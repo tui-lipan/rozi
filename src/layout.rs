@@ -89,13 +89,6 @@ pub fn ordered_panes(workspace: &Workspace, focused: Option<PaneId>) -> Vec<&Pan
     panes
 }
 
-pub fn workspace_root_axis(workspace: &Workspace) -> SplitAxis {
-    match workspace.tile_tree.as_ref() {
-        Some(DwindleTree::Split { axis, .. }) => *axis,
-        _ => workspace.start_axis,
-    }
-}
-
 /// Dwindle split direction for the focused tile: split the longer side so the two halves
 /// stay roughly square (Hyprland compares the node's width vs height). Width is weighted by
 /// [`SPLIT_WIDTH_MULTIPLIER`] for terminal cell aspect. The new pane takes the second

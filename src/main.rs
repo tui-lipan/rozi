@@ -15,13 +15,14 @@ use tui_lipan::prelude::*;
 use crate::anim::{GeometryAnimation, WindowAnimationConfig};
 use crate::geometry::{
     canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
-    clamp_floating_rect, default_floating_rect, directional_score, grabbed_edge_on_outer_border,
-    inset_float_rect, lift_off_float_rect, resize_float_rect_from_corner, tiled_drag_preview_rect,
+    clamp_floating_rect, closest_pane_to_rect, default_floating_rect, directional_score,
+    grabbed_edge_on_outer_border, inset_float_rect, lift_off_float_rect,
+    resize_float_rect_from_corner, tiled_drag_preview_rect,
 };
 use crate::input::Action;
 use crate::layout::{
-    SpawnPlacement, insert_tiled_pane_at_point, place_spawned_pane, placement_for,
-    target_tiled_pane_for_drop, workspace_target_rects, workspace_target_rects_excluding,
+    insert_tiled_pane_at_point, place_spawned_pane, placement_for, target_tiled_pane_for_drop,
+    workspace_target_rects, workspace_target_rects_excluding,
 };
 use crate::pane::PaneEventOutcome;
 use crate::state::{
@@ -54,6 +55,9 @@ pub enum FrameworkFocus {
 
 #[derive(Clone)]
 pub enum Msg {
+    RunAction(Action),
+    ClosePalette,
+    CloseHelp,
     FocusPane(PaneId, FrameworkFocus),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -83,6 +87,7 @@ impl Component for HyprmuxApp {
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
+        register_commands(ctx);
         ctx.state
             .focused_pane
             .map(|id| spawn_pty_command(id, pty_config(&ctx.state.config), Some(Duration::ZERO)))
@@ -90,19 +95,33 @@ impl Component for HyprmuxApp {
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {
         match msg {
+            Msg::RunAction(action) => {
+                ctx.state.show_palette = false;
+                let update = execute_action(ctx, action);
+                request_current_pane_focus(ctx);
+                update
+            }
+            Msg::ClosePalette => {
+                ctx.state.show_palette = false;
+                request_current_pane_focus(ctx);
+                Update::full()
+            }
+            Msg::CloseHelp => {
+                ctx.state.show_help = false;
+                request_current_pane_focus(ctx);
+                Update::full()
+            }
             Msg::FocusPane(id, framework_focus) => {
                 focus_pane(&mut ctx.state, id);
                 if framework_focus == FrameworkFocus::Request {
                     request_pane_focus(ctx, id);
                 }
-                ctx.state.status = format!("Focused pane #{id}");
                 Update::full()
             }
             Msg::HoverPane(id) => {
                 if ctx.state.focused_pane != Some(id) {
                     focus_pane(&mut ctx.state, id);
                     request_pane_focus(ctx, id);
-                    ctx.state.status = format!("Hover-focused pane #{id}");
                     Update::full()
                 } else {
                     Update::none()
@@ -140,7 +159,6 @@ impl Component for HyprmuxApp {
                 {
                     ctx.state.resizing_pane = None;
                 }
-                ctx.state.status = format!("Finished resizing pane #{id}");
                 Update::full()
             }
             Msg::FinishOpen(id) => {
@@ -163,13 +181,8 @@ impl Component for HyprmuxApp {
             }
             Msg::PtyReady(id, pty) => {
                 if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-                    match pane.terminal.set_pty(pty) {
-                        Ok(()) => {
-                            ctx.state.status = format!("Pane #{id} shell ready");
-                        }
-                        Err(message) => {
-                            pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-                        }
+                    if let Err(message) = pane.terminal.set_pty(pty) {
+                        pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
                     }
                 }
                 Update::full()
@@ -255,34 +268,63 @@ impl HyprmuxApp {
             return anim::instant_transition();
         }
 
-        let animations = ctx.state.config.animations;
-        if !animations.enabled || !animations.geometry {
+        let animations = self.config.animations;
+        if !animations.enabled {
             return anim::instant_transition();
         }
 
-        let should_animate = match ctx.state.animation {
+        let enabled = match ctx.state.animation {
             GeometryAnimation::None => false,
-            GeometryAnimation::FloatingMove => pane.floating,
-            GeometryAnimation::Spawn
-            | GeometryAnimation::Close
-            | GeometryAnimation::Fullscreen
-            | GeometryAnimation::TileFloat
-            | GeometryAnimation::AxisChange => animations.tiled_size,
+            GeometryAnimation::Spawn => animations.spawn,
+            GeometryAnimation::Close => animations.close,
+            GeometryAnimation::Fullscreen => animations.fullscreen,
+            GeometryAnimation::TileFloat => animations.tile_float,
+            GeometryAnimation::AxisChange => animations.axis_change,
         };
-        if !should_animate {
+        if !enabled {
             return anim::instant_transition();
         }
 
-        anim::geometry_transition(animations.geometry_duration)
+        let duration = if pane.closing {
+            animations.close_duration
+        } else {
+            animations.geometry_duration
+        };
+        anim::geometry_transition(duration)
     }
 
     pub(crate) fn window_opacity_config(&self, pane: &Pane) -> TransitionConfig {
         let animations = self.config.animations;
-        if !animations.enabled || !animations.opacity {
+        if !animations.enabled {
             return anim::instant_transition();
         }
-        if pane.closing || pane.opening {
-            anim::opacity_transition(animations.close_duration)
+        if pane.closing {
+            return if animations.close {
+                TransitionConfig {
+                    duration: animations.close_duration,
+                    easing: Easing::EaseOutQuad,
+                }
+            } else {
+                anim::instant_transition()
+            };
+        }
+        if animations.spawn {
+            TransitionConfig {
+                duration: animations.close_duration,
+                easing: Easing::EaseOutQuad,
+            }
+        } else {
+            anim::instant_transition()
+        }
+    }
+
+    pub(crate) fn focus_chrome_transition_config(&self) -> TransitionConfig {
+        let animations = self.config.animations;
+        if animations.enabled && animations.focus_chrome {
+            TransitionConfig {
+                duration: animations.focus_chrome_duration,
+                easing: Easing::EaseInOutCubic,
+            }
         } else {
             anim::instant_transition()
         }
@@ -295,13 +337,11 @@ impl HyprmuxApp {
         slot: &str,
         target: Color,
     ) -> Color {
-        let animations = ctx.state.config.animations;
-        let config = if animations.enabled && animations.focus_chrome {
-            anim::focus_chrome_transition(animations.focus_chrome_duration)
-        } else {
-            anim::instant_transition()
-        };
-        ctx.transition(format!("hyprmux-pane-chrome-{pane}-{slot}"), target, config)
+        ctx.transition(
+            format!("hyprmux-pane-chrome-{pane}-{slot}"),
+            target,
+            self.focus_chrome_transition_config(),
+        )
     }
 }
 
@@ -314,8 +354,6 @@ fn handle_key_routing(
         Mode::Normal => {
             if input::is_prefix_key(key, ctx.state.config.input) {
                 ctx.state.mode = Mode::Prefix;
-                ctx.state.status =
-                    "prefix: waiting for command (Ctrl-a again sends literal)".into();
                 return (true, Update::full());
             }
 
@@ -336,12 +374,10 @@ fn handle_key_routing(
                 let update = id
                     .map(|id| forward_key_to_pane(ctx, id, key))
                     .unwrap_or_else(Update::none);
-                ctx.state.status = "sent literal Ctrl-a".to_string();
                 return (true, update);
             }
 
             if key.is(KeyCode::Esc) {
-                ctx.state.status = "prefix cancelled".to_string();
                 return (true, Update::full());
             }
 
@@ -353,7 +389,6 @@ fn handle_key_routing(
             let update = id
                 .map(|id| forward_key_to_pane(ctx, id, key))
                 .unwrap_or_else(Update::none);
-            ctx.state.status = "unknown prefix command; forwarded key".to_string();
             (true, update)
         }
     }
@@ -393,6 +428,64 @@ fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
             adjust_focused_split_ratio(&mut ctx.state, delta);
             Update::full()
         }
+        Action::TogglePalette => {
+            ctx.state.show_palette = !ctx.state.show_palette;
+            if ctx.state.show_palette {
+                ctx.state.show_help = false;
+            }
+            Update::full()
+        }
+        Action::ToggleHelp => {
+            ctx.state.show_help = !ctx.state.show_help;
+            if ctx.state.show_help {
+                ctx.state.show_palette = false;
+            }
+            Update::full()
+        }
+    }
+}
+
+fn register_commands(ctx: &mut Context<HyprmuxApp>) {
+    let registry = ctx.command_registry();
+    for binding in input::command_bindings()
+        .into_iter()
+        .filter(|binding| binding.palette)
+    {
+        let action = binding.action;
+        let link = ctx.link().clone();
+        registry.register(
+            CommandEntry::builder(binding.id)
+                .label(binding.label)
+                .category(binding.category)
+                .keybinding(binding.keys)
+                .handler(Callback::new(move |_| link.send(Msg::RunAction(action))))
+                .build(),
+        );
+    }
+    for index in 0..crate::state::WORKSPACE_COUNT {
+        let n = index + 1;
+        let link = ctx.link().clone();
+        registry.register(
+            CommandEntry::builder(format!("workspace.switch.{n}"))
+                .label(format!("Switch to workspace {n}"))
+                .category("Workspaces")
+                .keybinding(n.to_string())
+                .handler(Callback::new(move |_| {
+                    link.send(Msg::RunAction(Action::SwitchWorkspace(index)))
+                }))
+                .build(),
+        );
+        let link = ctx.link().clone();
+        registry.register(
+            CommandEntry::builder(format!("workspace.move.{n}"))
+                .label(format!("Move pane to workspace {n}"))
+                .category("Workspaces")
+                .keybinding(format!("Shift+{n}"))
+                .handler(Callback::new(move |_| {
+                    link.send(Msg::RunAction(Action::MoveToWorkspace(index)))
+                }))
+                .build(),
+        );
     }
 }
 
@@ -427,11 +520,10 @@ fn handle_pty_event(ctx: &mut Context<HyprmuxApp>, id: PaneId, event: TerminalPt
     match outcome {
         PaneEventOutcome::Repaint => Update::full(),
         PaneEventOutcome::StatusChanged => Update::full(),
-        PaneEventOutcome::Exited(code) => {
+        PaneEventOutcome::Exited(_code) => {
             if was_closing {
                 return Update::full();
             }
-            ctx.state.status = format!("Pane #{id} exited with status {code}");
             begin_close_pane(ctx, id, ctx.state.config.animations)
         }
     }
@@ -448,15 +540,11 @@ fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
     let previous_focused = workspace.focused_pane;
     workspace.panes.push(pane);
-    let placement = place_spawned_pane(workspace, id, previous_focused, bounds);
+    place_spawned_pane(workspace, id, previous_focused, bounds);
     workspace.focused_pane = Some(id);
     ctx.state.focused_pane = Some(id);
     request_pane_focus(ctx, id);
     ctx.state.animation = GeometryAnimation::Spawn;
-    ctx.state.status = match placement {
-        SpawnPlacement::Split(target) => format!("Spawned pane #{id} split off focused #{target}"),
-        SpawnPlacement::Appended => format!("Spawned pane #{id}"),
-    };
 
     Update::with_command(spawn_pty_command(
         id,
@@ -490,7 +578,6 @@ fn begin_close_pane(
         ctx.state.animation = GeometryAnimation::Close;
         choose_fallback_focus(&mut ctx.state);
         request_current_pane_focus(ctx);
-        ctx.state.status = format!("Closing pane #{id}");
         Update::with_command(prune_closed_command(id, anim::close_delay(animations)))
     } else {
         Update::full()
@@ -520,7 +607,6 @@ fn handle_terminal_input(
 
 fn close_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(id) = ctx.state.focused_pane else {
-        ctx.state.status = "No focused pane to close".to_string();
         return Update::full();
     };
     begin_close_pane(ctx, id, ctx.state.config.animations)
@@ -544,14 +630,9 @@ fn begin_move(
     request_pane_focus(ctx, id);
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
     let mut session = None;
-    let mut status = None;
     if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
         pane.opening = false;
-        if pane.fullscreen {
-            status = Some(format!(
-                "Pane #{id} is fullscreen; leave fullscreen before moving"
-            ));
-        } else {
+        if !pane.fullscreen {
             let was_floating = pane.floating;
             let drag_rect = if was_floating {
                 current_rect
@@ -574,11 +655,6 @@ fn begin_move(
                 was_floating,
                 drag_rect,
             });
-            status = Some(if was_floating {
-                format!("Moving floating pane #{id}")
-            } else {
-                format!("Dragging tiled pane #{id}; drop over a tile to split")
-            });
         }
     }
     ctx.state.moving_pane = session;
@@ -587,9 +663,6 @@ fn begin_move(
     } else {
         GeometryAnimation::None
     };
-    if let Some(status) = status {
-        ctx.state.status = status;
-    }
     Update::full()
 }
 
@@ -626,11 +699,6 @@ fn move_pane(
         } else {
             GeometryAnimation::TileFloat
         };
-        ctx.state.status = if session.was_floating {
-            format!("Moving floating #{id} by {dx:+}, {dy:+}")
-        } else {
-            format!("Dragging tiled #{id} by {dx:+}, {dy:+}")
-        };
     }
     if let Some(rect) = persisted_floating_rect
         && let Some(pane) = active_pane_mut(&mut ctx.state, id)
@@ -650,7 +718,6 @@ fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16) -> Update
             if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
                 pane.floating_rect = session.drag_rect;
             }
-            ctx.state.status = format!("Finished moving floating pane #{id}");
         } else {
             let viewport = ctx.viewport();
             drop_tiled_pane_at(&mut ctx.state, id, x, y, viewport);
@@ -672,7 +739,6 @@ fn begin_resize(
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     ctx.state.resizing_pane = Some(ResizeSession { id, corner });
-    ctx.state.status = format!("Resizing pane #{id} from {}", corner.label());
     Update::full()
 }
 
@@ -710,12 +776,10 @@ fn resize_pane_state(
     focus_pane(state, id);
     let bounds = canvas_bounds_from_viewport(viewport);
     let Some(pane) = active_pane_mut(state, id) else {
-        state.status = "Pane to resize was not found".to_string();
         return;
     };
 
     if pane.fullscreen {
-        state.status = format!("Pane #{id} is fullscreen; leave fullscreen before resizing");
         return;
     }
 
@@ -726,10 +790,6 @@ fn resize_pane_state(
             f32::from(dx),
             f32::from(dy),
             bounds,
-        );
-        state.status = format!(
-            "Resized floating #{id} from {} by {dx:+}, {dy:+}",
-            corner.label()
         );
         return;
     }
@@ -746,7 +806,6 @@ fn resize_pane_state(
     let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
     let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
     else {
-        state.status = format!("Pane #{id} is alone; no split to resize");
         return;
     };
 
@@ -758,7 +817,6 @@ fn resize_pane_state(
         placement_for(&placements, id)
     };
 
-    let mut adjusted = false;
     for (axis, pixels) in [
         (state::SplitAxis::Horizontal, f32::from(effective_dx)),
         (state::SplitAxis::Vertical, f32::from(effective_dy)),
@@ -772,7 +830,7 @@ fn resize_pane_state(
             continue;
         }
         if let Some(available) = nearest_split_available(&tree, tile_bounds, TILE_GAP, id, axis) {
-            adjusted |= resize_tiled_split(
+            resize_tiled_split(
                 &mut state.workspaces[state.active_workspace],
                 id,
                 axis,
@@ -783,11 +841,6 @@ fn resize_pane_state(
     }
 
     state.animation = GeometryAnimation::None;
-    state.status = if adjusted {
-        format!("Resized tiled #{id} from {}", corner.label())
-    } else {
-        format!("Pane #{id} has no divider to resize on that axis")
-    };
 }
 
 fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
@@ -808,25 +861,16 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     };
 
     let Some((target_id, target_rect)) = target else {
-        state.status = format!("Tiled pane #{id} stayed in place; no target tile");
         return;
     };
 
     let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
     let workspace = &mut state.workspaces[state.active_workspace];
-    if move_tiled_window_around_target(workspace, id, target_id, axis, moving_first) {
-        state.status = format!(
-            "Inserted tiled pane #{id} {} #{target_id}",
-            if moving_first { "before" } else { "after" }
-        );
-    } else {
-        state.status = format!("Tiled pane #{id} stayed in place");
-    }
+    move_tiled_window_around_target(workspace, id, target_id, axis, moving_first);
 }
 
 fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     let Some(id) = ctx.state.focused_pane else {
-        ctx.state.status = "No focused pane to toggle".to_string();
         return;
     };
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
@@ -845,7 +889,6 @@ fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
             insert_tiled_at = Some(crate::geometry::rect_center(pane.floating_rect));
             pane.floating = false;
             ctx.state.animation = GeometryAnimation::TileFloat;
-            ctx.state.status = format!("Pane #{id} returned to dwindle tiling");
         } else {
             pane.floating_rect = match current_rect {
                 Some(tile) => lift_off_float_rect(tile, pane.floating_rect, bounds),
@@ -854,38 +897,24 @@ fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
             pane.floating = true;
             remove_from_tiling = true;
             ctx.state.animation = GeometryAnimation::TileFloat;
-            ctx.state.status = format!("Pane #{id} is now floating; drag to move");
         }
     }
 
-    let mut status_after_tree_update = None;
     if insert_tiled_at.is_some() || remove_from_tiling {
         let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
         if let Some(point) = insert_tiled_at {
-            if let Some((target_id, moving_first)) =
-                insert_tiled_pane_at_point(workspace, id, point, bounds)
-            {
-                status_after_tree_update = Some(format!(
-                    "Pane #{id} returned to tiling {} #{target_id}",
-                    if moving_first { "before" } else { "after" }
-                ));
-            } else {
+            if insert_tiled_pane_at_point(workspace, id, point, bounds).is_none() {
                 append_tiled_window(workspace, id);
-                status_after_tree_update = Some(format!("Pane #{id} returned to dwindle tiling"));
             }
         } else if remove_from_tiling {
             remove_tiled_window(workspace, id);
         }
-    }
-    if let Some(status) = status_after_tree_update {
-        ctx.state.status = status;
     }
     request_pane_focus(ctx, id);
 }
 
 fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(id) = ctx.state.focused_pane else {
-        ctx.state.status = "No focused pane to fullscreen".to_string();
         return Update::full();
     };
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
@@ -894,30 +923,24 @@ fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
         workspace_target_rects(workspace, bounds)
     };
 
-    let mut status = None;
+    let mut toggled = false;
     if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
         pane.opening = false;
         if !pane.fullscreen && pane.floating {
             pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
         }
         pane.fullscreen = !pane.fullscreen;
-        status = Some(if pane.fullscreen {
-            format!("Pane #{id} is fullscreen")
-        } else {
-            format!("Pane #{id} left fullscreen")
-        });
+        toggled = true;
     }
-    if let Some(status) = status {
+    if toggled {
         ctx.state.animation = GeometryAnimation::Fullscreen;
         request_pane_focus(ctx, id);
-        ctx.state.status = status;
     }
     Update::full()
 }
 
 fn toggle_focused_split_axis(state: &mut State) {
     let Some(focused) = state.focused_pane else {
-        state.status = "No focused tiled pane for split toggle".to_string();
         return;
     };
     let workspace = &mut state.workspaces[state.active_workspace];
@@ -925,25 +948,19 @@ fn toggle_focused_split_axis(state: &mut State) {
         .active_tiled_ids_by_pane_order()
         .contains(&focused)
     {
-        state.status = "Focused pane is floating; no split axis to toggle".to_string();
         return;
     }
     workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     let Some(tree) = workspace.tile_tree.as_mut() else {
-        state.status = "Focused tiled pane is alone; no split axis to toggle".to_string();
         return;
     };
-    let Some((depth, axis)) = flip_tree_split_for_focused(tree, focused, 0) else {
-        state.status = "Focused tiled pane is alone; no split axis to toggle".to_string();
-        return;
-    };
-    state.animation = GeometryAnimation::AxisChange;
-    state.status = format!("Flipped focused split {} to {}", depth + 1, axis.label());
+    if flip_tree_split_for_focused(tree, focused, 0).is_some() {
+        state.animation = GeometryAnimation::AxisChange;
+    }
 }
 
 fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
     let Some(focused) = state.focused_pane else {
-        state.status = "No focused tiled pane for split adjustment".to_string();
         return;
     };
     let workspace = &mut state.workspaces[state.active_workspace];
@@ -951,16 +968,11 @@ fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
         workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     }
     let Some(tree) = workspace.tile_tree.as_mut() else {
-        state.status = "Focused pane is floating or alone; no split ratio to adjust".to_string();
         return;
     };
-    let Some(index) = adjust_tree_split_for_focused(tree, focused, delta, 0) else {
-        state.status = "Focused pane is floating or alone; no split ratio to adjust".to_string();
-        return;
-    };
-
-    state.animation = GeometryAnimation::None;
-    state.status = format!("Adjusted split {} by {:+.0}%", index + 1, delta * 100.0);
+    if adjust_tree_split_for_focused(tree, focused, delta, 0).is_some() {
+        state.animation = GeometryAnimation::None;
+    }
 }
 
 fn focus_in_direction(state: &mut State, direction: Direction, viewport: Rect) -> Option<PaneId> {
@@ -978,7 +990,6 @@ fn focus_in_direction(state: &mut State, direction: Direction, viewport: Rect) -
         .collect();
 
     if candidates.is_empty() {
-        state.status = "No panes to focus".to_string();
         state.focused_pane = None;
         return None;
     }
@@ -1002,7 +1013,6 @@ fn focus_in_direction(state: &mut State, direction: Direction, viewport: Rect) -
 
     if let Some(next_id) = next {
         focus_pane(state, next_id);
-        state.status = format!("Spatial focus {:?}: #{} → #{}", direction, focused, next_id);
         Some(next_id)
     } else {
         None
@@ -1034,7 +1044,6 @@ fn switch_workspace(state: &mut State, index: usize) {
     state.active_workspace = index;
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
-    state.status = format!("Switched to workspace {}", index + 1);
 }
 
 fn move_focused_to_workspace(state: &mut State, target_index: usize) {
@@ -1043,14 +1052,9 @@ fn move_focused_to_workspace(state: &mut State, target_index: usize) {
     }
     let source_index = state.active_workspace;
     let Some(focused) = state.focused_pane else {
-        state.status = "No focused pane to move".to_string();
         return;
     };
     if source_index == target_index {
-        state.status = format!(
-            "Pane #{focused} is already on workspace {}",
-            target_index + 1
-        );
         return;
     }
 
@@ -1059,7 +1063,6 @@ fn move_focused_to_workspace(state: &mut State, target_index: usize) {
         .iter()
         .position(|pane| pane.id == focused)
     else {
-        state.status = "Focused pane was not found".to_string();
         choose_fallback_focus(state);
         return;
     };
@@ -1077,7 +1080,6 @@ fn move_focused_to_workspace(state: &mut State, target_index: usize) {
     state.workspaces[target_index].panes.push(pane);
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
-    state.status = format!("Moved pane #{focused} to workspace {}", target_index + 1);
 }
 
 fn focus_pane(state: &mut State, id: PaneId) {
@@ -1092,24 +1094,100 @@ fn focus_pane(state: &mut State, id: PaneId) {
 }
 
 fn choose_fallback_focus(state: &mut State) {
-    let workspace = &mut state.workspaces[state.active_workspace];
-    let focus = workspace
-        .focused_pane
-        .filter(|focused| {
-            workspace
-                .panes
-                .iter()
-                .any(|pane| pane.id == *focused && !pane.closing)
+    choose_fallback_focus_near(state, state.focused_pane, None);
+}
+
+fn choose_fallback_focus_near(
+    state: &mut State,
+    reference_id: Option<PaneId>,
+    reference_rect: Option<FloatRect>,
+) {
+    let workspace_index = state.active_workspace;
+    let workspace = &state.workspaces[workspace_index];
+
+    if let Some(focused) = state.focused_pane
+        && workspace
+            .panes
+            .iter()
+            .any(|pane| pane.id == focused && !pane.closing)
+    {
+        state.workspaces[workspace_index].focused_pane = Some(focused);
+        return;
+    }
+
+    let focus = reference_id
+        .and_then(|reference_id| {
+            focus_near_pane_in_workspace(state, workspace, reference_id, reference_rect)
         })
-        .or_else(|| {
-            workspace
-                .panes
-                .iter()
-                .find(|pane| !pane.closing)
-                .map(|pane| pane.id)
-        });
-    workspace.focused_pane = focus;
+        .or_else(|| first_visible_pane(workspace));
+
+    state.workspaces[workspace_index].focused_pane = focus;
     state.focused_pane = focus;
+}
+
+fn first_visible_pane(workspace: &Workspace) -> Option<PaneId> {
+    workspace
+        .panes
+        .iter()
+        .find(|pane| !pane.closing)
+        .map(|pane| pane.id)
+}
+
+fn focus_near_pane_in_workspace(
+    state: &State,
+    workspace: &Workspace,
+    reference_id: PaneId,
+    reference_rect: Option<FloatRect>,
+) -> Option<PaneId> {
+    let reference = reference_pane_rect(state, workspace, reference_id, reference_rect)?;
+    let candidates: Vec<_> = visible_pane_placements(state, workspace)
+        .into_iter()
+        .filter(|(id, _)| *id != reference_id)
+        .collect();
+    closest_pane_to_rect(reference, &candidates)
+}
+
+fn visible_pane_placements(state: &State, workspace: &Workspace) -> Vec<(PaneId, FloatRect)> {
+    if let Some(viewport) = state.last_viewport.get() {
+        let bounds = canvas_bounds_from_viewport(viewport);
+        let placements = workspace_target_rects(workspace, bounds);
+        return workspace
+            .panes
+            .iter()
+            .filter(|pane| !pane.closing)
+            .filter_map(|pane| placement_for(&placements, pane.id).map(|rect| (pane.id, rect)))
+            .collect();
+    }
+
+    workspace
+        .panes
+        .iter()
+        .filter(|pane| !pane.closing)
+        .map(|pane| (pane.id, pane.floating_rect))
+        .collect()
+}
+
+fn reference_pane_rect(
+    state: &State,
+    workspace: &Workspace,
+    id: PaneId,
+    override_rect: Option<FloatRect>,
+) -> Option<FloatRect> {
+    if let Some(rect) = override_rect {
+        return Some(rect);
+    }
+    if let Some(viewport) = state.last_viewport.get() {
+        let bounds = canvas_bounds_from_viewport(viewport);
+        let placements = workspace_target_rects(workspace, bounds);
+        if let Some(rect) = placement_for(&placements, id) {
+            return Some(rect);
+        }
+    }
+    workspace
+        .panes
+        .iter()
+        .find(|pane| pane.id == id)
+        .map(|pane| pane.floating_rect)
 }
 
 fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
@@ -1135,19 +1213,38 @@ fn remove_pane(state: &mut State, id: PaneId) {
         state.resizing_pane = None;
     }
 
+    let removed_rect = reference_pane_rect(
+        state,
+        &state.workspaces[state.active_workspace],
+        id,
+        None,
+    );
+    let focus_updates: Vec<(usize, Option<PaneId>)> = state
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter_map(|(workspace_index, workspace)| {
+            if workspace.focused_pane != Some(id) {
+                return None;
+            }
+            Some((
+                workspace_index,
+                focus_near_pane_in_workspace(state, workspace, id, removed_rect)
+                    .or_else(|| first_visible_pane(workspace)),
+            ))
+        })
+        .collect();
+
     for workspace in &mut state.workspaces {
         remove_tiled_window(workspace, id);
         workspace.panes.retain(|pane| pane.id != id);
-        if workspace.focused_pane == Some(id) {
-            workspace.focused_pane = workspace
-                .panes
-                .iter()
-                .find(|pane| !pane.closing)
-                .map(|pane| pane.id);
-        }
     }
-    if state.focused_pane == Some(id) {
-        choose_fallback_focus(state);
+
+    for (workspace_index, focus) in focus_updates {
+        state.workspaces[workspace_index].focused_pane = focus;
+        if workspace_index == state.active_workspace {
+            state.focused_pane = focus;
+        }
     }
 }
 

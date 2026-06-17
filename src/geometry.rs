@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{OFFSCREEN_MIN_VISIBLE, ResizeCorner, SplitAxis, TOP_BAR_HEIGHT};
+use crate::state::{OFFSCREEN_MIN_VISIBLE, PaneId, ResizeCorner, SplitAxis, TOP_BAR_HEIGHT};
 
 pub fn canvas_bounds_from_viewport(viewport: Rect) -> FloatRect {
     FloatRect {
@@ -354,6 +354,58 @@ pub fn directional_score(
     Some(overlap_penalty + primary_gap * 10.0 + center_offset)
 }
 
+pub fn closest_pane_to_rect(reference: FloatRect, candidates: &[(PaneId, FloatRect)]) -> Option<PaneId> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    candidates
+        .iter()
+        .min_by(|(_, a), (_, b)| {
+            rect_proximity(reference, *a).total_cmp(&rect_proximity(reference, *b))
+        })
+        .map(|(id, _)| *id)
+}
+
+fn rect_proximity(reference: FloatRect, candidate: FloatRect) -> f32 {
+    edge_distance(reference, candidate) * 1_000_000.0 + center_distance_sq(reference, candidate)
+}
+
+fn edge_distance(a: FloatRect, b: FloatRect) -> f32 {
+    let dx = if a.x + a.w <= b.x {
+        b.x - (a.x + a.w)
+    } else if b.x + b.w <= a.x {
+        a.x - (b.x + b.w)
+    } else {
+        0.0
+    };
+    let dy = if a.y + a.h <= b.y {
+        b.y - (a.y + a.h)
+    } else if b.y + b.h <= a.y {
+        a.y - (b.y + b.h)
+    } else {
+        0.0
+    };
+
+    if dx == 0.0 && dy == 0.0 {
+        0.0
+    } else if dx == 0.0 {
+        dy
+    } else if dy == 0.0 {
+        dx
+    } else {
+        (dx * dx + dy * dy).sqrt()
+    }
+}
+
+fn center_distance_sq(a: FloatRect, b: FloatRect) -> f32 {
+    let (ax, ay) = rect_center(a);
+    let (bx, by) = rect_center(b);
+    let dx = ax - bx;
+    let dy = ay - by;
+    dx * dx + dy * dy
+}
+
 fn interval_overlap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
     (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
 }
@@ -415,6 +467,39 @@ mod tests {
         };
         let lifted = lift_off_float_rect(tile, remembered, bounds);
         assert_eq!(rect_center(lifted), rect_center(tile));
+    }
+
+    #[test]
+    fn closest_pane_prefers_adjacent_over_far_pane() {
+        let closing = FloatRect {
+            x: 60.0,
+            y: 20.0,
+            w: 40.0,
+            h: 20.0,
+        };
+        let far = (
+            1,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+        );
+        let adjacent = (
+            2,
+            FloatRect {
+                x: 60.0,
+                y: 0.0,
+                w: 40.0,
+                h: 19.0,
+            },
+        );
+        assert_eq!(
+            closest_pane_to_rect(closing, &[far, adjacent]),
+            Some(2),
+            "adjacent pane should win over a distant top-left pane"
+        );
     }
 
     #[test]

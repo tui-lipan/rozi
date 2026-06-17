@@ -13,6 +13,42 @@ pub enum Action {
     ToggleFullscreen,
     FlipSplit,
     AdjustRatio(f32),
+    TogglePalette,
+    ToggleHelp,
+}
+
+/// A discrete, parameterless binding surfaced in the help overlay, and — when
+/// `palette` is set — in the command palette. The help overlay documents every
+/// binding (it is the keybinding reference); the palette omits actions that are
+/// pointless to invoke by clicking (directional focus, opening the palette
+/// itself). Workspace digits (1-9) are handled separately as they expand into a range.
+pub struct CommandBinding {
+    pub id: &'static str,
+    pub action: Action,
+    pub label: &'static str,
+    pub keys: &'static str,
+    pub category: &'static str,
+    /// Whether this binding appears as a runnable entry in the command palette.
+    pub palette: bool,
+}
+
+pub fn command_bindings() -> Vec<CommandBinding> {
+    use Direction::{Down, Left, Right, Up};
+    vec![
+        CommandBinding { id: "pane.spawn", action: Action::Spawn, label: "New pane", keys: "Enter / c", category: "Panes", palette: true },
+        CommandBinding { id: "pane.close", action: Action::Close, label: "Close pane", keys: "w / x", category: "Panes", palette: true },
+        CommandBinding { id: "pane.float", action: Action::ToggleFloat, label: "Toggle floating", keys: "t", category: "Panes", palette: true },
+        CommandBinding { id: "pane.fullscreen", action: Action::ToggleFullscreen, label: "Toggle fullscreen", keys: "f", category: "Panes", palette: true },
+        CommandBinding { id: "layout.flip", action: Action::FlipSplit, label: "Flip split axis", keys: "Space", category: "Layout", palette: true },
+        CommandBinding { id: "layout.grow", action: Action::AdjustRatio(RATIO_STEP), label: "Grow split", keys: "] / +", category: "Layout", palette: true },
+        CommandBinding { id: "layout.shrink", action: Action::AdjustRatio(-RATIO_STEP), label: "Shrink split", keys: "[ / -", category: "Layout", palette: true },
+        CommandBinding { id: "focus.left", action: Action::Focus(Left), label: "Focus left", keys: "h / ←", category: "Focus", palette: false },
+        CommandBinding { id: "focus.down", action: Action::Focus(Down), label: "Focus down", keys: "j / ↓", category: "Focus", palette: false },
+        CommandBinding { id: "focus.up", action: Action::Focus(Up), label: "Focus up", keys: "k / ↑", category: "Focus", palette: false },
+        CommandBinding { id: "focus.right", action: Action::Focus(Right), label: "Focus right", keys: "l / →", category: "Focus", palette: false },
+        CommandBinding { id: "app.help", action: Action::ToggleHelp, label: "Show keybindings", keys: "?", category: "App", palette: true },
+        CommandBinding { id: "app.palette", action: Action::TogglePalette, label: "Command palette", keys: "p", category: "App", palette: false },
+    ]
 }
 
 pub fn is_prefix_key(key: KeyEvent, config: InputConfig) -> bool {
@@ -64,6 +100,8 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char(']') | KeyCode::Char('=') | KeyCode::Char('+') => {
             Some(Action::AdjustRatio(RATIO_STEP))
         }
+        KeyCode::Char('p') | KeyCode::Char('P') => Some(Action::TogglePalette),
+        KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,
     }
 }

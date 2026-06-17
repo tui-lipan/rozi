@@ -1,9 +1,8 @@
 use tui_lipan::prelude::*;
 
 use crate::geometry::{clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect};
-use crate::layout::{
-    ordered_panes, placement_for, workspace_root_axis, workspace_target_rects_excluding,
-};
+use crate::input::Action;
+use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
 use crate::state::{Pane, PaneId, TOP_BAR_HEIGHT};
 use crate::{FrameworkFocus, HyprmuxApp, Msg};
 
@@ -54,6 +53,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else if pane.fullscreen {
             bounds
         } else {
+            // Spawned panes appear at their tiled slot (and fade in via opacity); only
+            // surrounding panes animate to make room.
             base_rect
         };
         let config = app.transition_config_for(ctx, pane, viewport_changed);
@@ -69,14 +70,84 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         );
     }
 
-    VStack::new()
+    let mut root = VStack::new()
         .style(
             Style::new()
                 .bg(Color::rgb(10, 12, 18))
                 .fg(Color::rgb(220, 225, 235)),
         )
-        .child(top_bar(ctx, effective_focus).height(Length::Px(TOP_BAR_HEIGHT)))
-        .child(canvas)
+        .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
+        .child(canvas);
+
+    // Overlays portal to the root regardless of where they are attached.
+    if ctx.state.show_palette {
+        root = root.child(
+            CommandPalette::new()
+                .title("hyprmux commands")
+                .frame_style(Style::new().bg(Color::Reset))
+                .on_close(ctx.link().callback(|_| Msg::ClosePalette)),
+        );
+    }
+    if ctx.state.show_help {
+        root = root.child(help_overlay(ctx));
+    }
+
+    root.into()
+}
+
+fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let mut body = VStack::new().gap(1).child(
+        Text::new("Prefix any key with Ctrl-a, or hold the configured modifier. Esc closes this help.")
+            .style(Style::new().fg(Color::rgb(150, 160, 176))),
+    );
+
+    let mut last_category: Option<&str> = None;
+    for binding in &crate::input::command_bindings() {
+        if last_category != Some(binding.category) {
+            body = body.child(help_section(binding.category));
+            last_category = Some(binding.category);
+        }
+        body = body.child(help_row(binding.keys, binding.label));
+    }
+
+    body = body
+        .child(help_section("Workspaces"))
+        .child(help_row("1-9", "Switch to workspace"))
+        .child(help_row("Shift+1-9", "Move pane to workspace"))
+        .child(help_section("Mouse"))
+        .child(help_row("mod-drag", "Move / resize pane (left / right drag)"));
+
+    Modal::new()
+        .title("Keybindings")
+        .width(Length::Px(56))
+        .on_close(ctx.link().callback(|_| Msg::CloseHelp))
+        .child(body)
+        .into()
+}
+
+fn help_section(title: &str) -> Element {
+    Text::new(title.to_string())
+        .style(Style::new().fg(Color::rgb(124, 207, 255)).bold())
+        .height(Length::Px(1))
+        .into()
+}
+
+fn help_row(keys: &str, desc: &str) -> Element {
+    HStack::new()
+        .gap(2)
+        .height(Length::Px(1))
+        .child(
+            Text::new(keys.to_string())
+                .style(Style::new().fg(Color::rgb(255, 213, 110)))
+                .width(Length::Px(12))
+                .height(Length::Px(1)),
+        )
+        .child(
+            Text::new(desc.to_string())
+                .style(Style::new().fg(Color::rgb(206, 212, 224)))
+                .width(Length::Flex(1))
+                .height(Length::Px(1)),
+        )
         .into()
 }
 
@@ -89,13 +160,22 @@ fn pane_element(
 ) -> Element {
     let id = pane.id;
     let focused = effective_focus == Some(id);
-    let title_prefix = if pane.floating { "󰹙" } else { "󰖲" };
-    let close_suffix = if pane.closing { " closing" } else { "" };
-    let fullscreen_suffix = if pane.fullscreen { " fullscreen" } else { "" };
-    let title = format!(
-        " {title_prefix} #{} {}{}{} ",
-        pane.id, pane.title, fullscreen_suffix, close_suffix
-    );
+    let icon = if pane.fullscreen {
+        "󰊓"
+    } else if pane.floating {
+        "󰹙"
+    } else {
+        "󰖲"
+    };
+    let badge = if pane.closing {
+        Some("closing")
+    } else if pane.fullscreen {
+        Some("fullscreen")
+    } else if pane.floating {
+        Some("floating")
+    } else {
+        None
+    };
     let border_style = if pane.floating {
         BorderStyle::Double
     } else {
@@ -151,39 +231,35 @@ fn pane_element(
         Style::new().fg(title_bar_fg)
     };
 
+    // Prefer the title the running program set via OSC (shell `$PWD`, `vim`, …),
+    // falling back to the pane's own label when nothing has been set yet.
+    let title = pane.terminal.title().unwrap_or_else(|| pane.title.clone());
+    let mut title_row = HStack::new()
+        .style(title_bar_fill_style)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .child(
+            Text::new(format!(" {icon}  {} · {title} ", pane.id))
+                .style(title_bar_text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1)),
+        );
+    if let Some(badge) = badge {
+        title_row = title_row.child(
+            Text::new(format!(" {badge} "))
+                .style(title_bar_text_style)
+                .height(Length::Px(1)),
+        );
+    }
+
     let title_bar: Element = MouseRegion::new()
         .capture_click(true)
         .on_mouse_down(
             ctx.link()
                 .callback(move |_| Msg::FocusPane(id, FrameworkFocus::Request)),
         )
-        .child(
-            HStack::new()
-                .style(title_bar_fill_style)
-                .width(Length::Flex(1))
-                .height(Length::Px(1))
-                .child(
-                    Text::new(format!(
-                        "{title:<1} {} • {:.0}×{:.0} @ {:.0},{:.0} • {}",
-                        if pane.fullscreen {
-                            "fullscreen"
-                        } else if pane.floating {
-                            "floating"
-                        } else {
-                            "tiled"
-                        },
-                        animated_rect.w,
-                        animated_rect.h,
-                        animated_rect.x,
-                        animated_rect.y,
-                        pane.terminal.status_text(),
-                    ))
-                    .style(title_bar_text_style)
-                    .overflow(Overflow::Ellipsis)
-                    .width(Length::Flex(1))
-                    .height(Length::Px(1)),
-                ),
-        )
+        .child(title_row)
         .into();
 
     let terminal: Element = Terminal::new()
@@ -292,93 +368,97 @@ fn pane_element(
     element.key(pane_window_key(id))
 }
 
-fn top_bar(ctx: &Context<HyprmuxApp>, effective_focus: Option<PaneId>) -> VStack {
+/// Number of workspace tabs to show: at least 5, growing to include the active
+/// workspace and the highest one that currently holds panes.
+fn workspace_tab_count(state: &crate::state::State) -> usize {
+    let occupied = state
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, ws)| ws.visible_count() > 0)
+        .map(|(idx, _)| idx + 1)
+        .max()
+        .unwrap_or(0);
+    occupied
+        .max(state.active_workspace + 1)
+        .max(5)
+        .min(state.workspaces.len())
+}
+
+fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
     let state = &ctx.state;
-    let workspace = &state.workspaces[state.active_workspace];
-    let workspace_strip = state.workspaces.iter().enumerate().fold(
-        HStack::new().gap(1).height(Length::Px(1)),
-        |row, (idx, workspace)| {
-            let active = idx == state.active_workspace;
-            let label = format!(
-                " {}:{}{} ",
-                idx + 1,
-                workspace.visible_count(),
-                if active { "*" } else { "" }
-            );
-            let style = if active {
-                Style::new()
-                    .fg(Color::rgb(15, 18, 26))
-                    .bg(Color::rgb(124, 207, 255))
-                    .bold()
+    let shown = workspace_tab_count(state);
+
+    let tabs: Vec<Tab> = (0..shown)
+        .map(|idx| {
+            let count = state.workspaces[idx].visible_count();
+            let label = if count > 0 {
+                format!("{} ·{count}", idx + 1)
             } else {
-                Style::new()
-                    .fg(Color::rgb(120, 130, 145))
-                    .bg(Color::rgb(18, 24, 34))
+                format!("{}", idx + 1)
             };
-            row.child(Text::new(label).style(style).height(Length::Px(1)))
-        },
-    );
+            Tab::new(label)
+        })
+        .collect();
 
-    let focus_label = effective_focus
-        .map(|id| format!("#{id}"))
-        .unwrap_or_else(|| "none".to_string());
-    let mode_style = if state.mode == crate::state::Mode::Prefix {
-        Style::new()
-            .fg(Color::rgb(15, 18, 26))
-            .bg(Color::rgb(255, 213, 110))
-            .bold()
-    } else {
-        Style::new()
-            .fg(Color::rgb(155, 166, 185))
-            .bg(Color::rgb(18, 24, 34))
-    };
+    let workspace_tabs = Tabs::new()
+        .tabs(tabs)
+        .active(state.active_workspace.min(shown.saturating_sub(1)))
+        .focusable(false)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .divider(' ')
+        .style(
+            Style::new()
+                .fg(Color::rgb(120, 130, 145))
+                .bg(Color::rgb(18, 24, 34)),
+        )
+        .active_style(
+            Style::new()
+                .fg(Color::rgb(15, 18, 26))
+                .bg(Color::rgb(124, 207, 255))
+                .bold(),
+        )
+        .tab_hover_style(
+            Style::new()
+                .fg(Color::rgb(220, 225, 235))
+                .bg(Color::rgb(35, 42, 56)),
+        )
+        .on_change(
+            ctx.link()
+                .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
+        );
 
-    VStack::new()
+    let mut row = HStack::new()
+        .gap(1)
+        .height(Length::Px(1))
         .style(Style::new().bg(Color::rgb(10, 12, 18)))
         .child(
-            HStack::new()
-                .gap(2)
-                .height(Length::Px(1))
-                .child(
-                    Text::new(" hyprmux ")
-                        .style(
-                            Style::new()
-                                .fg(Color::rgb(240, 245, 255))
-                                .bg(Color::rgb(57, 91, 162))
-                                .bold(),
-                        )
-                        .height(Length::Px(1)),
+            Text::new(" hyprmux ")
+                .style(
+                    Style::new()
+                        .fg(Color::rgb(240, 245, 255))
+                        .bg(Color::rgb(57, 91, 162))
+                        .bold(),
                 )
-                .child(workspace_strip)
-                .child(
-                    Text::new(format!(" mode={} ", state.mode.label()))
-                        .style(mode_style)
-                        .height(Length::Px(1)),
-                )
-                .child(
-                    Text::new(format!(
-                        "active={} focused={} root={} mod={} shell panes",
-                        workspace.name,
-                        focus_label,
-                        workspace_root_axis(workspace).label(),
-                        state.config.input.modifier.label(),
-                    ))
-                    .style(Style::new().fg(Color::rgb(150, 160, 176)))
-                    .height(Length::Px(1)),
-                ),
-        )
-        .child(
-            Text::new(
-                "Ctrl-a prefix • Enter/c spawn • w close • h/j/k/l focus • t float • f fullscreen • Space flip • [/] ratio • mod-drag move/resize",
-            )
-            .style(Style::new().fg(Color::rgb(155, 166, 185)))
-            .height(Length::Px(1)),
-        )
-        .child(
-            Text::new(state.status.clone())
-                .style(Style::new().fg(Color::rgb(109, 213, 175)))
                 .height(Length::Px(1)),
         )
+        .child(workspace_tabs);
+
+    if state.mode == crate::state::Mode::Prefix {
+        row = row.child(
+            Text::new(" PREFIX ")
+                .style(
+                    Style::new()
+                        .fg(Color::rgb(15, 18, 26))
+                        .bg(Color::rgb(255, 213, 110))
+                        .bold(),
+                )
+                .height(Length::Px(1)),
+        );
+    }
+
+    row
 }
 
 fn empty_workspace_panel(input: &crate::state::InputConfig) -> Element {

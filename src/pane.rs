@@ -127,6 +127,15 @@ impl TerminalPane {
         }
     }
 
+    /// The title the running program set via OSC 0/2 (shell `$PWD`, `vim`, etc.),
+    /// trimmed and ignored when blank. `None` falls back to the pane's own label.
+    pub fn title(&self) -> Option<String> {
+        self.screen
+            .title()
+            .map(|title| title.trim().to_string())
+            .filter(|title| !title.is_empty())
+    }
+
     pub fn status_text(&self) -> String {
         match &self.status {
             ManagedTerminalStatus::Starting => "starting".to_string(),

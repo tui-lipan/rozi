@@ -15,17 +15,16 @@ pub enum GeometryAnimation {
     Fullscreen,
     TileFloat,
     AxisChange,
-    FloatingMove,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct WindowAnimationConfig {
     pub enabled: bool,
-    pub geometry: bool,
-    /// Optional escape hatch for tiled size interpolation. It is off by default
-    /// because live PTYs should receive a single resize per layout change.
-    pub tiled_size: bool,
-    pub opacity: bool,
+    pub spawn: bool,
+    pub close: bool,
+    pub fullscreen: bool,
+    pub tile_float: bool,
+    pub axis_change: bool,
     pub focus_chrome: bool,
     pub geometry_duration: Duration,
     pub close_duration: Duration,
@@ -37,9 +36,11 @@ impl Default for WindowAnimationConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            geometry: true,
-            tiled_size: false,
-            opacity: true,
+            spawn: true,
+            close: true,
+            fullscreen: true,
+            tile_float: true,
+            axis_change: true,
             focus_chrome: true,
             geometry_duration: Duration::from_millis(GEOMETRY_MS),
             close_duration: Duration::from_millis(CLOSE_MS),
@@ -56,20 +57,6 @@ pub fn geometry_transition(duration: Duration) -> TransitionConfig {
     }
 }
 
-pub fn opacity_transition(duration: Duration) -> TransitionConfig {
-    TransitionConfig {
-        duration,
-        easing: Easing::EaseOutQuad,
-    }
-}
-
-pub fn focus_chrome_transition(duration: Duration) -> TransitionConfig {
-    TransitionConfig {
-        duration,
-        easing: Easing::EaseInOutCubic,
-    }
-}
-
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {
         duration: Duration::ZERO,
@@ -78,7 +65,7 @@ pub fn instant_transition() -> TransitionConfig {
 }
 
 pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
-    if animations.enabled && animations.opacity {
+    if animations.enabled && animations.spawn {
         animations.open_delay
     } else {
         Duration::ZERO
@@ -86,7 +73,7 @@ pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
 }
 
 pub fn close_delay(animations: WindowAnimationConfig) -> Duration {
-    if animations.enabled && animations.opacity {
+    if animations.enabled && animations.close {
         animations.close_duration + Duration::from_millis(20)
     } else {
         Duration::ZERO

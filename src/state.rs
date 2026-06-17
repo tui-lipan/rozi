@@ -9,7 +9,7 @@ use crate::tiling::{DwindleTree, append_tiled_window, collect_tree_leaves};
 pub type PaneId = u32;
 
 pub const WORKSPACE_COUNT: usize = 9;
-pub const TOP_BAR_HEIGHT: u16 = 3;
+pub const TOP_BAR_HEIGHT: u16 = 1;
 pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
 pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
@@ -38,13 +38,6 @@ impl SplitAxis {
     pub fn at_depth(self, depth: usize) -> Self {
         if depth % 2 == 0 { self } else { self.flipped() }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Horizontal => "horizontal-first",
-            Self::Vertical => "vertical-first",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,17 +54,6 @@ pub enum ResizeCorner {
     UpperRight,
     LowerLeft,
     LowerRight,
-}
-
-impl ResizeCorner {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::UpperLeft => "upper-left",
-            Self::UpperRight => "upper-right",
-            Self::LowerLeft => "lower-left",
-            Self::LowerRight => "lower-right",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,15 +74,6 @@ pub struct MoveSession {
 pub enum Mode {
     Normal,
     Prefix,
-}
-
-impl Mode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::Prefix => "prefix",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -191,7 +164,7 @@ impl Pane {
     pub fn new(id: PaneId, scrollback: usize, floating_rect: FloatRect) -> Self {
         Self {
             id,
-            title: format!("shell #{id}"),
+            title: "shell".to_string(),
             floating: false,
             fullscreen: false,
             floating_rect,
@@ -203,7 +176,6 @@ impl Pane {
 }
 
 pub struct Workspace {
-    pub name: String,
     pub panes: Vec<Pane>,
     pub tile_tree: Option<DwindleTree>,
     pub focused_pane: Option<PaneId>,
@@ -214,7 +186,6 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(index: usize) -> Self {
         Self {
-            name: format!("ws{}", index + 1),
             panes: Vec::new(),
             tile_tree: None,
             focused_pane: None,
@@ -262,20 +233,17 @@ pub struct State {
     pub active_workspace: usize,
     pub focused_pane: Option<PaneId>,
     pub next_pane_id: PaneId,
-    pub status: String,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
     pub animation: GeometryAnimation,
     pub last_viewport: Cell<Option<Rect>>,
+    pub show_palette: bool,
+    pub show_help: bool,
 }
 
 impl State {
     pub fn new(config: HyprmuxConfig) -> Self {
-        let status = format!(
-            "Ctrl-a enters command mode; {}+key is the optional held modifier.",
-            config.input.modifier.label()
-        );
         let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
         let initial_id = 1;
         let initial_rect = FloatRect {
@@ -296,12 +264,13 @@ impl State {
             active_workspace: 0,
             focused_pane: Some(initial_id),
             next_pane_id: initial_id + 1,
-            status,
             mode: Mode::Normal,
             moving_pane: None,
             resizing_pane: None,
             animation: GeometryAnimation::None,
             last_viewport: Cell::new(None),
+            show_palette: false,
+            show_help: false,
         }
     }
 }

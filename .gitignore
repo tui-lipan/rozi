@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target/
+
+# rustfmt backups
+**/*.rs.bk
+
+# Debug symbols
+*.pdb
+
+# Editor / OS noise
+*.swp
+.DS_Store

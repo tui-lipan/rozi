@@ -7,14 +7,17 @@ pub enum Action {
     Spawn,
     Close,
     Focus(Direction),
+    Move(Direction),
     SwitchWorkspace(usize),
     MoveToWorkspace(usize),
     ToggleFloat,
     ToggleFullscreen,
     FlipSplit,
     AdjustRatio(f32),
+    EnterResizeMode,
     TogglePalette,
     ToggleHelp,
+    ToggleTitles,
 }
 
 /// A discrete, parameterless binding surfaced in the help overlay, and — when
@@ -35,19 +38,158 @@ pub struct CommandBinding {
 pub fn command_bindings() -> Vec<CommandBinding> {
     use Direction::{Down, Left, Right, Up};
     vec![
-        CommandBinding { id: "pane.spawn", action: Action::Spawn, label: "New pane", keys: "Enter / c", category: "Panes", palette: true },
-        CommandBinding { id: "pane.close", action: Action::Close, label: "Close pane", keys: "w / x", category: "Panes", palette: true },
-        CommandBinding { id: "pane.float", action: Action::ToggleFloat, label: "Toggle floating", keys: "t", category: "Panes", palette: true },
-        CommandBinding { id: "pane.fullscreen", action: Action::ToggleFullscreen, label: "Toggle fullscreen", keys: "f", category: "Panes", palette: true },
-        CommandBinding { id: "layout.flip", action: Action::FlipSplit, label: "Flip split axis", keys: "Space", category: "Layout", palette: true },
-        CommandBinding { id: "layout.grow", action: Action::AdjustRatio(RATIO_STEP), label: "Grow split", keys: "] / +", category: "Layout", palette: true },
-        CommandBinding { id: "layout.shrink", action: Action::AdjustRatio(-RATIO_STEP), label: "Shrink split", keys: "[ / -", category: "Layout", palette: true },
-        CommandBinding { id: "focus.left", action: Action::Focus(Left), label: "Focus left", keys: "h / ←", category: "Focus", palette: false },
-        CommandBinding { id: "focus.down", action: Action::Focus(Down), label: "Focus down", keys: "j / ↓", category: "Focus", palette: false },
-        CommandBinding { id: "focus.up", action: Action::Focus(Up), label: "Focus up", keys: "k / ↑", category: "Focus", palette: false },
-        CommandBinding { id: "focus.right", action: Action::Focus(Right), label: "Focus right", keys: "l / →", category: "Focus", palette: false },
-        CommandBinding { id: "app.help", action: Action::ToggleHelp, label: "Show keybindings", keys: "?", category: "App", palette: true },
-        CommandBinding { id: "app.palette", action: Action::TogglePalette, label: "Command palette", keys: "p", category: "App", palette: false },
+        CommandBinding {
+            id: "pane.spawn",
+            action: Action::Spawn,
+            label: "New pane",
+            keys: "Enter / c",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            id: "pane.close",
+            action: Action::Close,
+            label: "Close pane",
+            keys: "w / x",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            id: "pane.float",
+            action: Action::ToggleFloat,
+            label: "Toggle floating",
+            keys: "t",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            id: "pane.fullscreen",
+            action: Action::ToggleFullscreen,
+            label: "Toggle fullscreen",
+            keys: "f",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            id: "pane.move.left",
+            action: Action::Move(Left),
+            label: "Move pane left",
+            keys: "Shift+h / Shift+←",
+            category: "Panes",
+            palette: false,
+        },
+        CommandBinding {
+            id: "pane.move.down",
+            action: Action::Move(Down),
+            label: "Move pane down",
+            keys: "Shift+j / Shift+↓",
+            category: "Panes",
+            palette: false,
+        },
+        CommandBinding {
+            id: "pane.move.up",
+            action: Action::Move(Up),
+            label: "Move pane up",
+            keys: "Shift+k / Shift+↑",
+            category: "Panes",
+            palette: false,
+        },
+        CommandBinding {
+            id: "pane.move.right",
+            action: Action::Move(Right),
+            label: "Move pane right",
+            keys: "Shift+l / Shift+→",
+            category: "Panes",
+            palette: false,
+        },
+        CommandBinding {
+            id: "layout.flip",
+            action: Action::FlipSplit,
+            label: "Flip split axis",
+            keys: "Space",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
+            id: "layout.grow",
+            action: Action::AdjustRatio(RATIO_STEP),
+            label: "Grow split",
+            keys: "] / +",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
+            id: "layout.shrink",
+            action: Action::AdjustRatio(-RATIO_STEP),
+            label: "Shrink split",
+            keys: "[ / -",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
+            id: "layout.resize_mode",
+            action: Action::EnterResizeMode,
+            label: "Resize mode",
+            keys: "r",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
+            id: "focus.left",
+            action: Action::Focus(Left),
+            label: "Focus left",
+            keys: "h / ←",
+            category: "Focus",
+            palette: false,
+        },
+        CommandBinding {
+            id: "focus.down",
+            action: Action::Focus(Down),
+            label: "Focus down",
+            keys: "j / ↓",
+            category: "Focus",
+            palette: false,
+        },
+        CommandBinding {
+            id: "focus.up",
+            action: Action::Focus(Up),
+            label: "Focus up",
+            keys: "k / ↑",
+            category: "Focus",
+            palette: false,
+        },
+        CommandBinding {
+            id: "focus.right",
+            action: Action::Focus(Right),
+            label: "Focus right",
+            keys: "l / →",
+            category: "Focus",
+            palette: false,
+        },
+        CommandBinding {
+            id: "app.help",
+            action: Action::ToggleHelp,
+            label: "Show keybindings",
+            keys: "?",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
+            id: "app.titles",
+            action: Action::ToggleTitles,
+            label: "Toggle pane titlebars",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
+            id: "app.palette",
+            action: Action::TogglePalette,
+            label: "Command palette",
+            keys: "p",
+            category: "App",
+            palette: false,
+        },
     ]
 }
 
@@ -78,6 +220,24 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
         });
     }
 
+    if key.mods.shift || matches!(key.code, KeyCode::Char('H' | 'J' | 'K' | 'L')) {
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
+                return Some(Action::Move(Direction::Left));
+            }
+            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
+                return Some(Action::Move(Direction::Down));
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => {
+                return Some(Action::Move(Direction::Up));
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
+                return Some(Action::Move(Direction::Right));
+            }
+            _ => {}
+        }
+    }
+
     match key.code {
         KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => Some(Action::Spawn),
         KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Char('x') | KeyCode::Char('X') => {
@@ -100,6 +260,7 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
         KeyCode::Char(']') | KeyCode::Char('=') | KeyCode::Char('+') => {
             Some(Action::AdjustRatio(RATIO_STEP))
         }
+        KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::EnterResizeMode),
         KeyCode::Char('p') | KeyCode::Char('P') => Some(Action::TogglePalette),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,

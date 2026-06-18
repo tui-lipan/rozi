@@ -26,7 +26,7 @@ use crate::layout::{
 };
 use crate::pane::PaneEventOutcome;
 use crate::state::{
-    Direction, HyprmuxConfig, Mode, MoveSession, OUTER_GAP, Pane, PaneId, ResizeCorner,
+    Direction, HyprmuxConfig, Mode, MoveSession, OUTER_GAP, Pane, PaneId, RATIO_STEP, ResizeCorner,
     ResizeSession, State, TILE_GAP, Workspace,
 };
 use crate::tiling::{
@@ -35,16 +35,9 @@ use crate::tiling::{
     remove_tiled_window, resize_tiled_split,
 };
 
+#[derive(Default)]
 pub struct HyprmuxApp {
     config: HyprmuxConfig,
-}
-
-impl Default for HyprmuxApp {
-    fn default() -> Self {
-        Self {
-            config: HyprmuxConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,7 +384,31 @@ fn handle_key_routing(
                 .unwrap_or_else(Update::none);
             (true, update)
         }
+        Mode::Resize => handle_resize_mode_key(ctx, key),
     }
+}
+
+fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
+    if key.is(KeyCode::Esc) || key.is(KeyCode::Enter) {
+        ctx.state.mode = Mode::Normal;
+        request_current_pane_focus(ctx);
+        return (true, Update::full());
+    }
+
+    let direction = match key.code {
+        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => Some(Direction::Left),
+        KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => Some(Direction::Down),
+        KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => Some(Direction::Up),
+        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => Some(Direction::Right),
+        _ => None,
+    };
+
+    if let Some(direction) = direction {
+        resize_focused_in_direction(ctx, direction);
+        return (true, Update::full());
+    }
+
+    (true, Update::none())
 }
 
 fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
@@ -403,6 +420,11 @@ fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
             if let Some(id) = focus_in_direction(&mut ctx.state, direction, viewport) {
                 request_pane_focus(ctx, id);
             }
+            Update::full()
+        }
+        Action::Move(direction) => {
+            move_focused_in_direction(ctx, direction);
+            request_current_pane_focus(ctx);
             Update::full()
         }
         Action::SwitchWorkspace(index) => {
@@ -428,6 +450,12 @@ fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
             adjust_focused_split_ratio(&mut ctx.state, delta);
             Update::full()
         }
+        Action::EnterResizeMode => {
+            ctx.state.mode = Mode::Resize;
+            ctx.state.show_help = false;
+            ctx.state.show_palette = false;
+            Update::full()
+        }
         Action::TogglePalette => {
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {
@@ -440,6 +468,10 @@ fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
             if ctx.state.show_help {
                 ctx.state.show_palette = false;
             }
+            Update::full()
+        }
+        Action::ToggleTitles => {
+            ctx.state.show_titles = !ctx.state.show_titles;
             Update::full()
         }
     }
@@ -824,8 +856,7 @@ fn resize_pane_state(
         if pixels == 0.0 {
             continue;
         }
-        if focused_rect
-            .is_some_and(|r| grabbed_edge_on_outer_border(r, tile_bounds, corner, axis))
+        if focused_rect.is_some_and(|r| grabbed_edge_on_outer_border(r, tile_bounds, corner, axis))
         {
             continue;
         }
@@ -973,6 +1004,116 @@ fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
     if adjust_tree_split_for_focused(tree, focused, delta, 0).is_some() {
         state.animation = GeometryAnimation::None;
     }
+}
+
+fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let workspace_index = ctx.state.active_workspace;
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+
+    let target = {
+        let workspace = &ctx.state.workspaces[workspace_index];
+        let tiled_ids = workspace.active_tiled_ids_by_pane_order();
+        if !tiled_ids.contains(&focused) {
+            return;
+        }
+        let placements: Vec<_> = workspace_target_rects(workspace, bounds)
+            .into_iter()
+            .filter(|placement| tiled_ids.contains(&placement.id))
+            .collect();
+        directional_neighbor(&placements, focused, direction)
+    };
+
+    let Some(target_id) = target else {
+        return;
+    };
+    let axis = split_axis_for_direction(direction);
+    let moving_first = match direction {
+        Direction::Left | Direction::Up => true,
+        Direction::Right | Direction::Down => false,
+    };
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if move_tiled_window_around_target(workspace, focused, target_id, axis, moving_first) {
+        workspace.focused_pane = Some(focused);
+        ctx.state.focused_pane = Some(focused);
+        ctx.state.animation = GeometryAnimation::AxisChange;
+    }
+}
+
+fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+    let workspace_index = ctx.state.active_workspace;
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if !workspace
+        .active_tiled_ids_by_pane_order()
+        .contains(&focused)
+    {
+        return;
+    }
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_ref() else {
+        return;
+    };
+
+    let axis = split_axis_for_direction(direction);
+    let Some(available) = nearest_split_available(tree, tile_bounds, TILE_GAP, focused, axis)
+    else {
+        return;
+    };
+    let pixels = match direction {
+        Direction::Left | Direction::Up => -RATIO_STEP * available,
+        Direction::Right | Direction::Down => RATIO_STEP * available,
+    };
+    if resize_tiled_split(workspace, focused, axis, available, pixels) {
+        ctx.state.animation = GeometryAnimation::None;
+    }
+}
+
+fn directional_neighbor(
+    placements: &[tiling::PanePlacement],
+    focused: PaneId,
+    direction: Direction,
+) -> Option<PaneId> {
+    let current = placements
+        .iter()
+        .find(|candidate| candidate.id == focused)?;
+    placements
+        .iter()
+        .filter(|candidate| candidate.id != focused)
+        .filter_map(|candidate| {
+            directional_score(current.rect, candidate.rect, direction)
+                .map(|score| (candidate.id, candidate.rect, score))
+        })
+        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
+        .map(|(id, _, _)| id)
+}
+
+fn split_axis_for_direction(direction: Direction) -> state::SplitAxis {
+    match direction {
+        Direction::Left | Direction::Right => state::SplitAxis::Horizontal,
+        Direction::Up | Direction::Down => state::SplitAxis::Vertical,
+    }
+}
+
+fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
+    state.workspaces[state.active_workspace]
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
 }
 
 fn focus_in_direction(state: &mut State, direction: Direction, viewport: Rect) -> Option<PaneId> {
@@ -1213,12 +1354,8 @@ fn remove_pane(state: &mut State, id: PaneId) {
         state.resizing_pane = None;
     }
 
-    let removed_rect = reference_pane_rect(
-        state,
-        &state.workspaces[state.active_workspace],
-        id,
-        None,
-    );
+    let removed_rect =
+        reference_pane_rect(state, &state.workspaces[state.active_workspace], id, None);
     let focus_updates: Vec<(usize, Option<PaneId>)> = state
         .workspaces
         .iter()

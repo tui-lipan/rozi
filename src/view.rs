@@ -97,8 +97,10 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 
 fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let mut body = VStack::new().gap(1).child(
-        Text::new("Prefix any key with Ctrl-a, or hold the configured modifier. Esc closes this help.")
-            .style(Style::new().fg(Color::rgb(150, 160, 176))),
+        Text::new(
+            "Prefix any key with Ctrl-a, or hold the configured modifier. Esc closes this help.",
+        )
+        .style(Style::new().fg(Color::rgb(150, 160, 176))),
     );
 
     let mut last_category: Option<&str> = None;
@@ -115,7 +117,10 @@ fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .child(help_row("1-9", "Switch to workspace"))
         .child(help_row("Shift+1-9", "Move pane to workspace"))
         .child(help_section("Mouse"))
-        .child(help_row("mod-drag", "Move / resize pane (left / right drag)"));
+        .child(help_row(
+            "mod-drag",
+            "Move / resize pane (left / right drag)",
+        ));
 
     Modal::new()
         .title("Keybindings")
@@ -202,65 +207,67 @@ fn pane_element(
             Color::rgb(15, 18, 26)
         },
     );
-    let title_bar_bg = app.chrome_color(
-        ctx,
-        pane.id,
-        "title-bg",
-        if focused {
-            Color::rgb(124, 207, 255)
-        } else {
-            Color::rgb(35, 42, 56)
-        },
-    );
-    let title_bar_fg = app.chrome_color(
-        ctx,
-        pane.id,
-        "title-fg",
-        if focused {
-            Color::rgb(15, 18, 26)
-        } else {
-            Color::rgb(175, 185, 202)
-        },
-    );
-
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
-    let title_bar_fill_style = Style::new().bg(title_bar_bg);
-    let title_bar_text_style = if focused {
-        Style::new().fg(title_bar_fg).bold()
-    } else {
-        Style::new().fg(title_bar_fg)
-    };
 
-    // Prefer the title the running program set via OSC (shell `$PWD`, `vim`, …),
-    // falling back to the pane's own label when nothing has been set yet.
-    let title = pane.terminal.title().unwrap_or_else(|| pane.title.clone());
-    let mut title_row = HStack::new()
-        .style(title_bar_fill_style)
-        .width(Length::Flex(1))
-        .height(Length::Px(1))
-        .child(
-            Text::new(format!(" {icon}  {} · {title} ", pane.id))
-                .style(title_bar_text_style)
-                .overflow(Overflow::Ellipsis)
-                .width(Length::Flex(1))
-                .height(Length::Px(1)),
+    let mut window_stack = VStack::new().style(frame_style);
+    if ctx.state.show_titles {
+        let title_bar_bg = app.chrome_color(
+            ctx,
+            pane.id,
+            "title-bg",
+            if focused {
+                Color::rgb(124, 207, 255)
+            } else {
+                Color::rgb(35, 42, 56)
+            },
         );
-    if let Some(badge) = badge {
-        title_row = title_row.child(
-            Text::new(format!(" {badge} "))
-                .style(title_bar_text_style)
-                .height(Length::Px(1)),
+        let title_bar_fg = app.chrome_color(
+            ctx,
+            pane.id,
+            "title-fg",
+            if focused {
+                Color::rgb(15, 18, 26)
+            } else {
+                Color::rgb(175, 185, 202)
+            },
         );
+        let title_bar_fill_style = Style::new().bg(title_bar_bg);
+        let title_bar_text_style = if focused {
+            Style::new().fg(title_bar_fg).bold()
+        } else {
+            Style::new().fg(title_bar_fg)
+        };
+
+        let title = pane.terminal.title().unwrap_or_else(|| pane.title.clone());
+        let mut title_row = HStack::new()
+            .style(title_bar_fill_style)
+            .width(Length::Flex(1))
+            .height(Length::Px(1))
+            .child(
+                Text::new(format!(" {icon}  {} · {title} ", pane.id))
+                    .style(title_bar_text_style)
+                    .overflow(Overflow::Ellipsis)
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1)),
+            );
+        if let Some(badge) = badge {
+            title_row = title_row.child(
+                Text::new(format!(" {badge} "))
+                    .style(title_bar_text_style)
+                    .height(Length::Px(1)),
+            );
+        }
+
+        let title_bar: Element = MouseRegion::new()
+            .capture_click(true)
+            .on_mouse_down(
+                ctx.link()
+                    .callback(move |_| Msg::FocusPane(id, FrameworkFocus::Request)),
+            )
+            .child(title_row)
+            .into();
+        window_stack = window_stack.child(title_bar);
     }
-
-    let title_bar: Element = MouseRegion::new()
-        .capture_click(true)
-        .on_mouse_down(
-            ctx.link()
-                .callback(move |_| Msg::FocusPane(id, FrameworkFocus::Request)),
-        )
-        .child(title_row)
-        .into();
 
     let terminal: Element = Terminal::new()
         .snapshot(pane.terminal.snapshot.clone())
@@ -298,11 +305,7 @@ fn pane_element(
         .child(terminal)
         .into();
     let body = body.key(pane_body_key(id));
-
-    let window_stack = VStack::new()
-        .style(frame_style)
-        .child(title_bar)
-        .child(body);
+    window_stack = window_stack.child(body);
 
     let mut window_region = MouseRegion::new()
         .capture_requires_mods(ctx.state.config.input.modifier.key_mods())
@@ -452,6 +455,17 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
                     Style::new()
                         .fg(Color::rgb(15, 18, 26))
                         .bg(Color::rgb(255, 213, 110))
+                        .bold(),
+                )
+                .height(Length::Px(1)),
+        );
+    } else if state.mode == crate::state::Mode::Resize {
+        row = row.child(
+            Text::new(" RESIZE hjkl Esc ")
+                .style(
+                    Style::new()
+                        .fg(Color::rgb(15, 18, 26))
+                        .bg(Color::rgb(160, 220, 140))
                         .bold(),
                 )
                 .height(Length::Px(1)),

@@ -69,11 +69,11 @@ pub struct MoveSession {
     pub drag_rect: FloatRect,
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Prefix,
+    Resize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +240,7 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     pub show_palette: bool,
     pub show_help: bool,
+    pub show_titles: bool,
 }
 
 impl State {
@@ -271,6 +272,7 @@ impl State {
             last_viewport: Cell::new(None),
             show_palette: false,
             show_help: false,
+            show_titles: true,
         }
     }
 }

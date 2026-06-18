@@ -7,6 +7,7 @@ use crate::state::{Pane, PaneId, TOP_BAR_HEIGHT};
 use crate::{FrameworkFocus, HyprmuxApp, Msg};
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
     let viewport_changed = ctx
         .state
@@ -23,13 +24,13 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled);
     let effective_focus = effective_focused_pane(ctx, workspace);
     let mut canvas = Canvas::new()
-        .style(Style::new().bg(Color::rgb(10, 12, 18)))
+        .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
 
     if workspace.panes.iter().all(|pane| pane.closing) {
         canvas = canvas.child_at(
             empty_workspace_rect(bounds).to_rect(),
-            empty_workspace_panel(&ctx.state.config.input),
+            empty_workspace_panel(&ctx.state.config.input, theme),
         );
     }
 
@@ -71,11 +72,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
 
     let mut root = VStack::new()
-        .style(
-            Style::new()
-                .bg(Color::rgb(10, 12, 18))
-                .fg(Color::rgb(220, 225, 235)),
-        )
+        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
         .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
         .child(canvas);
 
@@ -91,16 +88,26 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.show_help {
         root = root.child(help_overlay(ctx));
     }
+    if ctx.state.show_theme_picker {
+        root = root.child(theme_picker_overlay(ctx));
+    }
+    if ctx.state.search.is_some() {
+        root = root.child(search_overlay(ctx));
+    }
 
-    root.into()
+    ThemeProvider::new(ctx.state.theme.clone())
+        .child(root)
+        .into()
 }
 
 fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
+    let prefix = ctx.state.config.input.prefix.to_formatted_string(false);
     let mut body = VStack::new().gap(1).child(
-        Text::new(
-            "Prefix any key with Ctrl-a, or hold the configured modifier. Esc closes this help.",
-        )
-        .style(Style::new().fg(Color::rgb(150, 160, 176))),
+        Text::new(format!(
+            "Prefix any key with {prefix}, or hold the configured modifier. Esc closes this help."
+        ))
+        .style(theme.muted),
     );
 
     let mut last_category: Option<&str> = None;
@@ -130,9 +137,106 @@ fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
+fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(search) = ctx.state.search.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let input = Input::bound(&search.input)
+        .placeholder("Search scrollback...")
+        .prefix("/ ")
+        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+        .focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .on_change(ctx.link().callback(Msg::SearchChanged))
+        .on_key(ctx.link().key_handler(|key| {
+            if key.is(KeyCode::Esc) {
+                Some(Msg::CloseSearch)
+            } else if key.code == KeyCode::Enter
+                && !key.mods.ctrl
+                && !key.mods.alt
+                && !key.mods.super_key
+            {
+                Some(Msg::SearchNext(key.mods.shift))
+            } else {
+                None
+            }
+        }));
+
+    Modal::new()
+        .title(format!("Search pane {}", search.target))
+        .width(Length::Px(64))
+        .on_close(ctx.link().callback(|_| Msg::CloseSearch))
+        .child(
+            VStack::new()
+                .gap(1)
+                .child(input.key(search_input_key()))
+                .child(Text::new(search.status.clone()).style(theme.muted)),
+        )
+        .into()
+}
+
+fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
+    let current = ctx.state.config.theme.preset;
+    let applied_builtin = ctx.state.config.theme.path.is_none();
+    let items = crate::state::ThemePreset::all().into_iter().map(|preset| {
+        let item = ListItem::new(preset.label());
+        if applied_builtin && preset == current {
+            item.description("current").active(true)
+        } else {
+            item
+        }
+    });
+    let body = VStack::new()
+        .gap(1)
+        .child(Text::new("Choose a built-in theme for this session.").style(theme.muted))
+        .child(
+            List::new()
+                .items(items)
+                .selected(ctx.state.theme_picker_selected)
+                .height(Length::Auto)
+                .border(true)
+                .border_style(BorderStyle::Rounded)
+                .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+                .selection_full_width(true)
+                .selection_symbol(Some("› "))
+                .unselected_symbol(Some("  "))
+                .active_symbol(Some("✓ "))
+                .active_style(Style::new().fg(theme.status.success).bold())
+                .selection_style(
+                    Style::new()
+                        .fg(theme.surface.backdrop)
+                        .bg(theme.border_active),
+                )
+                .on_select(
+                    ctx.link()
+                        .callback(|event: ListEvent| Msg::ThemePickerSelected(event.index)),
+                )
+                .on_activate(
+                    ctx.link()
+                        .callback(|event: ListEvent| Msg::ThemePickerActivated(event.index)),
+                )
+                .key(theme_picker_key()),
+        );
+
+    Modal::new()
+        .title("Choose theme")
+        .width(Length::Px(36))
+        .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
+        .child(body)
+        .into()
+}
+
 fn help_section(title: &str) -> Element {
+    // The active ThemeProvider supplies inherited text/bg; use the theme accent for headings.
     Text::new(title.to_string())
-        .style(Style::new().fg(Color::rgb(124, 207, 255)).bold())
+        .style(Style::new().bold())
         .height(Length::Px(1))
         .into()
 }
@@ -143,13 +247,12 @@ fn help_row(keys: &str, desc: &str) -> Element {
         .height(Length::Px(1))
         .child(
             Text::new(keys.to_string())
-                .style(Style::new().fg(Color::rgb(255, 213, 110)))
+                .style(Style::new().bold())
                 .width(Length::Px(12))
                 .height(Length::Px(1)),
         )
         .child(
             Text::new(desc.to_string())
-                .style(Style::new().fg(Color::rgb(206, 212, 224)))
                 .width(Length::Flex(1))
                 .height(Length::Px(1)),
         )
@@ -163,6 +266,7 @@ fn pane_element(
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
 ) -> Element {
+    let theme = &ctx.state.theme;
     let id = pane.id;
     let focused = effective_focus == Some(id);
     let icon = if pane.fullscreen {
@@ -192,9 +296,9 @@ fn pane_element(
         pane.id,
         "frame-fg",
         if focused {
-            Color::rgb(124, 207, 255)
+            theme.border_active
         } else {
-            Color::rgb(125, 135, 150)
+            theme.surface.menu
         },
     );
     let frame_bg = app.chrome_color(
@@ -202,9 +306,9 @@ fn pane_element(
         pane.id,
         "frame-bg",
         if focused {
-            Color::rgb(18, 24, 34)
+            theme.surface.panel
         } else {
-            Color::rgb(15, 18, 26)
+            theme.surface.backdrop
         },
     );
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
@@ -216,9 +320,9 @@ fn pane_element(
             pane.id,
             "title-bg",
             if focused {
-                Color::rgb(124, 207, 255)
+                theme.border_active
             } else {
-                Color::rgb(35, 42, 56)
+                theme.surface.element
             },
         );
         let title_bar_fg = app.chrome_color(
@@ -226,9 +330,9 @@ fn pane_element(
             pane.id,
             "title-fg",
             if focused {
-                Color::rgb(15, 18, 26)
+                theme.surface.backdrop
             } else {
-                Color::rgb(175, 185, 202)
+                theme.surface.menu
             },
         );
         let title_bar_fill_style = Style::new().bg(title_bar_bg);
@@ -271,11 +375,8 @@ fn pane_element(
 
     let terminal: Element = Terminal::new()
         .snapshot(pane.terminal.snapshot.clone())
-        .style(
-            Style::new()
-                .bg(Color::rgb(8, 10, 15))
-                .fg(Color::rgb(222, 226, 235)),
-        )
+        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
+        .selection_style(theme.text_selection)
         .focusable(true)
         .width(Length::Flex(1))
         .height(Length::Flex(1))
@@ -390,6 +491,7 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 
 fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
     let state = &ctx.state;
+    let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
 
     let tabs: Vec<Tab> = (0..shown)
@@ -411,21 +513,17 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
         .width(Length::Flex(1))
         .height(Length::Px(1))
         .divider(' ')
-        .style(
-            Style::new()
-                .fg(Color::rgb(120, 130, 145))
-                .bg(Color::rgb(18, 24, 34)),
-        )
+        .style(Style::new().fg(theme.surface.menu).bg(theme.surface.panel))
         .active_style(
             Style::new()
-                .fg(Color::rgb(15, 18, 26))
-                .bg(Color::rgb(124, 207, 255))
+                .fg(theme.surface.backdrop)
+                .bg(theme.border_active)
                 .bold(),
         )
         .tab_hover_style(
             Style::new()
-                .fg(Color::rgb(220, 225, 235))
-                .bg(Color::rgb(35, 42, 56)),
+                .fg(theme.surface.menu)
+                .bg(theme.surface.element),
         )
         .on_change(
             ctx.link()
@@ -435,13 +533,13 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
     let mut row = HStack::new()
         .gap(1)
         .height(Length::Px(1))
-        .style(Style::new().bg(Color::rgb(10, 12, 18)))
+        .style(Style::new().bg(theme.surface.backdrop))
         .child(
             Text::new(" hyprmux ")
                 .style(
                     Style::new()
-                        .fg(Color::rgb(240, 245, 255))
-                        .bg(Color::rgb(57, 91, 162))
+                        .fg(theme.surface.backdrop)
+                        .bg(theme.border_active)
                         .bold(),
                 )
                 .height(Length::Px(1)),
@@ -453,8 +551,8 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
             Text::new(" PREFIX ")
                 .style(
                     Style::new()
-                        .fg(Color::rgb(15, 18, 26))
-                        .bg(Color::rgb(255, 213, 110))
+                        .fg(theme.surface.backdrop)
+                        .bg(theme.status.warning)
                         .bold(),
                 )
                 .height(Length::Px(1)),
@@ -464,8 +562,8 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
             Text::new(" RESIZE hjkl Esc ")
                 .style(
                     Style::new()
-                        .fg(Color::rgb(15, 18, 26))
-                        .bg(Color::rgb(160, 220, 140))
+                        .fg(theme.surface.backdrop)
+                        .bg(theme.status.success)
                         .bold(),
                 )
                 .height(Length::Px(1)),
@@ -475,15 +573,16 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
     row
 }
 
-fn empty_workspace_panel(input: &crate::state::InputConfig) -> Element {
+fn empty_workspace_panel(input: &crate::state::InputConfig, theme: &Theme) -> Element {
+    let prefix = input.prefix.to_formatted_string(false);
     Frame::new()
         .title(" Empty workspace ")
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
             Style::new()
-                .fg(Color::rgb(130, 145, 165))
-                .bg(Color::rgb(15, 18, 26)),
+                .fg(theme.surface.menu)
+                .bg(theme.surface.backdrop),
         )
         .padding(1)
         .child(
@@ -491,8 +590,8 @@ fn empty_workspace_panel(input: &crate::state::InputConfig) -> Element {
                 .gap(1)
                 .child(Text::new("No panes here yet."))
                 .child(Text::new(format!(
-                    "Press {}+Enter or Ctrl-a Enter to spawn a shell.",
-                    input.modifier.label()
+                    "Press {}+Enter or {prefix} Enter to spawn a shell.",
+                    input.modifier.label(),
                 ))),
         )
         .into()
@@ -521,4 +620,12 @@ pub fn pane_body_key(id: PaneId) -> String {
 
 pub fn pane_terminal_key(id: PaneId) -> String {
     format!("hyprmux-terminal-{id}")
+}
+
+pub fn search_input_key() -> &'static str {
+    "hyprmux-search-input"
+}
+
+pub fn theme_picker_key() -> &'static str {
+    "hyprmux-theme-picker"
 }

@@ -352,6 +352,63 @@ pub fn allocate_dwindle(
     }
 }
 
+pub fn allocate_master(
+    ids: &[PaneId],
+    rect: FloatRect,
+    gap: f32,
+    ratio: f32,
+    placements: &mut Vec<PanePlacement>,
+) {
+    match ids {
+        [] => {}
+        [id] => placements.push(PanePlacement { id: *id, rect }),
+        [master, stack @ ..] => {
+            let (master_rect, stack_rect) =
+                split_float_rect(rect, SplitAxis::Horizontal, ratio, gap);
+            placements.push(PanePlacement {
+                id: *master,
+                rect: master_rect,
+            });
+            allocate_master_stack(stack, stack_rect, gap, placements);
+        }
+    }
+}
+
+fn allocate_master_stack(
+    ids: &[PaneId],
+    rect: FloatRect,
+    gap: f32,
+    placements: &mut Vec<PanePlacement>,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let usable_gap = if rect.h > gap { gap } else { 0.0 };
+    let available = (rect.h - usable_gap * ids.len().saturating_sub(1) as f32).max(0.0);
+    let base_h = (available / ids.len() as f32).floor();
+    let mut y = rect.y;
+    let mut remaining_h = available;
+    for (index, id) in ids.iter().enumerate() {
+        let last = index + 1 == ids.len();
+        let h = if last {
+            remaining_h
+        } else {
+            base_h.min(remaining_h)
+        };
+        placements.push(PanePlacement {
+            id: *id,
+            rect: FloatRect {
+                x: rect.x,
+                y,
+                w: rect.w,
+                h,
+            },
+        });
+        y += h + usable_gap;
+        remaining_h = (remaining_h - h).max(0.0);
+    }
+}
+
 pub fn split_float_rect(
     rect: FloatRect,
     axis: SplitAxis,
@@ -464,6 +521,32 @@ pub fn nearest_split_available(
     Some((extent - usable_gap).max(1.0))
 }
 
+pub fn focused_is_first_in_nearest_axis_split(
+    tree: &DwindleTree,
+    focused: PaneId,
+    target_axis: SplitAxis,
+) -> Option<bool> {
+    let DwindleTree::Split {
+        axis,
+        first,
+        second,
+        ..
+    } = tree
+    else {
+        return None;
+    };
+
+    if tree_contains(first, focused) {
+        focused_is_first_in_nearest_axis_split(first, focused, target_axis)
+            .or((*axis == target_axis).then_some(true))
+    } else if tree_contains(second, focused) {
+        focused_is_first_in_nearest_axis_split(second, focused, target_axis)
+            .or((*axis == target_axis).then_some(false))
+    } else {
+        None
+    }
+}
+
 pub fn resize_tiled_split(
     workspace: &mut Workspace,
     focused: PaneId,
@@ -570,5 +653,59 @@ mod tests {
         assert_close(clamp_split_ratio(0.01), MIN_SPLIT_RATIO);
         assert_close(clamp_split_ratio(0.99), MAX_SPLIT_RATIO);
         assert_close(clamp_split_ratio(f32::NAN), DEFAULT_RATIO);
+    }
+
+    #[test]
+    fn master_allocates_first_pane_as_left_master() {
+        let ids = [1, 2, 3];
+        let mut placements = Vec::new();
+        allocate_master(
+            &ids,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 101.0,
+                h: 41.0,
+            },
+            1.0,
+            0.5,
+            &mut placements,
+        );
+
+        assert_eq!(placements.iter().map(|p| p.id).collect::<Vec<_>>(), ids);
+        assert_close(placements[0].rect.x, 0.0);
+        assert_close(placements[0].rect.w, 50.0);
+        assert_close(placements[1].rect.x, 51.0);
+        assert_close(
+            placements[1].rect.y + placements[1].rect.h + 1.0,
+            placements[2].rect.y,
+        );
+        assert_close(placements[2].rect.y + placements[2].rect.h, 41.0);
+    }
+
+    #[test]
+    fn nearest_axis_split_reports_focused_side() {
+        let tree = build_dwindle_tree(&[1, 2, 3], SplitAxis::Horizontal, &[0.5, 0.5]).unwrap();
+
+        assert_eq!(
+            focused_is_first_in_nearest_axis_split(&tree, 1, SplitAxis::Horizontal),
+            Some(true)
+        );
+        assert_eq!(
+            focused_is_first_in_nearest_axis_split(&tree, 2, SplitAxis::Horizontal),
+            Some(false)
+        );
+        assert_eq!(
+            focused_is_first_in_nearest_axis_split(&tree, 2, SplitAxis::Vertical),
+            Some(true)
+        );
+        assert_eq!(
+            focused_is_first_in_nearest_axis_split(&tree, 3, SplitAxis::Vertical),
+            Some(false)
+        );
+        assert_eq!(
+            focused_is_first_in_nearest_axis_split(&tree, 99, SplitAxis::Horizontal),
+            None
+        );
     }
 }

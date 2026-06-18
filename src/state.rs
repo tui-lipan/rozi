@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::path::PathBuf;
 
 use tui_lipan::prelude::*;
 
@@ -46,6 +47,28 @@ pub enum Direction {
     Down,
     Up,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutKind {
+    Dwindle,
+    Master,
+}
+
+impl LayoutKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dwindle => "dwindle",
+            Self::Master => "master",
+        }
+    }
+
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Dwindle => Self::Master,
+            Self::Master => Self::Dwindle,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,6 +149,115 @@ impl Default for InputConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemePreset {
+    OneDark,
+    Dracula,
+    Nord,
+    Gruvbox,
+    Catppuccin,
+    TokyoNight,
+    SolarizedDark,
+    Monokai,
+    Ansi,
+}
+
+impl ThemePreset {
+    pub fn all() -> [Self; 9] {
+        [
+            Self::OneDark,
+            Self::Dracula,
+            Self::Nord,
+            Self::Gruvbox,
+            Self::Catppuccin,
+            Self::TokyoNight,
+            Self::SolarizedDark,
+            Self::Monokai,
+            Self::Ansi,
+        ]
+    }
+
+    pub fn index(self) -> usize {
+        Self::all()
+            .iter()
+            .position(|preset| *preset == self)
+            .unwrap_or(0)
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::OneDark => "one-dark",
+            Self::Dracula => "dracula",
+            Self::Nord => "nord",
+            Self::Gruvbox => "gruvbox",
+            Self::Catppuccin => "catppuccin",
+            Self::TokyoNight => "tokyo-night",
+            Self::SolarizedDark => "solarized-dark",
+            Self::Monokai => "monokai",
+            Self::Ansi => "ansi",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OneDark => "One Dark",
+            Self::Dracula => "Dracula",
+            Self::Nord => "Nord",
+            Self::Gruvbox => "Gruvbox",
+            Self::Catppuccin => "Catppuccin",
+            Self::TokyoNight => "Tokyo Night",
+            Self::SolarizedDark => "Solarized Dark",
+            Self::Monokai => "Monokai",
+            Self::Ansi => "ANSI",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-")
+            .as_str()
+        {
+            "one-dark" | "onedark" => Some(Self::OneDark),
+            "dracula" => Some(Self::Dracula),
+            "nord" => Some(Self::Nord),
+            "gruvbox" => Some(Self::Gruvbox),
+            "catppuccin" => Some(Self::Catppuccin),
+            "tokyo-night" | "tokyonight" => Some(Self::TokyoNight),
+            "solarized-dark" | "solarized" => Some(Self::SolarizedDark),
+            "monokai" => Some(Self::Monokai),
+            "ansi" => Some(Self::Ansi),
+            _ => None,
+        }
+    }
+
+    pub fn theme(self) -> Theme {
+        match self {
+            Self::OneDark => Theme::one_dark(),
+            Self::Dracula => Theme::dracula(),
+            Self::Nord => Theme::nord(),
+            Self::Gruvbox => Theme::gruvbox(),
+            Self::Catppuccin => Theme::catppuccin(),
+            Self::TokyoNight => Theme::tokyo_night(),
+            Self::SolarizedDark => Theme::solarized_dark(),
+            Self::Monokai => Theme::monokai(),
+            Self::Ansi => Theme::ansi(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HyprmuxThemeConfig {
+    pub preset: ThemePreset,
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HyprmuxClipboardConfig {
+    pub enable_osc52: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct HyprmuxConfig {
     pub shell: Option<String>,
@@ -133,6 +265,8 @@ pub struct HyprmuxConfig {
     pub scrollback: usize,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
+    pub theme: HyprmuxThemeConfig,
+    pub clipboard: HyprmuxClipboardConfig,
 }
 
 impl Default for HyprmuxConfig {
@@ -145,6 +279,34 @@ impl Default for HyprmuxConfig {
             scrollback: 5000,
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
+            theme: HyprmuxThemeConfig::default(),
+            clipboard: HyprmuxClipboardConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScrollbackMatch {
+    pub offset: usize,
+    pub line: usize,
+}
+
+pub struct ScrollbackSearchState {
+    pub target: PaneId,
+    pub input: TextInput,
+    pub matches: Vec<ScrollbackMatch>,
+    pub current: usize,
+    pub status: String,
+}
+
+impl ScrollbackSearchState {
+    pub fn new(target: PaneId) -> Self {
+        Self {
+            target,
+            input: TextInput::new(""),
+            matches: Vec::new(),
+            current: 0,
+            status: "Type to search scrollback".to_string(),
         }
     }
 }
@@ -179,6 +341,7 @@ pub struct Workspace {
     pub panes: Vec<Pane>,
     pub tile_tree: Option<DwindleTree>,
     pub focused_pane: Option<PaneId>,
+    pub layout_kind: LayoutKind,
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
 }
@@ -189,6 +352,7 @@ impl Workspace {
             panes: Vec::new(),
             tile_tree: None,
             focused_pane: None,
+            layout_kind: LayoutKind::Dwindle,
             start_axis: if index % 2 == 0 {
                 SplitAxis::Horizontal
             } else {
@@ -241,11 +405,17 @@ pub struct State {
     pub show_palette: bool,
     pub show_help: bool,
     pub show_titles: bool,
+    pub show_theme_picker: bool,
+    pub theme_picker_selected: usize,
+    pub theme: Theme,
+    pub theme_watcher: Option<ThemeWatcher>,
+    pub search: Option<ScrollbackSearchState>,
 }
 
 impl State {
-    pub fn new(config: HyprmuxConfig) -> Self {
+    pub fn new(config: HyprmuxConfig, theme: Theme) -> Self {
         let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
+        let theme_picker_selected = config.theme.preset.index();
         let initial_id = 1;
         let initial_rect = FloatRect {
             x: 4.0,
@@ -273,6 +443,11 @@ impl State {
             show_palette: false,
             show_help: false,
             show_titles: true,
+            show_theme_picker: false,
+            theme_picker_selected,
+            theme,
+            theme_watcher: None,
+            search: None,
         }
     }
 }

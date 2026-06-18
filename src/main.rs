@@ -1,4 +1,5 @@
 mod anim;
+mod config;
 mod geometry;
 mod input;
 mod layout;
@@ -26,18 +27,42 @@ use crate::layout::{
 };
 use crate::pane::PaneEventOutcome;
 use crate::state::{
-    Direction, HyprmuxConfig, Mode, MoveSession, OUTER_GAP, Pane, PaneId, RATIO_STEP, ResizeCorner,
-    ResizeSession, State, TILE_GAP, Workspace,
+    Direction, HyprmuxConfig, LayoutKind, Mode, MoveSession, OUTER_GAP, Pane, PaneId, RATIO_STEP,
+    ResizeCorner, ResizeSession, ScrollbackMatch, ScrollbackSearchState, State, TILE_GAP,
+    ThemePreset, Workspace,
 };
 use crate::tiling::{
-    adjust_tree_split_for_focused, allocate_dwindle, append_tiled_window,
-    flip_tree_split_for_focused, move_tiled_window_around_target, nearest_split_available,
-    remove_tiled_window, resize_tiled_split,
+    adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle, append_tiled_window,
+    flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
+    move_tiled_window_around_target, nearest_split_available, ratio_at, remove_tiled_window,
+    resize_tiled_split,
 };
 
-#[derive(Default)]
 pub struct HyprmuxApp {
     config: HyprmuxConfig,
+    initial_theme: Theme,
+    startup_messages: Vec<String>,
+}
+
+impl Default for HyprmuxApp {
+    fn default() -> Self {
+        let config = HyprmuxConfig::default();
+        Self {
+            initial_theme: config.theme.preset.theme(),
+            config,
+            startup_messages: Vec::new(),
+        }
+    }
+}
+
+impl HyprmuxApp {
+    fn new(config: HyprmuxConfig, initial_theme: Theme, startup_messages: Vec<String>) -> Self {
+        Self {
+            config,
+            initial_theme,
+            startup_messages,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +76,14 @@ pub enum Msg {
     RunAction(Action),
     ClosePalette,
     CloseHelp,
+    CloseThemePicker,
+    ThemePickerSelected(usize),
+    ThemePickerActivated(usize),
+    ThemeTick,
+    ThemeError(String),
+    CloseSearch,
+    SearchChanged(InputEvent),
+    SearchNext(bool),
     FocusPane(PaneId, FrameworkFocus),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -76,14 +109,32 @@ impl Component for HyprmuxApp {
     type State = State;
 
     fn create_state(&self, _props: &Self::Properties) -> Self::State {
-        State::new(self.config.clone())
+        State::new(self.config.clone(), self.initial_theme.clone())
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
         register_commands(ctx);
-        ctx.state
+        for message in std::mem::take(&mut self.startup_messages) {
+            ctx.toast().push(info_toast(message));
+        }
+
+        if let Some(path) = &ctx.state.config.theme.path {
+            match ThemeWatcher::new(path.clone(), ctx.state.config.theme.preset.theme()) {
+                Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
+                Err(err) => {
+                    ctx.toast().push(error_toast(
+                        "Theme Watcher",
+                        format!("Could not watch {}: {err}", path.display()),
+                    ));
+                }
+            }
+        }
+
+        let spawn = ctx
+            .state
             .focused_pane
-            .map(|id| spawn_pty_command(id, pty_config(&ctx.state.config), Some(Duration::ZERO)))
+            .map(|id| (id, pty_config(&ctx.state.config), Some(Duration::ZERO)));
+        initial_command(spawn, ctx.state.theme_watcher.is_some())
     }
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {
@@ -91,7 +142,11 @@ impl Component for HyprmuxApp {
             Msg::RunAction(action) => {
                 ctx.state.show_palette = false;
                 let update = execute_action(ctx, action);
-                request_current_pane_focus(ctx);
+                match action {
+                    Action::OpenSearch => request_search_focus(ctx),
+                    Action::OpenThemePicker => {}
+                    _ => request_current_pane_focus(ctx),
+                }
                 update
             }
             Msg::ClosePalette => {
@@ -104,6 +159,39 @@ impl Component for HyprmuxApp {
                 request_current_pane_focus(ctx);
                 Update::full()
             }
+            Msg::CloseThemePicker => {
+                ctx.state.show_theme_picker = false;
+                request_current_pane_focus(ctx);
+                Update::full()
+            }
+            Msg::ThemePickerSelected(index) => {
+                ctx.state.theme_picker_selected = index;
+                Update::full()
+            }
+            Msg::ThemePickerActivated(index) => {
+                if let Some(preset) = ThemePreset::all().get(index).copied() {
+                    select_theme(ctx, preset);
+                    request_current_pane_focus(ctx);
+                }
+                Update::full()
+            }
+            Msg::ThemeTick => handle_theme_tick(ctx),
+            Msg::ThemeError(message) => {
+                ctx.toast().push(error_toast("Theme Reload", message));
+                Update::full()
+            }
+            Msg::CloseSearch => {
+                ctx.state.search = None;
+                request_current_pane_focus(ctx);
+                Update::full()
+            }
+            Msg::SearchChanged(event) => {
+                if let Some(search) = ctx.state.search.as_mut() {
+                    event.apply_to(&mut search.input);
+                }
+                recompute_search(ctx)
+            }
+            Msg::SearchNext(backward) => search_next(ctx, backward),
             Msg::FocusPane(id, framework_focus) => {
                 focus_pane(&mut ctx.state, id);
                 if framework_focus == FrameworkFocus::Request {
@@ -165,6 +253,14 @@ impl Component for HyprmuxApp {
             }
             Msg::PruneClosed(id) => {
                 remove_pane(&mut ctx.state, id);
+                if ctx
+                    .state
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| search.target == id)
+                {
+                    ctx.state.search = None;
+                }
                 if total_visible_panes(&ctx.state) == 0 {
                     ctx.quit();
                     return Update::none();
@@ -173,10 +269,15 @@ impl Component for HyprmuxApp {
                 Update::full()
             }
             Msg::PtyReady(id, pty) => {
+                let mut error = None;
                 if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
                     if let Err(message) = pane.terminal.set_pty(pty) {
+                        error = Some(message.clone());
                         pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
                     }
+                }
+                if let Some(message) = error {
+                    ctx.toast().push(error_toast(format!("Pane {id}"), message));
                 }
                 Update::full()
             }
@@ -188,13 +289,19 @@ impl Component for HyprmuxApp {
                 update
             }
             Msg::PaneMouse(id, bytes) => {
+                let mut error = None;
                 if let Some(pane) = find_pane_mut(&mut ctx.state, id)
                     && let Err(message) = pane.terminal.send_bytes(&bytes)
                 {
+                    error = Some(message.clone());
                     pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-                    return Update::full();
                 }
-                Update::none()
+                if let Some(message) = error {
+                    ctx.toast().push(error_toast(format!("Pane {id}"), message));
+                    Update::full()
+                } else {
+                    Update::none()
+                }
             }
             Msg::PaneResize(id, cols, rows) => {
                 if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -202,7 +309,10 @@ impl Component for HyprmuxApp {
                         Ok(true) => Update::full(),
                         Ok(false) => Update::none(),
                         Err(message) => {
+                            let toast_message = message.clone();
                             pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+                            ctx.toast()
+                                .push(error_toast(format!("Pane {id}"), toast_message));
                             Update::full()
                         }
                     }
@@ -456,6 +566,16 @@ fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
             ctx.state.show_palette = false;
             Update::full()
         }
+        Action::ToggleLayout => {
+            toggle_layout(ctx);
+            Update::full()
+        }
+        Action::OpenSearch => open_search(ctx),
+        Action::OpenThemePicker => open_theme_picker(ctx),
+        Action::SelectTheme(preset) => {
+            select_theme(ctx, preset);
+            Update::full()
+        }
         Action::TogglePalette => {
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {
@@ -494,31 +614,176 @@ fn register_commands(ctx: &mut Context<HyprmuxApp>) {
                 .build(),
         );
     }
-    for index in 0..crate::state::WORKSPACE_COUNT {
-        let n = index + 1;
-        let link = ctx.link().clone();
-        registry.register(
-            CommandEntry::builder(format!("workspace.switch.{n}"))
-                .label(format!("Switch to workspace {n}"))
-                .category("Workspaces")
-                .keybinding(n.to_string())
-                .handler(Callback::new(move |_| {
-                    link.send(Msg::RunAction(Action::SwitchWorkspace(index)))
-                }))
-                .build(),
-        );
-        let link = ctx.link().clone();
-        registry.register(
-            CommandEntry::builder(format!("workspace.move.{n}"))
-                .label(format!("Move pane to workspace {n}"))
-                .category("Workspaces")
-                .keybinding(format!("Shift+{n}"))
-                .handler(Callback::new(move |_| {
-                    link.send(Msg::RunAction(Action::MoveToWorkspace(index)))
-                }))
-                .build(),
-        );
+}
+
+fn initial_command(
+    spawn: Option<(PaneId, TerminalPtyConfig, Option<Duration>)>,
+    theme_tick: bool,
+) -> Option<Command> {
+    if spawn.is_none() && !theme_tick {
+        return None;
     }
+    Some(Command::spawn(move |link: CommandLink<Msg>| {
+        if let Some((id, config, finish_open_after)) = spawn {
+            spawn_pty(id, config, link.clone());
+            if let Some(delay) = finish_open_after {
+                if !delay.is_zero() {
+                    std::thread::sleep(delay);
+                }
+                link.send(Msg::FinishOpen(id));
+            }
+        }
+        if theme_tick {
+            std::thread::sleep(Duration::from_millis(150));
+            link.send(Msg::ThemeTick);
+        }
+    }))
+}
+
+fn schedule_theme_tick() -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        std::thread::sleep(Duration::from_millis(150));
+        link.send(Msg::ThemeTick);
+    })
+}
+
+fn handle_theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
+        return Update::none();
+    };
+
+    let mut newest_theme = None;
+    while let Some(theme) = watcher.try_recv() {
+        newest_theme = Some(theme);
+    }
+    let mut errors = Vec::new();
+    while let Some(err) = watcher.try_recv_error() {
+        errors.push(err);
+    }
+
+    for err in errors {
+        ctx.link().send(Msg::ThemeError(err));
+    }
+
+    if let Some(theme) = newest_theme {
+        ctx.state.theme = theme;
+        return Update::with_command(schedule_theme_tick());
+    }
+    Update::command_only(schedule_theme_tick())
+}
+
+fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(target) = ctx.state.focused_pane else {
+        return Update::full();
+    };
+    ctx.state.search = Some(ScrollbackSearchState::new(target));
+    ctx.state.show_help = false;
+    ctx.state.show_palette = false;
+    ctx.state.mode = Mode::Normal;
+    request_search_focus(ctx);
+    Update::full()
+}
+
+fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.show_theme_picker = true;
+    ctx.state.theme_picker_selected = ctx.state.config.theme.preset.index();
+    ctx.state.show_help = false;
+    ctx.state.show_palette = false;
+    ctx.state.search = None;
+    ctx.state.mode = Mode::Normal;
+    request_theme_picker_focus(ctx);
+    Update::full()
+}
+
+fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some((target, query)) = ctx
+        .state
+        .search
+        .as_ref()
+        .map(|search| (search.target, search.input.text().to_string()))
+    else {
+        return Update::none();
+    };
+
+    let query = query.trim().to_string();
+    let matches: Vec<ScrollbackMatch> = if query.is_empty() {
+        Vec::new()
+    } else {
+        find_pane_mut(&mut ctx.state, target)
+            .map(|pane| {
+                pane.terminal
+                    .search_scrollback(&query)
+                    .into_iter()
+                    .map(|matched| ScrollbackMatch {
+                        offset: matched.offset,
+                        line: matched.line,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    if let Some(search) = ctx.state.search.as_mut() {
+        search.matches = matches;
+        search.current = 0;
+        search.status = if query.is_empty() {
+            "Type to search scrollback".to_string()
+        } else if search.matches.is_empty() {
+            format!("No matches for `{query}`")
+        } else {
+            format!("1 / {} matches", search.matches.len())
+        };
+    }
+
+    jump_to_search_match(ctx);
+    request_search_focus(ctx);
+    Update::full()
+}
+
+fn search_next(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
+    let Some(search) = ctx.state.search.as_mut() else {
+        return Update::none();
+    };
+    if search.matches.is_empty() {
+        request_search_focus(ctx);
+        return Update::full();
+    }
+    let len = search.matches.len();
+    search.current = if backward {
+        search.current.checked_sub(1).unwrap_or(len - 1)
+    } else {
+        (search.current + 1) % len
+    };
+    search.status = format!("{} / {len} matches", search.current + 1);
+    jump_to_search_match(ctx);
+    request_search_focus(ctx);
+    Update::full()
+}
+
+fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
+    let Some((target, matched)) = ctx.state.search.as_ref().and_then(|search| {
+        search
+            .matches
+            .get(search.current)
+            .cloned()
+            .map(|matched| (search.target, matched))
+    }) else {
+        return;
+    };
+    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
+        pane.terminal.set_scrollback(matched.offset);
+    }
+}
+
+fn info_toast(message: impl Into<String>) -> Toast {
+    Toast::new(message.into()).duration(3.0)
+}
+
+fn error_toast(title: impl Into<String>, message: impl Into<String>) -> Toast {
+    Toast::new(message.into())
+        .title(Some(title.into()))
+        .duration(6.0)
+        .border(true)
 }
 
 fn forward_key_to_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent) -> Update {
@@ -535,27 +800,43 @@ fn forward_key_to_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent)
             }
         }
         Err(message) => {
+            let toast_message = message.clone();
             pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+            ctx.toast()
+                .push(error_toast(format!("Pane {id}"), toast_message));
             Update::full()
         }
     }
 }
 
 fn handle_pty_event(ctx: &mut Context<HyprmuxApp>, id: PaneId, event: TerminalPtyEvent) -> Update {
-    let (outcome, was_closing) = {
+    let pty_error = match &event {
+        TerminalPtyEvent::Error(message) => Some(message.to_string()),
+        _ => None,
+    };
+    let (outcome, was_closing, status_text) = {
         let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
             return Update::none();
         };
         let outcome = pane.terminal.handle_pty_event(event);
-        (outcome, pane.closing)
+        (outcome, pane.closing, pane.terminal.status_text())
     };
     match outcome {
         PaneEventOutcome::Repaint => Update::full(),
-        PaneEventOutcome::StatusChanged => Update::full(),
-        PaneEventOutcome::Exited(_code) => {
+        PaneEventOutcome::StatusChanged => {
+            if let Some(message) =
+                pty_error.or_else(|| status_text.strip_prefix("error: ").map(str::to_string))
+            {
+                ctx.toast().push(error_toast(format!("Pane {id}"), message));
+            }
+            Update::full()
+        }
+        PaneEventOutcome::Exited(code) => {
             if was_closing {
                 return Update::full();
             }
+            ctx.toast()
+                .push(info_toast(format!("Pane {id} exited with code {code}")));
             begin_close_pane(ctx, id, ctx.state.config.animations)
         }
     }
@@ -631,7 +912,10 @@ fn handle_terminal_input(
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && let Err(message) = pane.terminal.send_bytes(&input.bytes)
     {
+        let toast_message = message.clone();
         pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+        ctx.toast()
+            .push(error_toast(format!("Pane {id}"), toast_message));
         return Update::full();
     }
     Update::none()
@@ -835,6 +1119,29 @@ fn resize_pane_state(
         ResizeCorner::LowerLeft | ResizeCorner::LowerRight => dy,
     };
 
+    if state.workspaces[state.active_workspace].layout_kind == LayoutKind::Master {
+        let bounds = canvas_bounds_from_viewport(viewport);
+        let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+        let focused_rect = {
+            let placements =
+                workspace_target_rects(&state.workspaces[state.active_workspace], bounds);
+            placement_for(&placements, id)
+        };
+        if focused_rect.is_some_and(|rect| {
+            grabbed_edge_on_outer_border(rect, tile_bounds, corner, state::SplitAxis::Horizontal)
+        }) {
+            return;
+        }
+        resize_master_split_by_pixels(
+            &mut state.workspaces[state.active_workspace],
+            id,
+            f32::from(effective_dx),
+            master_available_width(tile_bounds),
+        );
+        state.animation = GeometryAnimation::None;
+        return;
+    }
+
     let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
     let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
     else {
@@ -975,6 +1282,9 @@ fn toggle_focused_split_axis(state: &mut State) {
         return;
     };
     let workspace = &mut state.workspaces[state.active_workspace];
+    if workspace.layout_kind == LayoutKind::Master {
+        return;
+    }
     if !workspace
         .active_tiled_ids_by_pane_order()
         .contains(&focused)
@@ -995,6 +1305,12 @@ fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
         return;
     };
     let workspace = &mut state.workspaces[state.active_workspace];
+    if workspace.layout_kind == LayoutKind::Master {
+        if adjust_master_split_for_focused(workspace, focused, delta) {
+            state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
     if workspace.tile_tree.is_none() {
         workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     }
@@ -1004,6 +1320,70 @@ fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
     if adjust_tree_split_for_focused(tree, focused, delta, 0).is_some() {
         state.animation = GeometryAnimation::None;
     }
+}
+
+fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
+    let workspace_index = ctx.state.active_workspace;
+    let layout_kind = {
+        let workspace = &mut ctx.state.workspaces[workspace_index];
+        workspace.layout_kind = workspace.layout_kind.toggled();
+        workspace.layout_kind
+    };
+    ctx.state.animation = GeometryAnimation::AxisChange;
+    ctx.toast().push(info_toast(format!(
+        "Workspace {} layout: {}",
+        workspace_index + 1,
+        layout_kind.label()
+    )));
+}
+
+fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
+    ctx.state.config.theme.preset = preset;
+    ctx.state.config.theme.path = None;
+    ctx.state.theme_watcher = None;
+    ctx.state.theme = preset.theme();
+    ctx.state.show_theme_picker = false;
+    ctx.toast()
+        .push(info_toast(format!("Theme: {}", preset.label())));
+}
+
+fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {
+    let ids = workspace.tiled_ids();
+    if ids.len() < 2 || !ids.contains(&focused) {
+        return false;
+    }
+    let signed_delta = if ids.first() == Some(&focused) {
+        delta
+    } else {
+        -delta
+    };
+    if workspace.split_ratios.is_empty() {
+        workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
+    }
+    workspace.split_ratios[0] =
+        adjust_ratio_value(ratio_at(&workspace.split_ratios, 0), signed_delta);
+    true
+}
+
+fn resize_master_split_by_pixels(
+    workspace: &mut Workspace,
+    focused: PaneId,
+    pixels: f32,
+    available: f32,
+) -> bool {
+    if pixels == 0.0 || available <= 0.0 {
+        return false;
+    }
+    adjust_master_split_for_focused(workspace, focused, pixels / available.max(1.0))
+}
+
+fn master_available_width(tile_bounds: FloatRect) -> f32 {
+    let gap = if tile_bounds.w > TILE_GAP {
+        TILE_GAP
+    } else {
+        0.0
+    };
+    (tile_bounds.w - gap).max(1.0)
 }
 
 fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
@@ -1062,6 +1442,22 @@ fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Directi
     {
         return;
     }
+
+    if workspace.layout_kind == LayoutKind::Master {
+        let axis = split_axis_for_direction(direction);
+        if axis != state::SplitAxis::Horizontal {
+            return;
+        }
+        let available = master_available_width(tile_bounds);
+        let ids = workspace.tiled_ids();
+        let focused_is_first = ids.first() == Some(&focused);
+        let pixels = keyboard_resize_pixels(direction, focused_is_first, available);
+        if resize_master_split_by_pixels(workspace, focused, pixels, available) {
+            ctx.state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+
     if workspace.tile_tree.is_none() {
         workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     }
@@ -1074,13 +1470,22 @@ fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Directi
     else {
         return;
     };
-    let pixels = match direction {
-        Direction::Left | Direction::Up => -RATIO_STEP * available,
-        Direction::Right | Direction::Down => RATIO_STEP * available,
+    let Some(focused_is_first) = focused_is_first_in_nearest_axis_split(tree, focused, axis) else {
+        return;
     };
+    let pixels = keyboard_resize_pixels(direction, focused_is_first, available);
     if resize_tiled_split(workspace, focused, axis, available, pixels) {
         ctx.state.animation = GeometryAnimation::None;
     }
+}
+
+fn keyboard_resize_pixels(direction: Direction, focused_is_first: bool, available: f32) -> f32 {
+    let grows_focused = match direction {
+        Direction::Left | Direction::Up => !focused_is_first,
+        Direction::Right | Direction::Down => focused_is_first,
+    };
+    let pixels = RATIO_STEP * available;
+    if grows_focused { pixels } else { -pixels }
 }
 
 fn directional_neighbor(
@@ -1418,6 +1823,14 @@ fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
+fn request_search_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::search_input_key());
+}
+
+fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::theme_picker_key());
+}
+
 fn pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {
     let mut pty_config = if let Some(shell) = &config.shell {
         TerminalPtyConfig::new(shell.clone())
@@ -1471,10 +1884,68 @@ fn prune_closed_command(id: PaneId, delay: Duration) -> Command {
     })
 }
 
+fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
+    ClipboardConfig {
+        enable_osc52: config.clipboard.enable_osc52,
+        ..ClipboardConfig::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_resize_directions_grow_toward_the_nearest_split() {
+        let available = 100.0;
+        let step = RATIO_STEP * available;
+
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Right, true, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Left, true, available),
+            -step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Left, false, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Right, false, available),
+            -step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Down, true, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Up, false, available),
+            step
+        );
+    }
+}
+
 fn main() -> Result<()> {
+    let loaded = config::load_config();
+    let loaded_theme = config::load_initial_theme(&loaded.config);
+    let mut startup_messages = loaded.warnings;
+    startup_messages.extend(loaded_theme.warnings);
+    if loaded.found {
+        startup_messages.push(format!("Loaded config from {}", loaded.path.display()));
+    }
+    let config = loaded.config;
+    let theme = loaded_theme.theme;
+    let terminal_bg = query_host_colors().map(|colors| colors.bg);
+
     App::new()
         .title("hyprmux")
+        .theme(theme.clone())
+        .terminal_bg(terminal_bg)
+        .toast_placement(ToastPlacement::BottomEnd)
+        .clipboard_config(clipboard_config(&config))
         .mouse(true)
-        .mount(HyprmuxApp::default())
+        .mount(HyprmuxApp::new(config, theme, startup_messages))
         .run()
 }

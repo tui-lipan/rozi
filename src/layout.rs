@@ -1,10 +1,12 @@
 use tui_lipan::prelude::FloatRect;
 
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, inset_float_rect};
-use crate::state::{OUTER_GAP, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace};
+use crate::state::{
+    LayoutKind, OUTER_GAP, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
+};
 use crate::tiling::{
-    DwindleTree, PanePlacement, allocate_dwindle, append_tiled_window, build_dwindle_tree,
-    insert_leaf_around_target, prune_tree_to_ids, tree_contains,
+    DwindleTree, PanePlacement, allocate_dwindle, allocate_master, append_tiled_window,
+    build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(workspace: &Workspace, bounds: FloatRect) -> Vec<PanePlacement> {
@@ -18,8 +20,26 @@ pub fn workspace_target_rects_excluding(
 ) -> Vec<PanePlacement> {
     let mut placements = Vec::new();
     let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
-    if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
-        allocate_dwindle(&tree, tile_bounds, TILE_GAP, &mut placements);
+    match workspace.layout_kind {
+        LayoutKind::Dwindle => {
+            if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
+                allocate_dwindle(&tree, tile_bounds, TILE_GAP, &mut placements);
+            }
+        }
+        LayoutKind::Master => {
+            let ids: Vec<_> = workspace
+                .tiled_ids()
+                .into_iter()
+                .filter(|id| Some(*id) != exclude_tiled)
+                .collect();
+            allocate_master(
+                &ids,
+                tile_bounds,
+                TILE_GAP,
+                ratio_at(&workspace.split_ratios, 0),
+                &mut placements,
+            );
+        }
     }
 
     for pane in workspace
@@ -189,6 +209,11 @@ pub fn place_spawned_pane(
     previous_focused: Option<PaneId>,
     bounds: FloatRect,
 ) -> SpawnPlacement {
+    if workspace.layout_kind == LayoutKind::Master {
+        append_tiled_window(workspace, id);
+        return SpawnPlacement::Appended;
+    }
+
     if let Some(target) = previous_focused.filter(|target| *target != id) {
         let placements = workspace_target_rects_excluding(workspace, bounds, Some(id));
         if let Some(rect) = placement_for(&placements, target) {

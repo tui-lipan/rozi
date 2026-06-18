@@ -24,6 +24,12 @@ pub enum PaneEventOutcome {
     Exited(i32),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalSearchMatch {
+    pub offset: usize,
+    pub line: usize,
+}
+
 impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
@@ -56,6 +62,7 @@ impl TerminalPane {
                             self.status = ManagedTerminalStatus::Error(Arc::from(format!(
                                 "pty response write failed: {err}"
                             )));
+                            self.snapshot = self.screen.render_snapshot();
                             return PaneEventOutcome::StatusChanged;
                         }
                     }
@@ -119,6 +126,48 @@ impl TerminalPane {
         self.screen.set_scrollback(offset);
         self.snapshot = self.screen.render_snapshot();
         true
+    }
+
+    pub fn search_scrollback(&mut self, query: &str) -> Vec<TerminalSearchMatch> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let needle = query.to_ascii_lowercase();
+        let original_offset = self.screen.scrollback_offset();
+        let max_offset = self.screen.total_scrollback_rows();
+        let mut matches = Vec::new();
+        let mut seen_lines = std::collections::HashMap::new();
+        let step = usize::from(self.rows.max(1));
+
+        let mut offset = max_offset;
+        loop {
+            self.screen.set_scrollback(offset);
+            let snapshot = self.screen.render_snapshot();
+            for (line, text) in snapshot.text.lines().enumerate() {
+                if text.to_ascii_lowercase().contains(&needle) {
+                    let logical_line = line as isize - offset as isize;
+                    let matched = TerminalSearchMatch { offset, line };
+                    if let Some(index) = seen_lines.get(&logical_line).copied() {
+                        // Prefer the lowest scrollback offset for overlapping scan windows, so
+                        // matches already visible in the live viewport do not jump upward.
+                        matches[index] = matched;
+                    } else {
+                        seen_lines.insert(logical_line, matches.len());
+                        matches.push(matched);
+                    }
+                }
+            }
+            if offset == 0 {
+                break;
+            }
+            offset = offset.saturating_sub(step);
+        }
+
+        self.screen.set_scrollback(original_offset);
+        self.snapshot = self.screen.render_snapshot();
+        matches
     }
 
     pub fn kill(&mut self) {

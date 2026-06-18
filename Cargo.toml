@@ -7,4 +7,6 @@ license = "MIT OR Apache-2.0"
 description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
 
 [dependencies]
-tui-lipan = { path = "../tui-lipan", features = ["terminal"] }
+tui-lipan = { path = "../tui-lipan", features = ["terminal", "theme-reload"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

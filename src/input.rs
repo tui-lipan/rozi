@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{Direction, InputConfig, RATIO_STEP};
+use crate::state::{Direction, InputConfig, RATIO_STEP, ThemePreset};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
@@ -15,6 +15,10 @@ pub enum Action {
     FlipSplit,
     AdjustRatio(f32),
     EnterResizeMode,
+    ToggleLayout,
+    OpenSearch,
+    OpenThemePicker,
+    SelectTheme(ThemePreset),
     TogglePalette,
     ToggleHelp,
     ToggleTitles,
@@ -135,6 +139,14 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
+            id: "layout.toggle",
+            action: Action::ToggleLayout,
+            label: "Toggle layout",
+            keys: "m",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
             id: "focus.left",
             action: Action::Focus(Left),
             label: "Focus left",
@@ -172,6 +184,22 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             label: "Show keybindings",
             keys: "?",
             category: "App",
+            palette: true,
+        },
+        CommandBinding {
+            id: "app.search",
+            action: Action::OpenSearch,
+            label: "Search scrollback",
+            keys: "/",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
+            id: "theme.choose",
+            action: Action::OpenThemePicker,
+            label: "Choose theme",
+            keys: "",
+            category: "Theme",
             palette: true,
         },
         CommandBinding {
@@ -261,6 +289,8 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
             Some(Action::AdjustRatio(RATIO_STEP))
         }
         KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::EnterResizeMode),
+        KeyCode::Char('m') | KeyCode::Char('M') => Some(Action::ToggleLayout),
+        KeyCode::Char('/') => Some(Action::OpenSearch),
         KeyCode::Char('p') | KeyCode::Char('P') => Some(Action::TogglePalette),
         KeyCode::Char('?') => Some(Action::ToggleHelp),
         _ => None,

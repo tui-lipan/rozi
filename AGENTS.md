@@ -1,0 +1,145 @@
+# AGENTS.md
+
+## What this is
+
+`hyprmux` is a single-process Hyprland-style tiling **terminal multiplexer**: panes are
+live PTY shells, laid out with dwindle tiling, floating windows, workspaces, animated
+geometry, and tmux-style prefix commands. It is built on the `tui-lipan` TUI framework and
+was ported from that project's `window_manager` example — that example remains the
+reference implementation for the tiling/interaction algorithms.
+
+There is intentionally **no detach/reattach** (no daemon); PTYs live in the single UI process.
+
+## Commands
+
+- Build: `cargo build`
+- Run: `cargo run` (then quit the app with `Ctrl-q`)
+- Lint: `cargo clippy`
+- Test: `cargo test`; a single test by name substring, e.g.
+  `cargo test spawn_split_direction_follows_focused_tile_aspect`
+- Format: `cargo fmt`; if you manually run `rustfmt`, pass `--edition 2024`.
+
+> Dependency note: `tui-lipan` is a **path dependency** (`../tui-lipan`, `features = ["terminal"]`).
+> The sibling `../tui-lipan` checkout must exist to build; the `terminal` feature pulls in
+> `portable-pty` + `alacritty_terminal` for the PTY-backed terminal primitives. This repo is
+> not self-contained for a standalone clone.
+
+## Working with tui-lipan
+
+- Prefer the dedicated `tui-lipan-rag` tools when unsure about framework APIs. Good first calls:
+  `tui_lipan_lookup_widget` for widgets, `tui_lipan_lookup_widget_defaults` before noisy builder
+  chains, `tui_lipan_lookup_example` for runnable patterns, and `tui_lipan_search` for broad API
+  questions.
+- `../tui-lipan` is a separate git repo and may be dirty with unrelated user work. If you must
+  change it, inspect its status and stage only the intended files. Never sweep unrelated framework
+  changes into a hyprmux-motivated commit.
+- If a hyprmux behavior bug comes from a framework primitive or from the original
+  `examples/window_manager.rs`, consider whether the same fix belongs in `../tui-lipan` too.
+- For framework terminal changes, verify both sides: run the targeted tui-lipan command with the
+  relevant feature, e.g. `cargo check --features terminal` or `cargo clippy --features terminal`,
+  then run `cargo test` / `cargo clippy` in hyprmux.
+
+## Git / Commit Hygiene
+
+- Commit only when explicitly requested. Before committing, inspect `git status --short`,
+  `git diff --stat`, and `git log --oneline -10` in every repo you will commit.
+- The workspace can be dirty. Preserve unrelated untracked or modified files such as local agent
+  docs, generated notes, or sibling-framework work. Stage paths explicitly.
+- When committing in both repos, commit `../tui-lipan` first if hyprmux depends on that framework
+  change, then commit hyprmux.
+- Do not amend or force-push unless explicitly requested.
+
+## Verification Habits
+
+- For app-only Rust changes, prefer at least `cargo test` and `cargo clippy` from this repo.
+- For broad feature work, run `cargo build` too. `cargo run` needs a real terminal; quit with
+  `Ctrl-q`.
+- `cargo fmt` may reformat older one-line code outside your logical change. If that happens, decide
+  whether to include the formatting intentionally or restore it before committing scoped work.
+- `git diff --check` is cheap and should be clean before commit.
+
+## Architecture
+
+Elm-style app: one root `Component` (`HyprmuxApp` in `main.rs`) with `State`/`Msg` and
+`create_state` / `update` / `on_key` / `view`. tui-lipan supplies the runtime plus the
+primitives this app leans on: `Canvas` (absolute child placement), `Transition<FloatRect>`
+(geometry animation), `MouseRegion` (drag/resize), and `TerminalPty`/`TerminalScreen`/
+`TerminalRenderSnapshot` (the terminal).
+
+Three pieces require reading across modules to understand:
+
+**1. Layout is app-driven geometry, not framework layout.** The dwindle tree (`tiling.rs`)
+computes each tiled pane's target `FloatRect`; floating panes carry an explicit rect.
+`view::render` places *every* pane (tiled or floating) into one `Canvas` at an animated rect
+produced by `ctx.transition(key, target, config)`. Animation is therefore entirely app-side
+— there is no engine rect-override. Critically, the policy in `HyprmuxApp::transition_config_for`
+animates **position and opacity but effectively snaps size changes** (it returns an instant
+transition during move/resize sessions and viewport changes) to avoid spamming `pty.resize`
+/ SIGWINCH and reflowing the shell. Keep that invariant when touching animations.
+
+**2. A pane is a real shell.** Each `Pane` (`state.rs`) owns a `TerminalPane` (`pane.rs`)
+wrapping a `TerminalScreen` (VT emulator) + an optional `TerminalPty`. PTYs are spawned on a
+background thread via `Command::spawn` → `spawn_pty` (`main.rs`), which sends `Msg::PtyReady`
+then streams `Msg::PtyEvent`. Output bytes feed `screen.process_bytes` and re-render the
+snapshot; `TerminalPtyEvent::Exited` closes the pane (`remove_pane`, with dwindle-tree +
+focus cleanup; quitting when the last pane closes). Pane geometry size changes call
+`TerminalPane::resize`, which resizes both the screen and the PTY.
+
+**3. Input routing / command mode (the crux).** Keys reach the WM two ways: the framework
+`Component::on_key` (when no terminal consumes them) and the focused terminal's input
+callback (`Msg::PaneKey`). Both funnel through `handle_key_routing(ctx, key, source_pane)`,
+a `Mode::Normal`/`Mode::Prefix` state machine:
+- Normal: the prefix key (`Ctrl-a`) enters Prefix mode; a held WM modifier (`Alt` default,
+  `Super` optional) triggers an `Action` directly; otherwise the key is forwarded to the
+  focused pane's PTY.
+- Prefix: the next key runs an `Action`, or `Ctrl-a` again sends a literal `Ctrl-a`, or `Esc`
+  cancels, or an unknown key is forwarded.
+
+`input.rs` maps keys → `Action` and owns `command_bindings()`, the **single source of truth**
+for both the command palette and the help overlay (workspace digits 1-9 are handled
+separately because they expand into a range). `execute_action` (`main.rs`) dispatches actions.
+The command palette intentionally omits repetitive workspace commands; workspace digits belong in
+the help overlay. Theme selection is a single `Choose theme` command that opens a `List` modal.
+
+**4. Config, themes, and terminal colors.** Runtime config is loaded by `config.rs` from
+`$HYPRMUX_CONFIG` or `~/.config/hyprmux/hyprmux.toml`. Config parse/read failures should warn via
+toasts without pretending the file was loaded. App chrome uses `ThemeProvider` and `Theme`; custom
+theme files can hot-reload through tui-lipan's `ThemeWatcher`. PTY content colors are not just the
+widget background: `TerminalScreen` snapshots resolve ANSI/default colors through a
+`TerminalColorPalette`. Keep `apply_terminal_palette_to_state` in sync with theme changes,
+theme-picker selection, hot reload, initial state, and spawned panes.
+
+**5. Master layout and scrollback search.** `Workspace.layout_kind` switches placement between
+dwindle and master. Master uses the first tiled pane as the left master and the remaining tiled
+panes as a right stack. Scrollback search is app-side: it scans `TerminalScreen` snapshots by moving
+the screen scrollback offset, deduplicates overlapping scan windows, then restores the original
+offset and jumps to selected matches. tui-lipan does not currently provide in-terminal highlight
+search.
+
+### Module map
+- `main.rs` — root component, `update`/`on_key`, `handle_key_routing`, `execute_action`,
+  PTY spawning, pane lifecycle (spawn/close/move/resize/fullscreen/workspaces), theme watcher,
+  scrollback search, terminal palette application.
+- `config.rs` — TOML config loading, env/default path handling, theme-file loading, config warning
+  collection.
+- `state.rs` — data model (`State`, `Workspace`, `Pane`, sessions, `HyprmuxConfig`/`InputConfig`)
+  and tuning constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
+- `tiling.rs` — `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust,
+  `allocate_dwindle`, `allocate_master`.
+- `geometry.rs` — `FloatRect` math: clamps (incl. off-screen-but-grabbable margin),
+  resize-from-corner, the terminal-border resize gate, dwindle split direction, spatial-focus scoring.
+- `layout.rs` — `Workspace` → placements; `place_spawned_pane` (new pane always splits the
+  *focused* pane, axis from its aspect ratio — Hyprland dwindle, never the cursor).
+- `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,
+  palette/help overlays, and the per-pane mouse/drag/keyboard callback wiring.
+- `pane.rs` — `TerminalPane`: PTY + screen + snapshot lifecycle, terminal palette, scrollback
+  search helper, and resize.
+- `anim.rs` — `GeometryAnimation`, `WindowAnimationConfig`, transition presets.
+
+## Conventions
+
+- The dwindle/geometry/animation logic is ported from tui-lipan's `examples/window_manager.rs`.
+  When fixing behavior here, check whether the same fix belongs there (and vice-versa) —
+  several fixes have been kept in sync across both.
+- Split direction follows the focused tile's aspect ratio with `SPLIT_WIDTH_MULTIPLIER`
+  correcting for terminal cells being ~2× taller than wide (Hyprland's `split_width_multiplier`).

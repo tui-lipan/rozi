@@ -44,6 +44,15 @@ impl TerminalPane {
         }
     }
 
+    pub fn set_palette(&mut self, palette: TerminalColorPalette) -> bool {
+        if self.screen.palette() == palette {
+            return false;
+        }
+        self.screen.set_palette(palette);
+        self.snapshot = self.screen.render_snapshot();
+        true
+    }
+
     pub fn set_pty(&mut self, pty: TerminalPty) -> std::result::Result<(), String> {
         pty.resize(self.cols, self.rows)
             .map_err(|err| format!("pty resize failed: {err}"))?;

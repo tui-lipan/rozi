@@ -466,6 +466,7 @@ fn pane_element(
     };
     let element: Element = Animated::new(window_region.child(window_stack))
         .opacity(opacity)
+        .opacity_target(theme.surface.backdrop)
         .transition(app.window_opacity_config(pane))
         .into();
 

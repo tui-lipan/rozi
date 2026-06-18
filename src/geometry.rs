@@ -354,7 +354,10 @@ pub fn directional_score(
     Some(overlap_penalty + primary_gap * 10.0 + center_offset)
 }
 
-pub fn closest_pane_to_rect(reference: FloatRect, candidates: &[(PaneId, FloatRect)]) -> Option<PaneId> {
+pub fn closest_pane_to_rect(
+    reference: FloatRect,
+    candidates: &[(PaneId, FloatRect)],
+) -> Option<PaneId> {
     if candidates.is_empty() {
         return None;
     }

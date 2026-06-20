@@ -1,7 +1,8 @@
 use tui_lipan::prelude::*;
 
+use crate::focus_ops::request_theme_picker_focus;
 use crate::state::{Mode, State, ThemePreset};
-use crate::{HyprmuxApp, Msg, info_toast, request_theme_picker_focus, schedule_theme_tick};
+use crate::{HyprmuxApp, Msg, info_toast, schedule_theme_tick};
 
 pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
@@ -96,14 +97,14 @@ pub(crate) fn theme_error_toast(message: String) -> Toast {
     crate::error_toast("Theme Reload", message)
 }
 
-fn style_fg(style: Style) -> Option<Color> {
+pub(crate) fn style_fg(style: Style) -> Option<Color> {
     style
         .fg
         .map(|paint| clean_terminal_color(paint.color(), Color::Reset))
         .filter(|color| *color != Color::Reset)
 }
 
-fn clean_terminal_color(color: Color, fallback: Color) -> Color {
+pub(crate) fn clean_terminal_color(color: Color, fallback: Color) -> Color {
     match color {
         Color::Reset | Color::Backdrop | Color::Transparent => fallback,
         _ => color,

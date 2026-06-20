@@ -1511,7 +1511,7 @@ fn total_visible_panes(state: &State) -> usize {
     state.workspaces.iter().map(Workspace::visible_count).sum()
 }
 
-fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
+pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
     ctx.request_focus(view::pane_terminal_key(id));
 }
 

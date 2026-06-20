@@ -1,7 +1,8 @@
 use tui_lipan::prelude::*;
 
+use crate::HyprmuxApp;
+use crate::focus_ops::{find_pane_mut, request_search_focus};
 use crate::state::{ScrollbackMatch, ScrollbackSearchState};
-use crate::{HyprmuxApp, find_pane_mut, request_search_focus};
 
 pub(crate) fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(target) = ctx.state.focused_pane else {

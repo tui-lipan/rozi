@@ -1,15 +1,19 @@
 use tui_lipan::prelude::*;
 
+use crate::focus_ops::{
+    focus_in_direction, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
+    switch_workspace,
+};
 use crate::input::{self, Action};
+use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
+use crate::resize_move_ops::{
+    adjust_focused_split_ratio, move_focused_in_direction, toggle_focused_split_axis,
+    toggle_fullscreen, toggle_layout, toggle_tiling,
+};
 use crate::search_ops::open_search;
 use crate::state::Mode;
 use crate::theme_ops::{open_theme_picker, select_theme};
-use crate::{
-    HyprmuxApp, Msg, adjust_focused_split_ratio, close_focused_pane, focus_in_direction,
-    move_focused_in_direction, move_focused_to_workspace, request_current_pane_focus,
-    request_pane_focus, spawn_pane, switch_workspace, toggle_focused_split_axis, toggle_fullscreen,
-    toggle_layout, toggle_tiling,
-};
+use crate::{HyprmuxApp, Msg};
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     match action {

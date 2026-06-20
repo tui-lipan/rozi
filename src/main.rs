@@ -296,7 +296,7 @@ impl Component for HyprmuxApp {
             Msg::PaneInput(id, input) => handle_terminal_input(ctx, id, input),
             Msg::PaneKey(id, key) => {
                 focus_pane(&mut ctx.state, id);
-                let (_handled, update) = handle_key_routing(ctx, key, Some(id));
+                let (_handled, update) = key_routing::handle_key_routing(ctx, key, Some(id));
                 update
             }
             Msg::PaneMouse(id, bytes) => {
@@ -348,8 +348,8 @@ impl Component for HyprmuxApp {
             return KeyUpdate::handled(Update::none());
         }
 
-        sync_focus_from_framework(ctx);
-        let (handled, update) = handle_key_routing(ctx, key, None);
+        key_routing::sync_focus_from_framework(ctx);
+        let (handled, update) = key_routing::handle_key_routing(ctx, key, None);
         if handled {
             KeyUpdate::handled(update)
         } else {
@@ -459,80 +459,7 @@ impl HyprmuxApp {
     }
 }
 
-fn handle_key_routing(
-    ctx: &mut Context<HyprmuxApp>,
-    key: KeyEvent,
-    source_pane: Option<PaneId>,
-) -> (bool, Update) {
-    match ctx.state.mode {
-        Mode::Normal => {
-            if input::is_prefix_key(key, ctx.state.config.input) {
-                ctx.state.mode = Mode::Prefix;
-                return (true, Update::full());
-            }
-
-            if let Some(action) = input::action_for_held(key, ctx.state.config.input) {
-                return (true, execute_action(ctx, action));
-            }
-
-            if let Some(id) = source_pane {
-                return (true, forward_key_to_pane(ctx, id, key));
-            }
-
-            (false, Update::none())
-        }
-        Mode::Prefix => {
-            ctx.state.mode = Mode::Normal;
-            if input::is_prefix_key(key, ctx.state.config.input) {
-                let id = source_pane.or(ctx.state.focused_pane);
-                let update = id
-                    .map(|id| forward_key_to_pane(ctx, id, key))
-                    .unwrap_or_else(Update::none);
-                return (true, update);
-            }
-
-            if key.is(KeyCode::Esc) {
-                return (true, Update::full());
-            }
-
-            if let Some(action) = input::action_for_prefix(key) {
-                return (true, execute_action(ctx, action));
-            }
-
-            let id = source_pane.or(ctx.state.focused_pane);
-            let update = id
-                .map(|id| forward_key_to_pane(ctx, id, key))
-                .unwrap_or_else(Update::none);
-            (true, update)
-        }
-        Mode::Resize => handle_resize_mode_key(ctx, key),
-    }
-}
-
-fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
-    if key.is(KeyCode::Esc) || key.is(KeyCode::Enter) {
-        ctx.state.mode = Mode::Normal;
-        request_current_pane_focus(ctx);
-        return (true, Update::full());
-    }
-
-    let direction = match key.code {
-        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => Some(Direction::Left),
-        KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => Some(Direction::Down),
-        KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => Some(Direction::Up),
-        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => Some(Direction::Right),
-        _ => None,
-    };
-
-    if let Some(direction) = direction {
-        resize_focused_in_direction(ctx, direction);
-        return (true, Update::full());
-    }
-
-    (true, Update::none())
-}
-
-fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     match action {
         Action::Spawn => spawn_pane(ctx),
         Action::Close => close_focused_pane(ctx),
@@ -798,7 +725,11 @@ fn error_toast(title: impl Into<String>, message: impl Into<String>) -> Toast {
         .border(true)
 }
 
-fn forward_key_to_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent) -> Update {
+pub(crate) fn forward_key_to_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    key: KeyEvent,
+) -> Update {
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Update::none();
     };
@@ -1495,7 +1426,7 @@ fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction
     }
 }
 
-fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let Some(focused) = ctx.state.focused_pane else {
         return;
     };
@@ -1698,7 +1629,7 @@ fn move_focused_to_workspace(state: &mut State, target_index: usize) {
     choose_fallback_focus(state);
 }
 
-fn focus_pane(state: &mut State, id: PaneId) {
+pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
     if state.workspaces[state.active_workspace]
         .panes
         .iter()
@@ -1864,30 +1795,11 @@ fn total_visible_panes(state: &State) -> usize {
     state.workspaces.iter().map(Workspace::visible_count).sum()
 }
 
-fn framework_focused_pane(ctx: &Context<HyprmuxApp>, workspace: &Workspace) -> Option<PaneId> {
-    workspace
-        .panes
-        .iter()
-        .filter(|pane| !pane.closing)
-        .find(|pane| ctx.has_focus_within_key(view::pane_window_key(pane.id)))
-        .map(|pane| pane.id)
-}
-
-fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
-    let framework_focus = {
-        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-        framework_focused_pane(ctx, workspace)
-    };
-    if let Some(id) = framework_focus {
-        focus_pane(&mut ctx.state, id);
-    }
-}
-
 fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
     ctx.request_focus(view::pane_terminal_key(id));
 }
 
-fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
     if let Some(id) = ctx.state.focused_pane {
         request_pane_focus(ctx, id);
     }

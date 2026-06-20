@@ -1,11 +1,20 @@
+mod actions;
 mod anim;
 mod config;
+mod focus_ops;
 mod geometry;
 mod input;
+mod key_routing;
 mod layout;
 mod pane;
+mod pane_lifecycle;
+mod pty_events;
+mod resize_move_ops;
+mod search_ops;
 mod state;
+mod theme_ops;
 mod tiling;
+mod update;
 mod view;
 
 use std::sync::Arc;

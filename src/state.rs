@@ -253,6 +253,11 @@ pub struct HyprmuxThemeConfig {
     pub path: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HyprmuxProfileConfig {
+    pub path: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct HyprmuxClipboardConfig {
     pub enable_osc52: bool,
@@ -266,6 +271,7 @@ pub struct HyprmuxConfig {
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
     pub theme: HyprmuxThemeConfig,
+    pub profile: HyprmuxProfileConfig,
     pub clipboard: HyprmuxClipboardConfig,
 }
 
@@ -280,6 +286,7 @@ impl Default for HyprmuxConfig {
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
             theme: HyprmuxThemeConfig::default(),
+            profile: HyprmuxProfileConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
         }
     }
@@ -311,9 +318,44 @@ impl ScrollbackSearchState {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PaneIdentity {
+    pub custom_title: Option<String>,
+    pub profile_name: Option<String>,
+    pub cwd: Option<String>,
+    pub command: Option<String>,
+}
+
+impl PaneIdentity {
+    pub fn set_custom_title(&mut self, title: impl AsRef<str>) {
+        let title = title.as_ref().trim();
+        if title.is_empty() {
+            self.custom_title = None;
+            self.profile_name = None;
+        } else {
+            self.custom_title = Some(title.to_string());
+        }
+    }
+}
+
+pub struct PaneRenameState {
+    pub target: PaneId,
+    pub input: TextInput,
+}
+
+impl PaneRenameState {
+    pub fn new(target: PaneId, initial: impl AsRef<str>) -> Self {
+        Self {
+            target,
+            input: TextInput::new(initial.as_ref()),
+        }
+    }
+}
+
 pub struct Pane {
     pub id: PaneId,
     pub title: String,
+    pub identity: PaneIdentity,
     pub floating: bool,
     pub fullscreen: bool,
     pub floating_rect: FloatRect,
@@ -327,6 +369,7 @@ impl Pane {
         Self {
             id,
             title: "shell".to_string(),
+            identity: PaneIdentity::default(),
             floating: false,
             fullscreen: false,
             floating_rect,
@@ -334,6 +377,29 @@ impl Pane {
             closing: false,
             terminal: TerminalPane::new(scrollback),
         }
+    }
+
+    pub fn display_title(&self, terminal_title: Option<String>) -> String {
+        self.identity
+            .custom_title
+            .clone()
+            .or(terminal_title)
+            .unwrap_or_else(|| self.title.clone())
+    }
+
+    pub fn set_custom_title(&mut self, title: impl AsRef<str>) {
+        self.identity.set_custom_title(title);
+    }
+
+    pub fn clear_custom_title(&mut self) {
+        self.identity.custom_title = None;
+    }
+
+    pub fn subtitle(&self) -> Option<&str> {
+        self.identity
+            .command
+            .as_deref()
+            .or(self.identity.cwd.as_deref())
     }
 }
 
@@ -410,6 +476,7 @@ pub struct State {
     pub theme: Theme,
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
+    pub rename: Option<PaneRenameState>,
 }
 
 impl State {
@@ -448,6 +515,75 @@ impl State {
             theme,
             theme_watcher: None,
             search: None,
+            rename: None,
         }
+    }
+
+    pub fn from_profile(
+        config: HyprmuxConfig,
+        theme: Theme,
+        profile: crate::profiles::HyprmuxProfile,
+    ) -> Self {
+        crate::profiles::restore_state_from_profile(config, theme, profile)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pane() -> Pane {
+        Pane::new(
+            1,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        )
+    }
+
+    #[test]
+    fn pane_display_title_prefers_custom_title() {
+        let mut pane = pane();
+        pane.title = "terminal title".to_string();
+        pane.set_custom_title("custom title");
+
+        assert_eq!(
+            pane.display_title(Some("terminal title".to_string())),
+            "custom title"
+        );
+    }
+
+    #[test]
+    fn pane_display_title_uses_terminal_title_before_fallback() {
+        let mut pane = pane();
+        pane.title = "fallback title".to_string();
+
+        assert_eq!(
+            pane.display_title(Some("terminal title".to_string())),
+            "terminal title"
+        );
+    }
+
+    #[test]
+    fn empty_custom_title_is_cleared() {
+        let mut pane = pane();
+        pane.set_custom_title("custom title");
+        pane.set_custom_title("   ");
+
+        assert_eq!(pane.identity.custom_title, None);
+        assert_eq!(pane.display_title(None), "shell");
+    }
+
+    #[test]
+    fn pane_subtitle_prefers_command_before_cwd() {
+        let mut pane = pane();
+        pane.identity.cwd = Some("/tmp/project".to_string());
+        pane.identity.command = Some("vim src/main.rs".to_string());
+
+        assert_eq!(pane.subtitle(), Some("vim src/main.rs"));
     }
 }

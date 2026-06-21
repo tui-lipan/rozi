@@ -3,11 +3,13 @@ mod anim;
 mod config;
 mod focus_ops;
 mod geometry;
+mod identity_ops;
 mod input;
 mod key_routing;
 mod layout;
 mod pane;
 mod pane_lifecycle;
+mod profiles;
 mod pty_events;
 mod resize_move_ops;
 mod search_ops;
@@ -28,6 +30,7 @@ use crate::state::{HyprmuxConfig, Pane, PaneId, ResizeCorner, State};
 pub struct HyprmuxApp {
     config: HyprmuxConfig,
     initial_theme: Theme,
+    startup_profile: Option<profiles::HyprmuxProfile>,
     startup_messages: Vec<String>,
 }
 
@@ -37,16 +40,23 @@ impl Default for HyprmuxApp {
         Self {
             initial_theme: config.theme.preset.theme(),
             config,
+            startup_profile: None,
             startup_messages: Vec::new(),
         }
     }
 }
 
 impl HyprmuxApp {
-    fn new(config: HyprmuxConfig, initial_theme: Theme, startup_messages: Vec<String>) -> Self {
+    fn new(
+        config: HyprmuxConfig,
+        initial_theme: Theme,
+        startup_profile: Option<profiles::HyprmuxProfile>,
+        startup_messages: Vec<String>,
+    ) -> Self {
         Self {
             config,
             initial_theme,
+            startup_profile,
             startup_messages,
         }
     }
@@ -71,6 +81,9 @@ pub enum Msg {
     CloseSearch,
     SearchChanged(InputEvent),
     SearchNext(bool),
+    CloseRenamePane,
+    RenamePaneChanged(InputEvent),
+    SubmitRenamePane,
     FocusPane(PaneId, FrameworkFocus),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -96,7 +109,11 @@ impl Component for HyprmuxApp {
     type State = State;
 
     fn create_state(&self, _props: &Self::Properties) -> Self::State {
-        let mut state = State::new(self.config.clone(), self.initial_theme.clone());
+        let mut state = if let Some(profile) = self.startup_profile.clone() {
+            State::from_profile(self.config.clone(), self.initial_theme.clone(), profile)
+        } else {
+            State::new(self.config.clone(), self.initial_theme.clone())
+        };
         theme_ops::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -119,14 +136,10 @@ impl Component for HyprmuxApp {
             }
         }
 
-        let spawn = ctx.state.focused_pane.map(|id| {
-            (
-                id,
-                pane_lifecycle::pty_config(&ctx.state.config),
-                Some(Duration::ZERO),
-            )
-        });
-        pane_lifecycle::initial_command(spawn, ctx.state.theme_watcher.is_some())
+        pane_lifecycle::initial_command(
+            startup_spawns(&ctx.state),
+            ctx.state.theme_watcher.is_some(),
+        )
     }
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {
@@ -151,6 +164,22 @@ impl Component for HyprmuxApp {
     fn view(&self, ctx: &Context<Self>) -> Element {
         view::render(self, ctx)
     }
+}
+
+fn startup_spawns(state: &State) -> Vec<(PaneId, TerminalPtyConfig, Option<Duration>)> {
+    state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .filter(|pane| !pane.closing)
+        .map(|pane| {
+            (
+                pane.id,
+                pane_lifecycle::pty_config_for_pane(&state.config, pane),
+                Some(Duration::ZERO),
+            )
+        })
+        .collect()
 }
 
 impl HyprmuxApp {
@@ -272,6 +301,22 @@ fn main() -> Result<()> {
     if loaded.found {
         startup_messages.push(format!("Loaded config from {}", loaded.path.display()));
     }
+    let startup_profile =
+        loaded
+            .config
+            .profile
+            .path
+            .as_ref()
+            .and_then(|path| match profiles::load_profile(path) {
+                Ok(profile) => {
+                    startup_messages.push(format!("Loaded profile from {}", path.display()));
+                    Some(profile)
+                }
+                Err(err) => {
+                    startup_messages.push(format!("Profile load failed: {err}"));
+                    None
+                }
+            });
     let config = loaded.config;
     let theme = loaded_theme.theme;
     let terminal_bg = query_host_colors().map(|colors| colors.bg);
@@ -283,6 +328,60 @@ fn main() -> Result<()> {
         .toast_placement(ToastPlacement::BottomEnd)
         .clipboard_config(clipboard_config(&config))
         .mouse(true)
-        .mount(HyprmuxApp::new(config, theme, startup_messages))
+        .mount(HyprmuxApp::new(
+            config,
+            theme,
+            startup_profile,
+            startup_messages,
+        ))
         .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect() -> FloatRect {
+        FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        }
+    }
+
+    #[test]
+    fn startup_spawns_include_all_non_closing_panes() {
+        let mut config = HyprmuxConfig::default();
+        config.shell = Some("/bin/bash".to_string());
+        config.cwd = Some("/repo".into());
+        let mut state = State::new(config, Theme::default());
+        state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
+        let mut restored = Pane::new(3, 100, rect());
+        restored.identity.cwd = Some("/repo/backend".to_string());
+        restored.identity.command = Some("cargo run".to_string());
+        state.workspaces[1].panes.push(restored);
+        let mut closing = Pane::new(4, 100, rect());
+        closing.closing = true;
+        state.workspaces[1].panes.push(closing);
+
+        let spawns = startup_spawns(&state);
+        let ids: Vec<PaneId> = spawns.iter().map(|(id, _, _)| *id).collect();
+
+        assert_eq!(ids, vec![1, 2, 3]);
+
+        let restored_config = spawns
+            .iter()
+            .find(|(id, _, _)| *id == 3)
+            .map(|(_, config, _)| format!("{config:?}"))
+            .expect("restored pane spawn config");
+
+        assert!(restored_config.contains("/bin/bash"), "{restored_config}");
+        assert!(restored_config.contains("-lc"), "{restored_config}");
+        assert!(restored_config.contains("cargo run"), "{restored_config}");
+        assert!(
+            restored_config.contains("/repo/backend"),
+            "{restored_config}"
+        );
+    }
 }

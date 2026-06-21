@@ -12,11 +12,13 @@ pub enum Action {
     MoveToWorkspace(usize),
     ToggleFloat,
     ToggleFullscreen,
+    RenamePane,
     FlipSplit,
     AdjustRatio(f32),
     EnterResizeMode,
     ToggleLayout,
     OpenSearch,
+    SaveProfile,
     OpenThemePicker,
     SelectTheme(ThemePreset),
     TogglePalette,
@@ -71,6 +73,14 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             action: Action::ToggleFullscreen,
             label: "Toggle fullscreen",
             keys: "f",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            id: "pane.rename",
+            action: Action::RenamePane,
+            label: "Rename pane",
+            keys: "n",
             category: "Panes",
             palette: true,
         },
@@ -195,6 +205,14 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
+            id: "profile.save",
+            action: Action::SaveProfile,
+            label: "Save project profile",
+            keys: "",
+            category: "Profile",
+            palette: true,
+        },
+        CommandBinding {
             id: "theme.choose",
             action: Action::OpenThemePicker,
             label: "Choose theme",
@@ -273,6 +291,7 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
         }
         KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::ToggleFloat),
         KeyCode::Char('f') | KeyCode::Char('F') => Some(Action::ToggleFullscreen),
+        KeyCode::Char('n') | KeyCode::Char('N') => Some(Action::RenamePane),
         KeyCode::Char(' ') => Some(Action::FlipSplit),
         KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
             Some(Action::Focus(Direction::Left))
@@ -321,4 +340,23 @@ fn workspace_key(key: KeyEvent) -> Option<(usize, bool)> {
     };
 
     Some((digit - 1, symbol_implies_shift))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_profile_binding_is_palette_command() {
+        let binding = command_bindings()
+            .into_iter()
+            .find(|binding| binding.id == "profile.save")
+            .expect("save profile binding exists");
+
+        assert_eq!(binding.action, Action::SaveProfile);
+        assert_eq!(binding.label, "Save project profile");
+        assert_eq!(binding.keys, "");
+        assert_eq!(binding.category, "Profile");
+        assert!(binding.palette);
+    }
 }

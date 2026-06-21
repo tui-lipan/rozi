@@ -34,7 +34,35 @@ struct FileConfig {
     input: InputFileConfig,
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
+    profile: ProfileFileConfig,
     clipboard: ClipboardFileConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ProfileFileConfig {
+    path: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_config_parses_profile_path() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [profile]
+            path = "~/code/hyprmux/dev.toml"
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(
+            parsed.profile.path.as_deref(),
+            Some("~/code/hyprmux/dev.toml")
+        );
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -141,6 +169,9 @@ pub fn load_config() -> LoadedConfig {
     if let Some(path) = non_empty(parsed.theme.path) {
         config.theme.path = Some(expand_path(path));
     }
+    if let Some(path) = non_empty(parsed.profile.path) {
+        config.profile.path = Some(expand_path(path));
+    }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
@@ -215,7 +246,7 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn expand_path(path: impl AsRef<Path>) -> PathBuf {
+pub(crate) fn expand_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     let text = path.to_string_lossy();
     if text == "~" {

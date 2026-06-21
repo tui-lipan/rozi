@@ -144,14 +144,14 @@ pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> 
 }
 
 pub(crate) fn initial_command(
-    spawn: Option<(PaneId, TerminalPtyConfig, Option<Duration>)>,
+    spawns: Vec<(PaneId, TerminalPtyConfig, Option<Duration>)>,
     theme_tick: bool,
 ) -> Option<Command> {
-    if spawn.is_none() && !theme_tick {
+    if spawns.is_empty() && !theme_tick {
         return None;
     }
     Some(Command::spawn(move |link: CommandLink<Msg>| {
-        if let Some((id, config, finish_open_after)) = spawn {
+        for (id, config, finish_open_after) in spawns {
             spawn_pty(id, config, link.clone());
             if let Some(delay) = finish_open_after {
                 if !delay.is_zero() {
@@ -168,14 +168,52 @@ pub(crate) fn initial_command(
 }
 
 pub(crate) fn pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {
-    let mut pty_config = if let Some(shell) = &config.shell {
-        TerminalPtyConfig::new(shell.clone())
+    let mut pty_config = if let Some(shell) = shell_for_config(config) {
+        TerminalPtyConfig::new(shell)
     } else {
         TerminalPtyConfig::default()
     }
     .term("xterm-256color");
 
     if let Some(cwd) = &config.cwd {
+        pty_config = pty_config.cwd(cwd.clone());
+    }
+
+    pty_config
+}
+
+fn shell_for_config(config: &HyprmuxConfig) -> Option<String> {
+    config.shell.clone()
+}
+
+fn default_shell() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string())
+}
+
+pub(crate) fn pty_config_for_pane(config: &HyprmuxConfig, pane: &Pane) -> TerminalPtyConfig {
+    let mut pty_config = if let Some(command) = pane
+        .identity
+        .command
+        .as_deref()
+        .filter(|command| !command.trim().is_empty())
+    {
+        let shell = shell_for_config(config).unwrap_or_else(default_shell);
+        TerminalPtyConfig::new(shell)
+            .arg("-lc")
+            .arg(command.to_string())
+            .term("xterm-256color")
+    } else {
+        pty_config(config)
+    };
+
+    if let Some(cwd) = &config.cwd {
+        pty_config = pty_config.cwd(cwd.clone());
+    }
+
+    if let Some(cwd) = &pane.identity.cwd {
         pty_config = pty_config.cwd(cwd.clone());
     }
 
@@ -218,4 +256,36 @@ pub(crate) fn prune_closed_command(id: PaneId, delay: Duration) -> Command {
         }
         link.send(Msg::PruneClosed(id));
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect() -> FloatRect {
+        FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        }
+    }
+
+    #[test]
+    fn pane_config_prefers_pane_cwd_and_wraps_command_in_shell() {
+        let mut config = HyprmuxConfig::default();
+        config.shell = Some("/bin/bash".to_string());
+        config.cwd = Some("/repo".into());
+
+        let mut pane = Pane::new(1, 100, rect());
+        pane.identity.cwd = Some("/repo/backend".to_string());
+        pane.identity.command = Some("cargo run".to_string());
+
+        let debug = format!("{:?}", pty_config_for_pane(&config, &pane));
+
+        assert!(debug.contains("/bin/bash"), "{debug}");
+        assert!(debug.contains("-lc"), "{debug}");
+        assert!(debug.contains("cargo run"), "{debug}");
+        assert!(debug.contains("/repo/backend"), "{debug}");
+    }
 }

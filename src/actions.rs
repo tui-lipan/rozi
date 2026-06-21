@@ -4,8 +4,10 @@ use crate::focus_ops::{
     focus_in_direction, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
     switch_workspace,
 };
+use crate::identity_ops::open_rename_pane;
 use crate::input::{self, Action};
 use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
+use crate::profiles::{profile_from_state, save_profile};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, toggle_focused_split_axis,
     toggle_fullscreen, toggle_layout, toggle_tiling,
@@ -46,6 +48,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::ToggleFullscreen => toggle_fullscreen(ctx),
+        Action::RenamePane => open_rename_pane(ctx),
         Action::FlipSplit => {
             toggle_focused_split_axis(&mut ctx.state);
             Update::full()
@@ -65,6 +68,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::OpenSearch => open_search(ctx),
+        Action::SaveProfile => save_project_profile(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::SelectTheme(preset) => {
             select_theme(ctx, preset);
@@ -89,6 +93,32 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
     }
+}
+
+fn save_project_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(path) = ctx.state.config.profile.path.clone() else {
+        ctx.toast().push(crate::pty_events::error_toast(
+            "Save Profile",
+            "Set [profile].path in hyprmux.toml before saving a profile.",
+        ));
+        return Update::full();
+    };
+
+    let profile = profile_from_state(&ctx.state);
+    match save_profile(&path, &profile) {
+        Ok(()) => {
+            ctx.toast().push(crate::pty_events::info_toast(format!(
+                "Saved project profile to {}",
+                path.display()
+            )));
+        }
+        Err(message) => {
+            ctx.toast()
+                .push(crate::pty_events::error_toast("Save Profile", message));
+        }
+    }
+
+    Update::full()
 }
 
 pub(crate) fn register_commands(ctx: &mut Context<HyprmuxApp>) {

@@ -94,6 +94,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.search.is_some() {
         root = root.child(search_overlay(ctx));
     }
+    if ctx.state.rename.is_some() {
+        root = root.child(rename_overlay(ctx));
+    }
 
     ThemeProvider::new(ctx.state.theme.clone())
         .child(root)
@@ -178,6 +181,44 @@ fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .child(input.key(search_input_key()))
                 .child(Text::new(search.status.clone()).style(theme.muted)),
         )
+        .into()
+}
+
+fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(rename) = ctx.state.rename.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let input = Input::bound(&rename.input)
+        .placeholder("Pane name, empty clears custom title")
+        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+        .focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .on_change(ctx.link().callback(Msg::RenamePaneChanged))
+        .on_key(ctx.link().key_handler(|key| {
+            if key.is(KeyCode::Esc) {
+                Some(Msg::CloseRenamePane)
+            } else if key.code == KeyCode::Enter
+                && !key.mods.ctrl
+                && !key.mods.alt
+                && !key.mods.super_key
+            {
+                Some(Msg::SubmitRenamePane)
+            } else {
+                None
+            }
+        }));
+
+    Modal::new()
+        .title(format!("Rename pane {}", rename.target))
+        .width(Length::Px(56))
+        .on_close(ctx.link().callback(|_| Msg::CloseRenamePane))
+        .child(input.key(rename_input_key()))
         .into()
 }
 
@@ -342,7 +383,11 @@ fn pane_element(
             Style::new().fg(title_bar_fg)
         };
 
-        let title = pane.terminal.title().unwrap_or_else(|| pane.title.clone());
+        let mut title = pane.display_title(pane.terminal.title());
+        if let Some(subtitle) = pane.subtitle() {
+            title.push_str(" — ");
+            title.push_str(subtitle);
+        }
         let mut title_row = HStack::new()
             .style(title_bar_fill_style)
             .width(Length::Flex(1))
@@ -624,6 +669,10 @@ pub fn pane_terminal_key(id: PaneId) -> String {
 
 pub fn search_input_key() -> &'static str {
     "hyprmux-search-input"
+}
+
+pub fn rename_input_key() -> &'static str {
+    "hyprmux-rename-input"
 }
 
 pub fn theme_picker_key() -> &'static str {

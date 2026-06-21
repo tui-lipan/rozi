@@ -3,8 +3,10 @@ use tui_lipan::prelude::*;
 use crate::actions::execute_action;
 use crate::anim::GeometryAnimation;
 use crate::focus_ops::{
-    focus_pane, request_current_pane_focus, request_pane_focus, request_search_focus,
+    focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
+    request_search_focus,
 };
+use crate::identity_ops::{apply_rename_pane, close_rename_pane};
 use crate::input::Action;
 use crate::key_routing::handle_key_routing;
 use crate::pane_lifecycle::{find_pane_mut, handle_prune_closed};
@@ -25,6 +27,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             let update = execute_action(ctx, action);
             match action {
                 Action::OpenSearch => request_search_focus(ctx),
+                Action::RenamePane => request_rename_focus(ctx),
                 Action::OpenThemePicker => {}
                 _ => request_current_pane_focus(ctx),
             }
@@ -73,6 +76,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             recompute_search(ctx)
         }
         Msg::SearchNext(backward) => search_next(ctx, backward),
+        Msg::CloseRenamePane => {
+            let update = close_rename_pane(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::RenamePaneChanged(event) => {
+            if let Some(rename) = ctx.state.rename.as_mut() {
+                event.apply_to(&mut rename.input);
+            }
+            request_rename_focus(ctx);
+            Update::full()
+        }
+        Msg::SubmitRenamePane => {
+            let update = apply_rename_pane(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
         Msg::FocusPane(id, framework_focus) => {
             focus_pane(&mut ctx.state, id);
             if framework_focus == FrameworkFocus::Request {

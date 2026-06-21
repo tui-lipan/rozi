@@ -5,6 +5,14 @@
 laid out with dwindle tiling, floating windows, workspaces, and tmux-style prefix
 commands.
 
+Highlights:
+
+- Pane identity: rename panes with the prefix command `n` or the command palette.
+- Project profiles: restore named panes, workspace layout, floating geometry, and
+  fresh shell/command launches from a TOML profile.
+- Profiles intentionally restore layout and launch intent only, not live PTY state.
+  See [Project profiles and pane identity](docs/project-profiles.md).
+
 ## Run
 
 ```bash
@@ -24,6 +32,7 @@ The always-works control path is the prefix key: press `Ctrl-a`, then a command.
 | `Shift+1..9` | move pane to workspace |
 | `t` | toggle floating/tiling |
 | `f` | toggle fullscreen |
+| `n` | rename the focused pane |
 | `Space` | flip focused split |
 | `[` / `]` | adjust split ratio |
 | `Ctrl-a` | send a literal `Ctrl-a` to the pane |
@@ -38,3 +47,6 @@ Mouse move/resize uses the configured modifier plus left/right drag.
 
 `hyprmux` intentionally does not implement tmux-style detach/reattach yet. PTYs
 live inside the single UI process.
+
+Project profiles follow the same rule: they start fresh PTYs from saved layout and
+launch metadata rather than restoring previous shell processes.

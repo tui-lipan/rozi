@@ -78,12 +78,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 
     // Overlays portal to the root regardless of where they are attached.
     if ctx.state.show_palette {
-        root = root.child(
-            CommandPalette::new()
-                .title("hyprmux commands")
-                .frame_style(Style::new().bg(Color::Reset))
-                .on_close(ctx.link().callback(|_| Msg::ClosePalette)),
-        );
+        root = root.child(palette_overlay(ctx));
     }
     if ctx.state.show_help {
         root = root.child(help_overlay(ctx));
@@ -222,6 +217,83 @@ fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
+fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
+
+    // Commands are sourced from the single binding table; only entries flagged for
+    // the palette appear here. The help overlay remains the full keybinding reference.
+    // Group by category (first-seen order) so each category header appears once even
+    // when bindings of the same category are not declared contiguously.
+    let mut groups: Vec<(&'static str, Vec<SearchEntry<Action>>)> = Vec::new();
+    for binding in crate::input::command_bindings()
+        .into_iter()
+        .filter(|binding| binding.palette)
+    {
+        let mut entry = SearchEntry::item(binding.label, binding.action);
+        if !binding.keys.is_empty() {
+            entry = entry.description(ItemDescription::new().right(binding.keys));
+        }
+        match groups
+            .iter_mut()
+            .find(|(category, _)| *category == binding.category)
+        {
+            Some((_, items)) => items.push(entry),
+            None => groups.push((binding.category, vec![entry])),
+        }
+    }
+    let mut entries: Vec<SearchEntry<Action>> = Vec::new();
+    for (category, items) in groups {
+        entries.push(SearchEntry::header(category));
+        entries.extend(items);
+    }
+
+    let selection_style = Style::new()
+        .fg(theme.surface.backdrop)
+        .bg(theme.border_active)
+        .bold();
+    let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
+
+    let palette = SearchPalette::<Action>::new()
+        .entries(entries)
+        .placeholder("Search commands…")
+        .height(Length::Auto)
+        .input_border(false)
+        .input_prefix("  ")
+        .input_style(input_style)
+        .input_focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .input_placeholder_style(theme.muted)
+        .list_border(false)
+        .list_scrollbar(true)
+        .list_selection_full_width(true)
+        .list_selection_symbol("")
+        .list_unselected_symbol("")
+        .list_selection_style(selection_style)
+        .list_item_hover_style(Style::new().bg(theme.surface.element))
+        .list_item_horizontal_padding((0, 1, 0, 1))
+        .list_header_horizontal_padding((0, 1, 0, 1))
+        .description_style(theme.muted)
+        .match_style(Style::new().fg(theme.border_active).bold())
+        .preserve_groups(true)
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
+        );
+
+    Modal::new()
+        .title("Commands")
+        .width(Length::Px(60))
+        .height(Length::Auto)
+        .border_style(BorderStyle::Rounded)
+        .padding(0)
+        .on_close(ctx.link().callback(|_| Msg::ClosePalette))
+        .child(palette)
+        .key(palette_key())
+}
+
 fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let current = ctx.state.config.theme.preset;
@@ -242,18 +314,18 @@ fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .items(items)
                 .selected(ctx.state.theme_picker_selected)
                 .height(Length::Auto)
-                .border(true)
-                .border_style(BorderStyle::Rounded)
+                .border(false)
                 .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
                 .selection_full_width(true)
-                .selection_symbol(Some("› "))
+                .selection_symbol(Some("  "))
                 .unselected_symbol(Some("  "))
                 .active_symbol(Some("✓ "))
                 .active_style(Style::new().fg(theme.status.success).bold())
                 .selection_style(
                     Style::new()
                         .fg(theme.surface.backdrop)
-                        .bg(theme.border_active),
+                        .bg(theme.border_active)
+                        .bold(),
                 )
                 .on_select(
                     ctx.link()
@@ -268,7 +340,8 @@ fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     Modal::new()
         .title("Choose theme")
-        .width(Length::Px(36))
+        .width(Length::Px(40))
+        .border_style(BorderStyle::Rounded)
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
         .child(body)
         .into()
@@ -677,4 +750,8 @@ pub fn rename_input_key() -> &'static str {
 
 pub fn theme_picker_key() -> &'static str {
     "hyprmux-theme-picker"
+}
+
+pub fn palette_key() -> &'static str {
+    "hyprmux-command-palette"
 }

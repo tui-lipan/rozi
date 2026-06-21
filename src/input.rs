@@ -27,12 +27,15 @@ pub enum Action {
 }
 
 /// A discrete, parameterless binding surfaced in the help overlay, and — when
-/// `palette` is set — in the command palette. The help overlay documents every
-/// binding (it is the keybinding reference); the palette omits actions that are
-/// pointless to invoke by clicking (directional focus, opening the palette
-/// itself). Workspace digits (1-9) are handled separately as they expand into a range.
+/// `palette` is set — in the command palette. The help overlay is the full
+/// keybinding reference: it documents *every* binding. The palette is curated to
+/// commands that are awkward to reach by keyboard — those with no quick shortcut
+/// (save profile, toggle titlebars, choose theme) plus a few discoverable extras
+/// (search, resize mode, toggle layout, help). Frequent single-key actions
+/// (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help
+/// reference only, since invoking them from a search box is slower than the key.
+/// Workspace digits (1-9) are handled separately as they expand into a range.
 pub struct CommandBinding {
-    pub id: &'static str,
     pub action: Action,
     pub label: &'static str,
     pub keys: &'static str,
@@ -45,47 +48,41 @@ pub fn command_bindings() -> Vec<CommandBinding> {
     use Direction::{Down, Left, Right, Up};
     vec![
         CommandBinding {
-            id: "pane.spawn",
             action: Action::Spawn,
             label: "New pane",
             keys: "Enter / c",
             category: "Panes",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "pane.close",
             action: Action::Close,
             label: "Close pane",
             keys: "w / x",
             category: "Panes",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "pane.float",
             action: Action::ToggleFloat,
             label: "Toggle floating",
             keys: "t",
             category: "Panes",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "pane.fullscreen",
             action: Action::ToggleFullscreen,
             label: "Toggle fullscreen",
             keys: "f",
             category: "Panes",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "pane.rename",
             action: Action::RenamePane,
             label: "Rename pane",
             keys: "n",
             category: "Panes",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "pane.move.left",
             action: Action::Move(Left),
             label: "Move pane left",
             keys: "Shift+h / Shift+←",
@@ -93,7 +90,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "pane.move.down",
             action: Action::Move(Down),
             label: "Move pane down",
             keys: "Shift+j / Shift+↓",
@@ -101,7 +97,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "pane.move.up",
             action: Action::Move(Up),
             label: "Move pane up",
             keys: "Shift+k / Shift+↑",
@@ -109,7 +104,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "pane.move.right",
             action: Action::Move(Right),
             label: "Move pane right",
             keys: "Shift+l / Shift+→",
@@ -117,31 +111,27 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "layout.flip",
             action: Action::FlipSplit,
             label: "Flip split axis",
             keys: "Space",
             category: "Layout",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "layout.grow",
             action: Action::AdjustRatio(RATIO_STEP),
             label: "Grow split",
             keys: "] / +",
             category: "Layout",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "layout.shrink",
             action: Action::AdjustRatio(-RATIO_STEP),
             label: "Shrink split",
             keys: "[ / -",
             category: "Layout",
-            palette: true,
+            palette: false,
         },
         CommandBinding {
-            id: "layout.resize_mode",
             action: Action::EnterResizeMode,
             label: "Resize mode",
             keys: "r",
@@ -149,7 +139,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "layout.toggle",
             action: Action::ToggleLayout,
             label: "Toggle layout",
             keys: "m",
@@ -157,7 +146,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "focus.left",
             action: Action::Focus(Left),
             label: "Focus left",
             keys: "h / ←",
@@ -165,7 +153,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "focus.down",
             action: Action::Focus(Down),
             label: "Focus down",
             keys: "j / ↓",
@@ -173,7 +160,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "focus.up",
             action: Action::Focus(Up),
             label: "Focus up",
             keys: "k / ↑",
@@ -181,7 +167,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "focus.right",
             action: Action::Focus(Right),
             label: "Focus right",
             keys: "l / →",
@@ -189,7 +174,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
         CommandBinding {
-            id: "app.help",
             action: Action::ToggleHelp,
             label: "Show keybindings",
             keys: "?",
@@ -197,7 +181,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "app.search",
             action: Action::OpenSearch,
             label: "Search scrollback",
             keys: "/",
@@ -205,7 +188,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "profile.save",
             action: Action::SaveProfile,
             label: "Save project profile",
             keys: "",
@@ -213,7 +195,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "theme.choose",
             action: Action::OpenThemePicker,
             label: "Choose theme",
             keys: "",
@@ -221,7 +202,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "app.titles",
             action: Action::ToggleTitles,
             label: "Toggle pane titlebars",
             keys: "",
@@ -229,7 +209,6 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
-            id: "app.palette",
             action: Action::TogglePalette,
             label: "Command palette",
             keys: "p",
@@ -350,13 +329,35 @@ mod tests {
     fn save_profile_binding_is_palette_command() {
         let binding = command_bindings()
             .into_iter()
-            .find(|binding| binding.id == "profile.save")
+            .find(|binding| binding.action == Action::SaveProfile)
             .expect("save profile binding exists");
 
-        assert_eq!(binding.action, Action::SaveProfile);
         assert_eq!(binding.label, "Save project profile");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Profile");
         assert!(binding.palette);
+    }
+
+    #[test]
+    fn frequent_single_key_actions_stay_out_of_palette() {
+        let bindings = command_bindings();
+        for action in [
+            Action::Spawn,
+            Action::Close,
+            Action::ToggleFloat,
+            Action::ToggleFullscreen,
+            Action::RenamePane,
+            Action::FlipSplit,
+        ] {
+            let binding = bindings
+                .iter()
+                .find(|binding| binding.action == action)
+                .expect("binding exists");
+            assert!(
+                !binding.palette,
+                "{:?} should not be a palette command",
+                action
+            );
+        }
     }
 }

@@ -1,11 +1,12 @@
 use tui_lipan::prelude::*;
 
+use crate::HyprmuxApp;
 use crate::focus_ops::{
     focus_in_direction, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
     switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
-use crate::input::{self, Action};
+use crate::input::Action;
 use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
 use crate::profiles::{profile_from_state, save_profile};
 use crate::resize_move_ops::{
@@ -15,7 +16,6 @@ use crate::resize_move_ops::{
 use crate::search_ops::open_search;
 use crate::state::Mode;
 use crate::theme_ops::{open_theme_picker, select_theme};
-use crate::{HyprmuxApp, Msg};
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     match action {
@@ -119,23 +119,4 @@ fn save_project_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 
     Update::full()
-}
-
-pub(crate) fn register_commands(ctx: &mut Context<HyprmuxApp>) {
-    let registry = ctx.command_registry();
-    for binding in input::command_bindings()
-        .into_iter()
-        .filter(|binding| binding.palette)
-    {
-        let action = binding.action;
-        let link = ctx.link().clone();
-        registry.register(
-            CommandEntry::builder(binding.id)
-                .label(binding.label)
-                .category(binding.category)
-                .keybinding(binding.keys)
-                .handler(Callback::new(move |_| link.send(Msg::RunAction(action))))
-                .build(),
-        );
-    }
 }

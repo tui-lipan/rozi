@@ -119,7 +119,6 @@ impl Component for HyprmuxApp {
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
-        actions::register_commands(ctx);
         for message in std::mem::take(&mut self.startup_messages) {
             ctx.toast().push(pty_events::info_toast(message));
         }

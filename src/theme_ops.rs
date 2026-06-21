@@ -95,10 +95,6 @@ pub(crate) fn terminal_palette(theme: &Theme) -> TerminalColorPalette {
     )
 }
 
-pub(crate) fn theme_error_toast(message: String) -> Toast {
-    crate::pty_events::error_toast("Theme Reload", message)
-}
-
 pub(crate) fn style_fg(style: Style) -> Option<Color> {
     style
         .fg

@@ -1,52 +1,52 @@
 # hyprmux
 
-`hyprmux` is a single-process terminal multiplexer that ports the Hyprland-style
-`window_manager` example from `tui-lipan` into a real app: panes are live PTYs,
-laid out with dwindle tiling, floating windows, workspaces, and tmux-style prefix
-commands.
+`hyprmux` is a single-process, Hyprland-style tiling **terminal multiplexer**. Panes are
+live PTY shells laid out with dwindle tiling, plus floating windows, workspaces, animated
+geometry, and tmux-style prefix commands. It is built on the [`tui-lipan`](../tui-lipan)
+TUI framework and was ported from that project's `window_manager` example.
 
-Highlights:
-
-- Pane identity: rename panes with the prefix command `n` or the command palette.
-- Project profiles: restore named panes, workspace layout, floating geometry, and
-  fresh shell/command launches from a TOML profile.
-- Profiles intentionally restore layout and launch intent only, not live PTY state.
-  See [Project profiles and pane identity](docs/project-profiles.md).
-
-## Run
+There is intentionally **no detach/reattach** (no daemon): PTYs live inside the single UI
+process. When the last pane closes, the app quits.
 
 ```bash
-cargo run
+cargo run     # quit with Ctrl-q
 ```
 
-## Keybindings
+## Highlights
 
-The always-works control path is the prefix key: press `Ctrl-a`, then a command.
+- **Dwindle + master tiling** — new panes split the *focused* tile along its aspect ratio
+  (Hyprland dwindle), or switch to a master/stack layout per workspace.
+- **Floating & fullscreen panes** — toggle any pane to floating or fullscreen; move and
+  resize floats with the mouse.
+- **9 workspaces** with a top-bar tab strip showing live pane counts.
+- **Animated geometry** — spawn, close, fullscreen, tile/float, and split-axis transitions,
+  all individually configurable (size changes are snapped to avoid SIGWINCH spam).
+- **tmux-style prefix + held-modifier control** — `Ctrl-a` prefix that always works, plus an
+  `Alt`/`Super` held modifier for direct actions.
+- **Command palette & help overlay** — fuzzy command search (`p`) and a full keybinding
+  reference (`?`).
+- **Pane identity** — rename panes (`n`); titles also follow the program's OSC title.
+- **Project profiles** — restore a named workspace layout from a TOML file.
+- **Scrollback search** — search a pane's scrollback (`/`) and jump between matches.
+- **Themes** — 9 built-in presets, custom theme files, and live hot-reload. Terminal ANSI
+  colors are derived from the active theme.
+- **Real terminal** — mouse reporting, text selection, scroll-wheel scrollback, and OSC52
+  clipboard, provided by `tui-lipan`'s terminal primitives.
 
-| Prefix command | Action |
-| --- | --- |
-| `Enter` or `c` | spawn a new shell pane |
-| `w` or `x` | close the focused pane |
-| `h/j/k/l` or arrows | spatial focus |
-| `1..9` | switch workspace |
-| `Shift+1..9` | move pane to workspace |
-| `t` | toggle floating/tiling |
-| `f` | toggle fullscreen |
-| `n` | rename the focused pane |
-| `Space` | flip focused split |
-| `[` / `]` | adjust split ratio |
-| `Ctrl-a` | send a literal `Ctrl-a` to the pane |
+## Documentation
 
-Held-modifier bindings map to the same actions. The default modifier is `Alt`,
-because `Super` is rarely delivered reliably by terminal emulators. The prefix
-scheme remains the most portable path.
+Full docs live in [`docs/`](docs/):
 
-Mouse move/resize uses the configured modifier plus left/right drag.
+- [Getting started](docs/getting-started.md) — build, run, quit, and the dependency on `tui-lipan`.
+- [Keybindings](docs/keybindings.md) — prefix, held modifier, mouse, and the full key reference.
+- [Configuration](docs/configuration.md) — the complete `hyprmux.toml` reference.
+- [Layouts & panes](docs/layouts-and-panes.md) — dwindle, master, floating, fullscreen, resize.
+- [Themes](docs/themes.md) — presets, custom theme files, hot reload, and terminal colors.
+- [Terminal features](docs/terminal.md) — PTY, mouse, selection, clipboard, and scrollback search.
+- [Project profiles & pane identity](docs/project-profiles.md) — save and restore layouts.
 
-## Notes
+For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 
-`hyprmux` intentionally does not implement tmux-style detach/reattach yet. PTYs
-live inside the single UI process.
+## License
 
-Project profiles follow the same rule: they start fresh PTYs from saved layout and
-launch metadata rather than restoring previous shell processes.
+MIT OR Apache-2.0.

@@ -4,6 +4,22 @@ Project profiles let `hyprmux` restore a workspace layout for a project. A profi
 
 Profiles do **not** save or restore live PTY state. Restoring a profile starts fresh shells or commands in new PTYs; it does not resurrect the shell processes, scrollback, environment, or running programs from an earlier `hyprmux` process.
 
+## Pane identity
+
+Each pane carries an *identity* — the information `hyprmux` knows about it beyond its live
+shell:
+
+- **Custom title** — a name you set with the `n` keybinding (or *Rename pane* in the command
+  palette). It overrides the program's terminal title. Submitting an empty name clears it.
+- **Profile name** — the name a pane was restored with from a profile.
+- **cwd / command** — the working directory and launch command, when known (e.g. for panes
+  restored from a profile). These appear as the pane's subtitle and are what a `Save project
+  profile` writes back.
+
+The titlebar shows the custom title if set, otherwise the program's terminal title, otherwise
+the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
+for the full precedence, and [Keybindings](keybindings.md) for the rename flow.
+
 ## Enable a profile
 
 Set a profile path in your `hyprmux.toml`:

@@ -44,10 +44,10 @@ Move behavior clusters into modules:
 - `update.rs` — central `Msg` dispatcher. It should answer “what happens when this message arrives?” without embedding large behavior bodies.
 - `actions.rs` — converts `Action` values into app operations for prefix commands, command palette commands, and held-modifier shortcuts.
 - `key_routing.rs` — owns `Mode::Normal` / `Mode::Prefix`, terminal-vs-window-manager routing, literal prefix forwarding, unknown-key forwarding, and cancel behavior.
-- `pane_lifecycle.rs` — pane spawn, close, remove, fullscreen, floating/tiled transitions, and workspace moves.
+- `pane_lifecycle.rs` — pane spawn, close, remove, prune, and PTY command helpers.
 - `pty_events.rs` — PTY readiness, terminal output, terminal exit, and resize side effects.
-- `focus_ops.rs` — directional focus, workspace focus, hover/click focus policy, and focus cleanup helpers.
-- `resize_move_ops.rs` — keyboard resize/move and mouse drag/resize session handling.
+- `focus_ops.rs` — directional focus, workspace focus/movement, hover/click focus policy, and focus cleanup helpers.
+- `resize_move_ops.rs` — keyboard resize/move, mouse drag/resize session handling, floating/fullscreen transitions, and layout toggles.
 - `search_ops.rs` — scrollback search state transitions, result navigation, and query lifecycle.
 - `theme_ops.rs` — config/theme reload, picker selection, and terminal palette synchronization.
 

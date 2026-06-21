@@ -179,7 +179,7 @@ pub(crate) fn resize_pane(
     Update::full()
 }
 
-pub(crate) fn resize_pane_state(
+fn resize_pane_state(
     state: &mut State,
     id: PaneId,
     corner: ResizeCorner,
@@ -279,7 +279,7 @@ pub(crate) fn resize_pane_state(
     state.animation = GeometryAnimation::None;
 }
 
-pub(crate) fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
+fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
     state.animation = GeometryAnimation::TileFloat;
     let bounds = canvas_bounds_from_viewport(viewport);
     let drop_point = canvas_local_point_from_mouse(x, y, bounds);
@@ -435,11 +435,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
     )));
 }
 
-pub(crate) fn adjust_master_split_for_focused(
-    workspace: &mut Workspace,
-    focused: PaneId,
-    delta: f32,
-) -> bool {
+fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {
     let ids = workspace.tiled_ids();
     if ids.len() < 2 || !ids.contains(&focused) {
         return false;
@@ -457,7 +453,7 @@ pub(crate) fn adjust_master_split_for_focused(
     true
 }
 
-pub(crate) fn resize_master_split_by_pixels(
+fn resize_master_split_by_pixels(
     workspace: &mut Workspace,
     focused: PaneId,
     pixels: f32,
@@ -469,7 +465,7 @@ pub(crate) fn resize_master_split_by_pixels(
     adjust_master_split_for_focused(workspace, focused, pixels / available.max(1.0))
 }
 
-pub(crate) fn master_available_width(tile_bounds: FloatRect) -> f32 {
+fn master_available_width(tile_bounds: FloatRect) -> f32 {
     let gap = if tile_bounds.w > TILE_GAP {
         TILE_GAP
     } else {
@@ -571,11 +567,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
     }
 }
 
-pub(crate) fn keyboard_resize_pixels(
-    direction: Direction,
-    focused_is_first: bool,
-    available: f32,
-) -> f32 {
+fn keyboard_resize_pixels(direction: Direction, focused_is_first: bool, available: f32) -> f32 {
     let grows_focused = match direction {
         Direction::Left | Direction::Up => !focused_is_first,
         Direction::Right | Direction::Down => focused_is_first,

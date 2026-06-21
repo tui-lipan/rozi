@@ -1,11 +1,12 @@
 use tui_lipan::prelude::*;
 
+use crate::HyprmuxApp;
+use crate::actions::execute_action;
 use crate::focus_ops::{focus_pane, request_current_pane_focus};
 use crate::input;
 use crate::resize_move_ops::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId};
 use crate::view;
-use crate::{HyprmuxApp, execute_action};
 
 pub(crate) fn handle_key_routing(
     ctx: &mut Context<HyprmuxApp>,
@@ -57,10 +58,7 @@ pub(crate) fn handle_key_routing(
     }
 }
 
-pub(crate) fn handle_resize_mode_key(
-    ctx: &mut Context<HyprmuxApp>,
-    key: KeyEvent,
-) -> (bool, Update) {
+fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
     if key.is(KeyCode::Esc) || key.is(KeyCode::Enter) {
         ctx.state.mode = Mode::Normal;
         request_current_pane_focus(ctx);
@@ -83,7 +81,7 @@ pub(crate) fn handle_resize_mode_key(
     (true, Update::none())
 }
 
-pub(crate) fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
+fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
     workspace
         .panes

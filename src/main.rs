@@ -17,8 +17,6 @@ mod tiling;
 mod update;
 mod view;
 
-pub(crate) use actions::execute_action;
-
 use std::time::Duration;
 
 use tui_lipan::prelude::*;

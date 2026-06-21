@@ -95,14 +95,14 @@ pub(crate) fn terminal_palette(theme: &Theme) -> TerminalColorPalette {
     )
 }
 
-pub(crate) fn style_fg(style: Style) -> Option<Color> {
+fn style_fg(style: Style) -> Option<Color> {
     style
         .fg
         .map(|paint| clean_terminal_color(paint.color(), Color::Reset))
         .filter(|color| *color != Color::Reset)
 }
 
-pub(crate) fn clean_terminal_color(color: Color, fallback: Color) -> Color {
+fn clean_terminal_color(color: Color, fallback: Color) -> Color {
     match color {
         Color::Reset | Color::Backdrop | Color::Transparent => fallback,
         _ => color,

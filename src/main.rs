@@ -36,8 +36,8 @@ use crate::layout::{
 };
 use crate::pane_lifecycle::find_pane_mut;
 use crate::pty_events::{
-    error_toast, forward_key_to_pane, handle_pane_input, handle_pane_mouse, handle_pane_resize,
-    handle_pane_scroll, handle_prune_closed, handle_pty_event, handle_pty_ready, info_toast,
+    handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll, handle_pty_event,
+    handle_pty_ready,
 };
 use crate::state::{
     Direction, HyprmuxConfig, LayoutKind, MoveSession, OUTER_GAP, Pane, PaneId, RATIO_STEP,
@@ -268,7 +268,7 @@ impl Component for HyprmuxApp {
                 }
                 Update::full()
             }
-            Msg::PruneClosed(id) => handle_prune_closed(ctx, id),
+            Msg::PruneClosed(id) => pane_lifecycle::handle_prune_closed(ctx, id),
             Msg::PtyReady(id, pty) => handle_pty_ready(ctx, id, pty),
             Msg::PtyEvent(id, event) => handle_pty_event(ctx, id, event),
             Msg::PaneInput(id, input) => handle_pane_input(ctx, id, input),
@@ -809,7 +809,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
         workspace.layout_kind
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
-    ctx.toast().push(info_toast(format!(
+    ctx.toast().push(pty_events::info_toast(format!(
         "Workspace {} layout: {}",
         workspace_index + 1,
         layout_kind.label()

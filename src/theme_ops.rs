@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::focus_ops::request_theme_picker_focus;
 use crate::state::{Mode, State, ThemePreset};
-use crate::{HyprmuxApp, Msg, info_toast, schedule_theme_tick};
+use crate::{HyprmuxApp, Msg, schedule_theme_tick};
 
 pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
@@ -48,8 +48,10 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
     ctx.state.theme = preset.theme();
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
-    ctx.toast()
-        .push(info_toast(format!("Theme: {}", preset.label())));
+    ctx.toast().push(crate::pty_events::info_toast(format!(
+        "Theme: {}",
+        preset.label()
+    )));
 }
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) {
@@ -94,7 +96,7 @@ pub(crate) fn terminal_palette(theme: &Theme) -> TerminalColorPalette {
 }
 
 pub(crate) fn theme_error_toast(message: String) -> Toast {
-    crate::error_toast("Theme Reload", message)
+    crate::pty_events::error_toast("Theme Reload", message)
 }
 
 pub(crate) fn style_fg(style: Style) -> Option<Color> {

@@ -6,7 +6,7 @@ use crate::request_current_pane_focus;
 use crate::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId};
 use crate::view;
-use crate::{HyprmuxApp, execute_action, forward_key_to_pane};
+use crate::{HyprmuxApp, execute_action};
 
 pub(crate) fn handle_key_routing(
     ctx: &mut Context<HyprmuxApp>,
@@ -25,7 +25,7 @@ pub(crate) fn handle_key_routing(
             }
 
             if let Some(id) = source_pane {
-                return (true, forward_key_to_pane(ctx, id, key));
+                return (true, crate::pty_events::forward_key_to_pane(ctx, id, key));
             }
 
             (false, Update::none())
@@ -35,7 +35,7 @@ pub(crate) fn handle_key_routing(
             if input::is_prefix_key(key, ctx.state.config.input) {
                 let id = source_pane.or(ctx.state.focused_pane);
                 let update = id
-                    .map(|id| forward_key_to_pane(ctx, id, key))
+                    .map(|id| crate::pty_events::forward_key_to_pane(ctx, id, key))
                     .unwrap_or_else(Update::none);
                 return (true, update);
             }
@@ -50,7 +50,7 @@ pub(crate) fn handle_key_routing(
 
             let id = source_pane.or(ctx.state.focused_pane);
             let update = id
-                .map(|id| forward_key_to_pane(ctx, id, key))
+                .map(|id| crate::pty_events::forward_key_to_pane(ctx, id, key))
                 .unwrap_or_else(Update::none);
             (true, update)
         }

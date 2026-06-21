@@ -129,6 +129,24 @@ pub(crate) fn total_visible_panes(state: &State) -> usize {
     state.workspaces.iter().map(Workspace::visible_count).sum()
 }
 
+pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+    remove_pane(&mut ctx.state, id);
+    if ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.target == id)
+    {
+        ctx.state.search = None;
+    }
+    if total_visible_panes(&ctx.state) == 0 {
+        ctx.quit();
+        return Update::none();
+    }
+    request_current_pane_focus(ctx);
+    Update::full()
+}
+
 pub(crate) fn initial_command(
     spawn: Option<(PaneId, TerminalPtyConfig, Option<Duration>)>,
     theme_tick: bool,

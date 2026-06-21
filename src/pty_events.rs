@@ -3,9 +3,8 @@ use std::sync::Arc;
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::focus_ops::find_pane_mut;
 use crate::pane::PaneEventOutcome;
-use crate::pane_lifecycle::begin_close_pane;
+use crate::pane_lifecycle::{begin_close_pane, find_pane_mut};
 use crate::state::PaneId;
 
 pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
@@ -178,23 +177,5 @@ pub(crate) fn handle_pty_ready(
     if let Some(message) = error {
         ctx.toast().push(error_toast(format!("Pane {id}"), message));
     }
-    Update::full()
-}
-
-pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
-    crate::pane_lifecycle::remove_pane(&mut ctx.state, id);
-    if ctx
-        .state
-        .search
-        .as_ref()
-        .is_some_and(|search| search.target == id)
-    {
-        ctx.state.search = None;
-    }
-    if crate::pane_lifecycle::total_visible_panes(&ctx.state) == 0 {
-        ctx.quit();
-        return Update::none();
-    }
-    crate::request_current_pane_focus(ctx);
     Update::full()
 }

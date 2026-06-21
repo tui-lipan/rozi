@@ -1,8 +1,9 @@
 use tui_lipan::prelude::*;
 
+use crate::pane_lifecycle::handle_prune_closed;
 use crate::pty_events::{
-    handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
-    handle_prune_closed, handle_pty_event, handle_pty_ready,
+    handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll, handle_pty_event,
+    handle_pty_ready,
 };
 use crate::{HyprmuxApp, Msg};
 

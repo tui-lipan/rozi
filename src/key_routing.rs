@@ -1,9 +1,8 @@
 use tui_lipan::prelude::*;
 
-use crate::focus_pane;
+use crate::focus_ops::{focus_pane, request_current_pane_focus};
 use crate::input;
-use crate::request_current_pane_focus;
-use crate::resize_focused_in_direction;
+use crate::resize_move_ops::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId};
 use crate::view;
 use crate::{HyprmuxApp, execute_action};

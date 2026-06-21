@@ -1,6 +1,621 @@
-//! Temporary resize/move facade while Task 5 extracts implementations.
+use tui_lipan::prelude::*;
 
-pub(crate) use crate::{
-    adjust_focused_split_ratio, move_focused_in_direction, resize_focused_in_direction,
-    toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
+use crate::HyprmuxApp;
+use crate::anim::GeometryAnimation;
+use crate::focus_ops::{
+    self, active_pane_is_fullscreen, active_pane_mut, focus_pane, request_pane_focus,
 };
+use crate::geometry::{
+    canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
+    clamp_floating_rect, grabbed_edge_on_outer_border, inset_float_rect, lift_off_float_rect,
+    resize_float_rect_from_corner, tiled_drag_preview_rect,
+};
+use crate::layout::{
+    self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
+    workspace_target_rects, workspace_target_rects_excluding,
+};
+use crate::pty_events;
+use crate::state::{
+    self, Direction, LayoutKind, MoveSession, OUTER_GAP, PaneId, RATIO_STEP, ResizeCorner,
+    ResizeSession, State, TILE_GAP, Workspace,
+};
+use crate::tiling::{
+    adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle, append_tiled_window,
+    flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
+    move_tiled_window_around_target, nearest_split_available, ratio_at, remove_tiled_window,
+    resize_tiled_split,
+};
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn begin_move(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    current_rect: FloatRect,
+    from_local_x: u16,
+    from_local_y: u16,
+    target_w: u16,
+    target_h: u16,
+    modified: bool,
+) -> Update {
+    if !modified {
+        return Update::none();
+    }
+    focus_pane(&mut ctx.state, id);
+    request_pane_focus(ctx, id);
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let mut session = None;
+    if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
+        pane.opening = false;
+        if !pane.fullscreen {
+            let was_floating = pane.floating;
+            let drag_rect = if was_floating {
+                current_rect
+            } else {
+                tiled_drag_preview_rect(
+                    current_rect,
+                    pane.floating_rect,
+                    bounds,
+                    from_local_x,
+                    from_local_y,
+                    target_w,
+                    target_h,
+                )
+            };
+            if was_floating {
+                pane.floating_rect = drag_rect;
+            }
+            session = Some(MoveSession {
+                id,
+                was_floating,
+                drag_rect,
+            });
+        }
+    }
+    ctx.state.moving_pane = session;
+    ctx.state.animation = if session.is_some_and(|session| !session.was_floating) {
+        GeometryAnimation::TileFloat
+    } else {
+        GeometryAnimation::None
+    };
+    Update::full()
+}
+
+pub(crate) fn move_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    dx: i16,
+    dy: i16,
+    modified: bool,
+) -> Update {
+    if !modified {
+        return Update::none();
+    }
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let mut persisted_floating_rect = None;
+    if let Some(session) = ctx
+        .state
+        .moving_pane
+        .as_mut()
+        .filter(|session| session.id == id)
+    {
+        session.drag_rect.x += f32::from(dx);
+        session.drag_rect.y += f32::from(dy);
+        session.drag_rect = if session.was_floating {
+            clamp_floating_rect(session.drag_rect, bounds)
+        } else {
+            clamp_float_rect(session.drag_rect, bounds)
+        };
+        if session.was_floating {
+            persisted_floating_rect = Some(session.drag_rect);
+        }
+        ctx.state.animation = if session.was_floating {
+            GeometryAnimation::None
+        } else {
+            GeometryAnimation::TileFloat
+        };
+    }
+    if let Some(rect) = persisted_floating_rect
+        && let Some(pane) = active_pane_mut(&mut ctx.state, id)
+    {
+        pane.floating_rect = rect;
+    }
+    Update::full()
+}
+
+pub(crate) fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16) -> Update {
+    let session = ctx.state.moving_pane.filter(|session| session.id == id);
+    if session.is_some() {
+        ctx.state.moving_pane = None;
+    }
+    if let Some(session) = session {
+        if session.was_floating {
+            if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
+                pane.floating_rect = session.drag_rect;
+            }
+        } else {
+            let viewport = ctx.viewport();
+            drop_tiled_pane_at(&mut ctx.state, id, x, y, viewport);
+        }
+    }
+    Update::full()
+}
+
+pub(crate) fn begin_resize(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    corner: ResizeCorner,
+    modified: bool,
+) -> Update {
+    if !modified {
+        return Update::none();
+    }
+    ctx.state.animation = GeometryAnimation::None;
+    focus_pane(&mut ctx.state, id);
+    request_pane_focus(ctx, id);
+    ctx.state.resizing_pane = Some(ResizeSession { id, corner });
+    Update::full()
+}
+
+pub(crate) fn resize_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    corner: ResizeCorner,
+    dx: i16,
+    dy: i16,
+    modified: bool,
+) -> Update {
+    if !modified {
+        return Update::none();
+    }
+    ctx.state.animation = GeometryAnimation::None;
+    let corner = ctx
+        .state
+        .resizing_pane
+        .filter(|session| session.id == id)
+        .map(|session| session.corner)
+        .unwrap_or(corner);
+    let viewport = ctx.viewport();
+    resize_pane_state(&mut ctx.state, id, corner, dx, dy, viewport);
+    Update::full()
+}
+
+pub(crate) fn resize_pane_state(
+    state: &mut State,
+    id: PaneId,
+    corner: ResizeCorner,
+    dx: i16,
+    dy: i16,
+    viewport: Rect,
+) {
+    focus_pane(state, id);
+    let bounds = canvas_bounds_from_viewport(viewport);
+    let Some(pane) = active_pane_mut(state, id) else {
+        return;
+    };
+
+    if pane.fullscreen {
+        return;
+    }
+
+    if pane.floating {
+        pane.floating_rect = resize_float_rect_from_corner(
+            pane.floating_rect,
+            corner,
+            f32::from(dx),
+            f32::from(dy),
+            bounds,
+        );
+        return;
+    }
+
+    let effective_dx = match corner {
+        ResizeCorner::UpperLeft | ResizeCorner::LowerLeft => -dx,
+        ResizeCorner::UpperRight | ResizeCorner::LowerRight => dx,
+    };
+    let effective_dy = match corner {
+        ResizeCorner::UpperLeft | ResizeCorner::UpperRight => -dy,
+        ResizeCorner::LowerLeft | ResizeCorner::LowerRight => dy,
+    };
+
+    if state.workspaces[state.active_workspace].layout_kind == LayoutKind::Master {
+        let bounds = canvas_bounds_from_viewport(viewport);
+        let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+        let focused_rect = {
+            let placements =
+                workspace_target_rects(&state.workspaces[state.active_workspace], bounds);
+            placement_for(&placements, id)
+        };
+        if focused_rect.is_some_and(|rect| {
+            grabbed_edge_on_outer_border(rect, tile_bounds, corner, state::SplitAxis::Horizontal)
+        }) {
+            return;
+        }
+        resize_master_split_by_pixels(
+            &mut state.workspaces[state.active_workspace],
+            id,
+            f32::from(effective_dx),
+            master_available_width(tile_bounds),
+        );
+        state.animation = GeometryAnimation::None;
+        return;
+    }
+
+    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
+    else {
+        return;
+    };
+
+    // The grabbed corner's edge on each axis. An edge on the terminal boundary has no
+    // divider to drag, so skip resizing that axis instead of inverting the inner divider.
+    let focused_rect = {
+        let mut placements = Vec::new();
+        allocate_dwindle(&tree, tile_bounds, TILE_GAP, &mut placements);
+        placement_for(&placements, id)
+    };
+
+    for (axis, pixels) in [
+        (state::SplitAxis::Horizontal, f32::from(effective_dx)),
+        (state::SplitAxis::Vertical, f32::from(effective_dy)),
+    ] {
+        if pixels == 0.0 {
+            continue;
+        }
+        if focused_rect.is_some_and(|r| grabbed_edge_on_outer_border(r, tile_bounds, corner, axis))
+        {
+            continue;
+        }
+        if let Some(available) = nearest_split_available(&tree, tile_bounds, TILE_GAP, id, axis) {
+            resize_tiled_split(
+                &mut state.workspaces[state.active_workspace],
+                id,
+                axis,
+                available,
+                pixels,
+            );
+        }
+    }
+
+    state.animation = GeometryAnimation::None;
+}
+
+pub(crate) fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
+    state.animation = GeometryAnimation::TileFloat;
+    let bounds = canvas_bounds_from_viewport(viewport);
+    let drop_point = canvas_local_point_from_mouse(x, y, bounds);
+    let target = {
+        let workspace = &state.workspaces[state.active_workspace];
+        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id));
+        let tiled_ids: Vec<PaneId> = workspace
+            .tiled_ids()
+            .into_iter()
+            .filter(|target_id| *target_id != id)
+            .collect();
+        target_tiled_pane_for_drop(&placements, &tiled_ids, drop_point).and_then(|target_id| {
+            placement_for(&placements, target_id).map(|rect| (target_id, rect))
+        })
+    };
+
+    let Some((target_id, target_rect)) = target else {
+        return;
+    };
+
+    let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
+    let workspace = &mut state.workspaces[state.active_workspace];
+    move_tiled_window_around_target(workspace, id, target_id, axis, moving_first);
+}
+
+pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
+    let Some(id) = ctx.state.focused_pane else {
+        return;
+    };
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let current_rect = {
+        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        placement_for(&workspace_target_rects(workspace, bounds), id)
+    };
+
+    let mut insert_tiled_at = None;
+    let mut remove_from_tiling = false;
+    if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
+        pane.opening = false;
+        pane.fullscreen = false;
+        if pane.floating {
+            pane.floating_rect = clamp_float_rect(pane.floating_rect, bounds);
+            insert_tiled_at = Some(crate::geometry::rect_center(pane.floating_rect));
+            pane.floating = false;
+            ctx.state.animation = GeometryAnimation::TileFloat;
+        } else {
+            pane.floating_rect = match current_rect {
+                Some(tile) => lift_off_float_rect(tile, pane.floating_rect, bounds),
+                None => clamp_float_rect(pane.floating_rect, bounds),
+            };
+            pane.floating = true;
+            remove_from_tiling = true;
+            ctx.state.animation = GeometryAnimation::TileFloat;
+        }
+    }
+
+    if insert_tiled_at.is_some() || remove_from_tiling {
+        let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+        if let Some(point) = insert_tiled_at {
+            if insert_tiled_pane_at_point(workspace, id, point, bounds).is_none() {
+                append_tiled_window(workspace, id);
+            }
+        } else if remove_from_tiling {
+            remove_tiled_window(workspace, id);
+        }
+    }
+    request_pane_focus(ctx, id);
+}
+
+pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(id) = ctx.state.focused_pane else {
+        return Update::full();
+    };
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let placements = {
+        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        workspace_target_rects(workspace, bounds)
+    };
+
+    let mut toggled = false;
+    if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
+        pane.opening = false;
+        if !pane.fullscreen && pane.floating {
+            pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
+        }
+        pane.fullscreen = !pane.fullscreen;
+        toggled = true;
+    }
+    if toggled {
+        ctx.state.animation = GeometryAnimation::Fullscreen;
+        request_pane_focus(ctx, id);
+    }
+    Update::full()
+}
+
+pub(crate) fn toggle_focused_split_axis(state: &mut State) {
+    let Some(focused) = state.focused_pane else {
+        return;
+    };
+    let workspace = &mut state.workspaces[state.active_workspace];
+    if workspace.layout_kind == LayoutKind::Master {
+        return;
+    }
+    if !workspace
+        .active_tiled_ids_by_pane_order()
+        .contains(&focused)
+    {
+        return;
+    }
+    workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    let Some(tree) = workspace.tile_tree.as_mut() else {
+        return;
+    };
+    if flip_tree_split_for_focused(tree, focused, 0).is_some() {
+        state.animation = GeometryAnimation::AxisChange;
+    }
+}
+
+pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
+    let Some(focused) = state.focused_pane else {
+        return;
+    };
+    let workspace = &mut state.workspaces[state.active_workspace];
+    if workspace.layout_kind == LayoutKind::Master {
+        if adjust_master_split_for_focused(workspace, focused, delta) {
+            state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_mut() else {
+        return;
+    };
+    if adjust_tree_split_for_focused(tree, focused, delta, 0).is_some() {
+        state.animation = GeometryAnimation::None;
+    }
+}
+
+pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
+    let workspace_index = ctx.state.active_workspace;
+    let layout_kind = {
+        let workspace = &mut ctx.state.workspaces[workspace_index];
+        workspace.layout_kind = workspace.layout_kind.toggled();
+        workspace.layout_kind
+    };
+    ctx.state.animation = GeometryAnimation::AxisChange;
+    ctx.toast().push(pty_events::info_toast(format!(
+        "Workspace {} layout: {}",
+        workspace_index + 1,
+        layout_kind.label()
+    )));
+}
+
+pub(crate) fn adjust_master_split_for_focused(
+    workspace: &mut Workspace,
+    focused: PaneId,
+    delta: f32,
+) -> bool {
+    let ids = workspace.tiled_ids();
+    if ids.len() < 2 || !ids.contains(&focused) {
+        return false;
+    }
+    let signed_delta = if ids.first() == Some(&focused) {
+        delta
+    } else {
+        -delta
+    };
+    if workspace.split_ratios.is_empty() {
+        workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
+    }
+    workspace.split_ratios[0] =
+        adjust_ratio_value(ratio_at(&workspace.split_ratios, 0), signed_delta);
+    true
+}
+
+pub(crate) fn resize_master_split_by_pixels(
+    workspace: &mut Workspace,
+    focused: PaneId,
+    pixels: f32,
+    available: f32,
+) -> bool {
+    if pixels == 0.0 || available <= 0.0 {
+        return false;
+    }
+    adjust_master_split_for_focused(workspace, focused, pixels / available.max(1.0))
+}
+
+pub(crate) fn master_available_width(tile_bounds: FloatRect) -> f32 {
+    let gap = if tile_bounds.w > TILE_GAP {
+        TILE_GAP
+    } else {
+        0.0
+    };
+    (tile_bounds.w - gap).max(1.0)
+}
+
+pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let workspace_index = ctx.state.active_workspace;
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+
+    let target = {
+        let workspace = &ctx.state.workspaces[workspace_index];
+        let tiled_ids = workspace.active_tiled_ids_by_pane_order();
+        if !tiled_ids.contains(&focused) {
+            return;
+        }
+        let placements: Vec<_> = workspace_target_rects(workspace, bounds)
+            .into_iter()
+            .filter(|placement| tiled_ids.contains(&placement.id))
+            .collect();
+        focus_ops::directional_neighbor(&placements, focused, direction)
+    };
+
+    let Some(target_id) = target else {
+        return;
+    };
+    let axis = focus_ops::split_axis_for_direction(direction);
+    let moving_first = match direction {
+        Direction::Left | Direction::Up => true,
+        Direction::Right | Direction::Down => false,
+    };
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if move_tiled_window_around_target(workspace, focused, target_id, axis, moving_first) {
+        workspace.focused_pane = Some(focused);
+        ctx.state.focused_pane = Some(focused);
+        ctx.state.animation = GeometryAnimation::AxisChange;
+    }
+}
+
+pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+    let workspace_index = ctx.state.active_workspace;
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if !workspace
+        .active_tiled_ids_by_pane_order()
+        .contains(&focused)
+    {
+        return;
+    }
+
+    if workspace.layout_kind == LayoutKind::Master {
+        let axis = focus_ops::split_axis_for_direction(direction);
+        if axis != state::SplitAxis::Horizontal {
+            return;
+        }
+        let available = master_available_width(tile_bounds);
+        let ids = workspace.tiled_ids();
+        let focused_is_first = ids.first() == Some(&focused);
+        let pixels = keyboard_resize_pixels(direction, focused_is_first, available);
+        if resize_master_split_by_pixels(workspace, focused, pixels, available) {
+            ctx.state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_ref() else {
+        return;
+    };
+
+    let axis = focus_ops::split_axis_for_direction(direction);
+    let Some(available) = nearest_split_available(tree, tile_bounds, TILE_GAP, focused, axis)
+    else {
+        return;
+    };
+    let Some(focused_is_first) = focused_is_first_in_nearest_axis_split(tree, focused, axis) else {
+        return;
+    };
+    let pixels = keyboard_resize_pixels(direction, focused_is_first, available);
+    if resize_tiled_split(workspace, focused, axis, available, pixels) {
+        ctx.state.animation = GeometryAnimation::None;
+    }
+}
+
+pub(crate) fn keyboard_resize_pixels(
+    direction: Direction,
+    focused_is_first: bool,
+    available: f32,
+) -> f32 {
+    let grows_focused = match direction {
+        Direction::Left | Direction::Up => !focused_is_first,
+        Direction::Right | Direction::Down => focused_is_first,
+    };
+    let pixels = RATIO_STEP * available;
+    if grows_focused { pixels } else { -pixels }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_resize_directions_grow_toward_the_nearest_split() {
+        let available = 100.0;
+        let step = RATIO_STEP * available;
+
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Right, true, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Left, true, available),
+            -step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Left, false, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Right, false, available),
+            -step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Down, true, available),
+            step
+        );
+        assert_eq!(
+            keyboard_resize_pixels(Direction::Up, false, available),
+            step
+        );
+    }
+}

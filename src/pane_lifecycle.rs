@@ -4,8 +4,8 @@ use tui_lipan::prelude::*;
 
 use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
 use crate::focus_ops::{
-    first_visible_pane, focus_near_pane_in_workspace, request_current_pane_focus,
-    request_pane_focus,
+    choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
+    request_current_pane_focus, request_pane_focus,
 };
 use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
@@ -63,7 +63,7 @@ pub(crate) fn begin_close_pane(
 
     if closed {
         ctx.state.animation = GeometryAnimation::Close;
-        crate::choose_fallback_focus(&mut ctx.state);
+        choose_fallback_focus(&mut ctx.state);
         request_current_pane_focus(ctx);
         Update::with_command(prune_closed_command(id, anim::close_delay(animations)))
     } else {
@@ -95,7 +95,7 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
     }
 
     let removed_rect =
-        crate::reference_pane_rect(state, &state.workspaces[state.active_workspace], id, None);
+        reference_pane_rect(state, &state.workspaces[state.active_workspace], id, None);
     let focus_updates: Vec<(usize, Option<PaneId>)> = state
         .workspaces
         .iter()

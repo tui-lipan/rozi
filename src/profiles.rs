@@ -36,6 +36,38 @@ pub fn save_profile(path: &Path, profile: &HyprmuxProfile) -> Result<(), String>
         .map_err(|err| format!("Could not write profile {}: {err}", path.display()))
 }
 
+/// Resolve the session-autosave file path: the configured override, else
+/// `$XDG_STATE_HOME/hyprmux/session.toml` (falling back to `~/.local/state/...`).
+pub fn session_path(config: &crate::state::HyprmuxConfig) -> Option<PathBuf> {
+    if let Some(path) = &config.session.path {
+        return Some(path.clone());
+    }
+    let state_home = std::env::var_os("XDG_STATE_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(|home| PathBuf::from(home).join(".local/state"))
+        })?;
+    Some(state_home.join("hyprmux/session.toml"))
+}
+
+/// Write the live layout to the session file when `[session] autosave` is enabled. Called
+/// synchronously just before quit, so failures are reported to stderr (toasts won't render).
+pub fn persist_session_if_enabled(state: &State) {
+    if !state.config.session.autosave {
+        return;
+    }
+    let Some(path) = session_path(&state.config) else {
+        return;
+    };
+    let profile = profile_from_state(state);
+    if let Err(err) = save_profile(&path, &profile) {
+        eprintln!("hyprmux: session autosave failed: {err}");
+    }
+}
+
 pub fn profile_from_state(state: &State) -> HyprmuxProfile {
     HyprmuxProfile {
         version: 1,
@@ -63,7 +95,6 @@ pub fn restore_state_from_profile(
         return State::new(config, theme);
     }
 
-    let theme_picker_selected = config.theme.preset.index();
     let scrollback = config.scrollback;
     let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
     let mut next_pane_id = 1;
@@ -155,11 +186,14 @@ pub fn restore_state_from_profile(
         show_help: false,
         show_titles: true,
         show_theme_picker: false,
-        theme_picker_selected,
         theme,
         theme_watcher: None,
         search: None,
         rename: None,
+        copy_mode: None,
+        scratch: None,
+        scratch_visible: false,
+        scratch_return_focus: None,
     }
 }
 
@@ -218,7 +252,11 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
                     .clone()
                     .or_else(|| pane.identity.profile_name.clone()),
                 title: pane.identity.custom_title.clone(),
-                cwd: pane.identity.cwd.as_ref().map(PathBuf::from),
+                // Prefer the shell's real live cwd; fall back to the launch identity cwd.
+                cwd: pane
+                    .live_cwd()
+                    .or_else(|| pane.identity.cwd.clone())
+                    .map(PathBuf::from),
                 command: pane.identity.command.clone(),
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
@@ -371,6 +409,9 @@ pub enum ProfileLayoutKind {
     #[default]
     Dwindle,
     Master,
+    Grid,
+    Spiral,
+    Monocle,
 }
 
 impl From<LayoutKind> for ProfileLayoutKind {
@@ -378,6 +419,9 @@ impl From<LayoutKind> for ProfileLayoutKind {
         match layout {
             LayoutKind::Dwindle => Self::Dwindle,
             LayoutKind::Master => Self::Master,
+            LayoutKind::Grid => Self::Grid,
+            LayoutKind::Spiral => Self::Spiral,
+            LayoutKind::Monocle => Self::Monocle,
         }
     }
 }
@@ -387,6 +431,9 @@ impl From<ProfileLayoutKind> for LayoutKind {
         match layout {
             ProfileLayoutKind::Dwindle => Self::Dwindle,
             ProfileLayoutKind::Master => Self::Master,
+            ProfileLayoutKind::Grid => Self::Grid,
+            ProfileLayoutKind::Spiral => Self::Spiral,
+            ProfileLayoutKind::Monocle => Self::Monocle,
         }
     }
 }

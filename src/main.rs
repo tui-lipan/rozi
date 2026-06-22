@@ -1,17 +1,20 @@
 mod actions;
 mod anim;
 mod config;
+mod copy_mode;
 mod focus_ops;
 mod geometry;
 mod identity_ops;
 mod input;
 mod key_routing;
+mod keymap;
 mod layout;
 mod pane;
 mod pane_lifecycle;
 mod profiles;
 mod pty_events;
 mod resize_move_ops;
+mod scratchpad;
 mod search_ops;
 mod state;
 mod theme_ops;
@@ -74,13 +77,13 @@ pub enum Msg {
     ClosePalette,
     CloseHelp,
     CloseThemePicker,
-    ThemePickerSelected(usize),
-    ThemePickerActivated(usize),
     ThemeTick,
+    BarTick,
     ThemeError(String),
     CloseSearch,
     SearchChanged(InputEvent),
     SearchNext(bool),
+    SearchCycleScope,
     CloseRenamePane,
     RenamePaneChanged(InputEvent),
     SubmitRenamePane,
@@ -92,6 +95,8 @@ pub enum Msg {
     BeginResize(PaneId, ResizeCorner, bool),
     ResizePane(PaneId, ResizeCorner, i16, i16, bool),
     EndResize(PaneId),
+    /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
+    ResizeSplit(PaneId, bool, i16, i16),
     FinishOpen(PaneId),
     PruneClosed(PaneId),
     PtyReady(PaneId, TerminalPty),
@@ -138,6 +143,7 @@ impl Component for HyprmuxApp {
         pane_lifecycle::initial_command(
             startup_spawns(&ctx.state),
             ctx.state.theme_watcher.is_some(),
+            ctx.state.config.bar.has_clock(),
         )
     }
 
@@ -147,6 +153,7 @@ impl Component for HyprmuxApp {
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
         if key.mods.ctrl && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
+            profiles::persist_session_if_enabled(&ctx.state);
             ctx.quit();
             return KeyUpdate::handled(Update::none());
         }
@@ -251,6 +258,15 @@ impl HyprmuxApp {
         }
     }
 
+    pub(crate) fn scratch_transition_config(&self) -> TransitionConfig {
+        let animations = self.config.animations;
+        if animations.enabled && animations.tile_float {
+            anim::geometry_transition(animations.geometry_duration)
+        } else {
+            anim::instant_transition()
+        }
+    }
+
     pub(crate) fn focus_chrome_transition_config(&self) -> TransitionConfig {
         let animations = self.config.animations;
         if animations.enabled && animations.focus_chrome {
@@ -285,6 +301,15 @@ pub(crate) fn schedule_theme_tick() -> Command {
     })
 }
 
+/// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
+/// segment is present, so an idle app with the default bar never wakes for this.
+pub(crate) fn schedule_bar_tick() -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        std::thread::sleep(Duration::from_secs(1));
+        link.send(Msg::BarTick);
+    })
+}
+
 fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
     ClipboardConfig {
         enable_osc52: config.clipboard.enable_osc52,
@@ -300,7 +325,7 @@ fn main() -> Result<()> {
     if loaded.found {
         startup_messages.push(format!("Loaded config from {}", loaded.path.display()));
     }
-    let startup_profile =
+    let mut startup_profile =
         loaded
             .config
             .profile
@@ -316,6 +341,21 @@ fn main() -> Result<()> {
                     None
                 }
             });
+
+    // With no explicit profile, restore the autosaved session if one exists.
+    if startup_profile.is_none()
+        && loaded.config.session.autosave
+        && let Some(path) = profiles::session_path(&loaded.config)
+        && path.exists()
+    {
+        match profiles::load_profile(&path) {
+            Ok(profile) => {
+                startup_messages.push(format!("Restored session from {}", path.display()));
+                startup_profile = Some(profile);
+            }
+            Err(err) => startup_messages.push(format!("Session restore failed: {err}")),
+        }
+    }
     let config = loaded.config;
     let theme = loaded_theme.theme;
     let terminal_bg = query_host_colors().map(|colors| colors.bg);

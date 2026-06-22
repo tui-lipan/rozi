@@ -5,8 +5,9 @@ use crate::state::{
     LayoutKind, OUTER_GAP, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
 };
 use crate::tiling::{
-    DwindleTree, PanePlacement, allocate_dwindle, allocate_master, append_tiled_window,
-    build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
+    DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
+    allocate_spiral, append_tiled_window, build_dwindle_tree, insert_leaf_around_target,
+    prune_tree_to_ids, ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(workspace: &Workspace, bounds: FloatRect) -> Vec<PanePlacement> {
@@ -27,11 +28,7 @@ pub fn workspace_target_rects_excluding(
             }
         }
         LayoutKind::Master => {
-            let ids: Vec<_> = workspace
-                .tiled_ids()
-                .into_iter()
-                .filter(|id| Some(*id) != exclude_tiled)
-                .collect();
+            let ids = order_driven_ids(workspace, exclude_tiled);
             allocate_master(
                 &ids,
                 tile_bounds,
@@ -39,6 +36,19 @@ pub fn workspace_target_rects_excluding(
                 ratio_at(&workspace.split_ratios, 0),
                 &mut placements,
             );
+        }
+        LayoutKind::Grid => {
+            let ids = order_driven_ids(workspace, exclude_tiled);
+            allocate_grid(&ids, tile_bounds, TILE_GAP, &mut placements);
+        }
+        LayoutKind::Monocle => {
+            let ids = order_driven_ids(workspace, exclude_tiled);
+            allocate_monocle(&ids, tile_bounds, &mut placements);
+        }
+        LayoutKind::Spiral => {
+            if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
+                allocate_spiral(&tree, tile_bounds, TILE_GAP, &mut placements);
+            }
         }
     }
 
@@ -54,6 +64,16 @@ pub fn workspace_target_rects_excluding(
     }
 
     placements
+}
+
+/// Tiled ids for order-driven layouts (master/grid/monocle), in tree-leaf order with the
+/// optionally moving pane excluded.
+fn order_driven_ids(workspace: &Workspace, exclude_tiled: Option<PaneId>) -> Vec<PaneId> {
+    workspace
+        .tiled_ids()
+        .into_iter()
+        .filter(|id| Some(*id) != exclude_tiled)
+        .collect()
 }
 
 pub fn effective_tile_tree(
@@ -209,7 +229,12 @@ pub fn place_spawned_pane(
     previous_focused: Option<PaneId>,
     bounds: FloatRect,
 ) -> SpawnPlacement {
-    if workspace.layout_kind == LayoutKind::Master {
+    // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
+    // new pane simply appends to the end. Dwindle and spiral split the focused tile.
+    if matches!(
+        workspace.layout_kind,
+        LayoutKind::Master | LayoutKind::Grid | LayoutKind::Monocle
+    ) {
         append_tiled_window(workspace, id);
         return SpawnPlacement::Appended;
     }

@@ -19,6 +19,14 @@ identity, and scrollback search on top.
 The shell and starting directory come from the [config](configuration.md) (`shell`, `cwd`),
 falling back to the system `$SHELL` and the launch directory.
 
+### New panes inherit the focused directory
+
+A new pane opens in the **focused pane's current working directory** when it can be
+discovered, falling back to the configured `cwd`. On Linux the directory is read on demand from
+`/proc/<pid>/cwd` of the pane's shell — no shell configuration is required. On other platforms
+(or if the pid is unavailable) it falls back to the configured `cwd`. The same live cwd is what
+*Save project profile* records (see [Project profiles](project-profiles.md)).
+
 ## Mouse support
 
 With the configured WM modifier **not** held, mouse events go to the program in the pane —
@@ -40,6 +48,17 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
   escape sequence. This is enabled by default and can be turned off with
   `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard).
 
+## Copy mode
+
+Press `[` (or *Copy mode* in the palette) for a keyboard-driven way to review scrollback and
+yank text without the mouse. A cursor moves with `h/j/k/l`/arrows (scrolling into history or
+toward the live view at the top/bottom edges), `Ctrl-u`/`Ctrl-d` page by half a screen, and
+`g`/`G` jump to the top of history / the live bottom. Press `v` (or `Space`) to start a
+selection, then `y` (or `Enter`) to copy it to the system clipboard and exit, or `Esc`/`q` to
+leave without copying. The top bar shows a **COPY** indicator while active, and the selection
+is highlighted with the theme's selection color. Yank uses the system clipboard, reaching it
+over SSH via OSC52 when enabled.
+
 ## Window / program titles
 
 Programs set their title via the OSC 0/2 escape sequence (shells often set it to `$PWD`,
@@ -57,8 +76,11 @@ view back to the live bottom of the buffer.
 
 Press `/` (or *Search scrollback* in the palette) to search the focused pane's scrollback:
 
-- Type to search; the status line shows the match count (`1 / N matches`) or "No matches".
+- Type to search; the status line shows the match count (`1 / N matches`) and the active scope,
+  or "No matches".
 - `Enter` jumps to the **next** match; `Shift+Enter` jumps to the **previous** one.
+- `Tab` cycles the **scope**: the focused pane, the whole workspace, or all panes. Jumping to a
+  match in another pane (or workspace) switches focus there before scrolling to it.
 - Selecting a match scrolls the pane to that position; `Esc` closes the search and the pane
   returns to where it was.
 

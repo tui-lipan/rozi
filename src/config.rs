@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -5,8 +6,11 @@ use serde::Deserialize;
 use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
+use crate::input::Action;
+use crate::keymap::{Keymap, Trigger};
 use crate::state::{
-    HyprmuxClipboardConfig, HyprmuxConfig, HyprmuxThemeConfig, InputConfig, ThemePreset, WmModifier,
+    BarConfig, BarSegment, HyprmuxClipboardConfig, HyprmuxConfig, HyprmuxThemeConfig, InputConfig,
+    SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT, ThemePreset, WmModifier,
 };
 
 #[derive(Debug)]
@@ -35,7 +39,44 @@ struct FileConfig {
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
+    session: SessionFileConfig,
     clipboard: ClipboardFileConfig,
+    scratchpad: ScratchpadFileConfig,
+    bar: BarFileConfig,
+    keys: HashMap<String, KeyBindingSpec>,
+}
+
+/// A `[keys]` value: one binding string or a list of them.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum KeyBindingSpec {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl KeyBindingSpec {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::One(value) => vec![value],
+            Self::Many(values) => values,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ScratchpadFileConfig {
+    command: Option<String>,
+    cwd: Option<String>,
+    height: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct BarFileConfig {
+    left: Option<Vec<String>>,
+    right: Option<Vec<String>>,
+    clock_format: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -44,9 +85,49 @@ struct ProfileFileConfig {
     path: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct SessionFileConfig {
+    autosave: Option<bool>,
+    path: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_overlay_parses_held_and_prefix_bindings() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            spawn = ["alt-enter"]
+            close = "prefix q"
+            notanaction = "x"
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut warnings = Vec::new();
+        let keymap = build_keymap(parsed.keys, prefix, &mut warnings);
+
+        let alt_enter = KeyEvent {
+            code: KeyCode::Enter,
+            mods: KeyMods::ALT,
+        };
+        assert_eq!(keymap.held_action(alt_enter), Some(Action::Spawn));
+
+        let q = KeyEvent {
+            code: KeyCode::Char('q'),
+            mods: KeyMods::NONE,
+        };
+        assert_eq!(keymap.prefix_action(q), Some(Action::Close));
+
+        // Unknown action id yields exactly one warning and is skipped.
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("notanaction"));
+    }
 
     #[test]
     fn file_config_parses_profile_path() {
@@ -172,9 +253,31 @@ pub fn load_config() -> LoadedConfig {
     if let Some(path) = non_empty(parsed.profile.path) {
         config.profile.path = Some(expand_path(path));
     }
+    if let Some(autosave) = parsed.session.autosave {
+        config.session.autosave = autosave;
+    }
+    if let Some(path) = non_empty(parsed.session.path) {
+        config.session.path = Some(expand_path(path));
+    }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
+
+    config.scratchpad.command = non_empty(parsed.scratchpad.command);
+    config.scratchpad.cwd =
+        non_empty(parsed.scratchpad.cwd).map(|cwd| expand_path(cwd).to_string_lossy().to_string());
+    if let Some(height) = parsed.scratchpad.height {
+        let clamped = height.clamp(SCRATCHPAD_MIN_HEIGHT, SCRATCHPAD_MAX_HEIGHT);
+        if (clamped - height).abs() > f32::EPSILON {
+            warnings.push(format!(
+                "Scratchpad height {height} out of range; clamped to {clamped}"
+            ));
+        }
+        config.scratchpad.height = clamped;
+    }
+
+    apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
+    config.keymap = build_keymap(parsed.keys, config.input.prefix, &mut warnings);
 
     LoadedConfig {
         config,
@@ -228,6 +331,93 @@ fn apply_input_config(
             None => warnings.push(format!(
                 "Could not parse prefix `{prefix}`; try e.g. `ctrl-a`"
             )),
+        }
+    }
+}
+
+fn build_keymap(
+    keys: HashMap<String, KeyBindingSpec>,
+    prefix: KeyEvent,
+    warnings: &mut Vec<String>,
+) -> Keymap {
+    let mut keymap = Keymap::default();
+    for (action_name, spec) in keys {
+        let Some(action) = Action::from_id(&action_name) else {
+            warnings.push(format!("Unknown key action `{action_name}`; skipped"));
+            continue;
+        };
+        for binding in spec.into_vec() {
+            match parse_binding(&binding, prefix) {
+                Some((trigger, display)) => keymap.bind(action, trigger, display),
+                None => warnings.push(format!(
+                    "Could not parse binding `{binding}` for `{action_name}`; skipped"
+                )),
+            }
+        }
+    }
+    keymap
+}
+
+/// Parse a binding string into a [`Trigger`] and its display text. A binding is a prefix
+/// sequence when it starts with the literal `prefix` keyword or the configured prefix key
+/// (e.g. `prefix c`, `ctrl-a c`); otherwise it is a held-modifier chord (e.g. `alt-enter`).
+fn parse_binding(spec: &str, prefix: KeyEvent) -> Option<(Trigger, String)> {
+    let parts: Vec<&str> = spec.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    if parts.len() >= 2 {
+        let starts_with_prefix = parts[0].eq_ignore_ascii_case("prefix")
+            || parse_key(parts[0]).is_some_and(|key| key == prefix);
+        if starts_with_prefix {
+            let key = parse_key(parts[1])?;
+            let display = format!(
+                "{} {}",
+                prefix.to_formatted_string(false),
+                key.to_formatted_string(false)
+            );
+            return Some((Trigger::Prefix(key), display));
+        }
+    }
+
+    let key = parse_key(spec)?;
+    let display = key.to_formatted_string(false);
+    Some((Trigger::Held(key), display))
+}
+
+fn apply_bar_config(bar: &mut BarConfig, raw: BarFileConfig, warnings: &mut Vec<String>) {
+    fn parse_segments(
+        raw: Vec<String>,
+        region: &str,
+        warnings: &mut Vec<String>,
+    ) -> Vec<BarSegment> {
+        raw.into_iter()
+            .filter_map(|name| match BarSegment::parse(&name) {
+                Some(segment) => Some(segment),
+                None => {
+                    warnings.push(format!("Unknown {region} bar segment `{name}`; skipped"));
+                    None
+                }
+            })
+            .collect()
+    }
+
+    if let Some(left) = raw.left {
+        bar.left = parse_segments(left, "left", warnings);
+    }
+    if let Some(right) = raw.right {
+        bar.right = parse_segments(right, "right", warnings);
+    }
+    if let Some(format) = non_empty(raw.clock_format) {
+        // Reject invalid strftime so a clock segment can't panic at render time.
+        if chrono::format::StrftimeItems::new(&format).parse().is_ok() {
+            bar.clock_format = format;
+        } else {
+            warnings.push(format!(
+                "Invalid clock_format `{format}`; keeping `{}`",
+                bar.clock_format
+            ));
         }
     }
 }

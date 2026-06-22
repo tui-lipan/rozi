@@ -77,6 +77,34 @@ pub fn collect_tree_leaves(tree: &DwindleTree, out: &mut Vec<PaneId>) {
     }
 }
 
+/// Exchange the screen positions of two tiled leaves by swapping their pane ids in place.
+/// The split structure (axes and ratios) is untouched — only the leaf payloads move — so
+/// the two panes trade slots. Returns `true` only when both ids were present.
+pub fn swap_tree_leaves(tree: &mut DwindleTree, a: PaneId, b: PaneId) -> bool {
+    // Only mutate when both leaves are present, so a missing id leaves the tree untouched.
+    if a == b || !tree_contains(tree, a) || !tree_contains(tree, b) {
+        return false;
+    }
+    swap_tree_leaves_inner(tree, a, b);
+    true
+}
+
+fn swap_tree_leaves_inner(tree: &mut DwindleTree, a: PaneId, b: PaneId) {
+    match tree {
+        DwindleTree::Leaf(id) => {
+            if *id == a {
+                *id = b;
+            } else if *id == b {
+                *id = a;
+            }
+        }
+        DwindleTree::Split { first, second, .. } => {
+            swap_tree_leaves_inner(first, a, b);
+            swap_tree_leaves_inner(second, a, b);
+        }
+    }
+}
+
 pub fn tree_contains(tree: &DwindleTree, id: PaneId) -> bool {
     match tree {
         DwindleTree::Leaf(leaf) => *leaf == id,
@@ -409,6 +437,143 @@ fn allocate_master_stack(
     }
 }
 
+/// Monocle: every tiled pane fills the whole tile bounds. `ordered_panes` paints the
+/// focused pane last, so it lands on top of the stacked siblings.
+pub fn allocate_monocle(ids: &[PaneId], rect: FloatRect, placements: &mut Vec<PanePlacement>) {
+    for id in ids {
+        placements.push(PanePlacement { id: *id, rect });
+    }
+}
+
+/// Grid: a near-square `ceil(sqrt(N))`-column arrangement, row-major over `ids`. The last
+/// row holds the remainder and stretches its (possibly fewer) cells to fill the width.
+pub fn allocate_grid(
+    ids: &[PaneId],
+    rect: FloatRect,
+    gap: f32,
+    placements: &mut Vec<PanePlacement>,
+) {
+    let n = ids.len();
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        placements.push(PanePlacement { id: ids[0], rect });
+        return;
+    }
+
+    let cols = (n as f32).sqrt().ceil() as usize;
+    let rows = n.div_ceil(cols);
+    let row_rects = split_evenly(rect, SplitAxis::Vertical, rows, gap);
+
+    let mut placed = 0;
+    for (row_index, row_rect) in row_rects.iter().enumerate() {
+        let remaining = n - placed;
+        let cells_in_row = if row_index + 1 == rows {
+            remaining
+        } else {
+            cols.min(remaining)
+        };
+        if cells_in_row == 0 {
+            continue;
+        }
+        let cell_rects = split_evenly(*row_rect, SplitAxis::Horizontal, cells_in_row, gap);
+        for cell_rect in cell_rects {
+            if placed >= n {
+                break;
+            }
+            placements.push(PanePlacement {
+                id: ids[placed],
+                rect: cell_rect,
+            });
+            placed += 1;
+        }
+    }
+}
+
+/// Spiral: the dwindle tree, but each split's axis is re-derived from its sub-rect's live
+/// aspect (the longer side is split, weighted by [`SPLIT_WIDTH_MULTIPLIER`]) instead of the
+/// tree's stored axis. Because nesting always continues in the second child, successive
+/// panes wind into a Fibonacci spiral. Ratios still come from the tree.
+pub fn allocate_spiral(
+    tree: &DwindleTree,
+    rect: FloatRect,
+    gap: f32,
+    placements: &mut Vec<PanePlacement>,
+) {
+    match tree {
+        DwindleTree::Leaf(id) => placements.push(PanePlacement { id: *id, rect }),
+        DwindleTree::Split {
+            ratio,
+            first,
+            second,
+            ..
+        } => {
+            let axis = spiral_axis_for_rect(rect);
+            let (first_rect, second_rect) = split_float_rect(rect, axis, *ratio, gap);
+            allocate_spiral(first, first_rect, gap, placements);
+            allocate_spiral(second, second_rect, gap, placements);
+        }
+    }
+}
+
+fn spiral_axis_for_rect(rect: FloatRect) -> SplitAxis {
+    if rect.w >= rect.h * crate::state::SPLIT_WIDTH_MULTIPLIER {
+        SplitAxis::Horizontal
+    } else {
+        SplitAxis::Vertical
+    }
+}
+
+/// Split `rect` into `count` flush, gapped segments along `axis`, keeping boundaries on
+/// whole cells the way [`split_float_rect`] does. The last segment absorbs the rounding
+/// remainder so the segments exactly tile `rect`.
+fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: f32) -> Vec<FloatRect> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if count == 1 {
+        return vec![rect];
+    }
+
+    let extent = match axis {
+        SplitAxis::Horizontal => rect.w,
+        SplitAxis::Vertical => rect.h,
+    };
+    let usable_gap = if extent > gap { gap } else { 0.0 };
+    let total_gap = usable_gap * (count - 1) as f32;
+    let available = (extent - total_gap).max(0.0);
+    let base = (available / count as f32).floor();
+
+    let mut rects = Vec::with_capacity(count);
+    let mut start = match axis {
+        SplitAxis::Horizontal => rect.x,
+        SplitAxis::Vertical => rect.y,
+    };
+    let mut remaining = available;
+    for index in 0..count {
+        let last = index + 1 == count;
+        let size = if last { remaining } else { base.min(remaining) };
+        rects.push(match axis {
+            SplitAxis::Horizontal => FloatRect {
+                x: start,
+                y: rect.y,
+                w: size,
+                h: rect.h,
+            },
+            SplitAxis::Vertical => FloatRect {
+                x: rect.x,
+                y: start,
+                w: rect.w,
+                h: size,
+            },
+        });
+        start += size + usable_gap;
+        remaining = (remaining - size).max(0.0);
+    }
+    rects
+}
+
 pub fn split_float_rect(
     rect: FloatRect,
     axis: SplitAxis,
@@ -681,6 +846,130 @@ mod tests {
             placements[2].rect.y,
         );
         assert_close(placements[2].rect.y + placements[2].rect.h, 41.0);
+    }
+
+    #[test]
+    fn swap_tree_leaves_exchanges_payloads_only() {
+        let mut tree = build_dwindle_tree(&[1, 2, 3], SplitAxis::Horizontal, &[0.5, 0.5]).unwrap();
+        let before = tree.clone();
+        assert!(swap_tree_leaves(&mut tree, 1, 3));
+
+        let mut leaves = Vec::new();
+        collect_tree_leaves(&tree, &mut leaves);
+        assert_eq!(leaves, [3, 2, 1]);
+
+        // Structure (axes/ratios) is unchanged: same split shape, only leaf ids moved.
+        let axes_before = split_axes(&before);
+        let axes_after = split_axes(&tree);
+        assert_eq!(axes_before, axes_after);
+
+        // Swapping an absent id reports failure and leaves the tree untouched.
+        let snapshot = tree.clone();
+        assert!(!swap_tree_leaves(&mut tree, 1, 99));
+        assert_eq!(tree, snapshot);
+    }
+
+    fn split_axes(tree: &DwindleTree) -> Vec<SplitAxis> {
+        let mut out = Vec::new();
+        fn walk(tree: &DwindleTree, out: &mut Vec<SplitAxis>) {
+            if let DwindleTree::Split {
+                axis,
+                first,
+                second,
+                ..
+            } = tree
+            {
+                out.push(*axis);
+                walk(first, out);
+                walk(second, out);
+            }
+        }
+        walk(tree, &mut out);
+        out
+    }
+
+    #[test]
+    fn grid_allocates_two_by_two_for_four_panes() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let mut placements = Vec::new();
+        allocate_grid(&[1, 2, 3, 4], rect, 1.0, &mut placements);
+
+        assert_eq!(placements.len(), 4);
+        assert_eq!(
+            placements.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        // Top-left flush with the rect origin; bottom-right flush with the far edge.
+        assert_close(placements[0].rect.x, 0.0);
+        assert_close(placements[0].rect.y, 0.0);
+        assert_close(placements[3].rect.x + placements[3].rect.w, 100.0);
+        assert_close(placements[3].rect.y + placements[3].rect.h, 40.0);
+        // Two rows: first row top, last row bottom.
+        assert_close(
+            placements[0].rect.y + placements[0].rect.h + 1.0,
+            placements[2].rect.y,
+        );
+    }
+
+    #[test]
+    fn grid_last_row_spans_when_not_full() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let mut placements = Vec::new();
+        allocate_grid(&[1, 2, 3], rect, 1.0, &mut placements);
+
+        assert_eq!(placements.len(), 3);
+        // Third pane is alone on the last row and spans the full width.
+        assert_close(placements[2].rect.x, 0.0);
+        assert_close(placements[2].rect.w, 100.0);
+    }
+
+    #[test]
+    fn monocle_gives_every_pane_the_full_rect() {
+        let rect = FloatRect {
+            x: 2.0,
+            y: 3.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        let mut placements = Vec::new();
+        allocate_monocle(&[1, 2, 3], rect, &mut placements);
+
+        assert_eq!(placements.len(), 3);
+        for placement in placements {
+            assert_eq!(placement.rect, rect);
+        }
+    }
+
+    #[test]
+    fn spiral_winds_into_shrinking_regions() {
+        let tree = build_dwindle_tree(&[1, 2, 3, 4], SplitAxis::Horizontal, &[0.5, 0.5, 0.5])
+            .expect("tree");
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let mut placements = Vec::new();
+        allocate_spiral(&tree, rect, 1.0, &mut placements);
+
+        assert_eq!(
+            placements.iter().map(|p| p.id).collect::<Vec<_>>(),
+            [1, 2, 3, 4]
+        );
+        // Each successive pane occupies a strictly smaller area as the spiral winds in.
+        let areas: Vec<f32> = placements.iter().map(|p| p.rect.w * p.rect.h).collect();
+        assert!(areas[0] > areas[3], "{areas:?}");
     }
 
     #[test]

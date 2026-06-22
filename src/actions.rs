@@ -2,16 +2,16 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::focus_ops::{
-    focus_in_direction, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
-    switch_workspace,
+    cycle_focus_in_tiled_order, focus_in_direction, move_focused_to_workspace,
+    promote_focused_to_master, request_current_pane_focus, request_pane_focus, switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
 use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
 use crate::profiles::{profile_from_state, save_profile};
 use crate::resize_move_ops::{
-    adjust_focused_split_ratio, move_focused_in_direction, toggle_focused_split_axis,
-    toggle_fullscreen, toggle_layout, toggle_tiling,
+    adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
+    toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::search_ops::open_search;
 use crate::state::Mode;
@@ -49,6 +49,24 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         }
         Action::ToggleFullscreen => toggle_fullscreen(ctx),
         Action::RenamePane => open_rename_pane(ctx),
+        Action::Swap(direction) => {
+            swap_focused_in_direction(ctx, direction);
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Action::CycleFocus(forward) => {
+            if let Some(id) = cycle_focus_in_tiled_order(&mut ctx.state, forward) {
+                request_pane_focus(ctx, id);
+            }
+            Update::full()
+        }
+        Action::PromoteToMaster => {
+            if promote_focused_to_master(&mut ctx.state) {
+                ctx.state.animation = crate::anim::GeometryAnimation::AxisChange;
+            }
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
         Action::FlipSplit => {
             toggle_focused_split_axis(&mut ctx.state);
             Update::full()
@@ -67,6 +85,8 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             toggle_layout(ctx);
             Update::full()
         }
+        Action::EnterCopyMode => crate::copy_mode::enter(ctx),
+        Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => save_project_profile(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),

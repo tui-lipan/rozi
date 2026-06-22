@@ -24,8 +24,19 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         .set_palette(terminal_palette(&ctx.state.theme));
     pane.opening = true;
 
-    let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
     let previous_focused = workspace.focused_pane;
+    // A new pane opens in the focused pane's live working directory (falling back to the
+    // configured cwd when the focused pane is floating or its cwd is unknown).
+    if let Some(cwd) = previous_focused
+        .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
+        .and_then(|pane| pane.live_cwd())
+    {
+        pane.identity.cwd = Some(cwd);
+    }
+    let pty_config = pty_config_for_pane(&ctx.state.config, &pane);
+
+    let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
     workspace.panes.push(pane);
     place_spawned_pane(workspace, id, previous_focused, bounds);
     workspace.focused_pane = Some(id);
@@ -35,7 +46,7 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 
     Update::with_command(spawn_pty_command(
         id,
-        pty_config(&ctx.state.config),
+        pty_config,
         Some(anim::open_delay(ctx.state.config.animations)),
     ))
 }
@@ -79,6 +90,10 @@ pub(crate) fn close_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
+    // The scratchpad lives outside the workspace lists; route its events here too.
+    if state.scratch.as_ref().is_some_and(|pane| pane.id == id) {
+        return state.scratch.as_mut();
+    }
     state
         .workspaces
         .iter_mut()
@@ -136,6 +151,7 @@ pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> 
         ctx.state.search = None;
     }
     if total_visible_panes(&ctx.state) == 0 {
+        crate::profiles::persist_session_if_enabled(&ctx.state);
         ctx.quit();
         return Update::none();
     }
@@ -146,8 +162,9 @@ pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> 
 pub(crate) fn initial_command(
     spawns: Vec<(PaneId, TerminalPtyConfig, Option<Duration>)>,
     theme_tick: bool,
+    bar_tick: bool,
 ) -> Option<Command> {
-    if spawns.is_empty() && !theme_tick {
+    if spawns.is_empty() && !theme_tick && !bar_tick {
         return None;
     }
     Some(Command::spawn(move |link: CommandLink<Msg>| {
@@ -163,6 +180,9 @@ pub(crate) fn initial_command(
         if theme_tick {
             std::thread::sleep(Duration::from_millis(150));
             link.send(Msg::ThemeTick);
+        }
+        if bar_tick {
+            link.send(Msg::BarTick);
         }
     }))
 }

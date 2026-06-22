@@ -513,6 +513,110 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
     }
 }
 
+/// Exchange the focused pane with its directional neighbor, keeping focus on the moved pane.
+/// Unlike [`move_focused_in_direction`] (which re-inserts the pane at a neighbor's split),
+/// this trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
+/// there is no neighbor in that direction.
+pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let workspace_index = ctx.state.active_workspace;
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+
+    let target = {
+        let workspace = &ctx.state.workspaces[workspace_index];
+        let tiled_ids = workspace.active_tiled_ids_by_pane_order();
+        if !tiled_ids.contains(&focused) {
+            return;
+        }
+        let placements: Vec<_> = workspace_target_rects(workspace, bounds)
+            .into_iter()
+            .filter(|placement| tiled_ids.contains(&placement.id))
+            .collect();
+        focus_ops::directional_neighbor(&placements, focused, direction)
+    };
+
+    let Some(target_id) = target else {
+        return;
+    };
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_mut() else {
+        return;
+    };
+    if crate::tiling::swap_tree_leaves(tree, focused, target_id) {
+        workspace.focused_pane = Some(focused);
+        ctx.state.focused_pane = Some(focused);
+        ctx.state.animation = GeometryAnimation::AxisChange;
+    }
+}
+
+/// Adjust the split on a tiled boundary by a mouse drag. `pane_id` is the pane on the
+/// left/top side of the dragged gap; `horizontal_split` is true for a vertical gap (a
+/// left|right split). Used by the draggable gap strips in the view. Dwindle and master only.
+pub(crate) fn resize_split_by_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    pane_id: PaneId,
+    horizontal_split: bool,
+    dx: i16,
+    dy: i16,
+) -> Update {
+    if active_pane_is_fullscreen(&ctx.state, pane_id) {
+        return Update::none();
+    }
+    let pixels = f32::from(if horizontal_split { dx } else { dy });
+    if pixels == 0.0 {
+        return Update::none();
+    }
+    let axis = if horizontal_split {
+        state::SplitAxis::Horizontal
+    } else {
+        state::SplitAxis::Vertical
+    };
+
+    let workspace_index = ctx.state.active_workspace;
+    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if !workspace
+        .active_tiled_ids_by_pane_order()
+        .contains(&pane_id)
+    {
+        return Update::none();
+    }
+
+    if workspace.layout_kind == LayoutKind::Master {
+        if axis != state::SplitAxis::Horizontal {
+            return Update::none();
+        }
+        let available = master_available_width(tile_bounds);
+        resize_master_split_by_pixels(workspace, pane_id, pixels, available);
+        ctx.state.animation = GeometryAnimation::None;
+        return Update::full();
+    }
+
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_ref() else {
+        return Update::none();
+    };
+    let Some(available) = nearest_split_available(tree, tile_bounds, TILE_GAP, pane_id, axis)
+    else {
+        return Update::none();
+    };
+    if resize_tiled_split(workspace, pane_id, axis, available, pixels) {
+        ctx.state.animation = GeometryAnimation::None;
+    }
+    Update::full()
+}
+
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let Some(focused) = ctx.state.focused_pane else {
         return;

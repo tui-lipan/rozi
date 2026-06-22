@@ -16,8 +16,7 @@ use crate::pty_events::{
 };
 use crate::resize_move_ops::{begin_move, begin_resize, end_move, move_pane, resize_pane};
 use crate::search_ops::{recompute_search, search_next};
-use crate::state::ThemePreset;
-use crate::theme_ops::{select_theme, theme_tick};
+use crate::theme_ops::theme_tick;
 use crate::{FrameworkFocus, HyprmuxApp, Msg};
 
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -48,18 +47,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             Update::full()
         }
-        Msg::ThemePickerSelected(index) => {
-            ctx.state.theme_picker_selected = index;
-            Update::full()
-        }
-        Msg::ThemePickerActivated(index) => {
-            if let Some(preset) = ThemePreset::all().get(index).copied() {
-                select_theme(ctx, preset);
-                request_current_pane_focus(ctx);
-            }
-            Update::full()
-        }
         Msg::ThemeTick => theme_tick(ctx),
+        Msg::BarTick => {
+            // Repaint for the clock, then reschedule only while a clock segment is configured.
+            if ctx.state.config.bar.has_clock() {
+                Update::with_command(crate::schedule_bar_tick())
+            } else {
+                Update::none()
+            }
+        }
         Msg::ThemeError(message) => {
             ctx.toast().push(error_toast("Theme Reload", message));
             Update::full()
@@ -76,6 +72,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             recompute_search(ctx)
         }
         Msg::SearchNext(backward) => search_next(ctx, backward),
+        Msg::SearchCycleScope => crate::search_ops::cycle_search_scope(ctx),
         Msg::CloseRenamePane => {
             let update = close_rename_pane(ctx);
             request_current_pane_focus(ctx);
@@ -142,6 +139,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 ctx.state.resizing_pane = None;
             }
             Update::full()
+        }
+        Msg::ResizeSplit(id, horizontal_split, dx, dy) => {
+            crate::resize_move_ops::resize_split_by_drag(ctx, id, horizontal_split, dx, dy)
         }
         Msg::FinishOpen(id) => {
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {

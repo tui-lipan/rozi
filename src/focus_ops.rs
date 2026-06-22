@@ -107,6 +107,65 @@ pub(crate) fn cycle_focus_id(
     candidates.get(next_index).map(|candidate| candidate.id)
 }
 
+/// Move focus to the next/previous tiled pane in `tiled_ids()` order, wrapping around. If
+/// the current focus is floating (not part of the tiled order) it falls back to the first
+/// tiled pane. Returns the newly focused id, or `None` when there are no tiled panes.
+pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Option<PaneId> {
+    let ids = state.workspaces[state.active_workspace].tiled_ids();
+    if ids.is_empty() {
+        return None;
+    }
+    let next = match state
+        .focused_pane
+        .and_then(|id| ids.iter().position(|c| *c == id))
+    {
+        Some(index) => {
+            if forward {
+                (index + 1) % ids.len()
+            } else {
+                index.checked_sub(1).unwrap_or(ids.len() - 1)
+            }
+        }
+        None => 0,
+    };
+    let id = ids[next];
+    focus_pane(state, id);
+    Some(id)
+}
+
+/// Swap the focused pane into the master slot (the first tiled pane), exchanging positions
+/// with whatever pane is there. No-op for a floating/fullscreen focus, when the focused pane
+/// is not tiled, or when it is already the master. Returns `true` when a swap happened.
+pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
+    let Some(focused) = state.focused_pane else {
+        return false;
+    };
+    if active_pane_is_fullscreen(state, focused) {
+        return false;
+    }
+    let workspace = &mut state.workspaces[state.active_workspace];
+    let ids = workspace.tiled_ids();
+    let Some(&master) = ids.first() else {
+        return false;
+    };
+    if master == focused || !ids.contains(&focused) {
+        return false;
+    }
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_mut() else {
+        return false;
+    };
+    if crate::tiling::swap_tree_leaves(tree, focused, master) {
+        state.focused_pane = Some(focused);
+        state.workspaces[state.active_workspace].focused_pane = Some(focused);
+        true
+    } else {
+        false
+    }
+}
+
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     if index >= state.workspaces.len() {
         return;
@@ -298,4 +357,55 @@ pub(crate) fn total_visible_panes(state: &State) -> usize {
         .iter()
         .map(|workspace| workspace.panes.iter().filter(|pane| !pane.closing).count())
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{HyprmuxConfig, Pane};
+    use crate::tiling::{append_tiled_window, collect_tree_leaves};
+    use tui_lipan::prelude::Theme;
+
+    fn state_with_tiled(ids: &[PaneId]) -> State {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        // State::new seeds pane 1; clear and rebuild a deterministic tiled set.
+        state.workspaces[0].panes.clear();
+        state.workspaces[0].tile_tree = None;
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        for &id in ids {
+            state.workspaces[0].panes.push(Pane::new(id, 100, rect));
+            append_tiled_window(&mut state.workspaces[0], id);
+        }
+        state.next_pane_id = ids.iter().copied().max().unwrap_or(0) + 1;
+        state
+    }
+
+    #[test]
+    fn cycle_focus_wraps_in_both_directions() {
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.focused_pane = Some(2);
+        assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
+        assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
+        assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    #[test]
+    fn promote_swaps_focused_into_master_slot() {
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.focused_pane = Some(3);
+        assert!(promote_focused_to_master(&mut state));
+
+        let mut leaves = Vec::new();
+        collect_tree_leaves(state.workspaces[0].tile_tree.as_ref().unwrap(), &mut leaves);
+        assert_eq!(leaves.first(), Some(&3));
+        assert_eq!(state.focused_pane, Some(3));
+
+        // Already the master → no-op.
+        assert!(!promote_focused_to_master(&mut state));
+    }
 }

@@ -53,6 +53,27 @@ path = "~/code/my-app/hyprmux-profile.toml"  # optional project profile
 
 [clipboard]
 enable_osc52 = true          # allow programs to set the system clipboard via OSC52 (default: true)
+
+[session]
+autosave = true              # save the live layout on quit, restore it next launch (default: false)
+# path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
+
+[scratchpad]
+command = "btop"             # default: the normal shell
+cwd = "~"                    # default: the configured cwd
+height = 0.4                 # fraction of the viewport height, 0.1–0.9 (default: 0.4)
+
+[bar]
+left = ["title", "workspaces"]   # default
+right = ["session", "clock"]      # default: empty
+clock_format = "%H:%M"            # strftime, only used by a clock segment
+
+[keys]
+# Rebind any action to one or more keys. Held chords (alt-enter) or prefix
+# sequences (prefix c / ctrl-a c). Configuring an action replaces its defaults.
+spawn = ["alt-enter", "prefix c"]
+close = "prefix q"
+copy-mode = "prefix y"
 ```
 
 ## Top-level keys
@@ -127,3 +148,59 @@ See [Project profiles & pane identity](project-profiles.md) for the profile form
 | `enable_osc52` | `true` | Allow programs running in a pane to set the system clipboard via the OSC52 escape sequence. |
 
 See [Terminal features](terminal.md) for clipboard and selection behavior.
+
+## `[session]`
+
+Optional session auto-save: persist the live layout when `hyprmux` exits and restore it on the
+next launch, without any daemon. Like profiles, this restores *layout and launch intent*, not
+live PTY state.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `autosave` | `false` | Write the layout on quit and restore it on startup. |
+| `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
+
+A profile loaded via `[profile].path` takes precedence over the autosaved session at startup.
+
+## `[scratchpad]`
+
+The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `command` | the normal shell | Program to run in the scratchpad (e.g. `btop`). |
+| `cwd` | the configured `cwd` | Working directory for the scratchpad shell. |
+| `height` | `0.4` | Fraction of the viewport height; clamped to `0.1`–`0.9`. |
+
+## `[bar]`
+
+Customize the top bar. The default reproduces the original bar (the `hyprmux` badge then the
+workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips always render regardless of config.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `left` | `["title", "workspaces"]` | Ordered left-region segments. |
+| `right` | `[]` | Ordered right-region segments. |
+| `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
+
+Segment kinds: `title` (the badge), `workspaces` (the tabs), `session` (the active profile/
+session name), `clock`, `layout` (active workspace layout name), and `text:<literal>` with
+`{host}`, `{workspace}`, `{layout}`, `{session}` placeholders. Unknown segment names emit a
+warning and are skipped. A `clock` segment enables a once-a-second repaint; without one the bar
+never wakes an idle app.
+
+## `[keys]`
+
+Rebind window-management actions. Each entry maps an **action id** to one key string or a list
+of them. A binding is either a **held chord** (`alt-enter`) or a **prefix sequence**
+(`prefix c`, or the explicit `ctrl-a c`). Configuring an action **replaces** its default keys
+(so you fully control that command); the rest keep their defaults. Unknown action ids and
+unparseable keys emit a startup warning and are skipped. Workspace digits (`1`–`9`) are not
+individually rebindable, and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`) shows
+your active bindings.
+
+Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/right`,
+`swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
+`toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
+`resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
+`choose-theme`, `command-palette`, `help`, `toggle-titles`.

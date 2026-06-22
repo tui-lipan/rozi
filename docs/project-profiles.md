@@ -12,9 +12,11 @@ shell:
 - **Custom title** — a name you set with the `n` keybinding (or *Rename pane* in the command
   palette). It overrides the program's terminal title. Submitting an empty name clears it.
 - **Profile name** — the name a pane was restored with from a profile.
-- **cwd / command** — the working directory and launch command, when known (e.g. for panes
-  restored from a profile). These appear as the pane's subtitle and are what a `Save project
-  profile` writes back.
+- **cwd / command** — the working directory and launch command. On Linux the **live** working
+  directory of the pane's shell is discovered on demand (from `/proc/<pid>/cwd`), so a save
+  records where the shell actually is, not just where it was launched. The command is known for
+  panes launched from a profile. These appear as the pane's subtitle and are what *Save project
+  profile* writes back.
 
 The titlebar shows the custom title if set, otherwise the program's terminal title, otherwise
 the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
@@ -33,7 +35,9 @@ On startup, `hyprmux` loads that file when it exists and shows a startup message
 
 ## Profile shape
 
-Each profile has a version, the active workspace, and workspace entries. Pane entries can use these fields:
+Each profile has a version, the active workspace, and workspace entries. A workspace's `layout`
+is one of `dwindle`, `master`, `grid`, `spiral`, or `monocle`. Pane entries can use these
+fields:
 
 - `name`: pane title shown by `hyprmux` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
@@ -83,8 +87,19 @@ Profile commands run as `shell -lc <command>`. If the command exits, the shell e
 command = "cargo run; exec ${SHELL:-/bin/sh}"
 ```
 
-## Saving limitations in v1
+## Session auto-save
 
-Saving a hand-built session preserves pane names, workspace layout, split tree/ratios, floating state, fullscreen state, and floating geometry.
+Beyond explicit project profiles, `hyprmux` can **auto-save the live layout on quit** and
+restore it on the next launch — a daemon-free way to resume where you left off. Enable it with
+`[session] autosave = true` (see [Configuration](configuration.md#session)). It reuses the
+profile format and the same honesty caveats: it restores layout and launch intent, not live PTY
+state. An explicit `[profile].path` takes precedence over the autosaved session.
 
-It does not inspect running shells to discover their current working directory or original command. `cwd` and `command` are saved only for panes whose identity already knows those values, such as panes restored from a profile. Rename panes explicitly when you want stable profile titles.
+## Saving limitations
+
+Saving preserves pane names, workspace layout, split tree/ratios, floating state, fullscreen
+state, floating geometry, and (on Linux) each pane's live working directory.
+
+It still cannot recover a running program's original argument list: `command` is saved only for
+panes whose identity already knows it (such as panes launched from a profile). Rename panes
+explicitly when you want stable profile titles.

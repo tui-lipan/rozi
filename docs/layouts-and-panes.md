@@ -6,7 +6,8 @@ target rectangle. Each workspace carries its own layout.
 
 ## Tiled layouts
 
-Each workspace has a **layout kind**, toggled with `m` (*Toggle layout* in the palette):
+Each workspace has a **layout kind**. `m` (*Toggle layout* in the palette) **cycles** through
+them: dwindle → master → grid → spiral → monocle → dwindle.
 
 ### Dwindle (default)
 
@@ -25,7 +26,28 @@ choice.
 ### Master
 
 The first tiled pane becomes the **master** on the left; the remaining tiled panes stack on
-the right. Toggle back to dwindle with `m`.
+the right. The master/stack divider ratio is adjustable (resize mode, `]`/`-`, or dragging the
+gap with the mouse).
+
+### Grid
+
+Panes fill a near-square grid (`ceil(√N)` columns), row-major over the tiled panes. The last
+row stretches its (possibly fewer) cells to fill the width. Order-driven, like master — there
+are no split ratios to adjust.
+
+### Spiral
+
+Like dwindle, but each split's axis is re-derived from its region's live aspect ratio, so
+successive panes wind into a Fibonacci spiral. Split ratios are adjustable.
+
+### Monocle
+
+Every tiled pane fills the whole area; the focused pane is on top. Switch which pane is shown
+by cycling focus (`Tab`/`Shift+Tab`) or focusing directionally. PTYs for the hidden panes keep
+running. (For a quick one-pane maximize that restores afterward, use fullscreen `f` instead.)
+
+> **Resize and grid/monocle:** grid and monocle have no split ratios, so resize mode and the
+> grow/shrink keys have no effect there.
 
 ## Floating panes
 
@@ -48,8 +70,17 @@ tiled or floating geometry.
   keys — not merely the next pane in a list.
 - **Move** the focused pane with `Shift+h/j/k/l` (or `Shift`+arrows). In dwindle this
   rearranges the tile tree; floating panes move in the chosen direction.
+- **Swap** the focused pane with a neighbor (`modifier`+`Ctrl`+`h/j/k/l`) exchanges the two
+  panes' positions *in place* — unlike Move, it does not restructure the split tree.
+- **Cycle focus** through the tiled panes in order with `Tab` (next) / `Shift+Tab` (previous),
+  wrapping around. Handy in monocle to bring each pane to the top.
+- **Promote to master** (`.`, or the palette) swaps the focused pane into the first/master
+  slot.
 - Clicking a pane or its titlebar focuses it. The focused pane gets an accent border and a
   highlighted titlebar (these color changes animate when `focus_chrome` is enabled).
+
+A **new pane opens in the focused pane's current working directory** (when it can be
+discovered; see [Terminal features](terminal.md)), falling back to the configured `cwd`.
 
 ## Titlebars
 

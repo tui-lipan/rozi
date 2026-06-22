@@ -20,7 +20,9 @@ pub(crate) fn handle_key_routing(
                 return (true, Update::full());
             }
 
-            if let Some(action) = input::action_for_held(key, ctx.state.config.input) {
+            if let Some(action) =
+                input::action_for_held(key, ctx.state.config.input, &ctx.state.config.keymap)
+            {
                 return (true, execute_action(ctx, action));
             }
 
@@ -44,7 +46,7 @@ pub(crate) fn handle_key_routing(
                 return (true, Update::full());
             }
 
-            if let Some(action) = input::action_for_prefix(key) {
+            if let Some(action) = input::action_for_prefix(key, &ctx.state.config.keymap) {
                 return (true, execute_action(ctx, action));
             }
 
@@ -55,6 +57,7 @@ pub(crate) fn handle_key_routing(
             (true, update)
         }
         Mode::Resize => handle_resize_mode_key(ctx, key),
+        Mode::Copy => crate::copy_mode::handle_copy_key(ctx, key),
     }
 }
 

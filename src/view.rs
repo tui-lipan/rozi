@@ -71,6 +71,17 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         );
     }
 
+    // Draggable strips sit in the gaps between tiled panes so the split ratio can be adjusted
+    // with the mouse (in addition to resize mode and modifier+right-drag).
+    for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
+
+    // The scratchpad floats above every workspace pane when visible.
+    if let Some((rect, element)) = crate::scratchpad::scratch_placement(app, ctx) {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
+
     let mut root = VStack::new()
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
         .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
@@ -114,7 +125,8 @@ fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             body = body.child(help_section(binding.category));
             last_category = Some(binding.category);
         }
-        body = body.child(help_row(binding.keys, binding.label));
+        let keys = active_keys(ctx, binding);
+        body = body.child(help_row(&keys, binding.label));
     }
 
     body = body
@@ -155,6 +167,8 @@ fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_key(ctx.link().key_handler(|key| {
             if key.is(KeyCode::Esc) {
                 Some(Msg::CloseSearch)
+            } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+                Some(Msg::SearchCycleScope)
             } else if key.code == KeyCode::Enter
                 && !key.mods.ctrl
                 && !key.mods.alt
@@ -167,7 +181,7 @@ fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         }));
 
     Modal::new()
-        .title(format!("Search pane {}", search.target))
+        .title(format!("Search · {} · Tab: scope", search.scope.label()))
         .width(Length::Px(64))
         .on_close(ctx.link().callback(|_| Msg::CloseSearch))
         .child(
@@ -230,8 +244,9 @@ fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .filter(|binding| binding.palette)
     {
         let mut entry = SearchEntry::item(binding.label, binding.action);
-        if !binding.keys.is_empty() {
-            entry = entry.description(ItemDescription::new().right(binding.keys));
+        let keys = active_keys(ctx, &binding);
+        if !keys.is_empty() {
+            entry = entry.description(ItemDescription::new().right(keys));
         }
         match groups
             .iter_mut()
@@ -275,6 +290,7 @@ fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .list_item_hover_style(Style::new().bg(theme.surface.element))
         .list_item_horizontal_padding((0, 1, 0, 1))
         .list_header_horizontal_padding((0, 1, 0, 1))
+        .header_style(theme.accent.bold())
         .description_style(theme.muted)
         .match_style(Style::new().fg(theme.border_active).bold())
         .preserve_groups(true)
@@ -298,53 +314,74 @@ fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let current = ctx.state.config.theme.preset;
     let applied_builtin = ctx.state.config.theme.path.is_none();
-    let items = crate::state::ThemePreset::all().into_iter().map(|preset| {
-        let item = ListItem::new(preset.label());
-        if applied_builtin && preset == current {
-            item.description("current").active(true)
-        } else {
-            item
-        }
-    });
-    let body = VStack::new()
-        .gap(1)
-        .child(Text::new("Choose a built-in theme for this session.").style(theme.muted))
-        .child(
-            List::new()
-                .items(items)
-                .selected(ctx.state.theme_picker_selected)
-                .height(Length::Auto)
-                .border(false)
-                .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-                .selection_full_width(true)
-                .selection_symbol(Some("  "))
-                .unselected_symbol(Some("  "))
-                .active_symbol(Some("✓ "))
-                .active_style(Style::new().fg(theme.status.success).bold())
-                .selection_style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.border_active)
-                        .bold(),
-                )
-                .on_select(
-                    ctx.link()
-                        .callback(|event: ListEvent| Msg::ThemePickerSelected(event.index)),
-                )
-                .on_activate(
-                    ctx.link()
-                        .callback(|event: ListEvent| Msg::ThemePickerActivated(event.index)),
-                )
-                .key(theme_picker_key()),
+
+    // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
+    let entries: Vec<SearchEntry<Action>> = crate::state::ThemePreset::all()
+        .into_iter()
+        .map(|preset| {
+            let mut entry = SearchEntry::item(preset.label(), Action::SelectTheme(preset));
+            if applied_builtin && preset == current {
+                entry = entry.description(ItemDescription::new().right("current"));
+            }
+            entry
+        })
+        .collect();
+
+    let selection_style = Style::new()
+        .fg(theme.surface.backdrop)
+        .bg(theme.border_active)
+        .bold();
+    let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
+
+    let palette = SearchPalette::<Action>::new()
+        .entries(entries)
+        .placeholder("Search themes…")
+        .height(Length::Auto)
+        .input_border(false)
+        .input_prefix("  ")
+        .input_style(input_style)
+        .input_focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .input_placeholder_style(theme.muted)
+        .list_border(false)
+        .list_scrollbar(true)
+        .list_selection_full_width(true)
+        .list_selection_symbol("")
+        .list_unselected_symbol("")
+        .list_selection_style(selection_style)
+        .list_item_hover_style(Style::new().bg(theme.surface.element))
+        .list_item_horizontal_padding((0, 1, 0, 1))
+        .list_header_horizontal_padding((0, 1, 0, 1))
+        .description_style(theme.muted)
+        .match_style(Style::new().fg(theme.border_active).bold())
+        .preserve_groups(true)
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
         );
 
     Modal::new()
         .title("Choose theme")
-        .width(Length::Px(40))
+        .width(Length::Px(60))
+        .height(Length::Auto)
         .border_style(BorderStyle::Rounded)
+        .padding(0)
+        .frame_style(Style::new().bg(theme.surface.element))
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
-        .child(body)
-        .into()
+        .child(palette)
+        .key(theme_picker_key())
+}
+
+/// Display keys for a binding: the user's configured override if any, else the default text.
+fn active_keys(ctx: &Context<HyprmuxApp>, binding: &crate::input::CommandBinding) -> String {
+    ctx.state
+        .config
+        .keymap
+        .keys_for(binding.action)
+        .unwrap_or_else(|| binding.keys.to_string())
 }
 
 fn help_section(title: &str) -> Element {
@@ -373,7 +410,7 @@ fn help_row(keys: &str, desc: &str) -> Element {
         .into()
 }
 
-fn pane_element(
+pub(crate) fn pane_element(
     app: &HyprmuxApp,
     ctx: &Context<HyprmuxApp>,
     pane: &Pane,
@@ -491,7 +528,7 @@ fn pane_element(
         window_stack = window_stack.child(title_bar);
     }
 
-    let terminal: Element = Terminal::new()
+    let mut terminal_widget = Terminal::new()
         .snapshot(pane.terminal.snapshot.clone())
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
         .selection_style(theme.text_selection)
@@ -511,8 +548,11 @@ fn pane_element(
             ctx.link()
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
         )
-        .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)))
-        .into();
+        .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+    if let Some(selection) = copy_mode_selection(ctx, id) {
+        terminal_widget = terminal_widget.selection(Some(selection));
+    }
+    let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane_terminal_key(id));
 
     let body: Element = Frame::new()
@@ -590,6 +630,85 @@ fn pane_element(
     element.key(pane_window_key(id))
 }
 
+/// Draggable strips in the gaps between adjacent tiled panes. Each strip resizes the split on
+/// that boundary. Only dwindle (both axes) and master (the master/stack divider) have
+/// adjustable ratios, so other layouts get no strips.
+fn tiled_resize_strips(
+    ctx: &Context<HyprmuxApp>,
+    placements: &[crate::tiling::PanePlacement],
+    workspace: &crate::state::Workspace,
+) -> Vec<(FloatRect, Element)> {
+    use crate::state::{LayoutKind, TILE_GAP};
+    let master = matches!(workspace.layout_kind, LayoutKind::Master);
+    if !master && !matches!(workspace.layout_kind, LayoutKind::Dwindle) {
+        return Vec::new();
+    }
+
+    let tiled_ids = workspace.tiled_ids();
+    let tiled: Vec<(PaneId, FloatRect)> = placements
+        .iter()
+        .filter(|placement| tiled_ids.contains(&placement.id))
+        .map(|placement| (placement.id, placement.rect))
+        .collect();
+
+    let eps = 1.5;
+    let mut strips = Vec::new();
+    for (a_id, a) in &tiled {
+        for (_b_id, b) in &tiled {
+            // Vertical gap → horizontal (left|right) split. `a` is the left pane.
+            let a_right = a.x + a.w;
+            if (b.x - (a_right + TILE_GAP)).abs() < eps {
+                let y0 = a.y.max(b.y);
+                let y1 = (a.y + a.h).min(b.y + b.h);
+                if y1 - y0 > eps {
+                    strips.push((
+                        FloatRect {
+                            x: a_right,
+                            y: y0,
+                            w: TILE_GAP,
+                            h: y1 - y0,
+                        },
+                        resize_strip_element(ctx, *a_id, true),
+                    ));
+                }
+            }
+            // Horizontal gap → vertical (top|bottom) split. Not adjustable in master.
+            if !master {
+                let a_bottom = a.y + a.h;
+                if (b.y - (a_bottom + TILE_GAP)).abs() < eps {
+                    let x0 = a.x.max(b.x);
+                    let x1 = (a.x + a.w).min(b.x + b.w);
+                    if x1 - x0 > eps {
+                        strips.push((
+                            FloatRect {
+                                x: x0,
+                                y: a_bottom,
+                                w: x1 - x0,
+                                h: TILE_GAP,
+                            },
+                            resize_strip_element(ctx, *a_id, false),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    strips
+}
+
+fn resize_strip_element(
+    ctx: &Context<HyprmuxApp>,
+    pane_id: PaneId,
+    horizontal_split: bool,
+) -> Element {
+    MouseRegion::new()
+        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::ResizeSplit(pane_id, horizontal_split, event.delta_x, event.delta_y)
+        }))
+        .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
+        .into()
+}
+
 /// Number of workspace tabs to show: at least 5, growing to include the active
 /// workspace and the highest one that currently holds panes.
 fn workspace_tab_count(state: &crate::state::State) -> usize {
@@ -607,7 +726,7 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
         .min(state.workspaces.len())
 }
 
-fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
+fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
@@ -624,7 +743,7 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
         })
         .collect();
 
-    let workspace_tabs = Tabs::new()
+    Tabs::new()
         .tabs(tabs)
         .active(state.active_workspace.min(shown.saturating_sub(1)))
         .focusable(false)
@@ -646,13 +765,60 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
         .on_change(
             ctx.link()
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
-        );
+        )
+        .into()
+}
 
-    let mut row = HStack::new()
-        .gap(1)
+fn session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
+    ctx.state
+        .config
+        .profile
+        .path
+        .as_ref()
+        .and_then(|path| path.file_stem())
+        .map(|stem| stem.to_string_lossy().to_string())
+}
+
+fn bar_hostname() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|host| !host.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|host| host.trim().to_string())
+                .filter(|host| !host.is_empty())
+        })
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
+fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
+    let state = &ctx.state;
+    literal
+        .replace("{host}", &bar_hostname())
+        .replace("{workspace}", &(state.active_workspace + 1).to_string())
+        .replace(
+            "{layout}",
+            state.workspaces[state.active_workspace].layout_kind.label(),
+        )
+        .replace("{session}", &session_name(ctx).unwrap_or_default())
+}
+
+fn bar_text(text: impl Into<String>, theme: &Theme) -> Element {
+    Text::new(text.into())
+        .style(Style::new().fg(theme.surface.menu))
         .height(Length::Px(1))
-        .style(Style::new().bg(theme.surface.backdrop))
-        .child(
+        .into()
+}
+
+fn bar_segment_element(
+    ctx: &Context<HyprmuxApp>,
+    segment: &crate::state::BarSegment,
+) -> Option<Element> {
+    use crate::state::BarSegment;
+    let theme = &ctx.state.theme;
+    match segment {
+        BarSegment::Title => Some(
             Text::new(" hyprmux ")
                 .style(
                     Style::new()
@@ -660,9 +826,63 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
                         .bg(theme.border_active)
                         .bold(),
                 )
-                .height(Length::Px(1)),
-        )
-        .child(workspace_tabs);
+                .height(Length::Px(1))
+                .into(),
+        ),
+        BarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
+        BarSegment::Session => session_name(ctx).map(|name| bar_text(format!(" {name} "), theme)),
+        BarSegment::Clock => {
+            let now = chrono::Local::now();
+            Some(bar_text(
+                format!(" {} ", now.format(&ctx.state.config.bar.clock_format)),
+                theme,
+            ))
+        }
+        BarSegment::Layout => Some(bar_text(
+            format!(
+                " {} ",
+                ctx.state.workspaces[ctx.state.active_workspace]
+                    .layout_kind
+                    .label()
+            ),
+            theme,
+        )),
+        BarSegment::Text(literal) => Some(bar_text(substitute_placeholders(ctx, literal), theme)),
+    }
+}
+
+fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
+    let state = &ctx.state;
+    let theme = &ctx.state.theme;
+    let bar = &state.config.bar;
+
+    let mut row = HStack::new()
+        .gap(1)
+        .height(Length::Px(1))
+        .style(Style::new().bg(theme.surface.backdrop));
+
+    for segment in &bar.left {
+        if let Some(element) = bar_segment_element(ctx, segment) {
+            row = row.child(element);
+        }
+    }
+
+    // The workspace tabs already flex to fill slack; without them, insert a spacer so the
+    // right region lands flush against the trailing edge.
+    let has_workspaces = bar
+        .left
+        .iter()
+        .chain(bar.right.iter())
+        .any(|segment| matches!(segment, crate::state::BarSegment::Workspaces));
+    if !has_workspaces {
+        row = row.child(Text::new("").width(Length::Flex(1)).height(Length::Px(1)));
+    }
+
+    for segment in &bar.right {
+        if let Some(element) = bar_segment_element(ctx, segment) {
+            row = row.child(element);
+        }
+    }
 
     if state.mode == crate::state::Mode::Prefix {
         row = row.child(
@@ -682,6 +902,17 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
                     Style::new()
                         .fg(theme.surface.backdrop)
                         .bg(theme.status.success)
+                        .bold(),
+                )
+                .height(Length::Px(1)),
+        );
+    } else if state.mode == crate::state::Mode::Copy {
+        row = row.child(
+            Text::new(" COPY hjkl v y Esc ")
+                .style(
+                    Style::new()
+                        .fg(theme.surface.backdrop)
+                        .bg(theme.status.info)
                         .bold(),
                 )
                 .height(Length::Px(1)),
@@ -713,6 +944,29 @@ fn empty_workspace_panel(input: &crate::state::InputConfig, theme: &Theme) -> El
                 ))),
         )
         .into()
+}
+
+/// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
+/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching `extract_text`).
+fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
+    let copy = ctx.state.copy_mode.filter(|copy| copy.target == id)?;
+    let cursor = (copy.cursor_row, copy.cursor_col);
+    let (a, b) = copy
+        .anchor
+        .map(|anchor| (anchor, cursor))
+        .unwrap_or((cursor, cursor));
+    let (start, end) = if a <= b { (a, b) } else { (b, a) };
+    Some(TerminalSelection {
+        anchor: tui_lipan::utils::GridPos {
+            row: start.0,
+            col: start.1,
+        },
+        // Exclusive end column so the cursor/anchor cell is included in the highlight.
+        cursor: tui_lipan::utils::GridPos {
+            row: end.0,
+            col: end.1 + 1,
+        },
+    })
 }
 
 fn effective_focused_pane(

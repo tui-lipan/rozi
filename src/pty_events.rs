@@ -72,6 +72,10 @@ pub(crate) fn handle_pty_event(
             Update::full()
         }
         PaneEventOutcome::Exited(code) => {
+            if crate::scratchpad::is_scratch(id) {
+                // The scratch shell exited; drop it so the next toggle re-spawns a fresh one.
+                return crate::scratchpad::handle_scratch_exit(ctx);
+            }
             if was_closing {
                 return Update::full();
             }

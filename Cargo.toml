@@ -10,3 +10,4 @@ description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
 tui-lipan = { path = "../tui-lipan", features = ["terminal", "theme-reload"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

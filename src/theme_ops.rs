@@ -32,7 +32,6 @@ pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_theme_picker = true;
-    ctx.state.theme_picker_selected = ctx.state.config.theme.preset.index();
     ctx.state.show_help = false;
     ctx.state.show_palette = false;
     ctx.state.search = None;
@@ -60,6 +59,9 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) {
         for pane in &mut workspace.panes {
             pane.terminal.set_palette(palette);
         }
+    }
+    if let Some(scratch) = state.scratch.as_mut() {
+        scratch.terminal.set_palette(palette);
     }
 }
 

@@ -38,6 +38,11 @@ Both paths map to the same actions, so every command below can be triggered eith
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
+| Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `Ctrl+←/↓/↑/→` |
+| Promote pane to master | `.` (also palette) |
+
+**Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the
+tree); *Swap* exchanges the two panes' positions in place without restructuring.
 
 ### Focus
 
@@ -46,6 +51,7 @@ Spatial focus moves to the nearest pane in a direction (not just the next in a l
 | Command | Keys |
 | --- | --- |
 | Focus left / down / up / right | `h/j/k/l` or `←/↓/↑/→` |
+| Cycle focus to next / previous tiled pane | `Tab` / `Shift+Tab` |
 
 ### Layout
 
@@ -53,9 +59,12 @@ Spatial focus moves to the nearest pane in a direction (not just the next in a l
 | --- | --- |
 | Flip focused split axis | `Space` |
 | Grow split | `]` or `+` |
-| Shrink split | `[` or `-` |
+| Shrink split | `-` |
 | Enter resize mode | `r` |
-| Toggle dwindle ⇄ master layout | `m` |
+| Cycle layout (dwindle → master → grid → spiral → monocle) | `m` |
+
+See [Layouts and panes](layouts-and-panes.md) for what each layout does. "Zoom" is provided by
+*Toggle fullscreen* (`f`), which temporarily maximizes the focused pane.
 
 ### Workspaces
 
@@ -73,15 +82,21 @@ with a live pane count.
 | --- | --- |
 | Command palette | `p` |
 | Show keybindings (help) | `?` |
+| Copy mode | `[` |
 | Search scrollback | `/` |
+| Toggle scratchpad | `` ` `` (backtick) |
 | Quit | `Ctrl-q` |
 
+> All of the commands above (except `Ctrl-q`) can be rebound from `hyprmux.toml`. See the
+> `[keys]` section in [Configuration](configuration.md). The help overlay (`?`) always shows
+> your *active* bindings.
+
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard — save profile, choose theme, toggle titlebars, plus discoverable extras (search,
-resize mode, toggle layout, help). Frequent single-key actions (spawn/close/float/fullscreen/
-rename/flip/grow/shrink) live in the help overlay only, since the key is faster than a search
-box. Theme selection and "Save project profile" / "Toggle pane titlebars" are palette-only —
-they have no default key.
+keyboard — save profile, choose theme, toggle titlebars, promote to master, plus discoverable
+extras (search, copy mode, scratchpad, resize mode, toggle layout, help). Frequent single-key
+actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help overlay only,
+since the key is faster than a search box. Theme selection and "Save project profile" /
+"Toggle pane titlebars" are palette-only — they have no default key.
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
 including the workspace digits and mouse gestures.
@@ -92,6 +107,32 @@ Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use 
 adjust the focused pane's split ratios, and `Esc` to leave. The top bar shows a green
 **RESIZE hjkl Esc** indicator while active.
 
+## Copy mode
+
+Press `[` (or run *Copy mode* from the palette) to enter **copy mode**: a keyboard-driven way
+to review scrollback and yank text without a mouse. The top bar shows a **COPY hjkl v y Esc**
+indicator while active.
+
+| Key | Action |
+| --- | --- |
+| `h/j/k/l` or arrows | Move the cursor (scrolls into history / toward live at the edges) |
+| `Ctrl-u` / `Ctrl-d` | Half-page up / down |
+| `g` / `G` | Jump to the top of history / the live bottom |
+| `v` or `Space` | Start a selection at the cursor |
+| `y` or `Enter` | Copy the selection to the system clipboard and exit |
+| `Esc` or `q` | Exit without copying |
+
+The copy uses the system clipboard, working over SSH via OSC52 when `[clipboard].enable_osc52`
+is on.
+
+## Scratchpad
+
+Press `` ` `` (backtick) to toggle a **dropdown scratchpad**: a single always-running terminal
+that slides in over the current workspace and out again with one key. Its shell and scrollback
+stay alive while hidden, and it follows you across workspace switches. It is not part of any
+workspace and is not saved in profiles. Configure its command / cwd / height under
+`[scratchpad]` in [Configuration](configuration.md).
+
 ## Mouse
 
 Mouse gestures require the configured WM modifier held down (so they don't conflict with the
@@ -101,6 +142,7 @@ shell's own mouse usage):
 | --- | --- |
 | `modifier` + left-drag | Move the pane (tiled panes lift into a float-like drag; floats move freely) |
 | `modifier` + right-drag | Resize the pane from the nearest corner |
+| Drag the gap between two tiled panes | Adjust that split's ratio (dwindle and master) |
 | Click a pane / its titlebar | Focus that pane |
 | Scroll wheel over a pane | Scroll the terminal's scrollback |
 
@@ -113,5 +155,7 @@ While an overlay is open (command palette, help, theme picker, search, rename):
 - `Esc` closes the overlay.
 - `Enter` activates the selection (run command, pick theme, jump to next match, submit rename).
 - In **search**, `Enter` jumps to the next match and `Shift+Enter` jumps to the previous one.
+  `Tab` cycles the search **scope** (focused pane → workspace → all panes); jumping to a match
+  in another pane (or workspace) switches focus there.
 - In **rename**, submitting an empty name clears the custom title (falling back to the
   program's terminal title, then the pane's default label).

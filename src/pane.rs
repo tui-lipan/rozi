@@ -179,9 +179,75 @@ impl TerminalPane {
         matches
     }
 
+    /// Current cursor position in the visible snapshot grid as `(row, col)`.
+    pub fn cursor_position(&self) -> (usize, usize) {
+        (
+            usize::from(self.snapshot.cursor_row),
+            usize::from(self.snapshot.cursor_col),
+        )
+    }
+
+    pub fn scrollback_offset(&self) -> usize {
+        self.snapshot.scrollback_offset
+    }
+
+    pub fn total_scrollback_rows(&self) -> usize {
+        self.snapshot.total_scrollback_rows
+    }
+
+    /// Extract the text covered by a selection from the current snapshot grid. `anchor` and
+    /// `cursor` are `(row, col)` in visible-viewport coordinates; ordering is normalized.
+    /// Trailing whitespace is trimmed per line and lines are joined with `\n`.
+    pub fn extract_text(&self, anchor: (usize, usize), cursor: (usize, usize)) -> String {
+        let (start, end) = if anchor <= cursor {
+            (anchor, cursor)
+        } else {
+            (cursor, anchor)
+        };
+        let lines: Vec<&str> = self.snapshot.text.lines().collect();
+        let mut out = String::new();
+        for row in start.0..=end.0 {
+            let Some(line) = lines.get(row) else {
+                continue;
+            };
+            let chars: Vec<char> = line.chars().collect();
+            let col_start = if row == start.0 { start.1 } else { 0 };
+            let col_end = if row == end.0 {
+                (end.1 + 1).min(chars.len())
+            } else {
+                chars.len()
+            };
+            let segment: String = chars
+                .get(col_start..col_end.max(col_start))
+                .map(|slice| slice.iter().collect())
+                .unwrap_or_default();
+            out.push_str(segment.trim_end());
+            if row < end.0 {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
     pub fn kill(&mut self) {
         if let Some(pty) = self.pty.take() {
             let _ = pty.kill();
+        }
+    }
+
+    /// The live working directory of the pane's shell, read on demand from `/proc/<pid>/cwd`
+    /// (Linux only). Returns `None` when there is no PTY, no pid, or off Linux. This reads the
+    /// shell leader's cwd, which matches most terminals' "open here" behavior.
+    pub fn working_directory(&self) -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            let pid = self.pty.as_ref()?.pid()?;
+            let path = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+            Some(path.to_string_lossy().to_string())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
         }
     }
 
@@ -210,5 +276,29 @@ impl TerminalPane {
         self.screen.set_scrollback(0);
         self.snapshot = self.screen.render_snapshot();
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_text_trims_and_joins_selected_rows() {
+        let mut pane = TerminalPane::new(100);
+        pane.snapshot = TerminalRenderSnapshot {
+            text: std::sync::Arc::from("hello world   \nfoo bar\nbaz"),
+            ..TerminalRenderSnapshot::default()
+        };
+
+        // Single-line span is inclusive of the cursor cell and trims trailing space.
+        assert_eq!(pane.extract_text((0, 0), (0, 4)), "hello");
+        // Multi-line span joins rows with newlines, trimming each line's trailing space.
+        assert_eq!(
+            pane.extract_text((0, 0), (2, 2)),
+            "hello world\nfoo bar\nbaz"
+        );
+        // Anchor/cursor order is normalized.
+        assert_eq!(pane.extract_text((0, 4), (0, 0)), "hello");
     }
 }

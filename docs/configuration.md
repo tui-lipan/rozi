@@ -24,7 +24,7 @@ cwd = "~/code"              # default: the directory hyprmux was launched from
 scrollback = 10000          # default: 5000 lines per pane
 
 # Window-management input
-modifier = "alt"            # held modifier: "alt" (default) or "super"
+modifier = "alt"            # held WM modifier: "alt" (default) or "super"
 prefix = "ctrl-a"           # prefix key (default: ctrl-a)
 
 [input]                      # alternative place for the same two keys
@@ -69,8 +69,9 @@ right = ["session", "clock"]      # default: empty
 clock_format = "%H:%M"            # strftime, only used by a clock segment
 
 [keys]
-# Rebind any action to one or more keys. Held chords (alt-enter) or prefix
-# sequences (prefix c / ctrl-a c). Configuring an action replaces its defaults.
+# Rebind any action to one or more tui-lipan keybindings. Held chords
+# (alt-enter) or prefix sequences (prefix c / ctrl-a c). Configuring an
+# action replaces its defaults.
 spawn = ["alt-enter", "prefix c"]
 close = "prefix q"
 copy-mode = "prefix y"
@@ -83,7 +84,7 @@ copy-mode = "prefix y"
 | `shell` | string | system `$SHELL` | Program launched in each new pane. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |
-| `modifier` | string | `alt` | Held WM modifier; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
+| `modifier` | string | `alt` | Held WM modifier for direct command keys and mouse gestures; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
 | `prefix` | string | `ctrl-a` | Prefix key, e.g. `ctrl-a`, `ctrl-b`. |
 
 `modifier` and `prefix` can also live under `[input]`; the top-level keys take precedence if
@@ -91,11 +92,11 @@ both are present.
 
 ### Prefix syntax
 
-Prefix strings are `-` or `+` separated modifier+key combinations. Recognized modifiers:
-`ctrl`/`control`, `alt`, `super`/`meta`, `shift`. Recognized named keys: `enter`/`return`,
-`esc`/`escape`, `space`, `tab`, `backspace`, and the arrow keys `left`/`right`/`up`/`down`.
-Any single character (e.g. `a`, `b`) is a literal key. Examples: `ctrl-a`, `ctrl-b`,
-`alt-space`. An unparseable prefix is reported as a warning and the default is kept.
+Prefix strings use tui-lipan keybinding syntax. Modifiers include `ctrl`/`control`, `alt`,
+`shift`, and `super`/`cmd`/`command`/`meta`/`win`. Named keys include `enter`/`return`,
+`esc`/`escape`, `space`, `tab`, `backspace`, arrows, navigation keys, and function keys.
+Examples: `ctrl-a`, `ctrl-b`, `alt-space`, `f12`. The prefix must be one key; an unparseable
+prefix is reported as a warning and the default is kept.
 
 ## `[animations]`
 
@@ -191,13 +192,17 @@ never wakes an idle app.
 
 ## `[keys]`
 
-Rebind window-management actions. Each entry maps an **action id** to one key string or a list
-of them. A binding is either a **held chord** (`alt-enter`) or a **prefix sequence**
-(`prefix c`, or the explicit `ctrl-a c`). Configuring an action **replaces** its default keys
-(so you fully control that command); the rest keep their defaults. Unknown action ids and
-unparseable keys emit a startup warning and are skipped. Workspace digits (`1`–`9`) are not
-individually rebindable, and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`) shows
-your active bindings.
+Rebind window-management actions. Each entry maps an **action id** to one tui-lipan keybinding
+string or a list of them. Comma-separated alternatives also work inside one string. A binding is
+either an exact **held chord** (`alt-enter`) or a **prefix sequence** (`prefix c`, or the explicit
+`ctrl-a c`). Prefix bindings also define the held-modifier direct path: `prefix c` can be run as
+`modifier+c`. Configuring an action **replaces** its default keys when at least one replacement
+parses successfully; invalid replacements are warned and skipped. Workspace digits (`1`–`9`) are
+not individually rebindable, and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`)
+shows your active bindings.
+
+The parser is tui-lipan's `KeyBinding` parser. Use names like `shift-=`, not a bare `+`, for
+the plus shortcut because `+` is a modifier separator.
 
 Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/right`,
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,

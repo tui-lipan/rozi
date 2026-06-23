@@ -23,7 +23,7 @@ the last pane closes.
 ## At a glance
 
 - **Control paths** — a `Ctrl-a` prefix (always works) and a held `Alt`/`Super` modifier
-  for direct actions. See [Keybindings](keybindings.md).
+  for active command keys. See [Keybindings](keybindings.md).
 - **Layouts** — dwindle tiling by default, master/stack per workspace, plus floating and
   fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
 - **Quit** — `Ctrl-q` quits at any time.

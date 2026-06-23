@@ -159,7 +159,11 @@ impl Component for HyprmuxApp {
         }
 
         key_routing::sync_focus_from_framework(ctx);
-        let (handled, update) = key_routing::handle_key_routing(ctx, key, None);
+        let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
+        if theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
+            let command = update.command.take();
+            update = Update::with_command(command);
+        }
         if handled {
             KeyUpdate::handled(update)
         } else {

@@ -1,3 +1,4 @@
+use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
 
 use crate::geometry::{clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect};
@@ -23,6 +24,23 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .map(|session| session.id);
     let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled);
     let effective_focus = effective_focused_pane(ctx, workspace);
+    // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
+    // first open animates up from below.
+    let scratch_progress = crate::scratchpad::scratch_progress(app, ctx);
+    // Centered modal dialogs dim the workspace behind them the same way the scratchpad does, so
+    // the dialog reads as the focused layer. The scrollback search is excluded: it scrolls the
+    // panes to reveal matches, so they must stay readable.
+    let dialog_open = ctx.state.show_palette
+        || ctx.state.show_help
+        || ctx.state.show_theme_picker
+        || ctx.state.rename.is_some();
+    let dialog_dim_progress = ctx.transition::<f32>(
+        "hyprmux-dialog-dim",
+        if dialog_open { 1.0 } else { 0.0 },
+        app.scratch_transition_config(),
+    );
+    // Panes dim for whichever focused layer is most deployed; the dims never compound.
+    let pane_dim = crate::scratchpad::backdrop_dim(scratch_progress.max(dialog_dim_progress));
     let mut canvas = Canvas::new()
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
@@ -46,11 +64,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else if let Some(session) = moving
             && !pane.fullscreen
         {
-            if session.was_floating {
-                clamp_floating_rect(session.drag_rect, bounds)
-            } else {
-                clamp_float_rect(session.drag_rect, bounds)
-            }
+            clamp_floating_rect(session.drag_rect, bounds)
         } else if pane.fullscreen {
             bounds
         } else {
@@ -64,11 +78,34 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             target_rect,
             config,
         );
-
-        canvas = canvas.child_at(
-            animated_rect.to_rect(),
-            pane_element(app, ctx, pane, animated_rect, effective_focus),
+        // The titlebar shows a workspace-local position (1..N by insertion order), not the
+        // process-wide `PaneId`, so panes renumber after a close instead of ticking upward
+        // forever (the internal id still keys focus/tile-tree/sessions).
+        let display_number = workspace
+            .panes
+            .iter()
+            .position(|candidate| candidate.id == pane.id)
+            .map(|index| index + 1)
+            .unwrap_or_else(|| pane.id as usize)
+            .to_string();
+        let mut element = pane_element(
+            app,
+            ctx,
+            pane,
+            animated_rect,
+            effective_focus,
+            &display_number,
         );
+        // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
+        // while a focused layer is up. instant_transition: `pane_dim` is already smoothed by the
+        // underlying progress transitions, so this just applies it without re-easing.
+        if pane_dim < 1.0 {
+            element = Animated::new(element)
+                .opacity(pane_dim)
+                .transition(crate::anim::instant_transition())
+                .into();
+        }
+        canvas = canvas.child_at(animated_rect.to_rect(), element);
     }
 
     // Draggable strips sit in the gaps between tiled panes so the split ratio can be adjusted
@@ -77,8 +114,13 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    // The scratchpad floats above every workspace pane when visible.
-    if let Some((rect, element)) = crate::scratchpad::scratch_placement(app, ctx) {
+    // A transparent catcher swallows clicks meant for the dimmed panes and dismisses the
+    // scratchpad when clicked; the dropdown then slides up from the bottom above everything.
+    if let Some((rect, element)) = crate::scratchpad::scratch_backdrop(ctx, scratch_progress) {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
+    if let Some((rect, element)) = crate::scratchpad::scratch_placement(app, ctx, scratch_progress)
+    {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
@@ -111,37 +153,71 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 
 fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    let prefix = ctx.state.config.input.prefix.to_formatted_string(false);
-    let mut body = VStack::new().gap(1).child(
-        Text::new(format!(
-            "Prefix any key with {prefix}, or hold the configured modifier. Esc closes this help."
-        ))
-        .style(theme.muted),
-    );
+    let prefix = ctx.state.config.input.prefix.to_string();
+    let modifier = ctx.state.config.input.modifier.label();
 
-    let mut last_category: Option<&str> = None;
+    // Group bindings by category (first-seen order), so a category with non-contiguous
+    // entries in the table still gets a single header — matching the command palette.
+    let mut groups: Vec<(&'static str, Vec<(String, &'static str)>)> = Vec::new();
     for binding in &crate::input::command_bindings() {
-        if last_category != Some(binding.category) {
-            body = body.child(help_section(binding.category));
-            last_category = Some(binding.category);
+        let row = (active_keys(ctx, binding), binding.label);
+        match groups
+            .iter_mut()
+            .find(|(name, _)| *name == binding.category)
+        {
+            Some((_, rows)) => rows.push(row),
+            None => groups.push((binding.category, vec![row])),
         }
-        let keys = active_keys(ctx, binding);
-        body = body.child(help_row(&keys, binding.label));
+    }
+    // Workspace digits and mouse gestures aren't in the command table; append them.
+    groups.push((
+        "Workspaces",
+        vec![
+            ("1-9".to_string(), "Switch to workspace"),
+            ("Shift+1-9".to_string(), "Move pane to workspace"),
+        ],
+    ));
+    groups.push((
+        "Mouse",
+        vec![
+            ("mod-drag".to_string(), "Move pane (left-drag)"),
+            ("mod-right-drag".to_string(), "Resize pane from corner"),
+            ("drag gap".to_string(), "Resize a tiled split"),
+        ],
+    ));
+
+    let mut list = VStack::new();
+    for (index, (category, rows)) in groups.iter().enumerate() {
+        list = list.child(help_section(category, theme, index > 0));
+        for (keys, label) in rows {
+            list = list.child(help_row(keys, label, theme));
+        }
     }
 
-    body = body
-        .child(help_section("Workspaces"))
-        .child(help_row("1-9", "Switch to workspace"))
-        .child(help_row("Shift+1-9", "Move pane to workspace"))
-        .child(help_section("Mouse"))
-        .child(help_row(
-            "mod-drag",
-            "Move / resize pane (left / right drag)",
-        ));
+    let body = VStack::new()
+        .child(
+            Text::new(format!(
+                "Prefix keys with {prefix}, or hold {modifier} with any listed key. Scroll for more · Esc closes."
+            ))
+            .style(theme.muted)
+            .overflow(Overflow::Wrap)
+            .height(Length::Auto),
+        )
+        .child(Text::new("").height(Length::Px(1)))
+        .child(
+            ScrollView::new()
+                .children(vec![list.into()])
+                .focusable(true)
+                .scroll_wheel(true)
+                .scrollbar(true)
+                .scrollbar_config(ScrollbarConfig::new().variant(ScrollbarVariant::Integrated))
+                .height(Length::Flex(1))
+                .key(help_scroll_key()),
+        );
 
-    Modal::new()
-        .title("Keybindings")
-        .width(Length::Px(56))
+    styled_modal(ctx, "Keybindings", 50)
+        .height(Length::Percent(70))
+        .padding((1, 1, 1, 2))
         .on_close(ctx.link().callback(|_| Msg::CloseHelp))
         .child(body)
         .into()
@@ -180,17 +256,20 @@ fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             }
         }));
 
-    Modal::new()
-        .title(format!("Search · {} · Tab: scope", search.scope.label()))
-        .width(Length::Px(64))
-        .on_close(ctx.link().callback(|_| Msg::CloseSearch))
-        .child(
-            VStack::new()
-                .gap(1)
-                .child(input.key(search_input_key()))
-                .child(Text::new(search.status.clone()).style(theme.muted)),
-        )
-        .into()
+    styled_modal(
+        ctx,
+        &format!("Search · {} · Tab: scope", search.scope.label()),
+        64,
+    )
+    .padding((1, 2, 1, 2))
+    .on_close(ctx.link().callback(|_| Msg::CloseSearch))
+    .child(
+        VStack::new()
+            .gap(1)
+            .child(input.key(search_input_key()))
+            .child(Text::new(search.status.clone()).style(theme.muted)),
+    )
+    .into()
 }
 
 fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -223,17 +302,14 @@ fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             }
         }));
 
-    Modal::new()
-        .title(format!("Rename pane {}", rename.target))
-        .width(Length::Px(56))
+    styled_modal(ctx, &format!("Rename pane {}", rename.target), 56)
+        .padding((1, 2, 1, 2))
         .on_close(ctx.link().callback(|_| Msg::CloseRenamePane))
         .child(input.key(rename_input_key()))
         .into()
 }
 
 fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let theme = &ctx.state.theme;
-
     // Commands are sourced from the single binding table; only entries flagged for
     // the palette appear here. The help overlay remains the full keybinding reference.
     // Group by category (first-seen order) so each category header appears once even
@@ -262,18 +338,34 @@ fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         entries.extend(items);
     }
 
+    let palette = action_search_palette(ctx, entries, "Search commands…");
+
+    action_palette_modal(ctx, "Commands")
+        .on_close(ctx.link().callback(|_| Msg::ClosePalette))
+        .child(palette)
+        .key(palette_key())
+}
+
+/// A fully-configured `SearchPalette` shared by the command palette and the theme picker, so
+/// the two overlays look and behave identically (only their entries/placeholder differ).
+fn action_search_palette(
+    ctx: &Context<HyprmuxApp>,
+    entries: Vec<SearchEntry<Action>>,
+    placeholder: &str,
+) -> SearchPalette<Action> {
+    let theme = &ctx.state.theme;
     let selection_style = Style::new()
         .fg(theme.surface.backdrop)
         .bg(theme.border_active)
         .bold();
     let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
 
-    let palette = SearchPalette::<Action>::new()
+    SearchPalette::<Action>::new()
         .entries(entries)
-        .placeholder("Search commands…")
+        .placeholder(placeholder)
         .height(Length::Auto)
         .input_border(false)
-        .input_prefix("  ")
+        .input_prefix("")
         .input_style(input_style)
         .input_focus_style(
             Style::new()
@@ -297,21 +389,28 @@ fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_activate(
             ctx.link()
                 .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
-        );
+        )
+}
 
+/// Shared modal chrome for every overlay: a rounded border, an accent title, and the
+/// surface-element background fill so overlays read as solid panels over the workspace.
+fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -> Modal {
+    let theme = &ctx.state.theme;
     Modal::new()
-        .title("Commands")
-        .width(Length::Px(60))
-        .height(Length::Auto)
+        .title(title.to_string())
+        .title_style(theme.accent.bold())
+        .width(Length::Px(width))
         .border_style(BorderStyle::Rounded)
-        .padding(0)
-        .on_close(ctx.link().callback(|_| Msg::ClosePalette))
-        .child(palette)
-        .key(palette_key())
+        .frame_style(Style::new().bg(theme.surface.element))
+}
+
+/// The command palette / theme picker modal: shared chrome, content-sized, no inner padding
+/// (the `SearchPalette` manages its own).
+fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
+    styled_modal(ctx, title, 60).height(Length::Auto).padding(0)
 }
 
 fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let theme = &ctx.state.theme;
     let current = ctx.state.config.theme.preset;
     let applied_builtin = ctx.state.config.theme.path.is_none();
 
@@ -327,49 +426,9 @@ fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         })
         .collect();
 
-    let selection_style = Style::new()
-        .fg(theme.surface.backdrop)
-        .bg(theme.border_active)
-        .bold();
-    let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
+    let palette = action_search_palette(ctx, entries, "Search themes…");
 
-    let palette = SearchPalette::<Action>::new()
-        .entries(entries)
-        .placeholder("Search themes…")
-        .height(Length::Auto)
-        .input_border(false)
-        .input_prefix("  ")
-        .input_style(input_style)
-        .input_focus_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(theme.surface.element),
-        )
-        .input_placeholder_style(theme.muted)
-        .list_border(false)
-        .list_scrollbar(true)
-        .list_selection_full_width(true)
-        .list_selection_symbol("")
-        .list_unselected_symbol("")
-        .list_selection_style(selection_style)
-        .list_item_hover_style(Style::new().bg(theme.surface.element))
-        .list_item_horizontal_padding((0, 1, 0, 1))
-        .list_header_horizontal_padding((0, 1, 0, 1))
-        .description_style(theme.muted)
-        .match_style(Style::new().fg(theme.border_active).bold())
-        .preserve_groups(true)
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
-        );
-
-    Modal::new()
-        .title("Choose theme")
-        .width(Length::Px(60))
-        .height(Length::Auto)
-        .border_style(BorderStyle::Rounded)
-        .padding(0)
-        .frame_style(Style::new().bg(theme.surface.element))
+    action_palette_modal(ctx, "Choose theme")
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
         .child(palette)
         .key(theme_picker_key())
@@ -384,28 +443,62 @@ fn active_keys(ctx: &Context<HyprmuxApp>, binding: &crate::input::CommandBinding
         .unwrap_or_else(|| binding.keys.to_string())
 }
 
-fn help_section(title: &str) -> Element {
-    // The active ThemeProvider supplies inherited text/bg; use the theme accent for headings.
-    Text::new(title.to_string())
-        .style(Style::new().bold())
-        .height(Length::Px(1))
-        .into()
+/// A theme `Style` reduced to just its foreground, so text paints over the modal fill
+/// instead of carrying the role's own background (which would draw a stray colored block).
+fn fg_only(style: &Style) -> Style {
+    style
+        .fg
+        .map(|paint| Style::new().fg(paint.color()))
+        .unwrap_or_default()
 }
 
-fn help_row(keys: &str, desc: &str) -> Element {
+fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {
+    // A horizontal rule with the section title on it — the title in the accent color, the
+    // line muted — so groups read as clear dividers without competing with the key text.
+    let divider = Divider::horizontal()
+        .label(
+            Text::new(format!(" {} ", title.to_uppercase())).style(fg_only(&theme.accent).bold()),
+        )
+        .label_alignment(Align::Center)
+        .label_padding(1)
+        .style(fg_only(&theme.muted))
+        .width(Length::Flex(1));
+    if spaced {
+        VStack::new()
+            .child(Text::new("").height(Length::Px(1)))
+            .child(divider)
+            .into()
+    } else {
+        divider.into()
+    }
+}
+
+fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
+    let (keys_text, keys_style) = if keys.is_empty() {
+        ("not set".to_string(), fg_only(&theme.muted))
+    } else {
+        (
+            keys.to_string(),
+            Style::new().fg(theme.border_active).bold(),
+        )
+    };
     HStack::new()
         .gap(2)
         .height(Length::Px(1))
+        .justify(SpaceBetween)
         .child(
-            Text::new(keys.to_string())
-                .style(Style::new().bold())
-                .width(Length::Px(12))
-                .height(Length::Px(1)),
+            Text::new(keys_text)
+                .style(keys_style)
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .overflow(Overflow::Ellipsis),
         )
         .child(
             Text::new(desc.to_string())
-                .width(Length::Flex(1))
-                .height(Length::Px(1)),
+                .style(fg_only(&theme.primary))
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .overflow(Overflow::Ellipsis),
         )
         .into()
 }
@@ -416,6 +509,7 @@ pub(crate) fn pane_element(
     pane: &Pane,
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
+    display_number: &str,
 ) -> Element {
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -456,15 +550,11 @@ pub(crate) fn pane_element(
         ctx,
         pane.id,
         "frame-bg",
-        if focused {
-            theme.surface.panel
-        } else {
-            theme.surface.backdrop
-        },
+        crate::theme_ops::pane_frame_background(theme, focused),
     );
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
 
-    let mut window_stack = VStack::new().style(frame_style);
+    let mut window_stack = VStack::new().align(Align::Stretch).style(frame_style);
     if ctx.state.show_titles {
         let title_bar_bg = app.chrome_color(
             ctx,
@@ -503,7 +593,7 @@ pub(crate) fn pane_element(
             .width(Length::Flex(1))
             .height(Length::Px(1))
             .child(
-                Text::new(format!(" {icon}  {} · {title} ", pane.id))
+                Text::new(format!(" {icon}  {display_number} · {title} "))
                     .style(title_bar_text_style)
                     .overflow(Overflow::Ellipsis)
                     .width(Length::Flex(1))
@@ -530,7 +620,7 @@ pub(crate) fn pane_element(
 
     let mut terminal_widget = Terminal::new()
         .snapshot(pane.terminal.snapshot.clone())
-        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
+        .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focusable(true)
         .width(Length::Flex(1))
@@ -923,7 +1013,7 @@ fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
 }
 
 fn empty_workspace_panel(input: &crate::state::InputConfig, theme: &Theme) -> Element {
-    let prefix = input.prefix.to_formatted_string(false);
+    let prefix = input.prefix.to_string();
     Frame::new()
         .title(" Empty workspace ")
         .border(true)
@@ -1008,4 +1098,8 @@ pub fn theme_picker_key() -> &'static str {
 
 pub fn palette_key() -> &'static str {
     "hyprmux-command-palette"
+}
+
+pub fn help_scroll_key() -> &'static str {
+    "hyprmux-help-scroll"
 }

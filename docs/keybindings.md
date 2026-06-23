@@ -17,12 +17,15 @@ portable path because it does not depend on the terminal delivering modified key
 
 ### 2. Held modifier (direct)
 
-Hold the **WM modifier** and press a command key to run the same action without the prefix.
-The default modifier is **`Alt`**, because `Super` is rarely delivered reliably by terminal
-emulators. You can switch to `Super` in the config (see [Configuration](configuration.md)).
+Hold the **WM modifier** and press an active command key to run the same action without the
+prefix. The default modifier is **`Alt`**, because `Super` is rarely delivered reliably by
+terminal emulators. You can switch to `Super` in the config (see [Configuration](configuration.md)).
 
-Both paths map to the same actions, so every command below can be triggered either way:
-`prefix` then key, or `modifier`+key.
+The direct path uses the same active keymap as prefix mode: if a command key is rebound, the
+modifier path follows that rebind; if a modifier chord is not in the active keymap, it is
+forwarded to the focused shell.
+
+You can also configure an exact held chord in `[keys]`, for example `spawn = "alt-enter"`.
 
 > `Ctrl-q` quits the app and is handled before any routing, so it always works.
 

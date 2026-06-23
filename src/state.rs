@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use tui_lipan::prelude::*;
 
@@ -172,19 +173,16 @@ impl WmModifier {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputConfig {
-    pub prefix: KeyEvent,
+    pub prefix: KeyBinding,
     pub modifier: WmModifier,
 }
 
 impl Default for InputConfig {
     fn default() -> Self {
         Self {
-            prefix: KeyEvent {
-                code: KeyCode::Char('a'),
-                mods: KeyMods::CTRL,
-            },
+            prefix: KeyBinding::from_str("ctrl-a").expect("default prefix key parses"),
             modifier: WmModifier::Alt,
         }
     }

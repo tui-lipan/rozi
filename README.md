@@ -22,7 +22,7 @@ cargo run     # quit with Ctrl-q
 - **Animated geometry** — spawn, close, fullscreen, tile/float, and split-axis transitions,
   all individually configurable (size changes are snapped to avoid SIGWINCH spam).
 - **tmux-style prefix + held-modifier control** — `Ctrl-a` prefix that always works, plus an
-  `Alt`/`Super` held modifier for direct actions.
+  `Alt`/`Super` direct path for active command keys.
 - **Command palette & help overlay** — fuzzy command search (`p`) and a full keybinding
   reference (`?`).
 - **Pane identity** — rename panes (`n`); titles also follow the program's OSC title.

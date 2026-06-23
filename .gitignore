@@ -10,3 +10,6 @@
 # Editor / OS noise
 *.swp
 .DS_Store
+
+# Local implementation planning notes
+/docs/superpowers/plans/

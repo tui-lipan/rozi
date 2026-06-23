@@ -89,9 +89,9 @@ focus cleanup; quitting when the last pane closes). Pane geometry size changes c
 `Component::on_key` (when no terminal consumes them) and the focused terminal's input
 callback (`Msg::PaneKey`). Both funnel through `handle_key_routing(ctx, key, source_pane)`,
 a `Mode::Normal`/`Mode::Prefix` state machine:
-- Normal: the prefix key (`Ctrl-a`) enters Prefix mode; a held WM modifier (`Alt` default,
-  `Super` optional) triggers an `Action` directly; otherwise the key is forwarded to the
-  focused pane's PTY.
+- Normal: the prefix key (`Ctrl-a`) enters Prefix mode; an explicitly configured held chord,
+  or the configured WM modifier plus an active command key, triggers an `Action` directly;
+  otherwise the key is forwarded to the focused pane's PTY.
 - Prefix: the next key runs an `Action`, or `Ctrl-a` again sends a literal `Ctrl-a`, or `Esc`
   cancels, or an unknown key is forwarded.
 

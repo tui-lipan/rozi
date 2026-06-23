@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -110,7 +111,7 @@ mod tests {
 
         let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, prefix, &mut warnings);
+        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
 
         let alt_enter = KeyEvent {
             code: KeyCode::Enter,
@@ -231,7 +232,7 @@ pub fn load_config() -> LoadedConfig {
         config.scrollback = scrollback.max(1);
     }
 
-    let mut input = config.input;
+    let mut input = config.input.clone();
     apply_input_config(
         &mut input,
         parsed.modifier.or(parsed.input.modifier),
@@ -277,7 +278,7 @@ pub fn load_config() -> LoadedConfig {
     }
 
     apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
-    config.keymap = build_keymap(parsed.keys, config.input.prefix, &mut warnings);
+    config.keymap = build_keymap(parsed.keys, &config.input.prefix, &mut warnings);
 
     LoadedConfig {
         config,
@@ -326,9 +327,12 @@ fn apply_input_config(
         }
     }
     if let Some(prefix) = prefix {
-        match parse_key(&prefix) {
-            Some(parsed) => input.prefix = parsed,
-            None => warnings.push(format!(
+        match KeyBinding::from_str(&prefix) {
+            Ok(parsed) if parsed.step_count() == 1 => input.prefix = parsed,
+            Ok(_) => warnings.push(format!(
+                "Could not parse prefix `{prefix}`; prefix must be a single key"
+            )),
+            Err(_) => warnings.push(format!(
                 "Could not parse prefix `{prefix}`; try e.g. `ctrl-a`"
             )),
         }
@@ -337,7 +341,7 @@ fn apply_input_config(
 
 fn build_keymap(
     keys: HashMap<String, KeyBindingSpec>,
-    prefix: KeyEvent,
+    prefix: &KeyBinding,
     warnings: &mut Vec<String>,
 ) -> Keymap {
     let mut keymap = Keymap::default();
@@ -346,12 +350,25 @@ fn build_keymap(
             warnings.push(format!("Unknown key action `{action_name}`; skipped"));
             continue;
         };
+        let mut parsed_bindings = Vec::new();
         for binding in spec.into_vec() {
-            match parse_binding(&binding, prefix) {
-                Some((trigger, display)) => keymap.bind(action, trigger, display),
-                None => warnings.push(format!(
-                    "Could not parse binding `{binding}` for `{action_name}`; skipped"
-                )),
+            for candidate in binding
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                match parse_binding(candidate, prefix) {
+                    Some(parsed) => parsed_bindings.push(parsed),
+                    None => warnings.push(format!(
+                        "Could not parse binding `{candidate}` for `{action_name}`; skipped"
+                    )),
+                }
+            }
+        }
+        if !parsed_bindings.is_empty() {
+            keymap.clear_action(action);
+            for (trigger, display) in parsed_bindings {
+                keymap.bind(action, trigger, display);
             }
         }
     }
@@ -361,7 +378,7 @@ fn build_keymap(
 /// Parse a binding string into a [`Trigger`] and its display text. A binding is a prefix
 /// sequence when it starts with the literal `prefix` keyword or the configured prefix key
 /// (e.g. `prefix c`, `ctrl-a c`); otherwise it is a held-modifier chord (e.g. `alt-enter`).
-fn parse_binding(spec: &str, prefix: KeyEvent) -> Option<(Trigger, String)> {
+fn parse_binding(spec: &str, prefix: &KeyBinding) -> Option<(Trigger, String)> {
     let parts: Vec<&str> = spec.split_whitespace().collect();
     if parts.is_empty() {
         return None;
@@ -369,20 +386,23 @@ fn parse_binding(spec: &str, prefix: KeyEvent) -> Option<(Trigger, String)> {
 
     if parts.len() >= 2 {
         let starts_with_prefix = parts[0].eq_ignore_ascii_case("prefix")
-            || parse_key(parts[0]).is_some_and(|key| key == prefix);
+            || KeyBinding::from_str(parts[0]).is_ok_and(|key| key == *prefix);
         if starts_with_prefix {
-            let key = parse_key(parts[1])?;
-            let display = format!(
-                "{} {}",
-                prefix.to_formatted_string(false),
-                key.to_formatted_string(false)
-            );
+            let raw_key = parts[1..].join(" ");
+            let key = KeyBinding::from_str(&raw_key).ok()?;
+            if key.step_count() != 1 {
+                return None;
+            }
+            let display = format!("{prefix} {key}");
             return Some((Trigger::Prefix(key), display));
         }
     }
 
-    let key = parse_key(spec)?;
-    let display = key.to_formatted_string(false);
+    let key = KeyBinding::from_str(spec).ok()?;
+    if key.step_count() != 1 {
+        return None;
+    }
+    let display = key.to_string();
     Some((Trigger::Held(key), display))
 }
 
@@ -462,46 +482,6 @@ fn parse_modifier(value: &str) -> Option<WmModifier> {
         "super" | "meta" | "logo" | "win" | "windows" => Some(WmModifier::Super),
         _ => None,
     }
-}
-
-fn parse_key(value: &str) -> Option<KeyEvent> {
-    let normalized = value.trim().replace('+', "-");
-    if normalized.is_empty() {
-        return None;
-    }
-    let mut mods = KeyMods::NONE;
-    let mut code = None;
-    for part in normalized
-        .split('-')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-    {
-        match part.to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => mods.ctrl = true,
-            "alt" => mods.alt = true,
-            "super" | "meta" => mods.super_key = true,
-            "shift" => mods.shift = true,
-            "enter" | "return" => code = Some(KeyCode::Enter),
-            "esc" | "escape" => code = Some(KeyCode::Esc),
-            "space" => code = Some(KeyCode::Char(' ')),
-            "tab" => code = Some(KeyCode::Tab),
-            "backspace" => code = Some(KeyCode::Backspace),
-            "left" => code = Some(KeyCode::Left),
-            "right" => code = Some(KeyCode::Right),
-            "up" => code = Some(KeyCode::Up),
-            "down" => code = Some(KeyCode::Down),
-            other => {
-                let mut chars = other.chars();
-                let first = chars.next()?;
-                if chars.next().is_none() {
-                    code = Some(KeyCode::Char(first));
-                } else {
-                    return None;
-                }
-            }
-        }
-    }
-    code.map(|code| KeyEvent { code, mods })
 }
 
 fn apply_animations(target: &mut WindowAnimationConfig, raw: AnimationFileConfig) {

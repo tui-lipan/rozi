@@ -100,11 +100,7 @@ pub(crate) fn move_pane(
     {
         session.drag_rect.x += f32::from(dx);
         session.drag_rect.y += f32::from(dy);
-        session.drag_rect = if session.was_floating {
-            clamp_floating_rect(session.drag_rect, bounds)
-        } else {
-            clamp_float_rect(session.drag_rect, bounds)
-        };
+        session.drag_rect = clamp_floating_rect(session.drag_rect, bounds);
         if session.was_floating {
             persisted_floating_rect = Some(session.drag_rect);
         }

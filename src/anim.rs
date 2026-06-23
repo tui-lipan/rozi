@@ -72,10 +72,46 @@ pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
     }
 }
 
+/// How long to keep a closed pane in state before pruning it, so its own exit
+/// animation (shrink toward [`close_rect`] + opacity fade, both run for
+/// `close_duration`) can finish first. Panes surviving the close expand into the
+/// freed space on their own `geometry_duration` transition, independently of
+/// whether the closed pane is still present, so this does not need to wait for
+/// them.
+///
+/// [`close_rect`]: crate::geometry::close_rect
 pub fn close_delay(animations: WindowAnimationConfig) -> Duration {
     if animations.enabled && animations.close {
         animations.close_duration + Duration::from_millis(20)
     } else {
         Duration::ZERO
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_delay_covers_the_closing_panes_exit_animation() {
+        let animations = WindowAnimationConfig {
+            close_duration: Duration::from_millis(80),
+            // A longer survivor-expansion duration must not extend the prune delay;
+            // survivors animate independently of the closed pane's lifetime.
+            geometry_duration: Duration::from_millis(240),
+            ..WindowAnimationConfig::default()
+        };
+
+        assert_eq!(close_delay(animations), Duration::from_millis(100));
+    }
+
+    #[test]
+    fn close_delay_is_zero_when_close_animation_disabled() {
+        let animations = WindowAnimationConfig {
+            close: false,
+            ..WindowAnimationConfig::default()
+        };
+
+        assert_eq!(close_delay(animations), Duration::ZERO);
     }
 }

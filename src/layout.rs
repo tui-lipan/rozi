@@ -119,14 +119,24 @@ pub fn ordered_panes(workspace: &Workspace, focused: Option<PaneId>) -> Vec<&Pan
     let mut panes: Vec<&Pane> = workspace.panes.iter().collect();
     panes.sort_by_key(|pane| {
         (
-            pane.closing,
-            pane.floating,
+            pane_z_group(pane),
             pane.fullscreen,
             focused == Some(pane.id),
             pane.id,
         )
     });
     panes
+}
+
+fn pane_z_group(pane: &Pane) -> u8 {
+    match (pane.closing, pane.floating) {
+        // Tiled close animations should not cover the panes expanding into their space.
+        (true, false) => 0,
+        (false, false) => 1,
+        (false, true) => 2,
+        // Floating windows do not resize the tile layout, so keep their fade-out above it.
+        (true, true) => 3,
+    }
 }
 
 /// Dwindle split direction for the focused tile: split the longer side so the two halves
@@ -279,5 +289,48 @@ mod tests {
 
         // The new pane always takes the second (right/bottom) slot — fixed, not cursor.
         assert!(!spawn_split_for_rect(wide).1);
+    }
+
+    #[test]
+    fn ordered_panes_draws_tiled_closing_panes_under_expanding_panes() {
+        fn pane(id: PaneId) -> Pane {
+            Pane::new(
+                id,
+                100,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                },
+            )
+        }
+
+        let mut closing_tiled = pane(1);
+        closing_tiled.closing = true;
+
+        let active_tiled = pane(2);
+
+        let mut active_floating = pane(3);
+        active_floating.floating = true;
+
+        let mut closing_floating = pane(4);
+        closing_floating.floating = true;
+        closing_floating.closing = true;
+
+        let mut workspace = Workspace::new(0);
+        workspace.panes = vec![
+            active_tiled,
+            closing_floating,
+            closing_tiled,
+            active_floating,
+        ];
+
+        let ids: Vec<PaneId> = ordered_panes(&workspace, Some(2))
+            .into_iter()
+            .map(|pane| pane.id)
+            .collect();
+
+        assert_eq!(ids, vec![1, 2, 3, 4]);
     }
 }

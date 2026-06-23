@@ -10,7 +10,7 @@ use crate::focus_ops::{
 use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
 use crate::state::{HyprmuxConfig, Pane, PaneId, State};
-use crate::theme_ops::terminal_palette;
+use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
@@ -20,8 +20,10 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
-    pane.terminal
-        .set_palette(terminal_palette(&ctx.state.theme));
+    pane.terminal.set_palette(terminal_palette(
+        &ctx.state.theme,
+        pane_frame_background(&ctx.state.theme, true),
+    ));
     pane.opening = true;
 
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];

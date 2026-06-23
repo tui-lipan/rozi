@@ -15,13 +15,13 @@ pub(crate) fn handle_key_routing(
 ) -> (bool, Update) {
     match ctx.state.mode {
         Mode::Normal => {
-            if input::is_prefix_key(key, ctx.state.config.input) {
+            if input::is_prefix_key(key, &ctx.state.config.input) {
                 ctx.state.mode = Mode::Prefix;
                 return (true, Update::full());
             }
 
             if let Some(action) =
-                input::action_for_held(key, ctx.state.config.input, &ctx.state.config.keymap)
+                input::action_for_held(key, &ctx.state.config.input, &ctx.state.config.keymap)
             {
                 return (true, execute_action(ctx, action));
             }
@@ -34,7 +34,7 @@ pub(crate) fn handle_key_routing(
         }
         Mode::Prefix => {
             ctx.state.mode = Mode::Normal;
-            if input::is_prefix_key(key, ctx.state.config.input) {
+            if input::is_prefix_key(key, &ctx.state.config.input) {
                 let id = source_pane.or(ctx.state.focused_pane);
                 let update = id
                     .map(|id| crate::pty_events::forward_key_to_pane(ctx, id, key))

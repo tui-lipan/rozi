@@ -53,21 +53,41 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
     )));
 }
 
-pub(crate) fn apply_terminal_palette_to_state(state: &mut State) {
-    let palette = terminal_palette(&state.theme);
-    for workspace in &mut state.workspaces {
+pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
+    let theme = &state.theme;
+    let mut changed = false;
+    for (index, workspace) in state.workspaces.iter_mut().enumerate() {
+        let focused_pane = if index == state.active_workspace {
+            state.focused_pane
+        } else {
+            workspace.focused_pane
+        };
         for pane in &mut workspace.panes {
-            pane.terminal.set_palette(palette);
+            let background = pane_frame_background(theme, focused_pane == Some(pane.id));
+            changed |= pane
+                .terminal
+                .set_palette(terminal_palette(theme, background));
         }
     }
     if let Some(scratch) = state.scratch.as_mut() {
-        scratch.terminal.set_palette(palette);
+        changed |= scratch
+            .terminal
+            .set_palette(terminal_palette(theme, pane_frame_background(theme, true)));
+    }
+    changed
+}
+
+pub(crate) fn pane_frame_background(theme: &Theme, focused: bool) -> Color {
+    if focused {
+        theme.surface.panel
+    } else {
+        theme.surface.backdrop
     }
 }
 
-pub(crate) fn terminal_palette(theme: &Theme) -> TerminalColorPalette {
+pub(crate) fn terminal_palette(theme: &Theme, background: Color) -> TerminalColorPalette {
     let foreground = style_fg(theme.primary).unwrap_or(Color::White);
-    let background = clean_terminal_color(theme.surface.backdrop, Color::Black);
+    let background = clean_terminal_color(background, Color::Black);
     let muted = style_fg(theme.muted).unwrap_or(theme.surface.menu);
     let accent = style_fg(theme.accent).unwrap_or(theme.border_active);
     let purple = theme.file_icons.purple;
@@ -108,5 +128,63 @@ fn clean_terminal_color(color: Color, fallback: Color) -> Color {
     match color {
         Color::Reset | Color::Backdrop | Color::Transparent => fallback,
         _ => color,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{HyprmuxConfig, Pane, PaneId};
+
+    fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
+        state.workspaces[0]
+            .panes
+            .iter()
+            .find(|pane| pane.id == id)
+            .expect("pane should exist")
+            .terminal
+            .screen
+            .palette()
+            .background
+    }
+
+    #[test]
+    fn terminal_palette_background_matches_frame_focus() {
+        let theme = ThemePreset::OneDark.theme();
+        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        state.workspaces[0].panes.push(Pane::new(
+            2,
+            state.config.scrollback,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        ));
+
+        state.focused_pane = Some(1);
+        state.workspaces[0].focused_pane = Some(1);
+        assert!(apply_terminal_palette_to_state(&mut state));
+        assert_eq!(
+            pane_palette_background(&state, 1),
+            Some(theme.surface.panel)
+        );
+        assert_eq!(
+            pane_palette_background(&state, 2),
+            Some(theme.surface.backdrop)
+        );
+
+        state.focused_pane = Some(2);
+        state.workspaces[0].focused_pane = Some(2);
+        assert!(apply_terminal_palette_to_state(&mut state));
+        assert_eq!(
+            pane_palette_background(&state, 1),
+            Some(theme.surface.backdrop)
+        );
+        assert_eq!(
+            pane_palette_background(&state, 2),
+            Some(theme.surface.panel)
+        );
     }
 }

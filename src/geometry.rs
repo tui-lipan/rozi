@@ -248,7 +248,7 @@ pub fn tiled_drag_preview_rect(
     target_w: u16,
     target_h: u16,
 ) -> FloatRect {
-    let remembered = clamp_float_rect(remembered_float_rect, bounds);
+    let remembered = clamp_floating_rect(remembered_float_rect, bounds);
     let anchor_x = if target_w == 0 {
         0.5
     } else {
@@ -260,7 +260,7 @@ pub fn tiled_drag_preview_rect(
         (f32::from(from_local_y) / f32::from(target_h)).clamp(0.0, 1.0)
     };
 
-    clamp_float_rect(
+    clamp_floating_rect(
         FloatRect {
             x: tile_rect.x + f32::from(from_local_x) - remembered.w * anchor_x,
             y: tile_rect.y + f32::from(from_local_y) - remembered.h * anchor_y,
@@ -446,6 +446,33 @@ mod tests {
         );
         assert_eq!(rect.x, OFFSCREEN_MIN_VISIBLE - rect.w);
         assert_eq!(rect.y, OFFSCREEN_MIN_VISIBLE - rect.h);
+    }
+
+    #[test]
+    fn tiled_drag_preview_allows_offscreen_clipping() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 30.0,
+        };
+        let tile = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 50.0,
+            h: 20.0,
+        };
+        let remembered = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 10.0,
+        };
+
+        let rect = tiled_drag_preview_rect(tile, remembered, bounds, 49, 0, 50, 20);
+
+        assert!(rect.x < bounds.x);
+        assert!(rect.x >= OFFSCREEN_MIN_VISIBLE - rect.w);
     }
 
     #[test]

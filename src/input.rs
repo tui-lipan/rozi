@@ -375,64 +375,24 @@ pub fn command_bindings() -> Vec<CommandBinding> {
     ]
 }
 
-pub fn is_prefix_key(key: KeyEvent, config: InputConfig) -> bool {
-    key == config.prefix
+pub fn is_prefix_key(key: KeyEvent, config: &InputConfig) -> bool {
+    config.prefix.matches_sequence(&[key])
 }
 
-/// Resolve a held-modifier chord to an action, honoring user `[keys]` overrides first and
-/// then the compiled-in defaults (with any action the user has remapped suppressed).
-pub fn action_for_held(key: KeyEvent, config: InputConfig, keymap: &Keymap) -> Option<Action> {
+/// Resolve a normal-mode held chord to an action. Explicit held bindings win; otherwise the
+/// configured WM modifier is stripped and the remaining key is matched against the active
+/// tui-lipan-backed command keymap, so unbound modifier chords still fall through to the PTY.
+pub fn action_for_held(key: KeyEvent, config: &InputConfig, keymap: &Keymap) -> Option<Action> {
     if let Some(action) = keymap.held_action(key) {
         return Some(action);
     }
-    match default_action_for_held(key, config) {
-        Some(action) if keymap.overrides_action(action) => None,
-        other => other,
-    }
+
+    modifier_command_key(key, config).and_then(|command_key| action_for_prefix(command_key, keymap))
 }
 
-fn default_action_for_held(key: KeyEvent, config: InputConfig) -> Option<Action> {
-    if !config.modifier.matches(key) {
-        return None;
-    }
-    // modifier + Ctrl + direction swaps the focused pane with its neighbor. This is the one
-    // held chord that uses Ctrl; every other held binding rejects it.
-    if key.mods.ctrl {
-        return swap_action_for_key(key);
-    }
-    action_for_command_key(key)
-}
-
-fn swap_action_for_key(key: KeyEvent) -> Option<Action> {
-    match key.code {
-        KeyCode::Char('h' | 'H') | KeyCode::Left => Some(Action::Swap(Direction::Left)),
-        KeyCode::Char('j' | 'J') | KeyCode::Down => Some(Action::Swap(Direction::Down)),
-        KeyCode::Char('k' | 'K') | KeyCode::Up => Some(Action::Swap(Direction::Up)),
-        KeyCode::Char('l' | 'L') | KeyCode::Right => Some(Action::Swap(Direction::Right)),
-        _ => None,
-    }
-}
-
-/// Resolve a prefix-sequence key to an action, honoring user `[keys]` overrides first and
-/// then the compiled-in defaults (with any action the user has remapped suppressed).
+/// Resolve a prefix-sequence key to an action from the active tui-lipan-backed keymap.
+/// Workspace digits remain generated as a range rather than individual bindings.
 pub fn action_for_prefix(key: KeyEvent, keymap: &Keymap) -> Option<Action> {
-    if let Some(action) = keymap.prefix_action(key) {
-        return Some(action);
-    }
-    match default_action_for_prefix(key) {
-        Some(action) if keymap.overrides_action(action) => None,
-        other => other,
-    }
-}
-
-fn default_action_for_prefix(key: KeyEvent) -> Option<Action> {
-    if key.mods.ctrl || key.mods.alt || key.mods.super_key {
-        return None;
-    }
-    action_for_command_key(key)
-}
-
-fn action_for_command_key(key: KeyEvent) -> Option<Action> {
     if let Some((index, symbol_implies_shift)) = workspace_key(key) {
         return Some(if key.mods.shift || symbol_implies_shift {
             Action::MoveToWorkspace(index)
@@ -441,59 +401,7 @@ fn action_for_command_key(key: KeyEvent) -> Option<Action> {
         });
     }
 
-    if key.mods.shift || matches!(key.code, KeyCode::Char('H' | 'J' | 'K' | 'L')) {
-        match key.code {
-            KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
-                return Some(Action::Move(Direction::Left));
-            }
-            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
-                return Some(Action::Move(Direction::Down));
-            }
-            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => {
-                return Some(Action::Move(Direction::Up));
-            }
-            KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
-                return Some(Action::Move(Direction::Right));
-            }
-            _ => {}
-        }
-    }
-
-    match key.code {
-        KeyCode::Tab => Some(Action::CycleFocus(!key.mods.shift)),
-        KeyCode::BackTab => Some(Action::CycleFocus(false)),
-        KeyCode::Char('.') => Some(Action::PromoteToMaster),
-        KeyCode::Char('`' | '~') => Some(Action::ToggleScratchpad),
-        KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => Some(Action::Spawn),
-        KeyCode::Char('w') | KeyCode::Char('W') | KeyCode::Char('x') | KeyCode::Char('X') => {
-            Some(Action::Close)
-        }
-        KeyCode::Char('t') | KeyCode::Char('T') => Some(Action::ToggleFloat),
-        KeyCode::Char('f') | KeyCode::Char('F') => Some(Action::ToggleFullscreen),
-        KeyCode::Char('n') | KeyCode::Char('N') => Some(Action::RenamePane),
-        KeyCode::Char(' ') => Some(Action::FlipSplit),
-        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
-            Some(Action::Focus(Direction::Left))
-        }
-        KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
-            Some(Action::Focus(Direction::Down))
-        }
-        KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => Some(Action::Focus(Direction::Up)),
-        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
-            Some(Action::Focus(Direction::Right))
-        }
-        KeyCode::Char('[') => Some(Action::EnterCopyMode),
-        KeyCode::Char('-') => Some(Action::AdjustRatio(-RATIO_STEP)),
-        KeyCode::Char(']') | KeyCode::Char('=') | KeyCode::Char('+') => {
-            Some(Action::AdjustRatio(RATIO_STEP))
-        }
-        KeyCode::Char('r') | KeyCode::Char('R') => Some(Action::EnterResizeMode),
-        KeyCode::Char('m') | KeyCode::Char('M') => Some(Action::ToggleLayout),
-        KeyCode::Char('/') => Some(Action::OpenSearch),
-        KeyCode::Char('p') | KeyCode::Char('P') => Some(Action::TogglePalette),
-        KeyCode::Char('?') => Some(Action::ToggleHelp),
-        _ => None,
-    }
+    keymap.prefix_action(key)
 }
 
 fn workspace_key(key: KeyEvent) -> Option<(usize, bool)> {
@@ -522,9 +430,26 @@ fn workspace_key(key: KeyEvent) -> Option<(usize, bool)> {
     Some((digit - 1, symbol_implies_shift))
 }
 
+fn modifier_command_key(key: KeyEvent, config: &InputConfig) -> Option<KeyEvent> {
+    if !config.modifier.matches(key) {
+        return None;
+    }
+
+    let mut mods = key.mods;
+    match config.modifier {
+        crate::state::WmModifier::Alt => mods.alt = false,
+        crate::state::WmModifier::Super => mods.super_key = false,
+    }
+    Some(KeyEvent {
+        code: key.code,
+        mods,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn save_profile_binding_is_palette_command() {
@@ -560,5 +485,97 @@ mod tests {
                 action
             );
         }
+    }
+
+    #[test]
+    fn unconfigured_held_modifier_chord_falls_through() {
+        let key = KeyEvent {
+            code: KeyCode::Char('z'),
+            mods: KeyMods::ALT,
+        };
+
+        assert_eq!(
+            action_for_held(key, &InputConfig::default(), &Keymap::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn modifier_uses_active_prefix_keymap_directly() {
+        let key = KeyEvent {
+            code: KeyCode::Enter,
+            mods: KeyMods::ALT,
+        };
+
+        assert_eq!(
+            action_for_held(key, &InputConfig::default(), &Keymap::default()),
+            Some(Action::Spawn)
+        );
+    }
+
+    #[test]
+    fn modifier_plus_uses_tui_lipan_shift_equal_binding() {
+        let key = KeyEvent {
+            code: KeyCode::Char('='),
+            mods: KeyMods {
+                alt: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        };
+
+        assert_eq!(
+            action_for_held(key, &InputConfig::default(), &Keymap::default()),
+            Some(Action::AdjustRatio(RATIO_STEP))
+        );
+    }
+
+    #[test]
+    fn modifier_chord_falls_through_after_action_rebind_removes_key() {
+        let key = KeyEvent {
+            code: KeyCode::Char('n'),
+            mods: KeyMods::ALT,
+        };
+        let mut keymap = Keymap::default();
+        keymap.clear_action(Action::RenamePane);
+        keymap.bind(
+            Action::RenamePane,
+            crate::keymap::Trigger::Prefix(KeyBinding::from_str("r").unwrap()),
+            "r".to_string(),
+        );
+
+        assert_eq!(action_for_held(key, &InputConfig::default(), &keymap), None);
+    }
+
+    #[test]
+    fn configured_held_chord_is_consumed() {
+        let key = KeyEvent {
+            code: KeyCode::Char('n'),
+            mods: KeyMods::ALT,
+        };
+        let mut keymap = Keymap::default();
+        keymap.bind(
+            Action::RenamePane,
+            crate::keymap::Trigger::Held(KeyBinding::from_str("alt-n").unwrap()),
+            "Alt+N".to_string(),
+        );
+
+        assert_eq!(
+            action_for_held(key, &InputConfig::default(), &keymap),
+            Some(Action::RenamePane)
+        );
+    }
+
+    #[test]
+    fn prefix_ctrl_direction_swaps_by_default() {
+        let key = KeyEvent {
+            code: KeyCode::Char('h'),
+            mods: KeyMods::CTRL,
+        };
+
+        assert_eq!(
+            action_for_prefix(key, &Keymap::default()),
+            Some(Action::Swap(Direction::Left))
+        );
     }
 }

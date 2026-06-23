@@ -20,7 +20,7 @@ use crate::theme_ops::theme_tick;
 use crate::{FrameworkFocus, HyprmuxApp, Msg};
 
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
-    match msg {
+    let mut update = match msg {
         Msg::RunAction(action) => {
             ctx.state.show_palette = false;
             let update = execute_action(ctx, action);
@@ -28,6 +28,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
                 Action::OpenThemePicker => {}
+                // The scratchpad manages its own focus (the scratch terminal on show, the
+                // previously focused pane on hide); don't override it.
+                Action::ToggleScratchpad => {}
                 _ => request_current_pane_focus(ctx),
             }
             update
@@ -164,5 +167,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PaneMouse(id, bytes) => handle_pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => handle_pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => handle_pane_scroll(ctx, id, offset),
+    };
+
+    if crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
+        let command = update.command.take();
+        update = Update::with_command(command);
     }
+
+    update
 }

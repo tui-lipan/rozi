@@ -16,8 +16,8 @@ use crate::pty_events::{
 };
 use crate::resize_move_ops::{begin_move, begin_resize, end_move, move_pane, resize_pane};
 use crate::search_ops::{recompute_search, search_next};
-use crate::theme_ops::theme_tick;
-use crate::{FrameworkFocus, HyprmuxApp, Msg};
+use crate::theme_ops::{cancel_theme_picker, preview_theme, theme_tick};
+use crate::{HyprmuxApp, Msg};
 
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
     let mut update = match msg {
@@ -46,10 +46,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::CloseThemePicker => {
-            ctx.state.show_theme_picker = false;
+            cancel_theme_picker(ctx);
             request_current_pane_focus(ctx);
             Update::full()
         }
+        Msg::PreviewTheme(preset) => preview_theme(ctx, preset),
         Msg::ThemeTick => theme_tick(ctx),
         Msg::BarTick => {
             // Repaint for the clock, then reschedule only while a clock segment is configured.
@@ -93,11 +94,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
-        Msg::FocusPane(id, framework_focus) => {
+        Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
-            if framework_focus == FrameworkFocus::Request {
-                request_pane_focus(ctx, id);
-            }
+            request_pane_focus(ctx, id);
             Update::full()
         }
         Msg::HoverPane(id) => {

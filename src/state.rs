@@ -646,6 +646,7 @@ pub struct State {
     pub show_help: bool,
     pub show_titles: bool,
     pub show_theme_picker: bool,
+    pub theme_picker_preview: Option<ThemePickerPreview>,
     pub theme: Theme,
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
@@ -688,6 +689,7 @@ impl State {
             show_help: false,
             show_titles: true,
             show_theme_picker: false,
+            theme_picker_preview: None,
             theme,
             theme_watcher: None,
             search: None,
@@ -706,6 +708,10 @@ impl State {
     ) -> Self {
         crate::profiles::restore_state_from_profile(config, theme, profile)
     }
+}
+
+pub struct ThemePickerPreview {
+    pub theme: Theme,
 }
 
 #[cfg(test)]

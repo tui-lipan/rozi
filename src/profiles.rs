@@ -186,6 +186,7 @@ pub fn restore_state_from_profile(
         show_help: false,
         show_titles: true,
         show_theme_picker: false,
+        theme_picker_preview: None,
         theme,
         theme_watcher: None,
         search: None,

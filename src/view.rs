@@ -5,7 +5,7 @@ use crate::geometry::{clamp_float_rect, clamp_floating_rect, close_rect, empty_w
 use crate::input::Action;
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
 use crate::state::{Pane, PaneId, TOP_BAR_HEIGHT};
-use crate::{FrameworkFocus, HyprmuxApp, Msg};
+use crate::{HyprmuxApp, Msg};
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -23,7 +23,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .filter(|session| !session.was_floating)
         .map(|session| session.id);
     let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled);
-    let effective_focus = effective_focused_pane(ctx, workspace);
+    let focused_pane = workspace.focused_pane.or(ctx.state.focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
     let scratch_progress = crate::scratchpad::scratch_progress(app, ctx);
@@ -52,7 +52,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         );
     }
 
-    for pane in ordered_panes(workspace, effective_focus) {
+    for pane in ordered_panes(workspace, focused_pane) {
         let base_rect = placement_for(&placements, pane.id)
             .unwrap_or_else(|| clamp_float_rect(pane.floating_rect, bounds));
         let moving = ctx
@@ -88,14 +88,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .map(|index| index + 1)
             .unwrap_or_else(|| pane.id as usize)
             .to_string();
-        let mut element = pane_element(
-            app,
-            ctx,
-            pane,
-            animated_rect,
-            effective_focus,
-            &display_number,
-        );
+        let mut element =
+            pane_element(app, ctx, pane, animated_rect, focused_pane, &display_number);
         // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
         // while a focused layer is up. instant_transition: `pane_dim` is already smoothed by the
         // underlying progress transitions, so this just applies it without re-easing.
@@ -413,6 +407,7 @@ fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
 fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let current = ctx.state.config.theme.preset;
     let applied_builtin = ctx.state.config.theme.path.is_none();
+    let initial_selected = Some(current.index());
 
     // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
     let entries: Vec<SearchEntry<Action>> = crate::state::ThemePreset::all()
@@ -426,7 +421,15 @@ fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         })
         .collect();
 
-    let palette = action_search_palette(ctx, entries, "Search themes…");
+    let palette = action_search_palette(ctx, entries, "Search themes…")
+        .initial_selected_item_index(initial_selected)
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<Action>| match event.item.value {
+                    Action::SelectTheme(preset) => Msg::PreviewTheme(preset),
+                    _ => Msg::RunAction(event.item.value),
+                }),
+        );
 
     action_palette_modal(ctx, "Choose theme")
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
@@ -541,9 +544,9 @@ pub(crate) fn pane_element(
         pane.id,
         "frame-fg",
         if focused {
-            theme.border_active
+            crate::theme_ops::pane_frame_foreground(theme, true)
         } else {
-            theme.surface.menu
+            crate::theme_ops::pane_frame_foreground(theme, false)
         },
     );
     let frame_bg = app.chrome_color(
@@ -556,31 +559,28 @@ pub(crate) fn pane_element(
 
     let mut window_stack = VStack::new().align(Align::Stretch).style(frame_style);
     if ctx.state.show_titles {
-        let title_bar_bg = app.chrome_color(
-            ctx,
-            pane.id,
-            "title-bg",
-            if focused {
-                theme.border_active
-            } else {
-                theme.surface.element
-            },
-        );
+        let title_bar_bg_target = if focused {
+            theme.border_active
+        } else {
+            theme.surface.element
+        };
+        let title_bar_bg = app.chrome_color(ctx, pane.id, "title-bg", title_bar_bg_target);
         let title_bar_fg = app.chrome_color(
             ctx,
             pane.id,
             "title-fg",
-            if focused {
-                theme.surface.backdrop
-            } else {
-                theme.surface.menu
-            },
+            crate::theme_ops::pane_title_foreground(theme, focused, title_bar_bg_target),
         );
         let title_bar_fill_style = Style::new().bg(title_bar_bg);
         let title_bar_text_style = if focused {
-            Style::new().fg(title_bar_fg).bold()
+            Style::new()
+                .fg(title_bar_fg)
+                .bold()
+                .contrast_policy(ContrastPolicy::BlackOrWhite)
         } else {
-            Style::new().fg(title_bar_fg)
+            Style::new()
+                .fg(title_bar_fg)
+                .contrast_policy(ContrastPolicy::BlackOrWhite)
         };
 
         let mut title = pane.display_title(pane.terminal.title());
@@ -609,10 +609,7 @@ pub(crate) fn pane_element(
 
         let title_bar: Element = MouseRegion::new()
             .capture_click(true)
-            .on_mouse_down(
-                ctx.link()
-                    .callback(move |_| Msg::FocusPane(id, FrameworkFocus::Request)),
-            )
+            .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
         window_stack = window_stack.child(title_bar);
@@ -622,6 +619,7 @@ pub(crate) fn pane_element(
         .snapshot(pane.terminal.snapshot.clone())
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
+        .focus_style(Style::default())
         .focusable(true)
         .width(Length::Flex(1))
         .height(Length::Flex(1))
@@ -702,17 +700,19 @@ pub(crate) fn pane_element(
         .on_right_drag_end(ctx.link().callback(move |_| Msg::EndResize(id)))
         .on_mouse_move(ctx.link().callback(move |_| Msg::HoverPane(id)));
 
-    window_region = window_region.bubble_mouse_down(true).on_mouse_down(
-        ctx.link()
-            .callback(move |_| Msg::FocusPane(id, FrameworkFocus::Preserve)),
-    );
+    window_region = window_region
+        .bubble_mouse_down(true)
+        .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)));
 
     let opacity = if pane.closing || pane.opening {
         0.0
     } else {
         1.0
     };
-    let element: Element = Animated::new(window_region.child(window_stack))
+    let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
+        .child(window_region.child(window_stack))
+        .into();
+    let element: Element = Animated::new(pane_tree)
         .opacity(opacity)
         .transition(app.window_opacity_config(pane))
         .into();
@@ -1057,19 +1057,6 @@ fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<Terminal
             col: end.1 + 1,
         },
     })
-}
-
-fn effective_focused_pane(
-    ctx: &Context<HyprmuxApp>,
-    workspace: &crate::state::Workspace,
-) -> Option<PaneId> {
-    workspace
-        .panes
-        .iter()
-        .filter(|pane| !pane.closing)
-        .find(|pane| ctx.has_focus_within_key(pane_window_key(pane.id)))
-        .map(|pane| pane.id)
-        .or(ctx.state.focused_pane)
 }
 
 pub fn pane_window_key(id: PaneId) -> String {

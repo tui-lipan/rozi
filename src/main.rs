@@ -28,7 +28,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::GeometryAnimation;
 use crate::input::Action;
-use crate::state::{HyprmuxConfig, Pane, PaneId, ResizeCorner, State};
+use crate::state::{HyprmuxConfig, Pane, PaneId, ResizeCorner, State, ThemePreset};
 
 pub struct HyprmuxApp {
     config: HyprmuxConfig,
@@ -65,18 +65,13 @@ impl HyprmuxApp {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameworkFocus {
-    Preserve,
-    Request,
-}
-
 #[derive(Clone)]
 pub enum Msg {
     RunAction(Action),
     ClosePalette,
     CloseHelp,
     CloseThemePicker,
+    PreviewTheme(ThemePreset),
     ThemeTick,
     BarTick,
     ThemeError(String),
@@ -87,7 +82,7 @@ pub enum Msg {
     CloseRenamePane,
     RenamePaneChanged(InputEvent),
     SubmitRenamePane,
-    FocusPane(PaneId, FrameworkFocus),
+    FocusPane(PaneId),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),
@@ -290,12 +285,25 @@ impl HyprmuxApp {
         slot: &str,
         target: Color,
     ) -> Color {
-        ctx.transition(
-            format!("hyprmux-pane-chrome-{pane}-{slot}"),
-            target,
-            self.focus_chrome_transition_config(),
-        )
+        // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
+        // verbatim so the user's terminal palette resolves them; blending them animates
+        // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
+        // palette and flips the hue mid-fade — e.g. an ANSI theme's `LightCyan` chrome
+        // shows as true cyan while the focus animation runs but as the palette color at
+        // rest. Snapping keeps palette themes consistent (and matching the top bar).
+        let config = if chrome_color_animates(target) {
+            self.focus_chrome_transition_config()
+        } else {
+            anim::instant_transition()
+        };
+        ctx.transition(format!("hyprmux-pane-chrome-{pane}-{slot}"), target, config)
     }
+}
+
+/// Whether a chrome color target is safe to fade. Only truecolor (`Color::Rgb`) targets
+/// animate; named/indexed palette colors snap so the terminal palette stays in control.
+pub(crate) fn chrome_color_animates(target: Color) -> bool {
+    matches!(target, Color::Rgb(..))
 }
 
 pub(crate) fn schedule_theme_tick() -> Command {
@@ -426,5 +434,16 @@ mod tests {
             restored_config.contains("/repo/backend"),
             "{restored_config}"
         );
+    }
+
+    #[test]
+    fn chrome_color_snaps_palette_colors_but_fades_truecolor() {
+        // Named/indexed colors must not animate: blending always produces Color::Rgb,
+        // which bypasses the terminal palette and flips the hue mid-fade. Truecolor
+        // targets are safe to fade.
+        assert!(!chrome_color_animates(Color::LightCyan));
+        assert!(!chrome_color_animates(Color::Black));
+        assert!(!chrome_color_animates(Color::Indexed(14)));
+        assert!(chrome_color_animates(Color::Rgb(0, 255, 255)));
     }
 }

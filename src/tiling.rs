@@ -19,6 +19,12 @@ pub struct PanePlacement {
     pub rect: FloatRect,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitEdge {
+    Leading,
+    Trailing,
+}
+
 pub fn append_tiled_window(workspace: &mut Workspace, id: PaneId) {
     if workspace
         .tile_tree
@@ -111,6 +117,16 @@ pub fn tree_contains(tree: &DwindleTree, id: PaneId) -> bool {
         DwindleTree::Split { first, second, .. } => {
             tree_contains(first, id) || tree_contains(second, id)
         }
+    }
+}
+
+pub fn leaf_depth(tree: &DwindleTree, id: PaneId) -> Option<usize> {
+    match tree {
+        DwindleTree::Leaf(leaf) if *leaf == id => Some(0),
+        DwindleTree::Leaf(_) => None,
+        DwindleTree::Split { first, second, .. } => leaf_depth(first, id)
+            .or_else(|| leaf_depth(second, id))
+            .map(|depth| depth + 1),
     }
 }
 
@@ -686,6 +702,50 @@ pub fn nearest_split_available(
     Some((extent - usable_gap).max(1.0))
 }
 
+pub fn split_available_for_edge(
+    tree: &DwindleTree,
+    rect: FloatRect,
+    gap: f32,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: SplitEdge,
+) -> Option<f32> {
+    let DwindleTree::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = tree
+    else {
+        return None;
+    };
+
+    let (first_rect, second_rect) = split_float_rect(rect, *axis, *ratio, gap);
+    let (child, child_rect, focused_is_first) = if tree_contains(first, focused) {
+        (first.as_ref(), first_rect, true)
+    } else if tree_contains(second, focused) {
+        (second.as_ref(), second_rect, false)
+    } else {
+        return None;
+    };
+
+    if let Some(deeper) =
+        split_available_for_edge(child, child_rect, gap, focused, target_axis, edge)
+    {
+        return Some(deeper);
+    }
+
+    if *axis != target_axis || !split_edge_matches_focused_side(edge, focused_is_first) {
+        return None;
+    }
+    let extent = match target_axis {
+        SplitAxis::Horizontal => rect.w,
+        SplitAxis::Vertical => rect.h,
+    };
+    let usable_gap = if extent > gap { gap } else { 0.0 };
+    Some((extent - usable_gap).max(1.0))
+}
+
 pub fn focused_is_first_in_nearest_axis_split(
     tree: &DwindleTree,
     focused: PaneId,
@@ -729,6 +789,24 @@ pub fn resize_tiled_split(
     adjust_nearest_axis_split(tree, focused, target_axis, ratio_delta)
 }
 
+pub fn resize_tiled_split_for_edge(
+    workspace: &mut Workspace,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: SplitEdge,
+    available: f32,
+    pixels: f32,
+) -> bool {
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
+    }
+    let Some(tree) = workspace.tile_tree.as_mut() else {
+        return false;
+    };
+    let ratio_delta = pixels / available.max(1.0);
+    adjust_nearest_axis_split_for_edge(tree, focused, target_axis, edge, ratio_delta)
+}
+
 fn adjust_nearest_axis_split(
     tree: &mut DwindleTree,
     focused: PaneId,
@@ -766,6 +844,53 @@ fn adjust_nearest_axis_split(
     } else {
         false
     }
+}
+
+fn adjust_nearest_axis_split_for_edge(
+    tree: &mut DwindleTree,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: SplitEdge,
+    delta: f32,
+) -> bool {
+    let DwindleTree::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = tree
+    else {
+        return false;
+    };
+
+    if tree_contains(first, focused) {
+        if adjust_nearest_axis_split_for_edge(first, focused, target_axis, edge, delta) {
+            return true;
+        }
+        if *axis == target_axis && split_edge_matches_focused_side(edge, true) {
+            *ratio = adjust_ratio_value(*ratio, delta);
+            return true;
+        }
+        false
+    } else if tree_contains(second, focused) {
+        if adjust_nearest_axis_split_for_edge(second, focused, target_axis, edge, delta) {
+            return true;
+        }
+        if *axis == target_axis && split_edge_matches_focused_side(edge, false) {
+            *ratio = adjust_ratio_value(*ratio, -delta);
+            return true;
+        }
+        false
+    } else {
+        false
+    }
+}
+
+fn split_edge_matches_focused_side(edge: SplitEdge, focused_is_first: bool) -> bool {
+    matches!(
+        (edge, focused_is_first),
+        (SplitEdge::Leading, false) | (SplitEdge::Trailing, true)
+    )
 }
 
 #[cfg(test)]
@@ -996,5 +1121,98 @@ mod tests {
             focused_is_first_in_nearest_axis_split(&tree, 99, SplitAxis::Horizontal),
             None
         );
+    }
+
+    #[test]
+    fn edge_resize_targets_grabbed_left_boundary_not_deeper_right_boundary() {
+        let mut workspace = Workspace::new(0);
+        workspace.tile_tree =
+            build_dwindle_tree(&[1, 2, 3, 4], SplitAxis::Horizontal, &[0.25, 0.5, 0.5]);
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let available = split_available_for_edge(
+            workspace.tile_tree.as_ref().unwrap(),
+            rect,
+            1.0,
+            3,
+            SplitAxis::Horizontal,
+            SplitEdge::Leading,
+        )
+        .unwrap();
+
+        assert_close(available, 99.0);
+        assert!(resize_tiled_split_for_edge(
+            &mut workspace,
+            3,
+            SplitAxis::Horizontal,
+            SplitEdge::Leading,
+            available,
+            2.475,
+        ));
+
+        let (root_ratio, inner_ratio) = four_pane_horizontal_ratios(&workspace);
+        assert_close(root_ratio, 0.225);
+        assert_close(inner_ratio, 0.5);
+    }
+
+    #[test]
+    fn edge_resize_targets_grabbed_right_boundary_when_deepest() {
+        let mut workspace = Workspace::new(0);
+        workspace.tile_tree =
+            build_dwindle_tree(&[1, 2, 3, 4], SplitAxis::Horizontal, &[0.25, 0.5, 0.5]);
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let available = split_available_for_edge(
+            workspace.tile_tree.as_ref().unwrap(),
+            rect,
+            1.0,
+            3,
+            SplitAxis::Horizontal,
+            SplitEdge::Trailing,
+        )
+        .unwrap();
+
+        assert_close(available, 73.0);
+        assert!(resize_tiled_split_for_edge(
+            &mut workspace,
+            3,
+            SplitAxis::Horizontal,
+            SplitEdge::Trailing,
+            available,
+            7.3,
+        ));
+
+        let (root_ratio, inner_ratio) = four_pane_horizontal_ratios(&workspace);
+        assert_close(root_ratio, 0.25);
+        assert_close(inner_ratio, 0.6);
+    }
+
+    fn four_pane_horizontal_ratios(workspace: &Workspace) -> (f32, f32) {
+        let Some(DwindleTree::Split {
+            ratio: root_ratio,
+            second,
+            ..
+        }) = workspace.tile_tree.as_ref()
+        else {
+            panic!("missing root split");
+        };
+        let DwindleTree::Split { second, .. } = second.as_ref() else {
+            panic!("missing vertical split");
+        };
+        let DwindleTree::Split {
+            ratio: inner_ratio, ..
+        } = second.as_ref()
+        else {
+            panic!("missing inner horizontal split");
+        };
+        (*root_ratio, *inner_ratio)
     }
 }

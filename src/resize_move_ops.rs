@@ -20,10 +20,10 @@ use crate::state::{
     ResizeSession, State, TILE_GAP, Workspace,
 };
 use crate::tiling::{
-    adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle, append_tiled_window,
-    flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
+    SplitEdge, adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle,
+    append_tiled_window, flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
     move_tiled_window_around_target, nearest_split_available, ratio_at, remove_tiled_window,
-    resize_tiled_split,
+    resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -261,11 +261,15 @@ fn resize_pane_state(
         {
             continue;
         }
-        if let Some(available) = nearest_split_available(&tree, tile_bounds, TILE_GAP, id, axis) {
-            resize_tiled_split(
+        let edge = split_edge_for_corner(axis, corner);
+        if let Some(available) =
+            split_available_for_edge(&tree, tile_bounds, TILE_GAP, id, axis, edge)
+        {
+            resize_tiled_split_for_edge(
                 &mut state.workspaces[state.active_workspace],
                 id,
                 axis,
+                edge,
                 available,
                 pixels,
             );
@@ -273,6 +277,19 @@ fn resize_pane_state(
     }
 
     state.animation = GeometryAnimation::None;
+}
+
+fn split_edge_for_corner(axis: state::SplitAxis, corner: ResizeCorner) -> SplitEdge {
+    match axis {
+        state::SplitAxis::Horizontal => match corner {
+            ResizeCorner::UpperLeft | ResizeCorner::LowerLeft => SplitEdge::Leading,
+            ResizeCorner::UpperRight | ResizeCorner::LowerRight => SplitEdge::Trailing,
+        },
+        state::SplitAxis::Vertical => match corner {
+            ResizeCorner::UpperLeft | ResizeCorner::UpperRight => SplitEdge::Leading,
+            ResizeCorner::LowerLeft | ResizeCorner::LowerRight => SplitEdge::Trailing,
+        },
+    }
 }
 
 fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {

@@ -39,7 +39,7 @@ fullscreen = true            # animate fullscreen toggle
 tile_float = true            # animate tiling <-> floating
 axis_change = true           # animate split-axis flips
 focus_chrome = true          # animate focus border/title color changes
-geometry_ms = 220            # geometry transition duration (default: 220)
+geometry_ms = 220            # base geometry transition duration (default: 220)
 close_ms = 120               # close transition duration (default: 120)
 focus_chrome_ms = 160        # focus-chrome transition duration (default: 160)
 open_delay_ms = 36           # delay before a spawned pane fades in (default: 36)
@@ -113,7 +113,7 @@ milliseconds.
 | `tile_float` | `true` | Tiling ⇄ floating geometry animation. |
 | `axis_change` | `true` | Split-axis flip animation. |
 | `focus_chrome` | `true` | Border/titlebar color transitions when focus moves. |
-| `geometry_ms` | `220` | Geometry transition duration. |
+| `geometry_ms` | `220` | Base geometry transition duration; scratchpad slide uses two-thirds of this. |
 | `close_ms` | `120` | Close transition duration. |
 | `focus_chrome_ms` | `160` | Focus-chrome transition duration. |
 | `open_delay_ms` | `36` | Delay before a spawned pane begins fading in. |

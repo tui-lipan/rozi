@@ -6,6 +6,8 @@ pub const GEOMETRY_MS: u64 = 220;
 pub const CLOSE_MS: u64 = 120;
 pub const OPEN_DELAY_MS: u64 = 36;
 pub const FOCUS_CHROME_MS: u64 = 160;
+const SCRATCH_DURATION_NUMERATOR: u32 = 2;
+const SCRATCH_DURATION_DENOMINATOR: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GeometryAnimation {
@@ -72,6 +74,10 @@ pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
     }
 }
 
+pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
+    (geometry_duration / SCRATCH_DURATION_DENOMINATOR) * SCRATCH_DURATION_NUMERATOR
+}
+
 /// How long to keep a closed pane in state before pruning it, so its own exit
 /// animation (shrink toward [`close_rect`] + opacity fade, both run for
 /// `close_duration`) can finish first. Panes surviving the close expand into the
@@ -113,5 +119,13 @@ mod tests {
         };
 
         assert_eq!(close_delay(animations), Duration::ZERO);
+    }
+
+    #[test]
+    fn scratch_transition_duration_is_two_thirds_of_geometry_duration() {
+        assert_eq!(
+            scratch_transition_duration(Duration::from_millis(300)),
+            Duration::from_millis(200)
+        );
     }
 }

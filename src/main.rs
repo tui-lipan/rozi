@@ -260,7 +260,9 @@ impl HyprmuxApp {
     pub(crate) fn scratch_transition_config(&self) -> TransitionConfig {
         let animations = self.config.animations;
         if animations.enabled && animations.tile_float {
-            anim::geometry_transition(animations.geometry_duration)
+            anim::geometry_transition(anim::scratch_transition_duration(
+                animations.geometry_duration,
+            ))
         } else {
             anim::instant_transition()
         }

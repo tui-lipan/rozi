@@ -435,6 +435,9 @@ impl BarConfig {
 pub struct ScrollbackMatch {
     pub offset: usize,
     pub line: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+    pub text: String,
     pub pane: PaneId,
 }
 

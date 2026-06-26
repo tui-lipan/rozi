@@ -15,7 +15,7 @@ use crate::pty_events::{
     handle_pty_event, handle_pty_ready,
 };
 use crate::resize_move_ops::{begin_move, begin_resize, end_move, move_pane, resize_pane};
-use crate::search_ops::{recompute_search, search_next};
+use crate::search_ops::{recompute_search, search_next, select_search_match};
 use crate::theme_ops::{cancel_theme_picker, preview_theme, theme_tick};
 use crate::{HyprmuxApp, Msg};
 
@@ -69,13 +69,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             Update::full()
         }
-        Msg::SearchChanged(event) => {
+        Msg::SearchQueryChanged(query) => {
             if let Some(search) = ctx.state.search.as_mut() {
-                event.apply_to(&mut search.input);
+                let cursor = query.len();
+                search.input.set_text(query);
+                search.input.set_cursor(cursor);
+                search.input.set_anchor(None);
             }
             recompute_search(ctx)
         }
         Msg::SearchNext(backward) => search_next(ctx, backward),
+        Msg::SearchSelect(index) => select_search_match(ctx, index),
+        Msg::SearchActivate(index) => {
+            select_search_match(ctx, index);
+            ctx.state.search = None;
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
         Msg::SearchCycleScope => crate::search_ops::cycle_search_scope(ctx),
         Msg::CloseRenamePane => {
             let update = close_rename_pane(ctx);

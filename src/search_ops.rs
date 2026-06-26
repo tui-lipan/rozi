@@ -65,6 +65,9 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
                     |matched| ScrollbackMatch {
                         offset: matched.offset,
                         line: matched.line,
+                        start_col: matched.start_col,
+                        end_col: matched.end_col,
+                        text: matched.text,
                         pane: pane_id,
                     },
                 ));
@@ -85,6 +88,26 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
         };
     }
 
+    jump_to_search_match(ctx);
+    request_search_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn select_search_match(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(search) = ctx.state.search.as_mut() else {
+        return Update::none();
+    };
+    if index >= search.matches.len() {
+        request_search_focus(ctx);
+        return Update::full();
+    }
+    search.current = index;
+    search.status = format!(
+        "{} / {} matches ({})",
+        search.current + 1,
+        search.matches.len(),
+        search.scope.label()
+    );
     jump_to_search_match(ctx);
     request_search_focus(ctx);
     Update::full()

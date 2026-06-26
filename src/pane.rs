@@ -28,6 +28,16 @@ pub enum PaneEventOutcome {
 pub struct TerminalSearchMatch {
     pub offset: usize,
     pub line: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalSearchHighlight {
+    pub line: usize,
+    pub start_col: usize,
+    pub end_col: usize,
 }
 
 impl TerminalPane {
@@ -143,11 +153,10 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let needle = query.to_ascii_lowercase();
         let original_offset = self.screen.scrollback_offset();
         let max_offset = self.screen.total_scrollback_rows();
         let mut matches = Vec::new();
-        let mut seen_lines = std::collections::HashMap::new();
+        let mut seen_matches = std::collections::HashMap::new();
         let step = usize::from(self.rows.max(1));
 
         let mut offset = max_offset;
@@ -155,15 +164,22 @@ impl TerminalPane {
             self.screen.set_scrollback(offset);
             let snapshot = self.screen.render_snapshot();
             for (line, text) in snapshot.text.lines().enumerate() {
-                if text.to_ascii_lowercase().contains(&needle) {
-                    let logical_line = line as isize - offset as isize;
-                    let matched = TerminalSearchMatch { offset, line };
-                    if let Some(index) = seen_lines.get(&logical_line).copied() {
+                let logical_line = line as isize - offset as isize;
+                for (start_col, end_col) in search_match_ranges(text, query) {
+                    let matched = TerminalSearchMatch {
+                        offset,
+                        line,
+                        start_col,
+                        end_col,
+                        text: text.to_string(),
+                    };
+                    let key = (logical_line, start_col, end_col);
+                    if let Some(index) = seen_matches.get(&key).copied() {
                         // Prefer the lowest scrollback offset for overlapping scan windows, so
                         // matches already visible in the live viewport do not jump upward.
                         matches[index] = matched;
                     } else {
-                        seen_lines.insert(logical_line, matches.len());
+                        seen_matches.insert(key, matches.len());
                         matches.push(matched);
                     }
                 }
@@ -177,6 +193,48 @@ impl TerminalPane {
         self.screen.set_scrollback(original_offset);
         self.snapshot = self.screen.render_snapshot();
         matches
+    }
+
+    pub fn search_highlighted_snapshot(
+        &self,
+        query: &str,
+        highlight_style: Style,
+        active_highlight_style: Style,
+        active_highlight: Option<TerminalSearchHighlight>,
+    ) -> TerminalRenderSnapshot {
+        let query = query.trim();
+        if query.is_empty() {
+            return self.snapshot.clone();
+        }
+
+        let mut snapshot = self.snapshot.clone();
+        let plain_lines: Vec<&str> = snapshot.text.lines().collect();
+        let mut color_lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
+        let mut changed = false;
+
+        for (row, spans) in color_lines.iter_mut().enumerate() {
+            let Some(line) = plain_lines.get(row) else {
+                continue;
+            };
+            let ranges = search_match_ranges(line, query);
+            if ranges.is_empty() {
+                continue;
+            }
+            *spans = highlight_span_ranges(
+                row,
+                spans,
+                &ranges,
+                highlight_style,
+                active_highlight_style,
+                active_highlight,
+            );
+            changed = true;
+        }
+
+        if changed {
+            snapshot.color_lines = color_lines.into();
+        }
+        snapshot
     }
 
     /// Current cursor position in the visible snapshot grid as `(row, col)`.
@@ -279,6 +337,103 @@ impl TerminalPane {
     }
 }
 
+fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
+    let needle = query.to_ascii_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    let haystack = line.to_ascii_lowercase();
+    let mut ranges = Vec::new();
+    let mut search_from = 0usize;
+    while search_from < haystack.len() {
+        let Some(relative_start) = haystack[search_from..].find(&needle) else {
+            break;
+        };
+        let start = search_from + relative_start;
+        let end = start + needle.len();
+        let start_col = haystack[..start].chars().count();
+        let end_col = haystack[..end].chars().count();
+        if start_col < end_col {
+            ranges.push((start_col, end_col));
+        }
+        search_from = end;
+    }
+    ranges
+}
+
+fn highlight_span_ranges(
+    row: usize,
+    spans: &[Span],
+    ranges: &[(usize, usize)],
+    highlight_style: Style,
+    active_highlight_style: Style,
+    active_highlight: Option<TerminalSearchHighlight>,
+) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut col = 0usize;
+
+    for span in spans {
+        let chars: Vec<char> = span.content.chars().collect();
+        let span_start = col;
+        let span_end = span_start + chars.len();
+        let mut local_start = 0usize;
+
+        for &(range_start, range_end) in ranges {
+            if range_end <= span_start {
+                continue;
+            }
+            if range_start >= span_end {
+                break;
+            }
+
+            let highlight_start = range_start.max(span_start) - span_start;
+            let highlight_end = range_end.min(span_end) - span_start;
+            let style = if active_highlight.is_some_and(|active| {
+                active.line == row && active.start_col == range_start && active.end_col == range_end
+            }) {
+                active_highlight_style
+            } else {
+                highlight_style
+            };
+            push_span_segment(&mut out, span, &chars, local_start, highlight_start, None);
+            push_span_segment(
+                &mut out,
+                span,
+                &chars,
+                highlight_start,
+                highlight_end,
+                Some(style),
+            );
+            local_start = highlight_end;
+        }
+
+        push_span_segment(&mut out, span, &chars, local_start, chars.len(), None);
+        col = span_end;
+    }
+
+    out
+}
+
+fn push_span_segment(
+    out: &mut Vec<Span>,
+    source: &Span,
+    chars: &[char],
+    start: usize,
+    end: usize,
+    style_patch: Option<Style>,
+) {
+    if start >= end {
+        return;
+    }
+    let mut span = source.clone();
+    span.content = chars[start..end].iter().collect::<String>().into();
+    if let Some(style_patch) = style_patch {
+        span.style = span.style.patch(style_patch);
+    }
+    out.push(span);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,5 +455,72 @@ mod tests {
         );
         // Anchor/cursor order is normalized.
         assert_eq!(pane.extract_text((0, 4), (0, 0)), "hello");
+    }
+
+    #[test]
+    fn search_match_ranges_returns_each_case_insensitive_occurrence() {
+        assert_eq!(
+            search_match_ranges("Alpha beta alpha", "alpha"),
+            vec![(0, 5), (11, 16)]
+        );
+    }
+
+    #[test]
+    fn search_highlighted_snapshot_marks_all_visible_matches() {
+        let mut pane = TerminalPane::new(100);
+        let base_style = Style::new().fg(Color::Green);
+        let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
+        let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
+        pane.snapshot = TerminalRenderSnapshot {
+            text: std::sync::Arc::from("Alpha beta alpha"),
+            color_lines: std::sync::Arc::from([vec![
+                Span::new("Alpha beta alpha").style(base_style),
+            ]]),
+            ..TerminalRenderSnapshot::default()
+        };
+
+        let snapshot = pane.search_highlighted_snapshot(
+            "alpha",
+            highlight_style,
+            active_highlight_style,
+            None,
+        );
+        let line = &snapshot.color_lines[0];
+        assert_eq!(line.len(), 3);
+        assert_eq!(line[0].content.as_ref(), "Alpha");
+        assert_eq!(line[1].content.as_ref(), " beta ");
+        assert_eq!(line[2].content.as_ref(), "alpha");
+        assert_eq!(line[0].style, base_style.patch(highlight_style));
+        assert_eq!(line[1].style, base_style);
+        assert_eq!(line[2].style, base_style.patch(highlight_style));
+    }
+
+    #[test]
+    fn search_highlighted_snapshot_marks_active_match_differently() {
+        let mut pane = TerminalPane::new(100);
+        let base_style = Style::new().fg(Color::Green);
+        let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
+        let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
+        pane.snapshot = TerminalRenderSnapshot {
+            text: std::sync::Arc::from("Alpha beta alpha"),
+            color_lines: std::sync::Arc::from([vec![
+                Span::new("Alpha beta alpha").style(base_style),
+            ]]),
+            ..TerminalRenderSnapshot::default()
+        };
+
+        let snapshot = pane.search_highlighted_snapshot(
+            "alpha",
+            highlight_style,
+            active_highlight_style,
+            Some(TerminalSearchHighlight {
+                line: 0,
+                start_col: 11,
+                end_col: 16,
+            }),
+        );
+        let line = &snapshot.color_lines[0];
+        assert_eq!(line[0].style, base_style.patch(highlight_style));
+        assert_eq!(line[2].style, base_style.patch(active_highlight_style));
     }
 }

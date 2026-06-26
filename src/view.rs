@@ -221,49 +221,95 @@ fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(search) = ctx.state.search.as_ref() else {
         return Text::new("").into();
     };
-    let theme = &ctx.state.theme;
-    let input = Input::bound(&search.input)
-        .placeholder("Search scrollback...")
-        .prefix("/ ")
-        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-        .focus_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(theme.surface.element),
-        )
-        .selection_style(theme.text_selection)
-        .width(Length::Flex(1))
-        .on_change(ctx.link().callback(Msg::SearchChanged))
-        .on_key(ctx.link().key_handler(|key| {
-            if key.is(KeyCode::Esc) {
-                Some(Msg::CloseSearch)
-            } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-                Some(Msg::SearchCycleScope)
-            } else if key.code == KeyCode::Enter
-                && !key.mods.ctrl
-                && !key.mods.alt
-                && !key.mods.super_key
-            {
-                Some(Msg::SearchNext(key.mods.shift))
-            } else {
-                None
-            }
-        }));
 
-    styled_modal(
+    action_palette_modal(
         ctx,
         &format!("Search · {} · Tab: scope", search.scope.label()),
-        64,
     )
-    .padding((1, 2, 1, 2))
     .on_close(ctx.link().callback(|_| Msg::CloseSearch))
-    .child(
-        VStack::new()
-            .gap(1)
-            .child(input.key(search_input_key()))
-            .child(Text::new(search.status.clone()).style(theme.muted)),
+    .child(scrollback_search_palette(ctx, search))
+    .key(search_input_key())
+}
+
+fn scrollback_search_palette(
+    ctx: &Context<HyprmuxApp>,
+    search: &crate::state::ScrollbackSearchState,
+) -> SearchPalette<usize> {
+    let current = search.current;
+    let query = search.input.text().trim();
+    let entries = search
+        .matches
+        .iter()
+        .enumerate()
+        .map(|(index, matched)| {
+            SearchEntry::item(search_match_label(matched), index)
+                .description(search_match_description(matched))
+                .active(index == current)
+        })
+        .collect::<Vec<_>>();
+
+    let empty_text = if query.is_empty() {
+        format!("Type to search scrollback ({})", search.scope.label())
+    } else {
+        format!("No matches for `{query}`")
+    };
+
+    shared_search_palette::<usize>(ctx, Length::Auto, true)
+        .entries(entries)
+        .placeholder("Search scrollback...")
+        .initial_query(query.to_string())
+        .preserve_groups(true)
+        .initial_selected_item_index(Some(current))
+        .sync_selection(true)
+        .description_placement(DescriptionPlacement::Right)
+        .empty_text(empty_text)
+        .input_key_interceptor(scrollback_search_key_interceptor(ctx))
+        .on_query_change(
+            ctx.link()
+                .callback(|query: std::sync::Arc<str>| Msg::SearchQueryChanged(query.to_string())),
+        )
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SearchSelect(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SearchActivate(event.item.value)),
+        )
+}
+
+fn scrollback_search_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+    ctx.link().key_handler(|key| {
+        if key.is(KeyCode::Esc) {
+            Some(Msg::CloseSearch)
+        } else if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            Some(Msg::SearchCycleScope)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+            Some(Msg::SearchNext(false))
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+            Some(Msg::SearchNext(true))
+        } else {
+            None
+        }
+    })
+}
+
+fn search_match_label(matched: &crate::state::ScrollbackMatch) -> String {
+    let label = matched.text.trim();
+    if label.is_empty() {
+        "(blank line)".to_string()
+    } else {
+        label.to_string()
+    }
+}
+
+fn search_match_description(matched: &crate::state::ScrollbackMatch) -> String {
+    format!(
+        "pane {} · row {} · col {}",
+        matched.pane,
+        matched.line + 1,
+        matched.start_col + 1
     )
-    .into()
 }
 
 fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -347,17 +393,31 @@ fn action_search_palette(
     entries: Vec<SearchEntry<Action>>,
     placeholder: &str,
 ) -> SearchPalette<Action> {
+    shared_search_palette::<Action>(ctx, Length::Auto, true)
+        .entries(entries)
+        .placeholder(placeholder)
+        .preserve_groups(true)
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
+        )
+}
+
+fn shared_search_palette<T: Clone + PartialEq>(
+    ctx: &Context<HyprmuxApp>,
+    height: Length,
+    highlight_matches: bool,
+) -> SearchPalette<T> {
     let theme = &ctx.state.theme;
     let selection_style = Style::new()
         .fg(theme.surface.backdrop)
         .bg(theme.border_active)
-        .bold();
+        .bold()
+        .contrast_policy(ContrastPolicy::BlackOrWhite);
     let input_style = theme.primary.patch(Style::new().bg(theme.surface.element));
 
-    SearchPalette::<Action>::new()
-        .entries(entries)
-        .placeholder(placeholder)
-        .height(Length::Auto)
+    let palette = SearchPalette::<T>::new()
+        .height(height)
         .input_border(false)
         .input_prefix("")
         .input_style(input_style)
@@ -366,24 +426,43 @@ fn action_search_palette(
                 .fg(theme.border_active)
                 .bg(theme.surface.element),
         )
-        .input_placeholder_style(theme.muted)
+        .input_placeholder_style(fg_only(&theme.muted))
         .list_border(false)
         .list_scrollbar(true)
         .list_selection_full_width(true)
         .list_selection_symbol("")
         .list_unselected_symbol("")
         .list_selection_style(selection_style)
+        .list_unfocused_selection_style(selection_style)
         .list_item_hover_style(Style::new().bg(theme.surface.element))
         .list_item_horizontal_padding((0, 1, 0, 1))
         .list_header_horizontal_padding((0, 1, 0, 1))
-        .header_style(theme.accent.bold())
-        .description_style(theme.muted)
-        .match_style(Style::new().fg(theme.border_active).bold())
-        .preserve_groups(true)
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
-        )
+        .item_style(fg_only(&theme.primary))
+        .active_item_style(search_palette_active_item_style())
+        .active_description_style(fg_only(&theme.accent))
+        .header_style(fg_only(&theme.accent).bold())
+        .description_style(fg_only(&theme.muted))
+        .empty_text_style(fg_only(&theme.muted));
+
+    if highlight_matches {
+        palette.match_style(search_palette_item_match_style(theme))
+    } else {
+        palette
+    }
+}
+
+fn search_palette_active_item_style() -> Style {
+    Style::new()
+        .fg(Color::Yellow)
+        .bold()
+        .contrast_policy(ContrastPolicy::BlackOrWhite)
+}
+
+fn search_palette_item_match_style(theme: &Theme) -> Style {
+    Style::new()
+        .fg(theme.border_active)
+        .bold()
+        .contrast_policy(ContrastPolicy::BlackOrWhite)
 }
 
 /// Shared modal chrome for every overlay: a rounded border, an accent title, and the
@@ -615,8 +694,9 @@ pub(crate) fn pane_element(
         window_stack = window_stack.child(title_bar);
     }
 
+    let snapshot = terminal_snapshot_for_pane(ctx, pane);
     let mut terminal_widget = Terminal::new()
-        .snapshot(pane.terminal.snapshot.clone())
+        .snapshot(snapshot)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
@@ -718,6 +798,62 @@ pub(crate) fn pane_element(
         .into();
 
     element.key(pane_window_key(id))
+}
+
+fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> TerminalRenderSnapshot {
+    let Some(query) = search_highlight_query(ctx, pane.id) else {
+        return pane.terminal.snapshot.clone();
+    };
+    pane.terminal.search_highlighted_snapshot(
+        query,
+        search_match_style(),
+        active_search_match_style(),
+        active_search_highlight(ctx, pane),
+    )
+}
+
+fn search_highlight_query(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<&str> {
+    let search = ctx.state.search.as_ref()?;
+    let query = search.input.text().trim();
+    if query.is_empty() || search.matches.is_empty() {
+        return None;
+    }
+    search
+        .matches
+        .iter()
+        .any(|matched| matched.pane == id)
+        .then_some(query)
+}
+
+fn active_search_highlight(
+    ctx: &Context<HyprmuxApp>,
+    pane: &Pane,
+) -> Option<crate::pane::TerminalSearchHighlight> {
+    let search = ctx.state.search.as_ref()?;
+    let matched = search.matches.get(search.current)?;
+    if matched.pane != pane.id || matched.offset != pane.terminal.snapshot.scrollback_offset {
+        return None;
+    }
+    Some(crate::pane::TerminalSearchHighlight {
+        line: matched.line,
+        start_col: matched.start_col,
+        end_col: matched.end_col,
+    })
+}
+
+fn search_match_style() -> Style {
+    Style::new()
+        .fg(Color::White)
+        .bg(Color::rgb(92, 64, 8))
+        .contrast_policy(ContrastPolicy::BlackOrWhite)
+}
+
+fn active_search_match_style() -> Style {
+    Style::new()
+        .fg(Color::Black)
+        .bg(Color::Yellow)
+        .bold()
+        .contrast_policy(ContrastPolicy::BlackOrWhite)
 }
 
 /// Draggable strips in the gaps between adjacent tiled panes. Each strip resizes the split on

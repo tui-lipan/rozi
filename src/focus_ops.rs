@@ -8,25 +8,6 @@ use crate::state::{Direction, Pane, PaneId, State, Workspace};
 use crate::tiling::{self, append_tiled_window, remove_tiled_window};
 use crate::view;
 
-pub(crate) fn directional_neighbor(
-    placements: &[tiling::PanePlacement],
-    focused: PaneId,
-    direction: Direction,
-) -> Option<PaneId> {
-    let current = placements
-        .iter()
-        .find(|candidate| candidate.id == focused)?;
-    placements
-        .iter()
-        .filter(|candidate| candidate.id != focused)
-        .filter_map(|candidate| {
-            directional_score(current.rect, candidate.rect, direction)
-                .map(|score| (candidate.id, candidate.rect, score))
-        })
-        .min_by(|(_, _, a), (_, _, b)| a.total_cmp(b))
-        .map(|(id, _, _)| id)
-}
-
 pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::SplitAxis {
     match direction {
         Direction::Left | Direction::Right => crate::state::SplitAxis::Horizontal,
@@ -160,6 +141,7 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
     if crate::tiling::swap_tree_leaves(tree, focused, master) {
         state.focused_pane = Some(focused);
         state.workspaces[state.active_workspace].focused_pane = Some(focused);
+        state.workspaces[state.active_workspace].last_move_swap = None;
         true
     } else {
         false

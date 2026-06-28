@@ -114,6 +114,13 @@ pub struct MoveSession {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MoveSwapHint {
+    pub pane: PaneId,
+    pub return_direction: Direction,
+    pub target: PaneId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Prefix,
@@ -587,6 +594,7 @@ pub struct Workspace {
     pub layout_kind: LayoutKind,
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
+    pub last_move_swap: Option<MoveSwapHint>,
 }
 
 impl Workspace {
@@ -602,6 +610,7 @@ impl Workspace {
                 SplitAxis::Vertical
             },
             split_ratios: vec![DEFAULT_RATIO; 16],
+            last_move_swap: None,
         }
     }
 

@@ -7,8 +7,8 @@ use crate::focus_ops::{
 };
 use crate::geometry::{
     canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
-    clamp_floating_rect, grabbed_edge_on_outer_border, inset_float_rect, lift_off_float_rect,
-    resize_float_rect_from_corner, tiled_drag_preview_rect,
+    clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, inset_float_rect,
+    lift_off_float_rect, resize_float_rect_from_corner, tiled_drag_preview_rect,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
@@ -16,14 +16,14 @@ use crate::layout::{
 };
 use crate::pty_events;
 use crate::state::{
-    self, Direction, LayoutKind, MoveSession, OUTER_GAP, PaneId, RATIO_STEP, ResizeCorner,
-    ResizeSession, State, TILE_GAP, Workspace,
+    self, Direction, LayoutKind, MoveSession, MoveSwapHint, OUTER_GAP, PaneId, RATIO_STEP,
+    ResizeCorner, ResizeSession, State, TILE_GAP, Workspace,
 };
 use crate::tiling::{
     SplitEdge, adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle,
     append_tiled_window, flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
     move_tiled_window_around_target, nearest_split_available, ratio_at, remove_tiled_window,
-    resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge,
+    resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge, swap_tree_leaves,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -407,6 +407,7 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
         return;
     };
     if flip_tree_split_for_focused(tree, focused, 0).is_some() {
+        workspace.last_move_swap = None;
         state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -438,6 +439,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
     let layout_kind = {
         let workspace = &mut ctx.state.workspaces[workspace_index];
         workspace.layout_kind = workspace.layout_kind.toggled();
+        workspace.last_move_swap = None;
         workspace.layout_kind
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
@@ -497,29 +499,8 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         return;
     }
 
-    let target = {
-        let workspace = &ctx.state.workspaces[workspace_index];
-        let tiled_ids = workspace.active_tiled_ids_by_pane_order();
-        if !tiled_ids.contains(&focused) {
-            return;
-        }
-        let placements: Vec<_> = workspace_target_rects(workspace, bounds)
-            .into_iter()
-            .filter(|placement| tiled_ids.contains(&placement.id))
-            .collect();
-        focus_ops::directional_neighbor(&placements, focused, direction)
-    };
-
-    let Some(target_id) = target else {
-        return;
-    };
-    let axis = focus_ops::split_axis_for_direction(direction);
-    let moving_first = match direction {
-        Direction::Left | Direction::Up => true,
-        Direction::Right | Direction::Down => false,
-    };
     let workspace = &mut ctx.state.workspaces[workspace_index];
-    if move_tiled_window_around_target(workspace, focused, target_id, axis, moving_first) {
+    if swap_tiled_neighbor_in_direction(workspace, bounds, focused, direction) {
         workspace.focused_pane = Some(focused);
         ctx.state.focused_pane = Some(focused);
         ctx.state.animation = GeometryAnimation::AxisChange;
@@ -527,8 +508,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
 }
 
 /// Exchange the focused pane with its directional neighbor, keeping focus on the moved pane.
-/// Unlike [`move_focused_in_direction`] (which re-inserts the pane at a neighbor's split),
-/// this trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
+/// This trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
 /// there is no neighbor in that direction.
 pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
@@ -540,33 +520,148 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         return;
     }
 
-    let target = {
-        let workspace = &ctx.state.workspaces[workspace_index];
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    if swap_tiled_neighbor_in_direction(workspace, bounds, focused, direction) {
+        workspace.focused_pane = Some(focused);
+        ctx.state.focused_pane = Some(focused);
+        ctx.state.animation = GeometryAnimation::AxisChange;
+    }
+}
+
+fn swap_tiled_neighbor_in_direction(
+    workspace: &mut Workspace,
+    bounds: FloatRect,
+    focused: PaneId,
+    direction: Direction,
+) -> bool {
+    let target_id = {
         let tiled_ids = workspace.active_tiled_ids_by_pane_order();
         if !tiled_ids.contains(&focused) {
-            return;
+            return false;
         }
         let placements: Vec<_> = workspace_target_rects(workspace, bounds)
             .into_iter()
             .filter(|placement| tiled_ids.contains(&placement.id))
             .collect();
-        focus_ops::directional_neighbor(&placements, focused, direction)
+        remembered_swap_target(workspace, &placements, focused, direction)
+            .or_else(|| strict_directional_neighbor(&placements, focused, direction))
     };
 
-    let Some(target_id) = target else {
-        return;
+    let Some(target_id) = target_id else {
+        return false;
     };
-    let workspace = &mut ctx.state.workspaces[workspace_index];
     if workspace.tile_tree.is_none() {
         workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     }
     let Some(tree) = workspace.tile_tree.as_mut() else {
-        return;
+        return false;
     };
-    if crate::tiling::swap_tree_leaves(tree, focused, target_id) {
-        workspace.focused_pane = Some(focused);
-        ctx.state.focused_pane = Some(focused);
-        ctx.state.animation = GeometryAnimation::AxisChange;
+    let swapped = swap_tree_leaves(tree, focused, target_id);
+    if swapped {
+        workspace.last_move_swap = Some(MoveSwapHint {
+            pane: focused,
+            return_direction: opposite_direction(direction),
+            target: target_id,
+        });
+    }
+    swapped
+}
+
+fn remembered_swap_target(
+    workspace: &Workspace,
+    placements: &[crate::tiling::PanePlacement],
+    focused: PaneId,
+    direction: Direction,
+) -> Option<PaneId> {
+    let hint = workspace.last_move_swap?;
+    if hint.pane != focused || hint.return_direction != direction {
+        return None;
+    }
+
+    let current = placements
+        .iter()
+        .find(|placement| placement.id == focused)?;
+    let target = placements
+        .iter()
+        .find(|placement| placement.id == hint.target)?;
+    is_strict_directional_candidate(current.rect, target.rect, direction).then_some(hint.target)
+}
+
+fn strict_directional_neighbor(
+    placements: &[crate::tiling::PanePlacement],
+    focused: PaneId,
+    direction: Direction,
+) -> Option<PaneId> {
+    let current = placements
+        .iter()
+        .find(|candidate| candidate.id == focused)?;
+    placements
+        .iter()
+        .filter(|candidate| candidate.id != focused)
+        .filter_map(|candidate| {
+            is_strict_directional_candidate(current.rect, candidate.rect, direction).then(|| {
+                directional_score(current.rect, candidate.rect, direction).map(|score| {
+                    let cross_offset =
+                        cross_axis_center_offset(current.rect, candidate.rect, direction);
+                    (candidate.id, score, cross_offset)
+                })
+            })?
+        })
+        .min_by(|(_, a_score, a_cross), (_, b_score, b_cross)| {
+            a_score
+                .total_cmp(b_score)
+                .then_with(|| a_cross.total_cmp(b_cross))
+        })
+        .map(|(id, _, _)| id)
+}
+
+fn is_strict_directional_candidate(
+    current: FloatRect,
+    candidate: FloatRect,
+    direction: Direction,
+) -> bool {
+    directional_score(current, candidate, direction).is_some()
+        && cross_axis_overlap(current, candidate, direction) > 0.0
+}
+
+fn cross_axis_overlap(current: FloatRect, candidate: FloatRect, direction: Direction) -> f32 {
+    match direction {
+        Direction::Left | Direction::Right => interval_overlap(
+            current.y,
+            current.y + current.h,
+            candidate.y,
+            candidate.y + candidate.h,
+        ),
+        Direction::Up | Direction::Down => interval_overlap(
+            current.x,
+            current.x + current.w,
+            candidate.x,
+            candidate.x + candidate.w,
+        ),
+    }
+}
+
+fn interval_overlap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
+    (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
+}
+
+fn cross_axis_center_offset(current: FloatRect, candidate: FloatRect, direction: Direction) -> f32 {
+    match direction {
+        Direction::Left | Direction::Right => {
+            ((current.y + current.h / 2.0) - (candidate.y + candidate.h / 2.0)).abs()
+        }
+        Direction::Up | Direction::Down => {
+            ((current.x + current.w / 2.0) - (candidate.x + candidate.w / 2.0)).abs()
+        }
+    }
+}
+
+fn opposite_direction(direction: Direction) -> Direction {
+    match direction {
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
     }
 }
 
@@ -696,6 +791,8 @@ fn keyboard_resize_pixels(direction: Direction, focused_is_first: bool, availabl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{Pane, SplitAxis};
+    use crate::tiling::DwindleTree;
 
     #[test]
     fn keyboard_resize_directions_grow_toward_the_nearest_split() {
@@ -726,5 +823,105 @@ mod tests {
             keyboard_resize_pixels(Direction::Up, false, available),
             step
         );
+    }
+
+    #[test]
+    fn directional_move_swaps_with_neighbor_instead_of_splitting_target() {
+        let (bounds, mut workspace) = three_pane_stack_workspace();
+
+        assert!(swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            3,
+            Direction::Left,
+        ));
+
+        assert_eq!(
+            workspace.tile_tree,
+            Some(DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(3)),
+                second: Box::new(DwindleTree::Split {
+                    axis: SplitAxis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Leaf(2)),
+                    second: Box::new(DwindleTree::Leaf(1)),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn directional_move_returns_to_the_previous_stacked_slot() {
+        let (bounds, mut workspace) = three_pane_stack_workspace();
+
+        assert!(swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            3,
+            Direction::Left,
+        ));
+        assert!(swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            3,
+            Direction::Right,
+        ));
+
+        assert_eq!(workspace.tile_tree, three_pane_stack_tree());
+    }
+
+    #[test]
+    fn vertical_directional_move_requires_horizontal_overlap() {
+        let (bounds, mut workspace) = three_pane_stack_workspace();
+
+        assert!(!swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            1,
+            Direction::Down,
+        ));
+        assert!(!swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            1,
+            Direction::Up,
+        ));
+        assert!(swap_tiled_neighbor_in_direction(
+            &mut workspace,
+            bounds,
+            2,
+            Direction::Down,
+        ));
+    }
+
+    fn three_pane_stack_workspace() -> (FloatRect, Workspace) {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 80.0,
+        };
+        let mut workspace = Workspace::new(0);
+        for id in 1..=3 {
+            workspace.panes.push(Pane::new(id, 100, bounds));
+        }
+        workspace.tile_tree = three_pane_stack_tree();
+        (bounds, workspace)
+    }
+
+    fn three_pane_stack_tree() -> Option<DwindleTree> {
+        Some(DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(2)),
+                second: Box::new(DwindleTree::Leaf(3)),
+            }),
+        })
     }
 }

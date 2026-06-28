@@ -218,6 +218,7 @@ pub fn insert_tiled_pane_around_target(
         return false;
     };
     workspace.tile_tree = Some(inserted);
+    workspace.last_move_swap = None;
     true
 }
 

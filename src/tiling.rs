@@ -38,13 +38,18 @@ pub fn append_tiled_window(workspace: &mut Workspace, id: PaneId) {
         id,
         workspace.start_axis,
     ));
+    workspace.last_move_swap = None;
 }
 
 pub fn remove_tiled_window(workspace: &mut Workspace, id: PaneId) {
-    workspace.tile_tree = workspace
-        .tile_tree
-        .take()
-        .and_then(|tree| remove_tree_leaf(tree, id).0);
+    let Some(tree) = workspace.tile_tree.take() else {
+        return;
+    };
+    let (tree, removed) = remove_tree_leaf(tree, id);
+    workspace.tile_tree = tree;
+    if removed {
+        workspace.last_move_swap = None;
+    }
 }
 
 pub fn build_dwindle_tree(
@@ -305,6 +310,7 @@ pub fn move_tiled_window_around_target(
         return false;
     };
     workspace.tile_tree = Some(inserted);
+    workspace.last_move_swap = None;
     true
 }
 

@@ -75,10 +75,6 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
     ctx.state.theme_picker_preview = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
-    ctx.toast().push(crate::pty_events::info_toast(format!(
-        "Theme: {}",
-        preset.label()
-    )));
 }
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {

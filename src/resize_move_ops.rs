@@ -14,7 +14,6 @@ use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
     workspace_target_rects, workspace_target_rects_excluding,
 };
-use crate::pty_events;
 use crate::state::{
     self, Direction, LayoutKind, MoveSession, MoveSwapHint, OUTER_GAP, PaneId, RATIO_STEP,
     ResizeCorner, ResizeSession, State, TILE_GAP, Workspace,
@@ -436,18 +435,12 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
 
 pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
     let workspace_index = ctx.state.active_workspace;
-    let layout_kind = {
+    {
         let workspace = &mut ctx.state.workspaces[workspace_index];
         workspace.layout_kind = workspace.layout_kind.toggled();
         workspace.last_move_swap = None;
-        workspace.layout_kind
-    };
+    }
     ctx.state.animation = GeometryAnimation::AxisChange;
-    ctx.toast().push(pty_events::info_toast(format!(
-        "Workspace {} layout: {}",
-        workspace_index + 1,
-        layout_kind.label()
-    )));
 }
 
 fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {

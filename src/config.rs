@@ -18,8 +18,6 @@ use crate::state::{
 #[derive(Debug)]
 pub struct LoadedConfig {
     pub config: HyprmuxConfig,
-    pub path: PathBuf,
-    pub found: bool,
     pub warnings: Vec<String>,
 }
 
@@ -215,21 +213,11 @@ pub fn load_config() -> LoadedConfig {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return LoadedConfig {
-                config,
-                path,
-                found: false,
-                warnings,
-            };
+            return LoadedConfig { config, warnings };
         }
         Err(err) => {
             warnings.push(format!("Config read failed for {}: {err}", path.display()));
-            return LoadedConfig {
-                config,
-                path,
-                found: false,
-                warnings,
-            };
+            return LoadedConfig { config, warnings };
         }
     };
 
@@ -237,12 +225,7 @@ pub fn load_config() -> LoadedConfig {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!("Config parse failed for {}: {err}", path.display()));
-            return LoadedConfig {
-                config,
-                path,
-                found: false,
-                warnings,
-            };
+            return LoadedConfig { config, warnings };
         }
     };
 
@@ -310,12 +293,7 @@ pub fn load_config() -> LoadedConfig {
     apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
     config.keymap = build_keymap(parsed.keys, &config.input.prefix, &mut warnings);
 
-    LoadedConfig {
-        config,
-        path,
-        found: true,
-        warnings,
-    }
+    LoadedConfig { config, warnings }
 }
 
 pub fn load_initial_theme(config: &HyprmuxConfig) -> LoadedTheme {

@@ -338,9 +338,6 @@ fn main() -> Result<()> {
     let loaded_theme = config::load_initial_theme(&loaded.config);
     let mut startup_messages = loaded.warnings;
     startup_messages.extend(loaded_theme.warnings);
-    if loaded.found {
-        startup_messages.push(format!("Loaded config from {}", loaded.path.display()));
-    }
     let mut startup_profile =
         loaded
             .config
@@ -348,10 +345,7 @@ fn main() -> Result<()> {
             .path
             .as_ref()
             .and_then(|path| match profiles::load_profile(path) {
-                Ok(profile) => {
-                    startup_messages.push(format!("Loaded profile from {}", path.display()));
-                    Some(profile)
-                }
+                Ok(profile) => Some(profile),
                 Err(err) => {
                     startup_messages.push(format!("Profile load failed: {err}"));
                     None
@@ -366,7 +360,6 @@ fn main() -> Result<()> {
     {
         match profiles::load_profile(&path) {
             Ok(profile) => {
-                startup_messages.push(format!("Restored session from {}", path.display()));
                 startup_profile = Some(profile);
             }
             Err(err) => startup_messages.push(format!("Session restore failed: {err}")),

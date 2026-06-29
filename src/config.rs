@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -167,6 +169,26 @@ mod tests {
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
     }
+
+    #[test]
+    fn theme_upsert_adds_missing_section() {
+        assert_eq!(
+            upsert_theme_preset("scrollback = 100\n", "lipan"),
+            "scrollback = 100\n\n[theme]\npreset = \"lipan\"\n"
+        );
+    }
+
+    #[test]
+    fn theme_upsert_replaces_preset_and_removes_custom_path() {
+        let updated = upsert_theme_preset(
+            "[theme]\npreset = \"dracula\"\npath = \"~/theme.toml\"\n\n[session]\nautosave = true\n",
+            "system",
+        );
+        assert_eq!(
+            updated,
+            "[theme]\npreset = \"system\"\n\n[session]\nautosave = true\n"
+        );
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -252,7 +274,7 @@ pub fn load_config() -> LoadedConfig {
     if let Some(preset) = parsed.theme.preset {
         match ThemePreset::parse(&preset) {
             Some(preset) => config.theme.preset = preset,
-            None => warnings.push(format!("Unknown theme preset `{preset}`; using one-dark")),
+            None => warnings.push(format!("Unknown theme preset `{preset}`; using lipan")),
         }
     }
     if let Some(path) = non_empty(parsed.theme.path) {
@@ -297,7 +319,7 @@ pub fn load_config() -> LoadedConfig {
 }
 
 pub fn load_initial_theme(config: &HyprmuxConfig) -> LoadedTheme {
-    let fallback = config.theme.preset.theme();
+    let fallback = theme_for_preset(config.theme.preset);
     let mut warnings = Vec::new();
     let theme = if let Some(path) = &config.theme.path {
         match load_theme_from_toml(path, fallback.clone()) {
@@ -311,6 +333,86 @@ pub fn load_initial_theme(config: &HyprmuxConfig) -> LoadedTheme {
         fallback
     };
     LoadedTheme { theme, warnings }
+}
+
+pub fn theme_for_preset(preset: ThemePreset) -> Theme {
+    if preset == ThemePreset::System {
+        ThemePreset::Lipan.theme()
+    } else {
+        preset.theme()
+    }
+}
+
+pub fn persist_theme_selection(preset: ThemePreset) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_theme_preset(&text, preset.id());
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&path, updated)
+        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn upsert_theme_preset(text: &str, preset_id: &str) -> String {
+    let mut output = String::new();
+    let mut in_theme = false;
+    let mut saw_theme = false;
+    let mut wrote_preset = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if section_starts {
+            if in_theme && !wrote_preset {
+                output.push_str(&format!("preset = \"{preset_id}\"\n"));
+                wrote_preset = true;
+            }
+            in_theme = trimmed == "[theme]";
+            saw_theme |= in_theme;
+        }
+
+        if in_theme
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(key, _)| matches!(key.trim(), "preset" | "path"))
+        {
+            if trimmed.starts_with("preset") && !wrote_preset {
+                output.push_str(&format!("preset = \"{preset_id}\"\n"));
+                wrote_preset = true;
+            }
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    if in_theme && !wrote_preset {
+        output.push_str(&format!("preset = \"{preset_id}\"\n"));
+    } else if !saw_theme {
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            output.push('\n');
+        }
+        output.push_str("[theme]\n");
+        output.push_str(&format!("preset = \"{preset_id}\"\n"));
+    }
+
+    output
 }
 
 pub fn config_path() -> PathBuf {
@@ -531,7 +633,7 @@ fn apply_animations(target: &mut WindowAnimationConfig, raw: AnimationFileConfig
 impl Default for HyprmuxThemeConfig {
     fn default() -> Self {
         Self {
-            preset: ThemePreset::OneDark,
+            preset: ThemePreset::Lipan,
             path: None,
         }
     }

@@ -4,6 +4,10 @@ use crate::focus_ops::request_theme_picker_focus;
 use crate::state::{Mode, State, ThemePickerPreview, ThemePreset};
 use crate::{HyprmuxApp, Msg, schedule_theme_tick};
 
+pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
+    Theme::from_host_colors(colors).with_extension(colors)
+}
+
 pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
         return Update::none();
@@ -54,7 +58,7 @@ pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) 
             theme: ctx.state.theme.clone(),
         });
     }
-    ctx.state.theme = preset.theme();
+    ctx.state.theme = theme_for_preset_from_context(ctx, preset);
     apply_terminal_palette_to_state(&mut ctx.state);
     Update::full()
 }
@@ -71,10 +75,25 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
     ctx.state.config.theme.preset = preset;
     ctx.state.config.theme.path = None;
     ctx.state.theme_watcher = None;
-    ctx.state.theme = preset.theme();
+    ctx.state.theme = theme_for_preset_from_context(ctx, preset);
     ctx.state.theme_picker_preview = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
+    if let Err(err) = crate::config::persist_theme_selection(preset) {
+        ctx.toast()
+            .push(crate::pty_events::error_toast("Theme not saved", err));
+    }
+}
+
+fn theme_for_preset_from_context(ctx: &Context<HyprmuxApp>, preset: ThemePreset) -> Theme {
+    if preset == ThemePreset::System {
+        ctx.state
+            .system_theme
+            .clone()
+            .unwrap_or_else(|| ThemePreset::Lipan.theme())
+    } else {
+        preset.theme()
+    }
 }
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
@@ -153,6 +172,10 @@ pub(crate) fn pane_title_foreground(theme: &Theme, focused: bool, background: Co
 pub(crate) fn terminal_palette(theme: &Theme, background: Color) -> TerminalColorPalette {
     let foreground = style_fg(theme.primary).unwrap_or(Color::White);
     let background = clean_terminal_color(background, Color::Black);
+    if let Some(host_colors) = theme.extension::<HostTerminalColors>() {
+        return TerminalColorPalette::new(host_colors.fg, background, host_colors.ansi);
+    }
+
     let muted = style_fg(theme.muted).unwrap_or(theme.surface.menu);
     let accent = style_fg(theme.accent).unwrap_or(theme.border_active);
     let purple = theme.file_icons.purple;
@@ -245,6 +268,15 @@ mod tests {
             .background
     }
 
+    fn host_colors() -> HostTerminalColors {
+        let ansi = std::array::from_fn(|i| Color::rgb(i as u8, 10 + i as u8, 20 + i as u8));
+        HostTerminalColors {
+            ansi,
+            fg: Color::rgb(230, 231, 232),
+            bg: Color::rgb(10, 11, 12),
+        }
+    }
+
     #[test]
     fn terminal_palette_background_respects_focused_background_config() {
         let theme = ThemePreset::OneDark.theme();
@@ -292,6 +324,34 @@ mod tests {
         );
         assert_eq!(
             pane_palette_background(&state, 2),
+            Some(theme.surface.panel)
+        );
+    }
+
+    #[test]
+    fn system_theme_terminal_palette_preserves_host_ansi_slots() {
+        let colors = host_colors();
+        let theme = system_theme_from_host_colors(colors);
+        let pane_background = Color::rgb(1, 2, 3);
+
+        let palette = terminal_palette(&theme, pane_background);
+
+        assert_eq!(palette.foreground, Some(colors.fg));
+        assert_eq!(palette.background, Some(pane_background));
+        assert_eq!(palette.ansi, colors.ansi);
+    }
+
+    #[test]
+    fn host_terminal_palette_background_still_follows_pane_background() {
+        let colors = host_colors();
+        let theme = system_theme_from_host_colors(colors);
+        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        state.config.pane.highlight_focused_background = true;
+
+        assert!(apply_terminal_palette_to_state(&mut state));
+
+        assert_eq!(
+            pane_palette_background(&state, 1),
             Some(theme.surface.panel)
         );
     }

@@ -197,6 +197,7 @@ impl Default for InputConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemePreset {
+    Lipan,
     OneDark,
     Dracula,
     Nord,
@@ -206,11 +207,13 @@ pub enum ThemePreset {
     SolarizedDark,
     Monokai,
     Ansi,
+    System,
 }
 
 impl ThemePreset {
-    pub fn all() -> [Self; 9] {
+    pub fn all() -> [Self; 11] {
         [
+            Self::Lipan,
             Self::OneDark,
             Self::Dracula,
             Self::Nord,
@@ -220,6 +223,7 @@ impl ThemePreset {
             Self::SolarizedDark,
             Self::Monokai,
             Self::Ansi,
+            Self::System,
         ]
     }
 
@@ -232,6 +236,7 @@ impl ThemePreset {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::Lipan => "lipan",
             Self::OneDark => "one-dark",
             Self::Dracula => "dracula",
             Self::Nord => "nord",
@@ -241,11 +246,13 @@ impl ThemePreset {
             Self::SolarizedDark => "solarized-dark",
             Self::Monokai => "monokai",
             Self::Ansi => "ansi",
+            Self::System => "system",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Lipan => "Lipan",
             Self::OneDark => "One Dark",
             Self::Dracula => "Dracula",
             Self::Nord => "Nord",
@@ -255,6 +262,7 @@ impl ThemePreset {
             Self::SolarizedDark => "Solarized Dark",
             Self::Monokai => "Monokai",
             Self::Ansi => "ANSI",
+            Self::System => "System",
         }
     }
 
@@ -265,6 +273,7 @@ impl ThemePreset {
             .replace(['_', ' '], "-")
             .as_str()
         {
+            "lipan" | "tui-lipan" | "tuilipan" | "default" => Some(Self::Lipan),
             "one-dark" | "onedark" => Some(Self::OneDark),
             "dracula" => Some(Self::Dracula),
             "nord" => Some(Self::Nord),
@@ -274,12 +283,14 @@ impl ThemePreset {
             "solarized-dark" | "solarized" => Some(Self::SolarizedDark),
             "monokai" => Some(Self::Monokai),
             "ansi" => Some(Self::Ansi),
+            "system" => Some(Self::System),
             _ => None,
         }
     }
 
     pub fn theme(self) -> Theme {
         match self {
+            Self::Lipan => Theme::lipan(),
             Self::OneDark => Theme::one_dark(),
             Self::Dracula => Theme::dracula(),
             Self::Nord => Theme::nord(),
@@ -289,6 +300,7 @@ impl ThemePreset {
             Self::SolarizedDark => Theme::solarized_dark(),
             Self::Monokai => Theme::monokai(),
             Self::Ansi => Theme::ansi(),
+            Self::System => Theme::default(),
         }
     }
 }
@@ -671,6 +683,7 @@ pub struct State {
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
     pub theme: Theme,
+    pub system_theme: Option<Theme>,
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
@@ -714,6 +727,7 @@ impl State {
             show_theme_picker: false,
             theme_picker_preview: None,
             theme,
+            system_theme: None,
             theme_watcher: None,
             search: None,
             rename: None,

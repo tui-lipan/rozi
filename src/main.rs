@@ -33,6 +33,7 @@ use crate::state::{HyprmuxConfig, Pane, PaneId, ResizeCorner, State, ThemePreset
 pub struct HyprmuxApp {
     config: HyprmuxConfig,
     initial_theme: Theme,
+    initial_system_theme: Option<Theme>,
     startup_profile: Option<profiles::HyprmuxProfile>,
     startup_messages: Vec<String>,
 }
@@ -42,6 +43,7 @@ impl Default for HyprmuxApp {
         let config = HyprmuxConfig::default();
         Self {
             initial_theme: config.theme.preset.theme(),
+            initial_system_theme: None,
             config,
             startup_profile: None,
             startup_messages: Vec::new(),
@@ -53,12 +55,14 @@ impl HyprmuxApp {
     fn new(
         config: HyprmuxConfig,
         initial_theme: Theme,
+        initial_system_theme: Option<Theme>,
         startup_profile: Option<profiles::HyprmuxProfile>,
         startup_messages: Vec<String>,
     ) -> Self {
         Self {
             config,
             initial_theme,
+            initial_system_theme,
             startup_profile,
             startup_messages,
         }
@@ -116,6 +120,7 @@ impl Component for HyprmuxApp {
         } else {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
+        state.system_theme = self.initial_system_theme.clone();
         theme_ops::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -126,7 +131,10 @@ impl Component for HyprmuxApp {
         }
 
         if let Some(path) = &ctx.state.config.theme.path {
-            match ThemeWatcher::new(path.clone(), ctx.state.config.theme.preset.theme()) {
+            match ThemeWatcher::new(
+                path.clone(),
+                config::theme_for_preset(ctx.state.config.theme.preset),
+            ) {
                 Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
                 Err(err) => {
                     ctx.toast().push(pty_events::error_toast(
@@ -366,23 +374,33 @@ fn main() -> Result<()> {
         }
     }
     let config = loaded.config;
-    let theme = loaded_theme.theme;
-    let terminal_bg = query_host_colors().map(|colors| colors.bg);
+    let startup_host_colors = query_host_colors();
+    let terminal_bg = startup_host_colors.map(|colors| colors.bg);
+    let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
+    let theme = if config.theme.preset == ThemePreset::System && config.theme.path.is_none() {
+        startup_system_theme
+            .clone()
+            .unwrap_or_else(|| loaded_theme.theme.clone())
+    } else {
+        loaded_theme.theme
+    };
 
-    App::new()
+    let app = App::new()
         .title("hyprmux")
         .theme(theme.clone())
         .terminal_bg(terminal_bg)
         .toast_placement(ToastPlacement::BottomEnd)
         .clipboard_config(clipboard_config(&config))
-        .mouse(true)
-        .mount(HyprmuxApp::new(
-            config,
-            theme,
-            startup_profile,
-            startup_messages,
-        ))
-        .run()
+        .mouse(true);
+
+    app.mount(HyprmuxApp::new(
+        config,
+        theme,
+        startup_system_theme,
+        startup_profile,
+        startup_messages,
+    ))
+    .run()
 }
 
 #[cfg(test)]

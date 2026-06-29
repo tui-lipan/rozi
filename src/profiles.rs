@@ -188,6 +188,7 @@ pub fn restore_state_from_profile(
         show_theme_picker: false,
         theme_picker_preview: None,
         theme,
+        system_theme: None,
         theme_watcher: None,
         search: None,
         rename: None,

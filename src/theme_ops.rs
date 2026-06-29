@@ -173,7 +173,7 @@ pub(crate) fn terminal_palette(theme: &Theme, background: Color) -> TerminalColo
     let foreground = style_fg(theme.primary).unwrap_or(Color::White);
     let background = clean_terminal_color(background, Color::Black);
     if let Some(host_colors) = theme.extension::<HostTerminalColors>() {
-        return TerminalColorPalette::new(host_colors.fg, background, host_colors.ansi);
+        return TerminalColorPalette::from_host_colors(*host_colors, background);
     }
 
     let muted = style_fg(theme.muted).unwrap_or(theme.surface.menu);

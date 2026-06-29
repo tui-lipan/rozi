@@ -313,6 +313,15 @@ pub struct HyprmuxSessionConfig {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct HyprmuxPaneConfig {
+    /// Whether the focused pane uses the theme's panel background instead of the normal
+    /// workspace backdrop. Disabled by default so hover focus does not repaint terminal bg.
+    pub highlight_focused_background: bool,
+    /// Whether moving the mouse over a pane focuses it.
+    pub focus_on_hover: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct HyprmuxClipboardConfig {
     pub enable_osc52: bool,
 }
@@ -351,6 +360,7 @@ pub struct HyprmuxConfig {
     pub theme: HyprmuxThemeConfig,
     pub profile: HyprmuxProfileConfig,
     pub session: HyprmuxSessionConfig,
+    pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
@@ -370,6 +380,7 @@ impl Default for HyprmuxConfig {
             theme: HyprmuxThemeConfig::default(),
             profile: HyprmuxProfileConfig::default(),
             session: HyprmuxSessionConfig::default(),
+            pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),

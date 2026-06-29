@@ -30,6 +30,7 @@ pub enum Action {
     TogglePalette,
     ToggleHelp,
     ToggleTitles,
+    ToggleFocusOnHover,
 }
 
 impl Action {
@@ -72,6 +73,7 @@ impl Action {
             Action::TogglePalette => "command-palette",
             Action::ToggleHelp => "help",
             Action::ToggleTitles => "toggle-titles",
+            Action::ToggleFocusOnHover => "toggle-focus-on-hover",
             Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::SelectTheme(_) => {
                 return None;
             }
@@ -115,6 +117,7 @@ impl Action {
             "command-palette" => Action::TogglePalette,
             "help" => Action::ToggleHelp,
             "toggle-titles" => Action::ToggleTitles,
+            "toggle-focus-on-hover" => Action::ToggleFocusOnHover,
             _ => return None,
         })
     }
@@ -124,7 +127,7 @@ impl Action {
 /// `palette` is set — in the command palette. The help overlay is the full
 /// keybinding reference: it documents *every* binding. The palette is curated to
 /// commands that are awkward to reach by keyboard — those with no quick shortcut
-/// (save profile, toggle titlebars, choose theme) plus a few discoverable extras
+/// (save profile, toggle titlebars, choose theme, focus-on-hover) plus a few discoverable extras
 /// (search, resize mode, toggle layout, help). Frequent single-key actions
 /// (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help
 /// reference only, since invoking them from a search box is slower than the key.
@@ -366,6 +369,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
+            action: Action::ToggleFocusOnHover,
+            label: "Toggle focus on hover",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
             action: Action::TogglePalette,
             label: "Command palette",
             keys: "p",
@@ -461,6 +471,19 @@ mod tests {
         assert_eq!(binding.label, "Save project profile");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Profile");
+        assert!(binding.palette);
+    }
+
+    #[test]
+    fn focus_on_hover_binding_is_palette_command() {
+        let binding = command_bindings()
+            .into_iter()
+            .find(|binding| binding.action == Action::ToggleFocusOnHover)
+            .expect("focus-on-hover binding exists");
+
+        assert_eq!(binding.label, "Toggle focus on hover");
+        assert_eq!(binding.keys, "");
+        assert_eq!(binding.category, "App");
         assert!(binding.palette);
     }
 

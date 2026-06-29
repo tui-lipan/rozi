@@ -110,6 +110,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::HoverPane(id) => {
+            if !ctx.state.config.pane.focus_on_hover {
+                return Update::none();
+            }
             if ctx.state.focused_pane != Some(id) {
                 focus_pane(&mut ctx.state, id);
                 request_pane_focus(ctx, id);

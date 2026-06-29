@@ -81,7 +81,11 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
         pane.terminal.set_palette(terminal_palette(
             &ctx.state.theme,
-            pane_frame_background(&ctx.state.theme, true),
+            pane_frame_background(
+                &ctx.state.theme,
+                true,
+                ctx.state.config.pane.highlight_focused_background,
+            ),
         ));
         // No spawn fade — the dropdown slides in via the rect transition instead, and there
         // is no FinishOpen(scratch) message to clear an `opening` flag.

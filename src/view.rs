@@ -632,7 +632,11 @@ pub(crate) fn pane_element(
         ctx,
         pane.id,
         "frame-bg",
-        crate::theme_ops::pane_frame_background(theme, focused),
+        crate::theme_ops::pane_frame_background(
+            theme,
+            focused,
+            ctx.state.config.pane.highlight_focused_background,
+        ),
     );
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
 

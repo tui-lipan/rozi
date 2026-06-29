@@ -22,7 +22,11 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.terminal.set_palette(terminal_palette(
         &ctx.state.theme,
-        pane_frame_background(&ctx.state.theme, true),
+        pane_frame_background(
+            &ctx.state.theme,
+            true,
+            ctx.state.config.pane.highlight_focused_background,
+        ),
     ));
     pane.opening = true;
 

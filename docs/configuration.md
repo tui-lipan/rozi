@@ -31,6 +31,10 @@ prefix = "ctrl-a"           # prefix key (default: ctrl-a)
 modifier = "alt"
 prefix = "ctrl-a"
 
+[pane]
+focus_on_hover = true         # mouse hover focuses panes (default: true)
+highlight_focused_background = false  # keep focused pane bg unchanged by default
+
 [animations]
 enabled = true               # master switch (default: true)
 spawn = true                 # animate new panes
@@ -97,6 +101,15 @@ Prefix strings use tui-lipan keybinding syntax. Modifiers include `ctrl`/`contro
 `esc`/`escape`, `space`, `tab`, `backspace`, arrows, navigation keys, and function keys.
 Examples: `ctrl-a`, `ctrl-b`, `alt-space`, `f12`. The prefix must be one key; an unparseable
 prefix is reported as a warning and the default is kept.
+
+## `[pane]`
+
+Pane focus and chrome behavior.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The *Toggle focus on hover* palette command changes this for the current run. |
+| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. |
 
 ## `[animations]`
 
@@ -208,4 +221,4 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
 `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
-`choose-theme`, `command-palette`, `help`, `toggle-titles`.
+`choose-theme`, `command-palette`, `help`, `toggle-titles`, `toggle-focus-on-hover`.

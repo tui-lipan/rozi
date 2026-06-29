@@ -10,8 +10,9 @@ use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
 use crate::keymap::{Keymap, Trigger};
 use crate::state::{
-    BarConfig, BarSegment, HyprmuxClipboardConfig, HyprmuxConfig, HyprmuxThemeConfig, InputConfig,
-    SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT, ThemePreset, WmModifier,
+    BarConfig, BarSegment, HyprmuxClipboardConfig, HyprmuxConfig, HyprmuxPaneConfig,
+    HyprmuxThemeConfig, InputConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT, ThemePreset,
+    WmModifier,
 };
 
 #[derive(Debug)]
@@ -41,6 +42,7 @@ struct FileConfig {
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
     session: SessionFileConfig,
+    pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
     scratchpad: ScratchpadFileConfig,
     bar: BarFileConfig,
@@ -91,6 +93,13 @@ struct ProfileFileConfig {
 struct SessionFileConfig {
     autosave: Option<bool>,
     path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct PaneFileConfig {
+    highlight_focused_background: Option<bool>,
+    focus_on_hover: Option<bool>,
 }
 
 #[cfg(test)]
@@ -144,6 +153,21 @@ mod tests {
             parsed.profile.path.as_deref(),
             Some("~/code/hyprmux/dev.toml")
         );
+    }
+
+    #[test]
+    fn file_config_parses_pane_options() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [pane]
+            highlight_focused_background = true
+            focus_on_hover = false
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.pane.highlight_focused_background, Some(true));
+        assert_eq!(parsed.pane.focus_on_hover, Some(false));
     }
 }
 
@@ -259,6 +283,12 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(path) = non_empty(parsed.session.path) {
         config.session.path = Some(expand_path(path));
+    }
+    if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
+        config.pane.highlight_focused_background = highlight_focused_background;
+    }
+    if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
+        config.pane.focus_on_hover = focus_on_hover;
     }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
@@ -532,5 +562,14 @@ impl Default for HyprmuxThemeConfig {
 impl Default for HyprmuxClipboardConfig {
     fn default() -> Self {
         Self { enable_osc52: true }
+    }
+}
+
+impl Default for HyprmuxPaneConfig {
+    fn default() -> Self {
+        Self {
+            highlight_focused_background: false,
+            focus_on_hover: true,
+        }
     }
 }

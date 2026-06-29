@@ -83,6 +83,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
     let theme = &state.theme;
+    let highlight_focused_background = state.config.pane.highlight_focused_background;
     let mut changed = false;
     for (index, workspace) in state.workspaces.iter_mut().enumerate() {
         let focused_pane = if index == state.active_workspace {
@@ -91,22 +92,31 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
             workspace.focused_pane
         };
         for pane in &mut workspace.panes {
-            let background = pane_frame_background(theme, focused_pane == Some(pane.id));
+            let background = pane_frame_background(
+                theme,
+                focused_pane == Some(pane.id),
+                highlight_focused_background,
+            );
             changed |= pane
                 .terminal
                 .set_palette(terminal_palette(theme, background));
         }
     }
     if let Some(scratch) = state.scratch.as_mut() {
-        changed |= scratch
-            .terminal
-            .set_palette(terminal_palette(theme, pane_frame_background(theme, true)));
+        changed |= scratch.terminal.set_palette(terminal_palette(
+            theme,
+            pane_frame_background(theme, true, highlight_focused_background),
+        ));
     }
     changed
 }
 
-pub(crate) fn pane_frame_background(theme: &Theme, focused: bool) -> Color {
-    if focused {
+pub(crate) fn pane_frame_background(
+    theme: &Theme,
+    focused: bool,
+    highlight_focused_background: bool,
+) -> Color {
+    if focused && highlight_focused_background {
         theme.surface.panel
     } else {
         theme.surface.backdrop
@@ -122,7 +132,7 @@ pub(crate) fn pane_frame_foreground(theme: &Theme, focused: bool) -> Color {
         style_fg(theme.border)
             .or_else(|| style_fg(theme.muted))
             .unwrap_or(theme.surface.menu),
-        pane_frame_background(theme, false),
+        pane_frame_background(theme, false, false),
         style_fg(theme.primary)
             .or_else(|| style_fg(theme.muted))
             .unwrap_or(Color::Gray),
@@ -240,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_palette_background_matches_frame_focus() {
+    fn terminal_palette_background_respects_focused_background_config() {
         let theme = ThemePreset::OneDark.theme();
         let mut state = State::new(HyprmuxConfig::default(), theme.clone());
         state.workspaces[0].panes.push(Pane::new(
@@ -256,6 +266,17 @@ mod tests {
 
         state.focused_pane = Some(1);
         state.workspaces[0].focused_pane = Some(1);
+        assert!(apply_terminal_palette_to_state(&mut state));
+        assert_eq!(
+            pane_palette_background(&state, 1),
+            Some(theme.surface.backdrop)
+        );
+        assert_eq!(
+            pane_palette_background(&state, 2),
+            Some(theme.surface.backdrop)
+        );
+
+        state.config.pane.highlight_focused_background = true;
         assert!(apply_terminal_palette_to_state(&mut state));
         assert_eq!(
             pane_palette_background(&state, 1),

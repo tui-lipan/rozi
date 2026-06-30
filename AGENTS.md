@@ -97,7 +97,9 @@ a `Mode::Normal`/`Mode::Prefix` state machine:
 
 `input.rs` maps keys → `Action` and owns `command_bindings()`, the **single source of truth**
 for both the command palette and the help overlay (workspace digits 1-9 are handled
-separately because they expand into a range). `execute_action` (`main.rs`) dispatches actions.
+separately because they expand into a range). `keymap.rs` resolves user-configured triggers;
+`key_routing.rs` owns `handle_key_routing` and the mode state machine. `execute_action`
+(`actions.rs`) dispatches actions.
 The command palette intentionally omits repetitive workspace commands; workspace digits belong in
 the help overlay. Theme selection is a single `Choose theme` command that opens a `List` modal.
 
@@ -117,24 +119,59 @@ offset and jumps to selected matches. tui-lipan does not currently provide in-te
 search.
 
 ### Module map
-- `main.rs` — root component, `update`/`on_key`, `handle_key_routing`, `execute_action`,
-  PTY spawning, pane lifecycle (spawn/close/move/resize/fullscreen/workspaces), theme watcher,
-  scrollback search, terminal palette application.
-- `config.rs` — TOML config loading, env/default path handling, theme-file loading, config warning
-  collection.
-- `state.rs` — data model (`State`, `Workspace`, `Pane`, sessions, `HyprmuxConfig`/`InputConfig`)
-  and tuning constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
-- `tiling.rs` — `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust,
-  `allocate_dwindle`, `allocate_master`.
-- `geometry.rs` — `FloatRect` math: clamps (incl. off-screen-but-grabbable margin),
-  resize-from-corner, the terminal-border resize gate, dwindle split direction, spatial-focus scoring.
+
+Modules are grouped by concern. Feature behavior that reacts to a `Msg` lives in a `*_ops`
+module; lifecycle and event-plumbing modules keep plain names (see Conventions).
+
+**Core / runtime**
+- `main.rs` — root `Component`, `init`/`on_key`/`view` wiring, animation/transition policy
+  (`transition_config_for`, opacity/chrome configs), `main()` entry (config + theme + profile
+  bootstrap), tick scheduling.
+- `update.rs` — `handle_msg`: the flat `Msg` router that delegates each message to a feature
+  module, then re-applies the terminal palette.
+- `state.rs` — runtime data model (`State`, `Workspace`, `Pane`, `Mode`, sessions) and tuning
+  constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
+- `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,
+  palette/help/search/rename/theme overlays, and the per-pane mouse/drag/keyboard callbacks.
+
+**Input**
+- `input.rs` — `Action` enum, key→`Action` mapping, `command_bindings()` (single source of truth
+  for palette + help overlay).
+- `keymap.rs` — `Keymap`/`Trigger`: resolves user-configured key bindings.
+- `key_routing.rs` — `handle_key_routing` + the `Normal`/`Prefix` mode state machine; framework
+  focus sync.
+- `actions.rs` — `execute_action`: dispatches each `Action` to the relevant op.
+
+**Panes / PTY**
+- `pane.rs` — `TerminalPane`: PTY + screen + snapshot lifecycle, terminal palette, scrollback
+  search helper, resize.
+- `pane_lifecycle.rs` — spawn/close/prune, `pty_config_for_pane`, startup `initial_command`,
+  `find_pane_mut`.
+- `pty_events.rs` — `PtyReady`/`PtyEvent`/`PaneInput`/`PaneMouse`/`PaneResize`/`PaneScroll`
+  handlers; toast helpers.
+
+**Layout / geometry**
+- `tiling.rs` — `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust, and the
+  allocators (`allocate_dwindle`, `allocate_master`, grid/spiral/monocle).
 - `layout.rs` — `Workspace` → placements; `place_spawned_pane` (new pane always splits the
   *focused* pane, axis from its aspect ratio — Hyprland dwindle, never the cursor).
-- `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,
-  palette/help overlays, and the per-pane mouse/drag/keyboard callback wiring.
-- `pane.rs` — `TerminalPane`: PTY + screen + snapshot lifecycle, terminal palette, scrollback
-  search helper, and resize.
+- `geometry.rs` — `FloatRect` math: clamps, resize-from-corner, terminal-border resize gate,
+  split direction, spatial-focus scoring.
+- `resize_move_ops.rs` — interactive move/resize sessions, split-ratio drags, directional
+  move/swap/resize, tiling/fullscreen/layout toggles.
 - `anim.rs` — `GeometryAnimation`, `WindowAnimationConfig`, transition presets.
+
+**Features**
+- `focus_ops.rs` — focus changes and framework focus requests.
+- `copy_mode.rs` — vi-style copy/selection mode.
+- `search_ops.rs` — scrollback search scan/recompute/navigation, scope cycling.
+- `scratchpad.rs` — the toggleable scratchpad pane and its focus handoff.
+- `identity_ops.rs` — pane rename state apply/close.
+- `theme_ops.rs` — theme picker/preview, hot-reload tick, terminal-palette application,
+  system-theme derivation.
+- `profiles.rs` — profile/session (de)serialization and `State` restore/persist.
+- `config.rs` — TOML config loading, env/default path handling, theme-file loading, warning
+  collection.
 
 ## Conventions
 
@@ -143,3 +180,8 @@ search.
   several fixes have been kept in sync across both.
 - Split direction follows the focused tile's aspect ratio with `SPLIT_WIDTH_MULTIPLIER`
   correcting for terminal cells being ~2× taller than wide (Hyprland's `split_width_multiplier`).
+- **Module naming:** a module that implements a *feature's reaction to messages/actions* uses the
+  `*_ops` suffix (`focus_ops`, `search_ops`, `theme_ops`, `identity_ops`, `resize_move_ops`).
+  Lifecycle, event-plumbing, and pure-data modules keep plain names (`pane_lifecycle`,
+  `pty_events`, `key_routing`, `profiles`, `config`). New modules should follow this split rather
+  than inventing a third convention.

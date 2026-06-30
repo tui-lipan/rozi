@@ -433,6 +433,7 @@ fn allocate_master_stack(
     if ids.is_empty() {
         return;
     }
+    let gap = visual_gap_for_axis(gap, SplitAxis::Vertical);
     let usable_gap = if rect.h > gap { gap } else { 0.0 };
     let available = (rect.h - usable_gap * ids.len().saturating_sub(1) as f32).max(0.0);
     let base_h = (available / ids.len() as f32).floor();
@@ -558,6 +559,7 @@ fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: f32) -> Vec
         return vec![rect];
     }
 
+    let gap = visual_gap_for_axis(gap, axis);
     let extent = match axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -605,6 +607,7 @@ pub fn split_float_rect(
     let ratio = clamp_split_ratio(ratio);
     match axis {
         SplitAxis::Horizontal => {
+            let gap = visual_gap_for_axis(gap, axis);
             let gap = if rect.w > gap { gap } else { 0.0 };
             let available = (rect.w - gap).max(0.0);
             let first_w = (available * ratio).round();
@@ -625,6 +628,7 @@ pub fn split_float_rect(
             )
         }
         SplitAxis::Vertical => {
+            let gap = visual_gap_for_axis(gap, axis);
             let gap = if rect.h > gap { gap } else { 0.0 };
             let available = (rect.h - gap).max(0.0);
             let first_h = (available * ratio).round();
@@ -644,6 +648,13 @@ pub fn split_float_rect(
                 },
             )
         }
+    }
+}
+
+fn visual_gap_for_axis(gap: f32, axis: SplitAxis) -> f32 {
+    match axis {
+        SplitAxis::Horizontal => gap,
+        SplitAxis::Vertical => 0.0,
     }
 }
 
@@ -700,6 +711,7 @@ pub fn nearest_split_available(
     if *axis != target_axis {
         return None;
     }
+    let gap = visual_gap_for_axis(gap, target_axis);
     let extent = match target_axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -744,6 +756,7 @@ pub fn split_available_for_edge(
     if *axis != target_axis || !split_edge_matches_focused_side(edge, focused_is_first) {
         return None;
     }
+    let gap = visual_gap_for_axis(gap, target_axis);
     let extent = match target_axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -926,6 +939,19 @@ mod tests {
     }
 
     #[test]
+    fn split_float_rect_removes_vertical_row_gap() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 41.0,
+        };
+        let (first, second) = split_float_rect(rect, SplitAxis::Vertical, 0.5, 1.0);
+        assert_close(first.y + first.h, second.y);
+        assert_close(second.y + second.h, 41.0);
+    }
+
+    #[test]
     fn dwindle_allocates_all_leaves() {
         let ids = [1, 2, 3];
         let tree = build_dwindle_tree(&ids, SplitAxis::Horizontal, &[0.5, 0.5]).unwrap();
@@ -973,7 +999,7 @@ mod tests {
         assert_close(placements[0].rect.w, 50.0);
         assert_close(placements[1].rect.x, 51.0);
         assert_close(
-            placements[1].rect.y + placements[1].rect.h + 1.0,
+            placements[1].rect.y + placements[1].rect.h,
             placements[2].rect.y,
         );
         assert_close(placements[2].rect.y + placements[2].rect.h, 41.0);
@@ -1042,7 +1068,7 @@ mod tests {
         assert_close(placements[3].rect.y + placements[3].rect.h, 40.0);
         // Two rows: first row top, last row bottom.
         assert_close(
-            placements[0].rect.y + placements[0].rect.h + 1.0,
+            placements[0].rect.y + placements[0].rect.h,
             placements[2].rect.y,
         );
     }

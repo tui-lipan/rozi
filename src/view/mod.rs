@@ -35,15 +35,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .replace(Some(viewport))
         .is_some_and(|previous| previous != viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-    let fullscreen_active = workspace
-        .panes
-        .iter()
-        .any(|pane| pane.fullscreen && !pane.closing);
-    let bounds = if fullscreen_active {
-        viewport_bounds(viewport)
-    } else {
-        canvas_bounds_from_viewport(viewport)
-    };
+    let bounds = canvas_bounds_from_viewport(viewport);
+    let root_bounds = viewport_bounds(viewport);
     let moving_tiled = ctx
         .state
         .moving_pane
@@ -73,6 +66,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut canvas = Canvas::new()
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
+    let mut fullscreen_layer = Canvas::new().height(Length::Flex(1));
+    let mut has_fullscreen_layer = false;
 
     if workspace.panes.iter().all(|pane| pane.closing) {
         canvas = canvas.child_at(
@@ -88,18 +83,21 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .state
             .moving_pane
             .filter(|session| session.id == pane.id);
-        let target_rect = if pane.closing {
+        let canvas_target_rect = if pane.closing {
             close_rect(pane.floating_rect)
         } else if let Some(session) = moving
             && !pane.fullscreen
         {
             clamp_floating_rect(session.drag_rect, bounds)
-        } else if pane.fullscreen {
-            bounds
         } else {
             // Spawned panes appear at their tiled slot (and fade in via opacity); only
             // surrounding panes animate to make room.
             base_rect
+        };
+        let target_rect = if pane.fullscreen && !pane.closing {
+            root_bounds
+        } else {
+            canvas_rect_to_root(canvas_target_rect)
         };
         let config = app.transition_config_for(ctx, pane, viewport_changed);
         let animated_rect = ctx.transition(
@@ -117,8 +115,14 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .map(|index| index + 1)
             .unwrap_or_else(|| pane.id as usize)
             .to_string();
-        let mut element =
-            pane_element(app, ctx, pane, animated_rect, focused_pane, &display_number);
+        let render_in_fullscreen_layer =
+            !pane.closing && (pane.fullscreen || animated_rect.y < f32::from(TOP_BAR_HEIGHT));
+        let render_rect = if render_in_fullscreen_layer {
+            animated_rect
+        } else {
+            root_rect_to_canvas(animated_rect)
+        };
+        let mut element = pane_element(app, ctx, pane, render_rect, focused_pane, &display_number);
         // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
         // while a focused layer is up. instant_transition: `pane_dim` is already smoothed by the
         // underlying progress transitions, so this just applies it without re-easing.
@@ -128,7 +132,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 .transition(crate::anim::instant_transition())
                 .into();
         }
-        canvas = canvas.child_at(animated_rect.to_rect(), element);
+        if render_in_fullscreen_layer {
+            has_fullscreen_layer = true;
+            fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);
+        } else {
+            canvas = canvas.child_at(render_rect.to_rect(), element);
+        }
     }
 
     // Draggable strips sit in the gaps between tiled panes so the split ratio can be adjusted
@@ -147,12 +156,16 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    let mut root =
-        VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
-    if !fullscreen_active {
-        root = root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
+    let app_root = VStack::new()
+        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
+        .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
+        .child(canvas);
+    let mut root = ZStack::new()
+        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
+        .child(app_root);
+    if has_fullscreen_layer {
+        root = root.child(fullscreen_layer);
     }
-    root = root.child(canvas);
 
     // Overlays portal to the root regardless of where they are attached.
     if ctx.state.show_palette {
@@ -260,6 +273,20 @@ pub(crate) fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -
 /// (the `SearchPalette` manages its own).
 pub(crate) fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
     styled_modal(ctx, title, 60).height(Length::Auto).padding(0)
+}
+
+fn canvas_rect_to_root(rect: FloatRect) -> FloatRect {
+    FloatRect {
+        y: rect.y + f32::from(TOP_BAR_HEIGHT),
+        ..rect
+    }
+}
+
+fn root_rect_to_canvas(rect: FloatRect) -> FloatRect {
+    FloatRect {
+        y: rect.y - f32::from(TOP_BAR_HEIGHT),
+        ..rect
+    }
 }
 
 /// A theme `Style` reduced to just its foreground, so text paints over the modal fill

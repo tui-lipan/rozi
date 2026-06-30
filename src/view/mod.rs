@@ -4,7 +4,8 @@ mod overlays;
 mod pane;
 
 pub use keys::{
-    pane_terminal_key, pane_window_key, rename_input_key, search_input_key, theme_picker_key,
+    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key, save_profile_key,
+    search_input_key, theme_picker_key,
 };
 pub(crate) use pane::pane_element;
 
@@ -20,7 +21,8 @@ use crate::state::TOP_BAR_HEIGHT;
 
 use bar::{empty_workspace_panel, top_bar};
 use overlays::{
-    help_overlay, palette_overlay, rename_overlay, search_overlay, theme_picker_overlay,
+    help_overlay, palette_overlay, profile_picker_overlay, rename_overlay, save_profile_overlay,
+    search_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 
@@ -58,7 +60,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let dialog_open = ctx.state.show_palette
         || ctx.state.show_help
         || ctx.state.show_theme_picker
-        || ctx.state.rename.is_some();
+        || ctx.state.rename.is_some()
+        || ctx.state.save_profile_prompt.is_some()
+        || ctx.state.show_profile_picker;
     let dialog_dim_progress = ctx.transition::<f32>(
         "hyprmux-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -165,6 +169,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.rename.is_some() {
         root = root.child(rename_overlay(ctx));
+    }
+    if ctx.state.save_profile_prompt.is_some() {
+        root = root.child(save_profile_overlay(ctx));
+    }
+    if ctx.state.show_profile_picker {
+        root = root.child(profile_picker_overlay(ctx));
     }
 
     ThemeProvider::new(ctx.state.theme.clone())

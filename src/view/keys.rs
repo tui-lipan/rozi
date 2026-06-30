@@ -20,6 +20,14 @@ pub fn rename_input_key() -> &'static str {
     "hyprmux-rename-input"
 }
 
+pub fn save_profile_key() -> &'static str {
+    "hyprmux-save-profile-input"
+}
+
+pub fn profile_picker_key() -> &'static str {
+    "hyprmux-profile-picker"
+}
+
 pub fn theme_picker_key() -> &'static str {
     "hyprmux-theme-picker"
 }

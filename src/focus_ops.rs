@@ -329,6 +329,14 @@ pub(crate) fn request_rename_focus(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(view::rename_input_key());
 }
 
+pub(crate) fn request_save_profile_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::save_profile_key());
+}
+
+pub(crate) fn request_profile_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::profile_picker_key());
+}
+
 pub(crate) fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(view::theme_picker_key());
 }

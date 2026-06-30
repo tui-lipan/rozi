@@ -53,7 +53,7 @@ preset = "one-dark"         # built-in preset (default: one-dark)
 path = "~/.config/hyprmux/theme.toml"  # optional custom theme file (hot-reloaded)
 
 [profile]
-path = "~/code/my-app/hyprmux-profile.toml"  # optional project profile
+default = "dev"              # named profile in ~/.config/hyprmux/profiles/
 
 [clipboard]
 enable_osc52 = true          # allow programs to set the system clipboard via OSC52 (default: true)
@@ -151,9 +151,9 @@ are derived from the active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `path` | _none_ | A project profile TOML file to load on startup and write back to via the *Save project profile* palette command. |
+| `default` | _none_ | Name of a profile in `~/.config/hyprmux/profiles/` to load on startup (unless overridden by a CLI profile). Also writable via *Set default profile* in the command palette. |
 
-See [Project profiles & pane identity](project-profiles.md) for the profile format.
+See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
 ## `[clipboard]`
 
@@ -174,7 +174,7 @@ live PTY state.
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
 | `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 
-A profile loaded via `[profile].path` takes precedence over the autosaved session at startup.
+A CLI profile or `[profile] default` takes precedence over the autosaved session at startup.
 
 ## `[scratchpad]`
 
@@ -221,4 +221,5 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
 `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
-`choose-theme`, `command-palette`, `help`, `toggle-titles`, `toggle-focus-on-hover`.
+`open-profile`, `set-default-profile`, `choose-theme`, `command-palette`, `help`,
+`toggle-titles`, `toggle-focus-on-hover`.

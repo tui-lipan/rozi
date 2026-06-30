@@ -11,6 +11,7 @@ mod keymap;
 mod layout;
 mod pane;
 mod pane_lifecycle;
+mod profile_ops;
 mod profiles;
 mod pty_events;
 mod resize_move_ops;
@@ -89,6 +90,12 @@ pub enum Msg {
     CloseRenamePane,
     RenamePaneChanged(InputEvent),
     SubmitRenamePane,
+    CloseSaveProfile,
+    SaveProfileNameChanged(InputEvent),
+    SubmitSaveProfile,
+    CloseProfilePicker,
+    ProfilePickerQueryChanged(String),
+    SelectProfile(usize),
     FocusPane(PaneId),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -182,7 +189,7 @@ impl Component for HyprmuxApp {
     }
 }
 
-fn startup_spawns(state: &State) -> Vec<(PaneId, TerminalPtyConfig, Option<Duration>)> {
+pub(crate) fn startup_spawns(state: &State) -> Vec<(PaneId, TerminalPtyConfig, Option<Duration>)> {
     state
         .workspaces
         .iter()
@@ -343,23 +350,55 @@ fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
 }
 
 fn main() -> Result<()> {
+    let cli = match parse_cli_args(std::env::args().skip(1).collect()) {
+        Ok(ParsedCli::Help) => {
+            print_help();
+            return Ok(());
+        }
+        Ok(ParsedCli::Version) => {
+            print_version();
+            return Ok(());
+        }
+        Ok(ParsedCli::Run(args)) => args,
+        Err(message) => {
+            eprintln!("{message}");
+            eprintln!("Run `hyprmux --help` for usage.");
+            std::process::exit(1);
+        }
+    };
+
+    if let Some(path) = cli.config_path {
+        unsafe {
+            std::env::set_var("HYPRMUX_CONFIG", path);
+        }
+    }
+
     let loaded = config::load_config();
     let loaded_theme = config::load_initial_theme(&loaded.config);
     let mut startup_messages = loaded.warnings;
     startup_messages.extend(loaded_theme.warnings);
-    let mut startup_profile =
-        loaded
-            .config
-            .profile
-            .path
-            .as_ref()
-            .and_then(|path| match profiles::load_profile(path) {
-                Ok(profile) => Some(profile),
-                Err(err) => {
-                    startup_messages.push(format!("Profile load failed: {err}"));
-                    None
-                }
-            });
+    let mut startup_profile = cli.profile.as_ref().and_then(|name| {
+        let path = config::profile_path_for_name(name);
+        match profiles::load_profile(&path) {
+            Ok(profile) => Some(profile),
+            Err(err) => {
+                startup_messages.push(format!("Profile `{name}` load failed: {err}"));
+                None
+            }
+        }
+    });
+
+    if startup_profile.is_none()
+        && let Some(name) = &loaded.config.profile.default
+    {
+        let path = config::profile_path_for_name(name);
+        match profiles::load_profile(&path) {
+            Ok(profile) => startup_profile = Some(profile),
+            Err(err) => {
+                startup_messages.push(format!("Default profile `{name}` load failed: {err}"))
+            }
+        }
+    }
 
     // With no explicit profile, restore the autosaved session if one exists.
     if startup_profile.is_none()
@@ -402,6 +441,83 @@ fn main() -> Result<()> {
         startup_messages,
     ))
     .run()
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CliArgs {
+    profile: Option<String>,
+    config_path: Option<String>,
+}
+
+#[derive(Debug)]
+enum ParsedCli {
+    Help,
+    Version,
+    Run(CliArgs),
+}
+
+fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
+    let mut cli = CliArgs::default();
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--help" | "-h" => return Ok(ParsedCli::Help),
+            "--version" | "-V" => return Ok(ParsedCli::Version),
+            "--profile" | "-p" => {
+                let name = iter
+                    .next()
+                    .ok_or_else(|| "--profile requires a profile name".to_string())?;
+                if cli.profile.is_some() {
+                    return Err("profile name specified more than once".to_string());
+                }
+                cli.profile = Some(name);
+            }
+            "--config" => {
+                let path = iter
+                    .next()
+                    .ok_or_else(|| "--config requires a path".to_string())?;
+                if cli.config_path.is_some() {
+                    return Err("--config specified more than once".to_string());
+                }
+                cli.config_path = Some(path);
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown flag `{other}`"));
+            }
+            name => {
+                if cli.profile.is_some() {
+                    return Err(format!("unexpected argument `{name}`"));
+                }
+                cli.profile = Some(name.to_string());
+            }
+        }
+    }
+    Ok(ParsedCli::Run(cli))
+}
+
+fn print_help() {
+    println!(
+        "\
+hyprmux — Hyprland-style tiling terminal multiplexer
+
+USAGE:
+    hyprmux [PROFILE]
+    hyprmux --profile <NAME>
+    hyprmux -p <NAME>
+
+OPTIONS:
+    -h, --help            Print help
+    -V, --version         Print version
+    -p, --profile <NAME>  Load a named profile from ~/.config/hyprmux/profiles/<NAME>.toml
+        --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
+
+A bare PROFILE positional is equivalent to --profile PROFILE.
+Quit the running app with Ctrl-q."
+    );
+}
+
+fn print_version() {
+    println!("hyprmux {}", env!("CARGO_PKG_VERSION"));
 }
 
 #[cfg(test)]
@@ -450,6 +566,40 @@ mod tests {
             restored_config.contains("/repo/backend"),
             "{restored_config}"
         );
+    }
+
+    #[test]
+    fn cli_parses_profile_flag_and_positional() {
+        let flag =
+            expect_run(parse_cli_args(vec!["--profile".into(), "dev".into()]).expect("parses"));
+        assert_eq!(flag.profile.as_deref(), Some("dev"));
+
+        let positional = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
+        assert_eq!(positional.profile.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn cli_help_and_version_are_early_exit_variants() {
+        assert!(matches!(
+            parse_cli_args(vec!["--help".into()]).expect("parses"),
+            ParsedCli::Help
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["-V".into()]).expect("parses"),
+            ParsedCli::Version
+        ));
+    }
+
+    #[test]
+    fn cli_rejects_unknown_flags() {
+        assert!(parse_cli_args(vec!["--nope".into()]).is_err());
+    }
+
+    fn expect_run(parsed: ParsedCli) -> CliArgs {
+        match parsed {
+            ParsedCli::Run(args) => args,
+            other => panic!("expected run args, got {other:?}"),
+        }
     }
 
     #[test]

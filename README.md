@@ -26,7 +26,7 @@ cargo run     # quit with Ctrl-q
 - **Command palette & help overlay** — fuzzy command search (`p`) and a full keybinding
   reference (`?`).
 - **Pane identity** — rename panes (`n`); titles also follow the program's OSC title.
-- **Project profiles** — restore a named workspace layout from a TOML file.
+- **Named profiles** — save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
 - **Scrollback search** — search a pane's scrollback (`/`) and jump between matches.
 - **Themes** — 9 built-in presets, custom theme files, and live hot-reload. Terminal ANSI
   colors are derived from the active theme.
@@ -44,6 +44,7 @@ Full docs live in [`docs/`](docs/):
 - [Themes](docs/themes.md) — presets, custom theme files, hot reload, and terminal colors.
 - [Terminal features](docs/terminal.md) — PTY, mouse, selection, clipboard, and scrollback search.
 - [Project profiles & pane identity](docs/project-profiles.md) — save and restore layouts.
+- [Named profiles](docs/profiles.md) — profiles directory, CLI launch, keep-open, picker commands.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

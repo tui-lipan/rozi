@@ -4,12 +4,16 @@ use crate::actions::execute_action;
 use crate::anim::GeometryAnimation;
 use crate::focus_ops::{
     focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
-    request_search_focus,
+    request_save_profile_focus, request_search_focus,
 };
 use crate::identity_ops::{apply_rename_pane, close_rename_pane};
 use crate::input::Action;
 use crate::key_routing::handle_key_routing;
 use crate::pane_lifecycle::{find_pane_mut, handle_prune_closed};
+use crate::profile_ops::{
+    cancel_profile_picker, close_save_profile_prompt, profile_picker_query_changed, select_profile,
+    submit_save_profile,
+};
 use crate::pty_events::{
     error_toast, handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
     handle_pty_event, handle_pty_ready,
@@ -28,6 +32,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
                 Action::OpenThemePicker => {}
+                Action::SaveProfile | Action::OpenProfilePicker | Action::SetDefaultProfile => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
                 // previously focused pane on hide); don't override it.
                 Action::ToggleScratchpad => {}
@@ -101,6 +106,34 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SubmitRenamePane => {
             let update = apply_rename_pane(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::CloseSaveProfile => {
+            let update = close_save_profile_prompt(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::SaveProfileNameChanged(event) => {
+            if let Some(prompt) = ctx.state.save_profile_prompt.as_mut() {
+                event.apply_to(&mut prompt.input);
+            }
+            request_save_profile_focus(ctx);
+            Update::full()
+        }
+        Msg::SubmitSaveProfile => {
+            let update = submit_save_profile(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::CloseProfilePicker => {
+            let update = cancel_profile_picker(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::ProfilePickerQueryChanged(query) => profile_picker_query_changed(ctx, query),
+        Msg::SelectProfile(index) => {
+            let update = select_profile(ctx, index);
             request_current_pane_focus(ctx);
             update
         }

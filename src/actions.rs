@@ -8,13 +8,13 @@ use crate::focus_ops::{
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
 use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
-use crate::profiles::{profile_from_state, save_profile};
+use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::search_ops::open_search;
-use crate::state::Mode;
+use crate::state::{Mode, ProfilePickerMode};
 use crate::theme_ops::{open_theme_picker, select_theme};
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
@@ -88,7 +88,9 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
-        Action::SaveProfile => save_project_profile(ctx),
+        Action::SaveProfile => open_save_profile_prompt(ctx),
+        Action::OpenProfilePicker => open_profile_picker(ctx, ProfilePickerMode::Load),
+        Action::SetDefaultProfile => open_profile_picker(ctx, ProfilePickerMode::SetDefault),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::SelectTheme(preset) => {
             select_theme(ctx, preset);
@@ -117,30 +119,4 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
     }
-}
-
-fn save_project_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(path) = ctx.state.config.profile.path.clone() else {
-        ctx.toast().push(crate::pty_events::error_toast(
-            "Save Profile",
-            "Set [profile].path in hyprmux.toml before saving a profile.",
-        ));
-        return Update::full();
-    };
-
-    let profile = profile_from_state(&ctx.state);
-    match save_profile(&path, &profile) {
-        Ok(()) => {
-            ctx.toast().push(crate::pty_events::info_toast(format!(
-                "Saved project profile to {}",
-                path.display()
-            )));
-        }
-        Err(message) => {
-            ctx.toast()
-                .push(crate::pty_events::error_toast("Save Profile", message));
-        }
-    }
-
-    Update::full()
 }

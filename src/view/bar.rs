@@ -132,13 +132,7 @@ fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
 }
 
 fn session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
-    ctx.state
-        .config
-        .profile
-        .path
-        .as_ref()
-        .and_then(|path| path.file_stem())
-        .map(|stem| stem.to_string_lossy().to_string())
+    ctx.state.config.profile.default.clone()
 }
 
 fn bar_hostname() -> String {

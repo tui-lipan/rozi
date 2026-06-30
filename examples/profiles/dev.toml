@@ -1,0 +1,26 @@
+# Example named profile for hyprmux.
+# Copy to ~/.config/hyprmux/profiles/dev.toml, then:
+#   hyprmux dev
+#   hyprmux --profile dev
+#
+# lazygit on the left keeps an interactive shell when you quit lazygit (keep_open).
+# nvim on the right runs normally and closes the pane when you exit vim.
+
+version = 1
+active_workspace = 0
+
+[[workspaces]]
+index = 0
+layout = "dwindle"
+focused_pane = 1
+
+[[workspaces.panes]]
+id = 0
+name = "lazygit"
+command = "lazygit"
+keep_open = true
+
+[[workspaces.panes]]
+id = 1
+name = "nvim"
+command = "nvim"

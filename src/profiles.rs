@@ -129,6 +129,7 @@ pub fn restore_state_from_profile(
                     .to_string()
             });
             pane.identity.command = pane_profile.command.clone();
+            pane.identity.keep_open = pane_profile.keep_open;
             pane.floating = pane_profile.floating;
             pane.fullscreen = pane_profile.fullscreen;
             workspace.panes.push(pane);
@@ -192,6 +193,9 @@ pub fn restore_state_from_profile(
         theme_watcher: None,
         search: None,
         rename: None,
+        save_profile_prompt: None,
+        show_profile_picker: false,
+        profile_picker: None,
         copy_mode: None,
         scratch: None,
         scratch_visible: false,
@@ -260,6 +264,7 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
                     .or_else(|| pane.identity.cwd.clone())
                     .map(PathBuf::from),
                 command: pane.identity.command.clone(),
+                keep_open: pane.identity.keep_open,
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
                 rect: pane.floating.then_some(pane.floating_rect.into()),
@@ -338,6 +343,7 @@ pub struct PaneProfile {
     pub title: Option<String>,
     pub cwd: Option<PathBuf>,
     pub command: Option<String>,
+    pub keep_open: bool,
     pub floating: bool,
     pub fullscreen: bool,
     pub rect: Option<ProfileRect>,
@@ -662,6 +668,7 @@ mod tests {
                             w: 80.0,
                             h: 24.0,
                         }),
+                        ..PaneProfile::default()
                     },
                     PaneProfile {
                         id: 1,
@@ -677,6 +684,7 @@ mod tests {
                             w: 80.0,
                             h: 24.0,
                         }),
+                        ..PaneProfile::default()
                     },
                 ],
             }],
@@ -746,6 +754,7 @@ mod tests {
                         floating: false,
                         fullscreen: false,
                         rect: None,
+                        ..PaneProfile::default()
                     }],
                     ..WorkspaceProfile::default()
                 },

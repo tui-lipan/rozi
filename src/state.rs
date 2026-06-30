@@ -3,7 +3,7 @@ use std::cell::Cell;
 use tui_lipan::prelude::*;
 
 use crate::anim::GeometryAnimation;
-use crate::config::HyprmuxConfig;
+use crate::config::{HyprmuxConfig, ProfileEntry};
 use crate::pane::TerminalPane;
 use crate::tiling::{DwindleTree, append_tiled_window, collect_tree_leaves};
 
@@ -322,6 +322,7 @@ pub struct PaneIdentity {
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
     pub command: Option<String>,
+    pub keep_open: bool,
 }
 
 impl PaneIdentity {
@@ -346,6 +347,30 @@ impl PaneRenameState {
         Self {
             target,
             input: TextInput::new(initial.as_ref()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfilePickerMode {
+    Load,
+    SetDefault,
+}
+
+pub struct ProfilePickerState {
+    pub mode: ProfilePickerMode,
+    pub entries: Vec<ProfileEntry>,
+    pub input: TextInput,
+    pub selected: usize,
+}
+
+impl ProfilePickerState {
+    pub fn new(mode: ProfilePickerMode, entries: Vec<ProfileEntry>) -> Self {
+        Self {
+            mode,
+            entries,
+            input: TextInput::new(""),
+            selected: 0,
         }
     }
 }
@@ -483,6 +508,9 @@ pub struct State {
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
+    pub save_profile_prompt: Option<PaneRenameState>,
+    pub show_profile_picker: bool,
+    pub profile_picker: Option<ProfilePickerState>,
     pub copy_mode: Option<CopyModeState>,
     pub scratch: Option<Pane>,
     pub scratch_visible: bool,
@@ -527,6 +555,9 @@ impl State {
             theme_watcher: None,
             search: None,
             rename: None,
+            save_profile_prompt: None,
+            show_profile_picker: false,
+            profile_picker: None,
             copy_mode: None,
             scratch: None,
             scratch_visible: false,

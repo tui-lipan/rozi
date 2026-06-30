@@ -26,6 +26,8 @@ pub enum Action {
     ToggleScratchpad,
     OpenSearch,
     SaveProfile,
+    OpenProfilePicker,
+    SetDefaultProfile,
     OpenThemePicker,
     SelectTheme(ThemePreset),
     TogglePalette,
@@ -70,6 +72,8 @@ impl Action {
             Action::ToggleScratchpad => "scratchpad",
             Action::OpenSearch => "search",
             Action::SaveProfile => "save-profile",
+            Action::OpenProfilePicker => "open-profile",
+            Action::SetDefaultProfile => "set-default-profile",
             Action::OpenThemePicker => "choose-theme",
             Action::TogglePalette => "command-palette",
             Action::ToggleHelp => "help",
@@ -114,6 +118,8 @@ impl Action {
             "scratchpad" => Action::ToggleScratchpad,
             "search" => Action::OpenSearch,
             "save-profile" => Action::SaveProfile,
+            "open-profile" => Action::OpenProfilePicker,
+            "set-default-profile" => Action::SetDefaultProfile,
             "choose-theme" => Action::OpenThemePicker,
             "command-palette" => Action::TogglePalette,
             "help" => Action::ToggleHelp,
@@ -350,7 +356,21 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::SaveProfile,
-            label: "Save project profile",
+            label: "Save profile",
+            keys: "",
+            category: "Profile",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::OpenProfilePicker,
+            label: "Open profile",
+            keys: "",
+            category: "Profile",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::SetDefaultProfile,
+            label: "Set default profile",
             keys: "",
             category: "Profile",
             palette: true,
@@ -469,7 +489,7 @@ mod tests {
             .find(|binding| binding.action == Action::SaveProfile)
             .expect("save profile binding exists");
 
-        assert_eq!(binding.label, "Save project profile");
+        assert_eq!(binding.label, "Save profile");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Profile");
         assert!(binding.palette);

@@ -13,7 +13,7 @@ There is intentionally **no detach/reattach** (no daemon); PTYs live in the sing
 ## Commands
 
 - Build: `cargo build`
-- Run: `cargo run` (then quit the app with `Ctrl-q`)
+- Run: `cargo run` (then quit the app with `Ctrl-q`); launch a named profile with `cargo run -- dev` or `cargo run -- --profile dev`
 - Lint: `cargo clippy`
 - Test: `cargo test`; a single test by name substring, e.g.
   `cargo test spawn_split_direction_follows_focused_tile_aspect`
@@ -167,11 +167,13 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 - `search_ops.rs` — scrollback search scan/recompute/navigation, scope cycling.
 - `scratchpad.rs` — the toggleable scratchpad pane and its focus handoff.
 - `identity_ops.rs` — pane rename state apply/close.
+- `profile_ops.rs` — save-by-name prompt, profile picker (load + set-default), profile load/switch.
 - `theme_ops.rs` — theme picker/preview, hot-reload tick, terminal-palette application,
   system-theme derivation.
-- `profiles.rs` — profile/session (de)serialization and `State` restore/persist.
-- `config.rs` — TOML config loading, env/default path handling, theme-file loading, warning
-  collection.
+- `profiles.rs` — profile/session (de)serialization and `State` restore/persist. Named profiles
+  live in `~/.config/hyprmux/profiles/`; `[profile] default` names the startup profile.
+- `config.rs` — TOML config loading, env/default path handling, theme-file loading, profile
+  directory discovery, warning collection.
 
 ## Conventions
 

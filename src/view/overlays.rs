@@ -2,11 +2,14 @@ use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
 
 use crate::input::{Action, CommandBinding};
-use crate::state::{ScrollbackMatch, ScrollbackSearchState, ThemePreset};
+use crate::state::{
+    ProfilePickerMode, ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, ThemePreset,
+};
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    help_scroll_key, palette_key, rename_input_key, search_input_key, theme_picker_key,
+    help_scroll_key, palette_key, profile_picker_key, rename_input_key, save_profile_key,
+    search_input_key, theme_picker_key,
 };
 use super::{action_palette_modal, fg_only, shared_search_palette, styled_modal};
 
@@ -212,6 +215,99 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::CloseRenamePane))
         .child(input.key(rename_input_key()))
         .into()
+}
+
+pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(prompt) = ctx.state.save_profile_prompt.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let input = Input::bound(&prompt.input)
+        .placeholder("Profile name")
+        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+        .focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .on_change(ctx.link().callback(Msg::SaveProfileNameChanged))
+        .on_key(ctx.link().key_handler(|key| {
+            if key.is(KeyCode::Esc) {
+                Some(Msg::CloseSaveProfile)
+            } else if key.code == KeyCode::Enter
+                && !key.mods.ctrl
+                && !key.mods.alt
+                && !key.mods.super_key
+            {
+                Some(Msg::SubmitSaveProfile)
+            } else {
+                None
+            }
+        }));
+
+    styled_modal(ctx, "Save profile", 56)
+        .padding((1, 2, 1, 2))
+        .on_close(ctx.link().callback(|_| Msg::CloseSaveProfile))
+        .child(input.key(save_profile_key()))
+        .into()
+}
+
+pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(picker) = ctx.state.profile_picker.as_ref() else {
+        return Text::new("").into();
+    };
+
+    let title = match picker.mode {
+        ProfilePickerMode::Load => "Open profile",
+        ProfilePickerMode::SetDefault => "Set default profile",
+    };
+
+    action_palette_modal(ctx, title)
+        .on_close(ctx.link().callback(|_| Msg::CloseProfilePicker))
+        .child(profile_picker_palette(ctx, picker))
+        .key(profile_picker_key())
+}
+
+fn profile_picker_palette(
+    ctx: &Context<HyprmuxApp>,
+    picker: &ProfilePickerState,
+) -> SearchPalette<usize> {
+    let query = picker.input.text().trim().to_ascii_lowercase();
+    let entries = picker
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
+        .map(|(index, entry)| {
+            SearchEntry::item(entry.name.clone(), index).active(index == picker.selected)
+        })
+        .collect::<Vec<_>>();
+
+    let empty_text = if picker.entries.is_empty() {
+        "No saved profiles — save one first".to_string()
+    } else if query.is_empty() {
+        "Type to filter profiles".to_string()
+    } else {
+        format!("No profiles match `{query}`")
+    };
+
+    shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .entries(entries)
+        .placeholder("Search profiles...")
+        .initial_query(picker.input.text().to_string())
+        .preserve_groups(false)
+        .initial_selected_item_index(Some(picker.selected))
+        .sync_selection(true)
+        .empty_text(empty_text)
+        .on_query_change(ctx.link().callback(|query: std::sync::Arc<str>| {
+            Msg::ProfilePickerQueryChanged(query.to_string())
+        }))
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SelectProfile(event.item.value)),
+        )
 }
 
 pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {

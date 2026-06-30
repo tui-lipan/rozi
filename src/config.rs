@@ -79,7 +79,14 @@ impl Default for HyprmuxThemeConfig {
 
 #[derive(Clone, Debug, Default)]
 pub struct HyprmuxProfileConfig {
-    pub path: Option<PathBuf>,
+    /// Name of a profile in [`profiles_dir`] to load on startup when no CLI profile is given.
+    pub default: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileEntry {
+    pub name: String,
+    pub path: PathBuf,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -310,7 +317,7 @@ struct BarFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ProfileFileConfig {
-    path: Option<String>,
+    default: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -365,18 +372,66 @@ mod tests {
     }
 
     #[test]
-    fn file_config_parses_profile_path() {
+    fn file_config_parses_profile_default() {
         let parsed: FileConfig = toml::from_str(
             r#"
             [profile]
-            path = "~/code/hyprmux/dev.toml"
+            default = "dev"
             "#,
         )
         .expect("config parses");
 
+        assert_eq!(parsed.profile.default.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn list_profiles_reads_sorted_toml_stems() {
+        let temp =
+            std::env::temp_dir().join(format!("hyprmux-profiles-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("tempdir");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &temp);
+        }
+
+        let profiles = temp.join("hyprmux/profiles");
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
+        std::fs::write(profiles.join("beta.toml"), "version = 1\n").expect("beta");
+        std::fs::write(profiles.join("alpha.toml"), "version = 1\n").expect("alpha");
+        std::fs::write(profiles.join("notes.txt"), "skip").expect("txt");
+
+        let listed = list_profiles();
         assert_eq!(
-            parsed.profile.path.as_deref(),
-            Some("~/code/hyprmux/dev.toml")
+            listed
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "beta"]
+        );
+
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn profile_upsert_adds_missing_section() {
+        assert_eq!(
+            upsert_default_profile("scrollback = 100\n", "dev"),
+            "scrollback = 100\n\n[profile]\ndefault = \"dev\"\n"
+        );
+    }
+
+    #[test]
+    fn profile_upsert_replaces_default_and_removes_path() {
+        let updated = upsert_default_profile(
+            "[profile]\npath = \"~/old.toml\"\ndefault = \"old\"\n\n[session]\nautosave = true\n",
+            "dev",
+        );
+        assert_eq!(
+            updated,
+            "[profile]\ndefault = \"dev\"\n\n[session]\nautosave = true\n"
         );
     }
 
@@ -528,8 +583,8 @@ pub fn load_config() -> LoadedConfig {
     if let Some(path) = non_empty(parsed.theme.path) {
         config.theme.path = Some(expand_path(path));
     }
-    if let Some(path) = non_empty(parsed.profile.path) {
-        config.profile.path = Some(expand_path(path));
+    if let Some(name) = non_empty(parsed.profile.default) {
+        config.profile.default = Some(name);
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;
@@ -658,6 +713,105 @@ fn upsert_theme_preset(text: &str, preset_id: &str) -> String {
         }
         output.push_str("[theme]\n");
         output.push_str(&format!("preset = \"{preset_id}\"\n"));
+    }
+
+    output
+}
+
+pub fn profiles_dir() -> PathBuf {
+    config_home().join("hyprmux/profiles")
+}
+
+pub fn profile_path_for_name(name: &str) -> PathBuf {
+    profiles_dir().join(format!("{name}.toml"))
+}
+
+pub fn list_profiles() -> Vec<ProfileEntry> {
+    let dir = profiles_dir();
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+
+    let mut entries = read_dir
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_stem()?.to_string_lossy().into_owned();
+            Some(ProfileEntry { name, path })
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries
+}
+
+pub fn persist_default_profile(name: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_default_profile(&text, name);
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&path, updated)
+        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn upsert_default_profile(text: &str, name: &str) -> String {
+    let mut output = String::new();
+    let mut in_profile = false;
+    let mut saw_profile = false;
+    let mut wrote_default = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if section_starts {
+            if in_profile && !wrote_default {
+                output.push_str(&format!("default = \"{name}\"\n"));
+                wrote_default = true;
+            }
+            in_profile = trimmed == "[profile]";
+            saw_profile |= in_profile;
+        }
+
+        if in_profile
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(key, _)| matches!(key.trim(), "default" | "path"))
+        {
+            if trimmed.starts_with("default") && !wrote_default {
+                output.push_str(&format!("default = \"{name}\"\n"));
+                wrote_default = true;
+            }
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    if in_profile && !wrote_default {
+        output.push_str(&format!("default = \"{name}\"\n"));
+    } else if !saw_profile {
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            output.push('\n');
+        }
+        output.push_str("[profile]\n");
+        output.push_str(&format!("default = \"{name}\"\n"));
     }
 
     output

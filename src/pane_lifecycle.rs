@@ -228,9 +228,14 @@ pub(crate) fn pty_config_for_pane(config: &HyprmuxConfig, pane: &Pane) -> Termin
         .filter(|command| !command.trim().is_empty())
     {
         let shell = shell_for_config(config).unwrap_or_else(default_shell);
+        let wrapped = if pane.identity.keep_open {
+            format!("{command}; exec {shell}")
+        } else {
+            command.to_string()
+        };
         TerminalPtyConfig::new(shell)
             .arg("-lc")
-            .arg(command.to_string())
+            .arg(wrapped)
             .term("xterm-256color")
     } else {
         pty_config(config)
@@ -314,5 +319,19 @@ mod tests {
         assert!(debug.contains("-lc"), "{debug}");
         assert!(debug.contains("cargo run"), "{debug}");
         assert!(debug.contains("/repo/backend"), "{debug}");
+    }
+
+    #[test]
+    fn keep_open_wraps_command_with_exec_shell() {
+        let mut config = HyprmuxConfig::default();
+        config.shell = Some("/bin/bash".to_string());
+
+        let mut pane = Pane::new(1, 100, rect());
+        pane.identity.command = Some("lazygit".to_string());
+        pane.identity.keep_open = true;
+
+        let debug = format!("{:?}", pty_config_for_pane(&config, &pane));
+
+        assert!(debug.contains("lazygit; exec /bin/bash"), "{debug}");
     }
 }

@@ -1,10 +1,11 @@
+use std::sync::Arc;
+
 use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
+use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::{Action, CommandBinding};
-use crate::state::{
-    ProfilePickerMode, ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, ThemePreset,
-};
+use crate::state::{ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, ThemePreset};
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
@@ -259,21 +260,44 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         return Text::new("").into();
     };
 
-    let title = match picker.mode {
-        ProfilePickerMode::Load => "Open profile",
-        ProfilePickerMode::SetDefault => "Set default profile",
+    let palette = profile_picker_palette(ctx, picker);
+    let body = VStack::new()
+        .child(palette)
+        .child(profile_picker_hints(ctx));
+
+    action_palette_modal(ctx, "Profiles")
+        .on_close(ctx.link().callback(|_| Msg::CloseProfilePicker))
+        .child(body)
+        .key(profile_picker_key())
+}
+
+fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
+    let hint = |label: &str, key: &str| -> Element {
+        HStack::new()
+            .gap(1)
+            .width(Length::Auto)
+            .child(Text::new(label).style(fg_only(&theme.primary).bold()))
+            .child(Text::new(key).style(fg_only(&theme.muted)))
+            .into()
     };
 
-    action_palette_modal(ctx, title)
-        .on_close(ctx.link().callback(|_| Msg::CloseProfilePicker))
-        .child(profile_picker_palette(ctx, picker))
-        .key(profile_picker_key())
+    HStack::new()
+        .padding((1, 1, 0, 1))
+        .justify(Justify::SpaceBetween)
+        .gap(2)
+        .child(hint("open", "enter"))
+        .child(hint("default", "ctrl+f"))
+        .child(hint("delete", "ctrl+d"))
+        .into()
 }
 
 fn profile_picker_palette(
     ctx: &Context<HyprmuxApp>,
     picker: &ProfilePickerState,
 ) -> SearchPalette<usize> {
+    let theme = &ctx.state.theme;
+    let default_name = ctx.state.config.profile.default.as_deref();
     let query = picker.input.text().trim().to_ascii_lowercase();
     let entries = picker
         .entries
@@ -281,7 +305,12 @@ fn profile_picker_palette(
         .enumerate()
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
-            SearchEntry::item(entry.name.clone(), index).active(index == picker.selected)
+            let mut item =
+                SearchEntry::item(entry.name.clone(), index).active(index == picker.selected);
+            if default_name == Some(entry.name.as_str()) {
+                item = item.description(ItemDescription::new().right("default"));
+            }
+            item
         })
         .collect::<Vec<_>>();
 
@@ -293,7 +322,23 @@ fn profile_picker_palette(
         format!("No profiles match `{query}`")
     };
 
-    shared_search_palette::<usize>(ctx, Length::Auto, false)
+    let pending_delete = picker.pending_delete;
+    let error_bg = theme.status.error;
+    let selection_style = if pending_delete.is_some() {
+        Style::new()
+            .bg(theme.status.error)
+            .fg(readable_text_color(None, error_bg))
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    } else {
+        Style::new()
+            .fg(theme.surface.backdrop)
+            .bg(theme.border_active)
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    };
+
+    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search profiles...")
         .initial_query(picker.input.text().to_string())
@@ -301,13 +346,54 @@ fn profile_picker_palette(
         .initial_selected_item_index(Some(picker.selected))
         .sync_selection(true)
         .empty_text(empty_text)
+        .list_selection_style(selection_style)
+        .list_unfocused_selection_style(selection_style)
+        .input_key_interceptor(profile_picker_key_interceptor(ctx))
         .on_query_change(ctx.link().callback(|query: std::sync::Arc<str>| {
             Msg::ProfilePickerQueryChanged(query.to_string())
         }))
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::ProfilePickerSelect(event.item.value)),
+        )
         .on_activate(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SelectProfile(event.item.value)),
-        )
+        );
+
+    if pending_delete.is_some() {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            if pending_delete == Some(item.value) {
+                Some(render_pending_delete_item(item, error_bg))
+            } else {
+                None
+            }
+        }));
+    }
+
+    palette
+}
+
+fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+    ctx.link().key_handler(|key| {
+        if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+            Some(Msg::ProfilePickerDelete)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
+            Some(Msg::ProfilePickerSetDefault)
+        } else {
+            None
+        }
+    })
+}
+
+fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> ListItem {
+    let fg = readable_text_color(None, error_bg);
+    ListItem::from_spans(vec![
+        Span::new(item.label.as_ref()).style(Style::new().fg(fg).strikethrough()),
+    ])
+    .description("again to confirm")
+    .description_style(Style::new().fg(fg).italic())
+    .style(Style::new().bg(error_bg).fg(fg))
 }
 
 pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {

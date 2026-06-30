@@ -151,7 +151,7 @@ are derived from the active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Name of a profile in `~/.config/hyprmux/profiles/` to load on startup (unless overridden by a CLI profile). Also writable via *Set default profile* in the command palette. |
+| `default` | _none_ | Name of a profile in `~/.config/hyprmux/profiles/` to load on startup (unless overridden by a CLI profile). Also writable via **Ctrl+f** in the **Profiles** picker. |
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
@@ -221,5 +221,5 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
 `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
-`open-profile`, `set-default-profile`, `choose-theme`, `command-palette`, `help`,
+`open-profile`, `choose-theme`, `command-palette`, `help`,
 `toggle-titles`, `toggle-focus-on-hover`.

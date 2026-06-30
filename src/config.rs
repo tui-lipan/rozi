@@ -436,6 +436,30 @@ mod tests {
     }
 
     #[test]
+    fn remove_default_profile_strips_matching_entry() {
+        let text = "[profile]\ndefault = \"dev\"\n\n[session]\nautosave = true\n";
+        assert_eq!(
+            remove_default_profile(text, "dev"),
+            "[profile]\n\n[session]\nautosave = true\n"
+        );
+    }
+
+    #[test]
+    fn remove_default_profile_leaves_other_defaults() {
+        let text = "[profile]\ndefault = \"work\"\n";
+        assert_eq!(remove_default_profile(text, "dev"), text);
+    }
+
+    #[test]
+    fn delete_profile_file_treats_missing_as_success() {
+        let path = std::env::temp_dir().join(format!(
+            "hyprmux-missing-profile-{}.toml",
+            std::process::id()
+        ));
+        delete_profile_file(&path).expect("missing profile delete succeeds");
+    }
+
+    #[test]
     fn file_config_parses_pane_options() {
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -768,6 +792,77 @@ pub fn persist_default_profile(name: &str) -> std::result::Result<PathBuf, Strin
     fs::write(&path, updated)
         .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
     Ok(path)
+}
+
+pub fn delete_profile_file(path: &Path) -> std::result::Result<(), String> {
+    match fs::metadata(path) {
+        Ok(meta) if !meta.is_file() => {
+            return Err(format!("Not a profile file: {}", path.display()));
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(format!(
+                "Could not inspect profile {}: {err}",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+    }
+
+    fs::remove_file(path)
+        .map_err(|err| format!("Could not delete profile {}: {err}", path.display()))
+}
+
+pub fn clear_default_profile(name: &str) -> std::result::Result<Option<PathBuf>, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = remove_default_profile(&text, name);
+    if updated == text {
+        return Ok(None);
+    }
+
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&path, updated)
+        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    Ok(Some(path))
+}
+
+fn remove_default_profile(text: &str, name: &str) -> String {
+    let target = format!("default = \"{name}\"");
+    let mut output = String::new();
+    let mut in_profile = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if section_starts {
+            in_profile = trimmed == "[profile]";
+        }
+
+        if in_profile && trimmed == target {
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    output
 }
 
 fn upsert_default_profile(text: &str, name: &str) -> String {

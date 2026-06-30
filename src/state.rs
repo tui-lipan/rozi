@@ -351,26 +351,22 @@ impl PaneRenameState {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProfilePickerMode {
-    Load,
-    SetDefault,
-}
-
 pub struct ProfilePickerState {
-    pub mode: ProfilePickerMode,
     pub entries: Vec<ProfileEntry>,
     pub input: TextInput,
+    /// Index into [`Self::entries`] for the highlighted profile.
     pub selected: usize,
+    /// Entry index awaiting a second Ctrl+D to confirm deletion.
+    pub pending_delete: Option<usize>,
 }
 
 impl ProfilePickerState {
-    pub fn new(mode: ProfilePickerMode, entries: Vec<ProfileEntry>) -> Self {
+    pub fn new(entries: Vec<ProfileEntry>) -> Self {
         Self {
-            mode,
             entries,
             input: TextInput::new(""),
             selected: 0,
+            pending_delete: None,
         }
     }
 }

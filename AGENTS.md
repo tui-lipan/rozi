@@ -167,7 +167,7 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 - `search_ops.rs` — scrollback search scan/recompute/navigation, scope cycling.
 - `scratchpad.rs` — the toggleable scratchpad pane and its focus handoff.
 - `identity_ops.rs` — pane rename state apply/close.
-- `profile_ops.rs` — save-by-name prompt, profile picker (load + set-default), profile load/switch.
+- `profile_ops.rs` — save-by-name prompt, unified profile picker (load/set-default/delete), profile load/switch.
 - `theme_ops.rs` — theme picker/preview, hot-reload tick, terminal-palette application,
   system-theme derivation.
 - `profiles.rs` — profile/session (de)serialization and `State` restore/persist. Named profiles

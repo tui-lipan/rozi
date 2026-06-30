@@ -212,6 +212,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .height(height)
         .input_border(false)
         .input_prefix("")
+        .input_padding((0, 1))
         .input_style(input_style)
         .input_focus_style(
             Style::new()
@@ -227,8 +228,8 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .list_selection_style(selection_style)
         .list_unfocused_selection_style(selection_style)
         .list_item_hover_style(Style::new().bg(theme.surface.element))
-        .list_item_horizontal_padding((0, 1, 0, 1))
-        .list_header_horizontal_padding((0, 1, 0, 1))
+        .list_item_horizontal_padding((0, 1))
+        .list_header_horizontal_padding((0, 1))
         .item_style(fg_only(&theme.primary))
         .active_item_style(search_palette_active_item_style())
         .active_description_style(fg_only(&theme.accent))

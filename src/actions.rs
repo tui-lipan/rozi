@@ -14,7 +14,7 @@ use crate::resize_move_ops::{
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::search_ops::open_search;
-use crate::state::{Mode, ProfilePickerMode};
+use crate::state::Mode;
 use crate::theme_ops::{open_theme_picker, select_theme};
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
@@ -89,8 +89,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
-        Action::OpenProfilePicker => open_profile_picker(ctx, ProfilePickerMode::Load),
-        Action::SetDefaultProfile => open_profile_picker(ctx, ProfilePickerMode::SetDefault),
+        Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::SelectTheme(preset) => {
             select_theme(ctx, preset);

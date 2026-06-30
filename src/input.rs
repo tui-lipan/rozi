@@ -27,7 +27,6 @@ pub enum Action {
     OpenSearch,
     SaveProfile,
     OpenProfilePicker,
-    SetDefaultProfile,
     OpenThemePicker,
     SelectTheme(ThemePreset),
     TogglePalette,
@@ -73,7 +72,6 @@ impl Action {
             Action::OpenSearch => "search",
             Action::SaveProfile => "save-profile",
             Action::OpenProfilePicker => "open-profile",
-            Action::SetDefaultProfile => "set-default-profile",
             Action::OpenThemePicker => "choose-theme",
             Action::TogglePalette => "command-palette",
             Action::ToggleHelp => "help",
@@ -119,7 +117,6 @@ impl Action {
             "search" => Action::OpenSearch,
             "save-profile" => Action::SaveProfile,
             "open-profile" => Action::OpenProfilePicker,
-            "set-default-profile" => Action::SetDefaultProfile,
             "choose-theme" => Action::OpenThemePicker,
             "command-palette" => Action::TogglePalette,
             "help" => Action::ToggleHelp,
@@ -363,14 +360,7 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::OpenProfilePicker,
-            label: "Open profile",
-            keys: "",
-            category: "Profile",
-            palette: true,
-        },
-        CommandBinding {
-            action: Action::SetDefaultProfile,
-            label: "Set default profile",
+            label: "Profiles",
             keys: "",
             category: "Profile",
             palette: true,
@@ -490,6 +480,19 @@ mod tests {
             .expect("save profile binding exists");
 
         assert_eq!(binding.label, "Save profile");
+        assert_eq!(binding.keys, "");
+        assert_eq!(binding.category, "Profile");
+        assert!(binding.palette);
+    }
+
+    #[test]
+    fn profiles_binding_is_palette_command() {
+        let binding = command_bindings()
+            .into_iter()
+            .find(|binding| binding.action == Action::OpenProfilePicker)
+            .expect("profiles binding exists");
+
+        assert_eq!(binding.label, "Profiles");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Profile");
         assert!(binding.palette);

@@ -11,8 +11,9 @@ use crate::input::Action;
 use crate::key_routing::handle_key_routing;
 use crate::pane_lifecycle::{find_pane_mut, handle_prune_closed};
 use crate::profile_ops::{
-    cancel_profile_picker, close_save_profile_prompt, profile_picker_query_changed, select_profile,
-    submit_save_profile,
+    cancel_profile_picker, close_save_profile_prompt, profile_picker_delete_key,
+    profile_picker_query_changed, profile_picker_selection_changed, profile_picker_set_default,
+    select_profile, submit_save_profile,
 };
 use crate::pty_events::{
     error_toast, handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
@@ -32,7 +33,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
                 Action::OpenThemePicker => {}
-                Action::SaveProfile | Action::OpenProfilePicker | Action::SetDefaultProfile => {}
+                Action::SaveProfile | Action::OpenProfilePicker => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
                 // previously focused pane on hide); don't override it.
                 Action::ToggleScratchpad => {}
@@ -132,6 +133,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             update
         }
         Msg::ProfilePickerQueryChanged(query) => profile_picker_query_changed(ctx, query),
+        Msg::ProfilePickerSelect(index) => profile_picker_selection_changed(ctx, index),
+        Msg::ProfilePickerSetDefault => profile_picker_set_default(ctx),
+        Msg::ProfilePickerDelete => profile_picker_delete_key(ctx),
         Msg::SelectProfile(index) => {
             let update = select_profile(ctx, index);
             request_current_pane_focus(ctx);

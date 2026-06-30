@@ -78,7 +78,8 @@ Set a default profile in config:
 default = "dev"
 ```
 
-Or use the in-app **Set default profile** command (command palette).
+Or use the in-app **Profiles** command (command palette): highlight a profile and press
+`Ctrl+f` to set it as the startup default.
 
 If a profile file is missing or fails to parse, hyprmux shows a startup warning and falls
 through to the next source (or a fresh layout).
@@ -88,8 +89,20 @@ through to the next source (or a fresh layout).
 | Command | Action |
 | --- | --- |
 | **Save profile** | Prompts for a name and writes `profiles/<name>.toml`. |
-| **Open profile** | Lists saved profiles; Enter loads the selection (replacing all panes). |
-| **Set default profile** | Persists `[profile] default` to `hyprmux.toml`. |
+| **Profiles** | Lists saved profiles with in-picker actions (see below). |
+
+### Profile picker actions
+
+Open **Profiles** from the command palette, then:
+
+| Key | Action |
+| --- | --- |
+| **Enter** | Load the highlighted profile (replaces all panes). |
+| **Ctrl+f** | Set the highlighted profile as `[profile] default` in `hyprmux.toml`. |
+| **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
+
+Profiles marked **default** in the list match your current `[profile] default` setting.
+Deleting the default profile clears that config entry when the file is removed.
 
 ## Command lifetime
 

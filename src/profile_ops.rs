@@ -1,14 +1,17 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::config::{list_profiles, persist_default_profile, profile_path_for_name};
+use crate::config::{
+    clear_default_profile, delete_profile_file, list_profiles, persist_default_profile,
+    profile_path_for_name,
+};
 use crate::focus_ops::request_profile_picker_focus;
 use crate::focus_ops::request_save_profile_focus;
 use crate::pane_lifecycle;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
 use crate::startup_spawns;
-use crate::state::{Mode, PaneRenameState, ProfilePickerMode, ProfilePickerState, State};
+use crate::state::{Mode, PaneRenameState, ProfilePickerState, State};
 use crate::theme_ops;
 
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -68,12 +71,9 @@ fn normalize_profile_name(name: &str) -> Option<String> {
     Some(name.to_string())
 }
 
-pub(crate) fn open_profile_picker(
-    ctx: &mut Context<HyprmuxApp>,
-    mode: ProfilePickerMode,
-) -> Update {
+pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     let entries = list_profiles();
-    ctx.state.profile_picker = Some(ProfilePickerState::new(mode, entries));
+    ctx.state.profile_picker = Some(ProfilePickerState::new(entries));
     ctx.state.show_profile_picker = true;
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
@@ -98,73 +98,178 @@ pub(crate) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
         picker.input.set_cursor(cursor);
         picker.input.set_anchor(None);
         picker.selected = 0;
+        picker.pending_delete = None;
     }
     request_profile_picker_focus(ctx);
     Update::full()
 }
 
-pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some((mode, entry)) = ctx.state.profile_picker.as_ref().and_then(|picker| {
-        picker
-            .entries
-            .get(index)
-            .map(|entry| (picker.mode, entry.clone()))
-    }) else {
+pub(crate) fn profile_picker_selection_changed(
+    ctx: &mut Context<HyprmuxApp>,
+    index: usize,
+) -> Update {
+    if let Some(picker) = ctx.state.profile_picker.as_mut() {
+        picker.selected = index;
+        if picker
+            .pending_delete
+            .is_some_and(|pending| pending != index)
+        {
+            picker.pending_delete = None;
+        }
+    }
+    Update::full()
+}
+
+pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
 
-    match mode {
-        ProfilePickerMode::SetDefault => match persist_default_profile(&entry.name) {
-            Ok(path) => {
-                ctx.state.config.profile.default = Some(entry.name.clone());
-                ctx.toast().push(info_toast(format!(
-                    "Default profile set to `{}` in {}",
-                    entry.name,
-                    path.display()
-                )));
+    match persist_default_profile(&entry.name) {
+        Ok(path) => {
+            ctx.state.config.profile.default = Some(entry.name.clone());
+            if let Some(picker) = ctx.state.profile_picker.as_mut() {
+                picker.pending_delete = None;
             }
-            Err(message) => {
-                ctx.toast()
-                    .push(error_toast("Set Default Profile", message));
-            }
-        },
-        ProfilePickerMode::Load => {
-            kill_all_live_ptys(&mut ctx.state);
-            let theme_watcher = ctx.state.theme_watcher.take();
-            let system_theme = ctx.state.system_theme.clone();
-            let config = ctx.state.config.clone();
-            let theme = ctx.state.theme.clone();
+            ctx.toast().push(info_toast(format!(
+                "Default profile set to `{}` in {}",
+                entry.name,
+                path.display()
+            )));
+        }
+        Err(message) => {
+            ctx.toast()
+                .push(error_toast("Set Default Profile", message));
+        }
+    }
+    Update::full()
+}
 
-            match load_profile(&entry.path) {
-                Ok(profile) => {
-                    let mut new_state = State::from_profile(config, theme, profile);
-                    new_state.theme_watcher = theme_watcher;
-                    new_state.system_theme = system_theme;
-                    ctx.state = new_state;
-                    theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-                    ctx.toast()
-                        .push(info_toast(format!("Loaded profile `{}`", entry.name)));
-                    ctx.state.show_profile_picker = false;
-                    ctx.state.profile_picker = None;
-                    // The theme-tick and bar-tick loops started at app launch are
-                    // self-sustaining and survive the state swap, so don't restart them
-                    // here — doing so would spawn duplicate loops on every load.
-                    return Update::with_command(pane_lifecycle::initial_command(
-                        startup_spawns(&ctx.state),
-                        false,
-                        false,
-                    ));
-                }
-                Err(message) => {
-                    ctx.toast().push(error_toast("Load Profile", message));
+pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(entry) = selected_profile_entry(ctx) else {
+        return Update::none();
+    };
+    let index = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .map(|picker| picker.selected);
+
+    let Some(index) = index else {
+        return Update::none();
+    };
+
+    let confirm = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_delete == Some(index));
+
+    if !confirm {
+        if let Some(picker) = ctx.state.profile_picker.as_mut() {
+            picker.pending_delete = Some(index);
+        }
+        return Update::full();
+    }
+
+    let name = entry.name.clone();
+    let path = entry.path.clone();
+    match delete_profile_file(&path) {
+        Ok(()) => {
+            if ctx.state.config.profile.default.as_deref() == Some(name.as_str()) {
+                match clear_default_profile(&name) {
+                    Ok(Some(config_path)) => {
+                        ctx.state.config.profile.default = None;
+                        ctx.toast().push(info_toast(format!(
+                            "Cleared startup default in {}",
+                            config_path.display()
+                        )));
+                    }
+                    Ok(None) => {}
+                    Err(message) => {
+                        ctx.toast()
+                            .push(error_toast("Clear Default Profile", message));
+                    }
                 }
             }
+            refresh_profile_picker_entries(ctx);
+            ctx.toast()
+                .push(info_toast(format!("Deleted profile `{name}`")));
+        }
+        Err(message) => {
+            ctx.toast().push(error_toast("Delete Profile", message));
+            if let Some(picker) = ctx.state.profile_picker.as_mut() {
+                picker.pending_delete = None;
+            }
+        }
+    }
+    Update::full()
+}
+
+pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(entry) = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .and_then(|picker| picker.entries.get(index).cloned())
+    else {
+        return Update::none();
+    };
+
+    kill_all_live_ptys(&mut ctx.state);
+    let theme_watcher = ctx.state.theme_watcher.take();
+    let system_theme = ctx.state.system_theme.clone();
+    let config = ctx.state.config.clone();
+    let theme = ctx.state.theme.clone();
+
+    match load_profile(&entry.path) {
+        Ok(profile) => {
+            let mut new_state = State::from_profile(config, theme, profile);
+            new_state.theme_watcher = theme_watcher;
+            new_state.system_theme = system_theme;
+            ctx.state = new_state;
+            theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
+            ctx.toast()
+                .push(info_toast(format!("Loaded profile `{}`", entry.name)));
+            ctx.state.show_profile_picker = false;
+            ctx.state.profile_picker = None;
+            // The theme-tick and bar-tick loops started at app launch are
+            // self-sustaining and survive the state swap, so don't restart them
+            // here — doing so would spawn duplicate loops on every load.
+            return Update::with_command(pane_lifecycle::initial_command(
+                startup_spawns(&ctx.state),
+                false,
+                false,
+            ));
+        }
+        Err(message) => {
+            ctx.toast().push(error_toast("Load Profile", message));
         }
     }
 
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     Update::full()
+}
+
+fn selected_profile_entry(ctx: &Context<HyprmuxApp>) -> Option<crate::config::ProfileEntry> {
+    ctx.state
+        .profile_picker
+        .as_ref()
+        .and_then(|picker| picker.entries.get(picker.selected).cloned())
+}
+
+fn refresh_profile_picker_entries(ctx: &mut Context<HyprmuxApp>) {
+    let Some(picker) = ctx.state.profile_picker.as_mut() else {
+        return;
+    };
+    picker.entries = list_profiles();
+    picker.pending_delete = None;
+    if picker.entries.is_empty() {
+        picker.selected = 0;
+        return;
+    }
+    picker.selected = picker.selected.min(picker.entries.len() - 1);
 }
 
 fn kill_all_live_ptys(state: &mut State) {

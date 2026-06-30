@@ -5,6 +5,7 @@ use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
+use super::integrated_scrollbar_config;
 
 pub(crate) fn pane_element(
     app: &HyprmuxApp,
@@ -129,8 +130,7 @@ pub(crate) fn pane_element(
         .width(Length::Flex(1))
         .height(Length::Flex(1))
         .scrollbar_config(
-            ScrollbarConfig::new()
-                .variant(ScrollbarVariant::Integrated)
+            integrated_scrollbar_config()
                 .thumb_style(Style::new().fg(frame_fg))
                 .thumb_focus_style(Style::new().fg(frame_fg))
                 .track_style(Style::new().fg(frame_fg).bg(frame_bg)),

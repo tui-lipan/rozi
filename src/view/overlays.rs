@@ -12,7 +12,10 @@ use super::keys::{
     help_scroll_key, palette_key, profile_picker_key, rename_input_key, save_profile_key,
     search_input_key, theme_picker_key,
 };
-use super::{action_palette_modal, fg_only, shared_search_palette, styled_modal};
+use super::{
+    action_palette_modal, fg_only, integrated_scrollbar_config, shared_search_palette,
+    styled_modal,
+};
 
 pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -73,7 +76,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .focusable(true)
                 .scroll_wheel(true)
                 .scrollbar(true)
-                .scrollbar_config(ScrollbarConfig::new().variant(ScrollbarVariant::Integrated))
+                .scrollbar_config(integrated_scrollbar_config())
                 .height(Length::Flex(1))
                 .key(help_scroll_key()),
         );

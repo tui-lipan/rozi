@@ -195,6 +195,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
+pub(crate) fn integrated_scrollbar_config() -> ScrollbarConfig {
+    ScrollbarConfig::new()
+        .variant(ScrollbarVariant::Integrated)
+        .thumb('▐')
+}
+
 pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     ctx: &Context<HyprmuxApp>,
     height: Length,
@@ -222,6 +228,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .input_placeholder_style(fg_only(&theme.muted))
         .list_border(false)
         .list_scrollbar(true)
+        .list_scrollbar_config(integrated_scrollbar_config())
         .list_selection_full_width(true)
         .list_selection_symbol("")
         .list_unselected_symbol("")

@@ -254,7 +254,8 @@ fn clean_terminal_color(color: Color, fallback: Color) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{HyprmuxConfig, Pane, PaneId};
+    use crate::config::HyprmuxConfig;
+    use crate::state::{Pane, PaneId};
 
     fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
         state.workspaces[0]

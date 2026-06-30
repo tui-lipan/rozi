@@ -1,7 +1,8 @@
 use tui_lipan::prelude::*;
 
+use crate::config::InputConfig;
 use crate::keymap::Keymap;
-use crate::state::{Direction, InputConfig, RATIO_STEP, ThemePreset};
+use crate::state::{Direction, RATIO_STEP, ThemePreset};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
@@ -447,8 +448,8 @@ fn modifier_command_key(key: KeyEvent, config: &InputConfig) -> Option<KeyEvent>
 
     let mut mods = key.mods;
     match config.modifier {
-        crate::state::WmModifier::Alt => mods.alt = false,
-        crate::state::WmModifier::Super => mods.super_key = false,
+        crate::config::WmModifier::Alt => mods.alt = false,
+        crate::config::WmModifier::Super => mods.super_key = false,
     }
     Some(KeyEvent {
         code: key.code,

@@ -11,11 +11,236 @@ use tui_lipan::prelude::*;
 use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
 use crate::keymap::{Keymap, Trigger};
-use crate::state::{
-    BarConfig, BarSegment, HyprmuxClipboardConfig, HyprmuxConfig, HyprmuxPaneConfig,
-    HyprmuxThemeConfig, InputConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT, ThemePreset,
-    WmModifier,
-};
+use crate::state::ThemePreset;
+
+// === Config schema ===
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WmModifier {
+    Super,
+    Alt,
+}
+
+impl WmModifier {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Super => "Super",
+            Self::Alt => "Alt",
+        }
+    }
+
+    pub fn key_mods(self) -> KeyMods {
+        match self {
+            Self::Super => KeyMods {
+                super_key: true,
+                ..KeyMods::NONE
+            },
+            Self::Alt => KeyMods::ALT,
+        }
+    }
+
+    pub fn matches(self, key: KeyEvent) -> bool {
+        match self {
+            Self::Super => key.mods.super_key,
+            Self::Alt => key.mods.alt,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputConfig {
+    pub prefix: KeyBinding,
+    pub modifier: WmModifier,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            prefix: KeyBinding::from_str("ctrl-a").expect("default prefix key parses"),
+            modifier: WmModifier::Alt,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HyprmuxThemeConfig {
+    pub preset: ThemePreset,
+    pub path: Option<PathBuf>,
+}
+
+impl Default for HyprmuxThemeConfig {
+    fn default() -> Self {
+        Self {
+            preset: ThemePreset::Lipan,
+            path: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HyprmuxProfileConfig {
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HyprmuxSessionConfig {
+    /// Persist the live layout on quit and restore it on next launch.
+    pub autosave: bool,
+    /// Override the session file location; defaults to `$XDG_STATE_HOME/hyprmux/session.toml`.
+    pub path: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HyprmuxPaneConfig {
+    /// Whether the focused pane uses the theme's panel background instead of the normal
+    /// workspace backdrop. Disabled by default so hover focus does not repaint terminal bg.
+    pub highlight_focused_background: bool,
+    /// Whether moving the mouse over a pane focuses it.
+    pub focus_on_hover: bool,
+}
+
+impl Default for HyprmuxPaneConfig {
+    fn default() -> Self {
+        Self {
+            highlight_focused_background: false,
+            focus_on_hover: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HyprmuxClipboardConfig {
+    pub enable_osc52: bool,
+}
+
+impl Default for HyprmuxClipboardConfig {
+    fn default() -> Self {
+        Self { enable_osc52: true }
+    }
+}
+
+/// Default fraction of the viewport height the dropdown scratchpad occupies.
+pub const SCRATCHPAD_DEFAULT_HEIGHT: f32 = 0.4;
+pub const SCRATCHPAD_MIN_HEIGHT: f32 = 0.1;
+pub const SCRATCHPAD_MAX_HEIGHT: f32 = 0.9;
+
+#[derive(Clone, Debug)]
+pub struct HyprmuxScratchpadConfig {
+    /// Command to run instead of the normal shell (e.g. `btop`); `None` uses the shell.
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    /// Height as a fraction of the viewport (clamped to `0.1..=0.9`).
+    pub height: f32,
+}
+
+impl Default for HyprmuxScratchpadConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            cwd: None,
+            height: SCRATCHPAD_DEFAULT_HEIGHT,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HyprmuxConfig {
+    pub shell: Option<String>,
+    pub cwd: Option<String>,
+    pub scrollback: usize,
+    pub input: InputConfig,
+    pub animations: WindowAnimationConfig,
+    pub theme: HyprmuxThemeConfig,
+    pub profile: HyprmuxProfileConfig,
+    pub session: HyprmuxSessionConfig,
+    pub pane: HyprmuxPaneConfig,
+    pub clipboard: HyprmuxClipboardConfig,
+    pub scratchpad: HyprmuxScratchpadConfig,
+    pub bar: BarConfig,
+    pub keymap: Keymap,
+}
+
+impl Default for HyprmuxConfig {
+    fn default() -> Self {
+        Self {
+            shell: None,
+            cwd: std::env::current_dir()
+                .ok()
+                .map(|path| path.to_string_lossy().to_string()),
+            scrollback: 5000,
+            input: InputConfig::default(),
+            animations: WindowAnimationConfig::default(),
+            theme: HyprmuxThemeConfig::default(),
+            profile: HyprmuxProfileConfig::default(),
+            session: HyprmuxSessionConfig::default(),
+            pane: HyprmuxPaneConfig::default(),
+            clipboard: HyprmuxClipboardConfig::default(),
+            scratchpad: HyprmuxScratchpadConfig::default(),
+            bar: BarConfig::default(),
+            keymap: Keymap::default(),
+        }
+    }
+}
+
+/// One segment of the configurable top bar. `Workspaces` is the workspace tab strip;
+/// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BarSegment {
+    Title,
+    Workspaces,
+    Session,
+    Clock,
+    Layout,
+    Text(String),
+}
+
+impl BarSegment {
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        if let Some(literal) = value.strip_prefix("text:") {
+            return Some(Self::Text(literal.to_string()));
+        }
+        match value.to_ascii_lowercase().as_str() {
+            "title" => Some(Self::Title),
+            "workspaces" => Some(Self::Workspaces),
+            "session" => Some(Self::Session),
+            "clock" => Some(Self::Clock),
+            "layout" => Some(Self::Layout),
+            _ => None,
+        }
+    }
+
+    pub fn is_clock(&self) -> bool {
+        matches!(self, Self::Clock)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarConfig {
+    pub left: Vec<BarSegment>,
+    pub right: Vec<BarSegment>,
+    pub clock_format: String,
+}
+
+impl Default for BarConfig {
+    fn default() -> Self {
+        // Matches today's bar: the badge then the workspace tabs, nothing on the right.
+        Self {
+            left: vec![BarSegment::Title, BarSegment::Workspaces],
+            right: Vec::new(),
+            clock_format: "%H:%M".to_string(),
+        }
+    }
+}
+
+impl BarConfig {
+    pub fn has_clock(&self) -> bool {
+        self.left
+            .iter()
+            .chain(self.right.iter())
+            .any(BarSegment::is_clock)
+    }
+}
 
 #[derive(Debug)]
 pub struct LoadedConfig {
@@ -188,6 +413,29 @@ mod tests {
             updated,
             "[theme]\npreset = \"system\"\n\n[session]\nautosave = true\n"
         );
+    }
+
+    #[test]
+    fn bar_segment_parses_builtins_and_text_literals() {
+        assert_eq!(BarSegment::parse("clock"), Some(BarSegment::Clock));
+        assert_eq!(
+            BarSegment::parse("Workspaces"),
+            Some(BarSegment::Workspaces)
+        );
+        assert_eq!(
+            BarSegment::parse("text:hi {host}"),
+            Some(BarSegment::Text("hi {host}".to_string()))
+        );
+        assert_eq!(BarSegment::parse("bogus"), None);
+    }
+
+    #[test]
+    fn bar_config_default_matches_current_layout() {
+        let bar = BarConfig::default();
+        assert_eq!(bar.left, vec![BarSegment::Title, BarSegment::Workspaces]);
+        assert!(bar.right.is_empty());
+        assert!(!bar.has_clock());
+        assert_eq!(bar.clock_format, "%H:%M");
     }
 }
 
@@ -627,29 +875,5 @@ fn apply_animations(target: &mut WindowAnimationConfig, raw: AnimationFileConfig
     }
     if let Some(value) = raw.open_delay_ms {
         target.open_delay = Duration::from_millis(value);
-    }
-}
-
-impl Default for HyprmuxThemeConfig {
-    fn default() -> Self {
-        Self {
-            preset: ThemePreset::Lipan,
-            path: None,
-        }
-    }
-}
-
-impl Default for HyprmuxClipboardConfig {
-    fn default() -> Self {
-        Self { enable_osc52: true }
-    }
-}
-
-impl Default for HyprmuxPaneConfig {
-    fn default() -> Self {
-        Self {
-            highlight_focused_background: false,
-            focus_on_hover: true,
-        }
     }
 }

@@ -27,8 +27,9 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::anim::GeometryAnimation;
+use crate::config::HyprmuxConfig;
 use crate::input::Action;
-use crate::state::{HyprmuxConfig, Pane, PaneId, ResizeCorner, State, ThemePreset};
+use crate::state::{Pane, PaneId, ResizeCorner, State, ThemePreset};
 
 pub struct HyprmuxApp {
     config: HyprmuxConfig,

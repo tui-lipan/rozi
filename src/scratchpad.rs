@@ -2,12 +2,11 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
+use crate::config::{HyprmuxConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
 use crate::geometry::{canvas_bounds_from_viewport, inset_float_rect};
 use crate::pane_lifecycle::{pty_config_for_pane, spawn_pty_command};
-use crate::state::{
-    HyprmuxConfig, OUTER_GAP, Pane, SCRATCH_PANE_ID, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT,
-};
+use crate::state::{OUTER_GAP, Pane, SCRATCH_PANE_ID};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::view;
 

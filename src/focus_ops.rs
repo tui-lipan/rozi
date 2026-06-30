@@ -344,7 +344,8 @@ pub(crate) fn total_visible_panes(state: &State) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{HyprmuxConfig, Pane};
+    use crate::config::HyprmuxConfig;
+    use crate::state::Pane;
     use crate::tiling::{append_tiled_window, collect_tree_leaves};
     use tui_lipan::prelude::Theme;
 

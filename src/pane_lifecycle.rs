@@ -3,13 +3,14 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
+use crate::config::HyprmuxConfig;
 use crate::focus_ops::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
     request_current_pane_focus, request_pane_focus, total_visible_panes,
 };
 use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
-use crate::state::{HyprmuxConfig, Pane, PaneId, State};
+use crate::state::{Pane, PaneId, State};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};

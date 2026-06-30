@@ -38,7 +38,7 @@ pub fn save_profile(path: &Path, profile: &HyprmuxProfile) -> Result<(), String>
 
 /// Resolve the session-autosave file path: the configured override, else
 /// `$XDG_STATE_HOME/hyprmux/session.toml` (falling back to `~/.local/state/...`).
-pub fn session_path(config: &crate::state::HyprmuxConfig) -> Option<PathBuf> {
+pub fn session_path(config: &crate::config::HyprmuxConfig) -> Option<PathBuf> {
     if let Some(path) = &config.session.path {
         return Some(path.clone());
     }
@@ -83,7 +83,7 @@ pub fn profile_from_state(state: &State) -> HyprmuxProfile {
 }
 
 pub fn restore_state_from_profile(
-    config: crate::state::HyprmuxConfig,
+    config: crate::config::HyprmuxConfig,
     theme: tui_lipan::prelude::Theme,
     profile: HyprmuxProfile,
 ) -> State {
@@ -472,7 +472,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
-    use crate::state::{HyprmuxConfig, Pane, State};
+    use crate::config::HyprmuxConfig;
+    use crate::state::{Pane, State};
     use tui_lipan::prelude::Theme;
 
     fn assert_rect_eq(actual: ProfileRect, expected: ProfileRect) {

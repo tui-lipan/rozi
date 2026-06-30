@@ -11,7 +11,10 @@ pub(crate) use pane::pane_element;
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::geometry::{clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect};
+use crate::geometry::{
+    canvas_bounds_from_viewport, clamp_float_rect, clamp_floating_rect, close_rect,
+    empty_workspace_rect, viewport_bounds,
+};
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
 use crate::state::TOP_BAR_HEIGHT;
 
@@ -29,8 +32,16 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .last_viewport
         .replace(Some(viewport))
         .is_some_and(|previous| previous != viewport);
-    let bounds = crate::geometry::canvas_bounds_from_viewport(viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+    let fullscreen_active = workspace
+        .panes
+        .iter()
+        .any(|pane| pane.fullscreen && !pane.closing);
+    let bounds = if fullscreen_active {
+        viewport_bounds(viewport)
+    } else {
+        canvas_bounds_from_viewport(viewport)
+    };
     let moving_tiled = ctx
         .state
         .moving_pane
@@ -132,10 +143,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    let mut root = VStack::new()
-        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
-        .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
-        .child(canvas);
+    let mut root =
+        VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
+    if !fullscreen_active {
+        root = root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
+    }
+    root = root.child(canvas);
 
     // Overlays portal to the root regardless of where they are attached.
     if ctx.state.show_palette {

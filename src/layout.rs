@@ -1,6 +1,6 @@
 use tui_lipan::prelude::FloatRect;
 
-use crate::geometry::{clamp_floating_rect, float_rect_contains_point, inset_float_rect};
+use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{
     LayoutKind, OUTER_GAP, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
 };
@@ -20,7 +20,7 @@ pub fn workspace_target_rects_excluding(
     exclude_tiled: Option<PaneId>,
 ) -> Vec<PanePlacement> {
     let mut placements = Vec::new();
-    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
     match workspace.layout_kind {
         LayoutKind::Dwindle => {
             if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {

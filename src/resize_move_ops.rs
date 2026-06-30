@@ -7,8 +7,8 @@ use crate::focus_ops::{
 };
 use crate::geometry::{
     canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
-    clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, inset_float_rect,
-    lift_off_float_rect, resize_float_rect_from_corner, tiled_drag_preview_rect,
+    clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, lift_off_float_rect,
+    resize_float_rect_from_corner, tiled_drag_preview_rect, workspace_tile_bounds,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
@@ -214,7 +214,7 @@ fn resize_pane_state(
 
     if state.workspaces[state.active_workspace].layout_kind == LayoutKind::Master {
         let bounds = canvas_bounds_from_viewport(viewport);
-        let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+        let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
         let focused_rect = {
             let placements =
                 workspace_target_rects(&state.workspaces[state.active_workspace], bounds);
@@ -235,7 +235,7 @@ fn resize_pane_state(
         return;
     }
 
-    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
     let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
     else {
         return;
@@ -683,7 +683,7 @@ pub(crate) fn resize_split_by_drag(
 
     let workspace_index = ctx.state.active_workspace;
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
-    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
@@ -727,7 +727,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
     }
     let workspace_index = ctx.state.active_workspace;
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
-    let tile_bounds = inset_float_rect(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()

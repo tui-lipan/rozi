@@ -11,6 +11,15 @@ pub fn canvas_bounds_from_viewport(viewport: Rect) -> FloatRect {
     }
 }
 
+pub fn viewport_bounds(viewport: Rect) -> FloatRect {
+    FloatRect {
+        x: 0.0,
+        y: 0.0,
+        w: f32::from(viewport.w),
+        h: f32::from(viewport.h),
+    }
+}
+
 pub fn empty_workspace_rect(bounds: FloatRect) -> FloatRect {
     let w = bounds.w.min(46.0).max(bounds.w.min(18.0));
     let h = bounds.h.min(8.0).max(bounds.h.min(4.0));
@@ -30,6 +39,16 @@ pub fn inset_float_rect(rect: FloatRect, inset: f32) -> FloatRect {
         y: rect.y + inset.min(rect.h / 2.0),
         w: (rect.w - horizontal).max(1.0),
         h: (rect.h - vertical).max(1.0),
+    }
+}
+
+pub fn workspace_tile_bounds(bounds: FloatRect, gap: f32) -> FloatRect {
+    let top = gap.min(bounds.h / 2.0);
+    FloatRect {
+        x: bounds.x + gap.min(bounds.w / 2.0),
+        y: bounds.y + top,
+        w: (bounds.w - gap * 2.0).max(1.0),
+        h: (bounds.h - top).max(1.0),
     }
 }
 
@@ -541,6 +560,26 @@ mod tests {
         assert_eq!(
             nearest_resize_corner_from_local(19, 9, 20, 10),
             ResizeCorner::LowerRight
+        );
+    }
+
+    #[test]
+    fn workspace_tile_bounds_preserves_top_gap_and_removes_bottom_gap() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+
+        assert_eq!(
+            workspace_tile_bounds(bounds, 1.0),
+            FloatRect {
+                x: 1.0,
+                y: 1.0,
+                w: 98.0,
+                h: 39.0,
+            }
         );
     }
 

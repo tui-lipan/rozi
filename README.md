@@ -1,12 +1,12 @@
 # hyprmux
 
-`hyprmux` is a single-process, Hyprland-style tiling **terminal multiplexer**. Panes are
-live PTY shells laid out with dwindle tiling, plus floating windows, workspaces, animated
-geometry, and tmux-style prefix commands. It is built on the [`tui-lipan`](../tui-lipan)
-TUI framework and was ported from that project's `window_manager` example.
+`hyprmux` is a Hyprland-style tiling **terminal multiplexer**. Panes are live PTY shells laid
+out with dwindle tiling, plus floating windows, workspaces, animated geometry, and tmux-style
+prefix commands. It is built on the [`tui-lipan`](../tui-lipan) TUI framework and was ported
+from that project's `window_manager` example.
 
-There is intentionally **no detach/reattach** (no daemon): PTYs live inside the single UI
-process. When the last pane closes, the app quits.
+By default hyprmux runs in local single-process mode. Explicit `--attach` / `--session` mode
+connects to a named always-on session server for detach/reattach-style workflows.
 
 ```bash
 cargo run     # quit with Ctrl-q
@@ -46,6 +46,7 @@ Full docs live in [`docs/`](docs/):
 - [Project profiles & pane identity](docs/project-profiles.md) — save and restore layouts.
 - [Named profiles](docs/profiles.md) — profiles directory, CLI launch, keep-open, picker commands.
 - [Control socket](docs/control.md) — pane environment, JSON control protocol, and CLI automation.
+- [Sessions](docs/sessions.md) — local vs attached runtime, named sessions, and lifecycle limits.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

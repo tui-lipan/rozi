@@ -19,6 +19,7 @@ mod pty_events;
 mod resize_move_ops;
 mod scratchpad;
 mod search_ops;
+mod session;
 mod state;
 mod theme_ops;
 mod tiling;
@@ -45,6 +46,7 @@ pub struct HyprmuxApp {
     startup_messages: Vec<String>,
     control_listener: Option<std::os::unix::net::UnixListener>,
     control_guard: Option<control::ControlSocketGuard>,
+    attach_session: Option<String>,
 }
 
 impl Default for HyprmuxApp {
@@ -58,11 +60,13 @@ impl Default for HyprmuxApp {
             startup_messages: Vec::new(),
             control_listener: None,
             control_guard: None,
+            attach_session: None,
         }
     }
 }
 
 impl HyprmuxApp {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: HyprmuxConfig,
         initial_theme: Theme,
@@ -71,6 +75,7 @@ impl HyprmuxApp {
         startup_messages: Vec<String>,
         control_listener: Option<std::os::unix::net::UnixListener>,
         control_guard: Option<control::ControlSocketGuard>,
+        attach_session: Option<String>,
     ) -> Self {
         Self {
             config,
@@ -80,6 +85,7 @@ impl HyprmuxApp {
             startup_messages,
             control_listener,
             control_guard,
+            attach_session,
         }
     }
 }
@@ -132,6 +138,45 @@ pub enum Msg {
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
+    SessionConnected {
+        name: String,
+        client: session::client::SessionClient,
+    },
+    SessionDisconnected(String),
+    SessionAttachFailed(String),
+    SessionAttached {
+        session: String,
+        panes: Vec<session::protocol::AttachedPane>,
+        layout_blob: Option<String>,
+    },
+    SessionSpawnResult {
+        pane_id: PaneId,
+        generation: u64,
+        ok: bool,
+        error: Option<String>,
+    },
+    SessionSnapshot {
+        pane_id: PaneId,
+        generation: u64,
+        snapshot: session::protocol::WireSnapshot,
+    },
+    SessionExited {
+        pane_id: PaneId,
+        generation: u64,
+        code: i32,
+    },
+    SessionBell {
+        pane_id: PaneId,
+        generation: u64,
+    },
+    SessionSearchResult {
+        request_id: u64,
+        pane_id: PaneId,
+        generation: u64,
+        query: String,
+        matches: Vec<session::protocol::WireSearchMatch>,
+    },
+    SessionError(String),
 }
 
 impl Component for HyprmuxApp {
@@ -150,6 +195,7 @@ impl Component for HyprmuxApp {
             .control_guard
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
+        state.session_name = self.attach_session.clone();
         theme_ops::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -174,11 +220,35 @@ impl Component for HyprmuxApp {
             }
         }
 
+        let attach_session = self.attach_session.clone();
+        let control_listener = self.control_listener.take();
+        if let Some(name) = attach_session {
+            let theme_tick = ctx.state.theme_watcher.is_some();
+            let bar_tick = ctx.state.config.bar.has_clock();
+            return Some(Command::spawn(move |link: CommandLink<Msg>| {
+                if let Some(listener) = control_listener {
+                    let listener_link = link.clone();
+                    std::thread::spawn(move || {
+                        crate::control::run_listener(listener, listener_link)
+                    });
+                }
+                let session_link = link.clone();
+                std::thread::spawn(move || attach_session_client(name, session_link));
+                if theme_tick {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    link.send(Msg::ThemeTick);
+                }
+                if bar_tick {
+                    link.send(Msg::BarTick);
+                }
+            }));
+        }
+        let spawns = startup_spawns(&mut ctx.state);
         pane_lifecycle::initial_command(
-            startup_spawns(&mut ctx.state),
+            spawns,
             ctx.state.theme_watcher.is_some(),
             ctx.state.config.bar.has_clock(),
-            self.control_listener.take(),
+            control_listener,
         )
     }
 
@@ -227,6 +297,7 @@ pub(crate) fn startup_spawns(
             let generation = next_generation;
             next_generation = next_generation.saturating_add(1);
             pane.pty_generation = generation;
+            pane.terminal.bind_session(pane.id, generation);
             spawns.push((
                 pane.id,
                 generation,
@@ -236,6 +307,128 @@ pub(crate) fn startup_spawns(
         });
     state.next_pty_generation = next_generation;
     spawns
+}
+
+fn attach_session_client(name: String, link: CommandLink<Msg>) {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let Ok(path) = session::server::session_socket_path(&name) else {
+        link.send(Msg::SessionAttachFailed(format!(
+            "invalid session name {name:?}"
+        )));
+        return;
+    };
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut spawned = false;
+    loop {
+        let (tx, rx) = mpsc::channel();
+        match session::client::SessionClient::connect_attached(&path, name.clone(), tx) {
+            Ok((client, attached)) => {
+                link.send(Msg::SessionConnected {
+                    name: name.clone(),
+                    client,
+                });
+                link.send(server_message_to_msg(attached));
+                for message in rx {
+                    link.send(server_message_to_msg(message));
+                }
+                link.send(Msg::SessionDisconnected(name));
+                return;
+            }
+            Err(err) => {
+                if !spawned {
+                    spawned = true;
+                    if path.exists() {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    if let Ok(exe) = std::env::current_exe() {
+                        let _ = std::process::Command::new(exe)
+                            .arg("--session")
+                            .arg(&name)
+                            .arg("--server")
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
+                    }
+                }
+                if Instant::now() >= deadline {
+                    link.send(Msg::SessionAttachFailed(format!(
+                        "could not attach to session {name:?}: {err}"
+                    )));
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
+    use session::protocol::ServerMessage;
+    match message {
+        ServerMessage::Attached {
+            session,
+            panes,
+            layout_blob,
+            ..
+        } => Msg::SessionAttached {
+            session,
+            panes,
+            layout_blob,
+        },
+        ServerMessage::Snapshot {
+            pane_id,
+            generation,
+            snapshot,
+        } => Msg::SessionSnapshot {
+            pane_id,
+            generation,
+            snapshot,
+        },
+        ServerMessage::Exited {
+            pane_id,
+            generation,
+            code,
+        } => Msg::SessionExited {
+            pane_id,
+            generation,
+            code,
+        },
+        ServerMessage::Bell {
+            pane_id,
+            generation,
+        } => Msg::SessionBell {
+            pane_id,
+            generation,
+        },
+        ServerMessage::SearchResult {
+            request_id,
+            pane_id,
+            generation,
+            query,
+            matches,
+        } => Msg::SessionSearchResult {
+            request_id,
+            pane_id,
+            generation,
+            query,
+            matches,
+        },
+        ServerMessage::SpawnResult {
+            pane_id,
+            generation,
+            ok,
+            error,
+        } => Msg::SessionSpawnResult {
+            pane_id,
+            generation,
+            ok,
+            error,
+        },
+        ServerMessage::Error { message, .. } => Msg::SessionError(message),
+    }
 }
 
 impl HyprmuxApp {
@@ -393,6 +586,9 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Ok(ParsedCli::Control(command)) => return run_control_cli(command),
+        Ok(ParsedCli::Server { name }) => return run_server_cli(&name),
+        Ok(ParsedCli::ListSessions) => return run_list_sessions_cli(),
+        Ok(ParsedCli::KillSession { name }) => return run_kill_session_cli(&name),
         Ok(ParsedCli::Run(args)) => args,
         Err(message) => {
             eprintln!("{message}");
@@ -448,6 +644,7 @@ fn main() -> Result<()> {
         }
     }
     let config = loaded.config;
+    let attach_session = cli.attach_session.clone();
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
@@ -483,6 +680,7 @@ fn main() -> Result<()> {
         startup_messages,
         control_listener,
         control_guard,
+        attach_session,
     ))
     .run()
 }
@@ -491,6 +689,7 @@ fn main() -> Result<()> {
 struct CliArgs {
     profile: Option<String>,
     config_path: Option<String>,
+    attach_session: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -505,6 +704,9 @@ enum ParsedCli {
     Version,
     Run(CliArgs),
     Control(ControlCli),
+    Server { name: String },
+    ListSessions,
+    KillSession { name: String },
 }
 
 fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
@@ -516,6 +718,49 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
         match arg.as_str() {
             "--help" | "-h" => return Ok(ParsedCli::Help),
             "--version" | "-V" => return Ok(ParsedCli::Version),
+            "list-sessions" => {
+                reject_trailing_control_args(&mut iter, "list-sessions")?;
+                return Ok(ParsedCli::ListSessions);
+            }
+            "kill-session" => {
+                let name = iter
+                    .next()
+                    .ok_or_else(|| "kill-session requires a session name".to_string())?;
+                reject_trailing_control_args(&mut iter, "kill-session")?;
+                return Ok(ParsedCli::KillSession { name });
+            }
+            "--server" => {
+                let name = iter
+                    .next()
+                    .ok_or_else(|| "--server requires a session name".to_string())?;
+                reject_trailing_control_args(&mut iter, "--server")?;
+                return Ok(ParsedCli::Server { name });
+            }
+            "--session" => {
+                let name = iter
+                    .next()
+                    .ok_or_else(|| "--session requires a session name".to_string())?;
+                match iter.next().as_deref() {
+                    Some("--server") => {
+                        reject_trailing_control_args(&mut iter, "--server")?;
+                        return Ok(ParsedCli::Server { name });
+                    }
+                    Some(other) => {
+                        return Err(format!(
+                            "unexpected argument `{other}` after --session <NAME>"
+                        ));
+                    }
+                    None => {
+                        cli.attach_session = Some(name);
+                    }
+                }
+            }
+            "--attach" => {
+                cli.attach_session = Some(
+                    iter.next()
+                        .ok_or_else(|| "--attach requires a session name".to_string())?,
+                );
+            }
             "--profile" | "-p" => {
                 let name = iter
                     .next()
@@ -714,6 +959,79 @@ fn run_control_cli(command: ControlCli) -> Result<()> {
     Ok(())
 }
 
+fn run_server_cli(name: &str) -> Result<()> {
+    session::server::run_named_session(name)?;
+    Ok(())
+}
+
+fn run_list_sessions_cli() -> Result<()> {
+    let dir = control::runtime_dir()?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(name) = file_name
+            .strip_prefix("session-")
+            .and_then(|name| name.strip_suffix(".sock"))
+        else {
+            continue;
+        };
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    for name in names {
+        println!("{name}");
+    }
+    Ok(())
+}
+
+fn run_kill_session_cli(name: &str) -> Result<()> {
+    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+
+    let path = session::server::session_socket_path(name)?;
+    if !path.exists() {
+        eprintln!("session {name:?} is not running");
+        std::process::exit(1);
+    }
+    match std::os::unix::net::UnixStream::connect(&path) {
+        Ok(mut stream) => {
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+            session::protocol::write_frame(
+                &mut stream,
+                &ClientMessage::Attach {
+                    session: name.to_string(),
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            )?;
+            match session::protocol::read_frame::<_, ServerMessage>(&mut stream)? {
+                ServerMessage::Attached { .. } => {
+                    session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)?;
+                    use std::io::Write;
+                    stream.flush()?;
+                }
+                other => {
+                    eprintln!("could not attach to session {name:?}: {other:?}");
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("could not attach to session {name:?}: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn print_help() {
     println!(
         "\
@@ -727,6 +1045,12 @@ USAGE:
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
     hyprmux [--socket PATH] split [COMMAND]
+    hyprmux --attach <NAME>
+    hyprmux --session <NAME>
+    hyprmux list-sessions
+    hyprmux kill-session <NAME>
+    hyprmux --server <NAME>
+    hyprmux --session <NAME> --server
 
 OPTIONS:
     -h, --help            Print help
@@ -759,9 +1083,11 @@ mod tests {
 
     #[test]
     fn startup_spawns_include_all_non_closing_panes() {
-        let mut config = HyprmuxConfig::default();
-        config.shell = Some("/bin/bash".to_string());
-        config.cwd = Some("/repo".into());
+        let config = HyprmuxConfig {
+            shell: Some("/bin/bash".to_string()),
+            cwd: Some("/repo".into()),
+            ..HyprmuxConfig::default()
+        };
         let mut state = State::new(config, Theme::default());
         state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
         let mut restored = Pane::new(3, 100, rect());
@@ -873,6 +1199,25 @@ mod tests {
             .is_err()
         );
         assert!(parse_cli_args(vec!["send-text".into(), "hi".into(), "extra".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_session_verbs_and_attach() {
+        assert!(matches!(
+            parse_cli_args(vec!["list-sessions".into()]).expect("parses"),
+            ParsedCli::ListSessions
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["kill-session".into(), "dev".into()]).expect("parses"),
+            ParsedCli::KillSession { name } if name == "dev"
+        ));
+        let attached =
+            expect_run(parse_cli_args(vec!["--attach".into(), "dev".into()]).expect("parses"));
+        assert_eq!(attached.attach_session.as_deref(), Some("dev"));
+        let session =
+            expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
+        assert_eq!(session.attach_session.as_deref(), Some("dev"));
+        assert!(parse_cli_args(vec!["kill-session".into()]).is_err());
     }
 
     #[test]

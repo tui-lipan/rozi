@@ -1,12 +1,12 @@
 # hyprmux documentation
 
-`hyprmux` is a single-process, Hyprland-style tiling terminal multiplexer built on the
+`hyprmux` is a Hyprland-style tiling terminal multiplexer built on the
 [`tui-lipan`](../../tui-lipan) TUI framework. Each pane is a live PTY shell; panes are
 arranged with dwindle (or master) tiling, with floating windows, fullscreen, 9 workspaces,
 animated geometry, and tmux-style prefix commands.
 
-There is **no detach/reattach**: PTYs live in the single UI process, and the app quits when
-the last pane closes.
+Local mode keeps PTYs in the UI process. Explicit `--attach` / `--session` mode connects to a
+named session server for persistent PTYs.
 
 ## Contents
 
@@ -19,6 +19,7 @@ the last pane closes.
 | [Themes](themes.md) | The 9 built-in presets, custom theme files, live hot-reload, and terminal ANSI colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
+| [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
 
 ## At a glance
 

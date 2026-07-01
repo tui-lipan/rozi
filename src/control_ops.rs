@@ -110,11 +110,19 @@ fn send_text(
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
     };
+    let client = ctx.state.session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
-    if pane.terminal.pty.is_none() {
+    if !pane.terminal.accepts_input() {
         return ControlResponse::error(format!("pane {id} PTY is not ready"));
+    }
+    if pane.terminal.is_server_backed() {
+        if let Some(client) = client {
+            client.send_input(id, pane.pty_generation, text.into_bytes());
+            return ControlResponse::empty();
+        }
+        return ControlResponse::error(format!("pane {id} session is not connected"));
     }
     match pane.terminal.send_bytes(text.as_bytes()) {
         Ok(()) => ControlResponse::empty(),

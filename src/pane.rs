@@ -3,12 +3,26 @@ use std::sync::Arc;
 use tui_lipan::prelude::*;
 
 pub struct TerminalPane {
-    pub screen: TerminalScreen,
+    pub pane_id: crate::state::PaneId,
+    pub generation: u64,
     pub snapshot: TerminalRenderSnapshot,
-    pub pty: Option<TerminalPty>,
     pub cols: u16,
     pub rows: u16,
     pub status: ManagedTerminalStatus,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    pub last_palette: Option<TerminalColorPalette>,
+    backend: TerminalBackend,
+}
+
+enum TerminalBackend {
+    /// Compatibility runtime used by the app until Phase 3.4 wires session attach/lifecycle.
+    Local {
+        screen: Box<TerminalScreen>,
+        pty: Option<TerminalPty>,
+    },
+    /// Server-backed cache façade. It intentionally owns no PTY/screen.
+    Server,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,29 +58,95 @@ impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
         let rows = 32;
+        let mut screen = TerminalScreen::new(rows, cols, scrollback);
+        let snapshot = screen.render_snapshot();
         Self {
-            screen: TerminalScreen::new(rows, cols, scrollback),
-            snapshot: TerminalRenderSnapshot::default(),
-            pty: None,
+            pane_id: 0,
+            generation: 0,
+            snapshot,
             cols,
             rows,
             status: ManagedTerminalStatus::Starting,
+            title: None,
+            cwd: None,
+            last_palette: None,
+            backend: TerminalBackend::Local {
+                screen: Box::new(screen),
+                pty: None,
+            },
         }
     }
 
+    pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
+        self.pane_id = pane_id;
+        self.generation = generation;
+    }
+
+    pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
+        self.bind_session(pane_id, generation);
+        self.backend = TerminalBackend::Server;
+    }
+
+    pub fn apply_snapshot(
+        &mut self,
+        snapshot: TerminalRenderSnapshot,
+        title: Option<String>,
+        cwd: Option<String>,
+    ) {
+        self.snapshot = snapshot;
+        self.title = title.filter(|title| !title.trim().is_empty());
+        self.cwd = cwd;
+        self.status = ManagedTerminalStatus::Ready;
+        self.backend = TerminalBackend::Server;
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self.status, ManagedTerminalStatus::Ready)
+    }
+
+    pub fn accepts_input(&self) -> bool {
+        match &self.backend {
+            TerminalBackend::Local { pty, .. } => pty.is_some() && self.is_ready(),
+            TerminalBackend::Server => self.is_ready(),
+        }
+    }
+
+    pub fn is_server_backed(&self) -> bool {
+        matches!(self.backend, TerminalBackend::Server)
+    }
+
     pub fn set_palette(&mut self, palette: TerminalColorPalette) -> bool {
-        if self.screen.palette() == palette {
+        if self.last_palette == Some(palette) {
             return false;
         }
-        self.screen.set_palette(palette);
-        self.snapshot = self.screen.render_snapshot();
-        true
+        match &mut self.backend {
+            TerminalBackend::Local { screen, .. } => {
+                screen.set_palette(palette);
+                self.snapshot = screen.render_snapshot();
+                self.last_palette = Some(palette);
+                true
+            }
+            TerminalBackend::Server => false,
+        }
     }
 
     pub fn set_pty(&mut self, pty: TerminalPty) -> std::result::Result<(), String> {
         pty.resize(self.cols, self.rows)
             .map_err(|err| format!("pty resize failed: {err}"))?;
-        self.pty = Some(pty);
+        match &mut self.backend {
+            TerminalBackend::Local { pty: slot, .. } => *slot = Some(pty),
+            TerminalBackend::Server => {
+                let mut screen = TerminalScreen::new(self.rows, self.cols, 0);
+                if let Some(palette) = self.last_palette {
+                    screen.set_palette(palette);
+                }
+                self.snapshot = screen.render_snapshot();
+                self.backend = TerminalBackend::Local {
+                    screen: Box::new(screen),
+                    pty: Some(pty),
+                };
+            }
+        }
         self.status = ManagedTerminalStatus::Ready;
         Ok(())
     }
@@ -74,24 +154,33 @@ impl TerminalPane {
     pub fn handle_pty_event(&mut self, event: TerminalPtyEvent) -> PaneEventOutcome {
         match event {
             TerminalPtyEvent::Output(bytes) => {
-                self.screen.process_bytes(&bytes);
-                if let Some(pty) = &self.pty {
-                    for response in self.screen.drain_responses() {
+                let TerminalBackend::Local { screen, pty } = &mut self.backend else {
+                    return PaneEventOutcome::Repaint;
+                };
+                screen.process_bytes(&bytes);
+                if let Some(pty) = pty {
+                    for response in screen.drain_responses() {
                         if let Err(err) = pty.write(&response) {
                             self.status = ManagedTerminalStatus::Error(Arc::from(format!(
                                 "pty response write failed: {err}"
                             )));
-                            self.snapshot = self.screen.render_snapshot();
+                            self.snapshot = screen.render_snapshot();
                             return PaneEventOutcome::StatusChanged;
                         }
                     }
                 }
-                self.snapshot = self.screen.render_snapshot();
+                self.title = screen
+                    .title()
+                    .map(|title| title.trim().to_string())
+                    .filter(|title| !title.is_empty());
+                self.snapshot = screen.render_snapshot();
                 PaneEventOutcome::Repaint
             }
             TerminalPtyEvent::Exited(code) => {
                 self.status = ManagedTerminalStatus::Exited(code);
-                self.pty = None;
+                if let TerminalBackend::Local { pty, .. } = &mut self.backend {
+                    *pty = None;
+                }
                 PaneEventOutcome::Exited(code)
             }
             TerminalPtyEvent::Error(message) => {
@@ -102,8 +191,11 @@ impl TerminalPane {
     }
 
     pub fn send_key(&mut self, key: KeyEvent) -> std::result::Result<PaneWriteResult, String> {
-        let Some(pty) = &self.pty else {
+        if !self.accepts_input() {
             return Ok(PaneWriteResult::default());
+        }
+        let TerminalBackend::Local { pty: Some(pty), .. } = &mut self.backend else {
+            return Err("server-backed key forwarding is not wired yet".to_string());
         };
         let forwarded = pty
             .send_key(key)
@@ -113,8 +205,11 @@ impl TerminalPane {
     }
 
     pub fn send_bytes(&mut self, bytes: &[u8]) -> std::result::Result<(), String> {
-        let Some(pty) = &self.pty else {
+        if !self.accepts_input() {
             return Ok(());
+        }
+        let TerminalBackend::Local { pty: Some(pty), .. } = &mut self.backend else {
+            return Err("server-backed byte forwarding is not wired yet".to_string());
         };
         pty.write(bytes)
             .map_err(|err| format!("pty write failed: {err}"))
@@ -129,21 +224,30 @@ impl TerminalPane {
 
         self.cols = cols;
         self.rows = rows;
-        if let Some(pty) = &self.pty {
-            pty.resize(cols, rows)
-                .map_err(|err| format!("pty resize failed: {err}"))?;
+        if let TerminalBackend::Local { screen, pty } = &mut self.backend {
+            if let Some(pty) = pty {
+                pty.resize(cols, rows)
+                    .map_err(|err| format!("pty resize failed: {err}"))?;
+            }
+            screen.resize(rows, cols);
+            self.snapshot = screen.render_snapshot();
         }
-        self.screen.resize(rows, cols);
-        self.snapshot = self.screen.render_snapshot();
         Ok(true)
     }
 
     pub fn set_scrollback(&mut self, offset: usize) -> bool {
-        if self.screen.scrollback_offset() == offset {
+        if let TerminalBackend::Local { screen, .. } = &mut self.backend {
+            if screen.scrollback_offset() == offset {
+                return false;
+            }
+            screen.set_scrollback(offset);
+            self.snapshot = screen.render_snapshot();
+            return true;
+        }
+        if self.snapshot.scrollback_offset == offset {
             return false;
         }
-        self.screen.set_scrollback(offset);
-        self.snapshot = self.screen.render_snapshot();
+        self.snapshot.scrollback_offset = offset;
         true
     }
 
@@ -153,16 +257,19 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let original_offset = self.screen.scrollback_offset();
-        let max_offset = self.screen.total_scrollback_rows();
+        let TerminalBackend::Local { screen, .. } = &mut self.backend else {
+            return Vec::new();
+        };
+        let original_offset = screen.scrollback_offset();
+        let max_offset = screen.total_scrollback_rows();
         let mut matches = Vec::new();
         let mut seen_matches = std::collections::HashMap::new();
         let step = usize::from(self.rows.max(1));
 
         let mut offset = max_offset;
         loop {
-            self.screen.set_scrollback(offset);
-            let snapshot = self.screen.render_snapshot();
+            screen.set_scrollback(offset);
+            let snapshot = screen.render_snapshot();
             for (line, text) in snapshot.text.lines().enumerate() {
                 let logical_line = line as isize - offset as isize;
                 for (start_col, end_col) in search_match_ranges(text, query) {
@@ -175,8 +282,6 @@ impl TerminalPane {
                     };
                     let key = (logical_line, start_col, end_col);
                     if let Some(index) = seen_matches.get(&key).copied() {
-                        // Prefer the lowest scrollback offset for overlapping scan windows, so
-                        // matches already visible in the live viewport do not jump upward.
                         matches[index] = matched;
                     } else {
                         seen_matches.insert(key, matches.len());
@@ -190,8 +295,8 @@ impl TerminalPane {
             offset = offset.saturating_sub(step);
         }
 
-        self.screen.set_scrollback(original_offset);
-        self.snapshot = self.screen.render_snapshot();
+        screen.set_scrollback(original_offset);
+        self.snapshot = screen.render_snapshot();
         matches
     }
 
@@ -288,32 +393,29 @@ impl TerminalPane {
     }
 
     pub fn kill(&mut self) {
-        if let Some(pty) = self.pty.take() {
+        if let TerminalBackend::Local { pty, .. } = &mut self.backend
+            && let Some(pty) = pty.take()
+        {
             let _ = pty.kill();
         }
+        self.status = ManagedTerminalStatus::Exited(0);
     }
 
-    /// The live working directory of the pane's shell, read on demand from `/proc/<pid>/cwd`
-    /// (Linux only). Returns `None` when there is no PTY, no pid, or off Linux. This reads the
-    /// shell leader's cwd, which matches most terminals' "open here" behavior.
+    /// The working directory last reported by the session server for the pane's shell.
     pub fn working_directory(&self) -> Option<String> {
-        #[cfg(target_os = "linux")]
+        if let TerminalBackend::Local { pty, .. } = &self.backend
+            && let Some(pid) = pty.as_ref().and_then(TerminalPty::pid)
         {
-            let pid = self.pty.as_ref()?.pid()?;
-            let path = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-            Some(path.to_string_lossy().to_string())
+            return cwd_for_pid(pid);
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.cwd.clone()
     }
 
     /// The title the running program set via OSC 0/2 (shell `$PWD`, `vim`, etc.),
     /// trimmed and ignored when blank. `None` falls back to the pane's own label.
     pub fn title(&self) -> Option<String> {
-        self.screen
-            .title()
+        self.title
+            .clone()
             .map(|title| title.trim().to_string())
             .filter(|title| !title.is_empty())
     }
@@ -328,13 +430,27 @@ impl TerminalPane {
     }
 
     fn snap_to_live_scrollback(&mut self) -> bool {
-        if self.screen.scrollback_offset() == 0 {
+        let TerminalBackend::Local { screen, .. } = &mut self.backend else {
+            return false;
+        };
+        if screen.scrollback_offset() == 0 {
             return false;
         }
-        self.screen.set_scrollback(0);
-        self.snapshot = self.screen.render_snapshot();
+        screen.set_scrollback(0);
+        self.snapshot = screen.render_snapshot();
         true
     }
+}
+
+#[cfg(target_os = "linux")]
+fn cwd_for_pid(pid: u32) -> Option<String> {
+    let path = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    Some(path.to_string_lossy().to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cwd_for_pid(_pid: u32) -> Option<String> {
+    None
 }
 
 fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {

@@ -113,8 +113,8 @@ pub fn restore_state_from_profile(
 
         let mut profile_pane_ids = HashMap::new();
         for pane_profile in &workspace_profile.panes {
-            let id = next_pane_id;
-            next_pane_id += 1;
+            let id = pane_profile.pane_id.unwrap_or(next_pane_id);
+            next_pane_id = next_pane_id.max(id.saturating_add(1));
             profile_pane_ids.insert(pane_profile.id, id);
 
             let mut pane = Pane::new(id, scrollback, pane_profile.rect.unwrap_or_default().into());
@@ -203,6 +203,10 @@ pub fn restore_state_from_profile(
         scratch_visible: false,
         scratch_return_focus: None,
         control_socket_path: None,
+        session_client: None,
+        session_name: None,
+        session_attached: false,
+        last_pushed_layout: None,
     }
 }
 
@@ -256,6 +260,7 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
             .enumerate()
             .map(|(index, pane)| PaneProfile {
                 id: index as PaneId,
+                pane_id: Some(pane.id),
                 name: pane
                     .identity
                     .custom_title
@@ -344,6 +349,8 @@ pub struct WorkspaceProfile {
 #[serde(default)]
 pub struct PaneProfile {
     pub id: PaneId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<PaneId>,
     pub name: Option<String>,
     pub title: Option<String>,
     pub cwd: Option<PathBuf>,
@@ -530,6 +537,7 @@ mod tests {
         assert_eq!(workspace.split_ratios[0], 0.63);
         assert_eq!(workspace.panes.len(), 2);
         assert_eq!(workspace.panes[0].id, 0);
+        assert_eq!(workspace.panes[0].pane_id, Some(1));
         assert_eq!(workspace.panes[0].name.as_deref(), Some("editor"));
         assert_eq!(workspace.panes[0].title.as_deref(), Some("editor"));
         assert_eq!(
@@ -543,6 +551,7 @@ mod tests {
         assert!(!workspace.panes[0].floating);
         assert!(workspace.panes[0].fullscreen);
         assert_eq!(workspace.panes[1].id, 1);
+        assert_eq!(workspace.panes[1].pane_id, Some(2));
         assert_eq!(workspace.panes[1].name.as_deref(), Some("scratch"));
         assert_eq!(workspace.panes[1].title.as_deref(), None);
         assert!(workspace.panes[1].floating);
@@ -551,6 +560,59 @@ mod tests {
             floating_rect.into(),
         );
         assert_eq!(workspace.tree, Some(ProfileTree::Leaf { pane: 0 }));
+    }
+
+    #[test]
+    fn restore_preserves_explicit_session_pane_ids_and_tree() {
+        let profile = HyprmuxProfile {
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                focused_pane: Some(1),
+                tree: Some(ProfileTree::Split {
+                    axis: ProfileSplitAxis::Horizontal,
+                    ratio: 0.42,
+                    first: Box::new(ProfileTree::Leaf { pane: 0 }),
+                    second: Box::new(ProfileTree::Leaf { pane: 1 }),
+                }),
+                panes: vec![
+                    PaneProfile {
+                        id: 0,
+                        pane_id: Some(2),
+                        ..PaneProfile::default()
+                    },
+                    PaneProfile {
+                        id: 1,
+                        pane_id: Some(3),
+                        ..PaneProfile::default()
+                    },
+                ],
+                ..WorkspaceProfile::default()
+            }],
+            ..HyprmuxProfile::default()
+        };
+
+        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let workspace = &state.workspaces[0];
+
+        assert_eq!(
+            workspace
+                .panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(workspace.focused_pane, Some(3));
+        assert_eq!(state.next_pane_id, 4);
+        assert_eq!(
+            workspace.tile_tree,
+            Some(DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.42,
+                first: Box::new(DwindleTree::Leaf(2)),
+                second: Box::new(DwindleTree::Leaf(3)),
+            })
+        );
     }
 
     #[test]

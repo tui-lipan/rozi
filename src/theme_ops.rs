@@ -98,6 +98,7 @@ fn theme_for_preset_from_context(ctx: &Context<HyprmuxApp>, preset: ThemePreset)
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
     let theme = &state.theme;
+    let client = state.session_client.clone();
     let highlight_focused_background = state.config.pane.highlight_focused_background;
     let mut changed = false;
     for (index, workspace) in state.workspaces.iter_mut().enumerate() {
@@ -112,9 +113,17 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
                 focused_pane == Some(pane.id),
                 highlight_focused_background,
             );
-            changed |= pane
-                .terminal
-                .set_palette(terminal_palette(theme, background));
+            let palette = terminal_palette(theme, background);
+            if pane.terminal.is_server_backed() {
+                if pane.terminal.last_palette != Some(palette) {
+                    if let Some(client) = &client {
+                        client.set_palette(pane.id, pane.pty_generation, palette);
+                        pane.terminal.last_palette = Some(palette);
+                    }
+                }
+            } else {
+                changed |= pane.terminal.set_palette(palette);
+            }
         }
     }
     if let Some(scratch) = state.scratch.as_mut() {
@@ -264,8 +273,9 @@ mod tests {
             .find(|pane| pane.id == id)
             .expect("pane should exist")
             .terminal
-            .screen
-            .palette()
+            .last_palette
+            .as_ref()
+            .expect("palette should be cached")
             .background
     }
 

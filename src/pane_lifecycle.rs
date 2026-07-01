@@ -45,6 +45,10 @@ pub(crate) fn spawn_pane_in_workspace(
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.pty_generation = generation;
+    pane.terminal.bind_session(id, generation);
+    if ctx.state.session_attached {
+        pane.terminal.bind_server_backend(id, generation);
+    }
     pane.identity = identity;
     pane.terminal.set_palette(terminal_palette(
         &ctx.state.theme,
@@ -61,6 +65,23 @@ pub(crate) fn spawn_pane_in_workspace(
         ctx.state.control_socket_path.as_deref(),
         &pane,
     );
+    let server_spawn = ctx
+        .state
+        .session_attached
+        .then(|| {
+            ctx.state.session_client.clone().map(|client| {
+                (
+                    client,
+                    pane.identity.command.clone(),
+                    pane.identity.cwd.clone(),
+                    pane.identity.custom_title.clone(),
+                    pane.terminal.cols,
+                    pane.terminal.rows,
+                    pane.identity.keep_open,
+                )
+            })
+        })
+        .flatten();
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
@@ -71,12 +92,17 @@ pub(crate) fn spawn_pane_in_workspace(
     request_pane_focus(ctx, id);
     ctx.state.animation = GeometryAnimation::Spawn;
 
-    let update = Update::with_command(spawn_pty_command(
-        id,
-        generation,
-        pty_config,
-        Some(anim::open_delay(ctx.state.config.animations)),
-    ));
+    let update = if let Some((client, command, cwd, title, cols, rows, keep_open)) = server_spawn {
+        client.spawn_pane(id, generation, command, cwd, cols, rows, keep_open, title);
+        Update::none()
+    } else {
+        Update::with_command(spawn_pty_command(
+            id,
+            generation,
+            pty_config,
+            Some(anim::open_delay(ctx.state.config.animations)),
+        ))
+    };
     (id, update)
 }
 
@@ -92,10 +118,16 @@ pub(crate) fn begin_close_pane(
     };
     let mut closed = false;
     let mut generation = None;
+    let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && !pane.closing
     {
         generation = Some(pane.pty_generation);
+        if pane.terminal.is_server_backed()
+            && let Some(client) = client
+        {
+            client.kill(id, pane.pty_generation);
+        }
         pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
         pane.opening = false;
         pane.closing = true;
@@ -371,9 +403,11 @@ mod tests {
 
     #[test]
     fn pane_config_prefers_pane_cwd_and_wraps_command_in_shell() {
-        let mut config = HyprmuxConfig::default();
-        config.shell = Some("/bin/bash".to_string());
-        config.cwd = Some("/repo".into());
+        let config = HyprmuxConfig {
+            shell: Some("/bin/bash".to_string()),
+            cwd: Some("/repo".into()),
+            ..HyprmuxConfig::default()
+        };
 
         let mut pane = Pane::new(1, 100, rect());
         pane.identity.cwd = Some("/repo/backend".to_string());
@@ -389,8 +423,10 @@ mod tests {
 
     #[test]
     fn keep_open_wraps_command_with_exec_shell() {
-        let mut config = HyprmuxConfig::default();
-        config.shell = Some("/bin/bash".to_string());
+        let config = HyprmuxConfig {
+            shell: Some("/bin/bash".to_string()),
+            ..HyprmuxConfig::default()
+        };
 
         let mut pane = Pane::new(1, 100, rect());
         pane.identity.command = Some("lazygit".to_string());

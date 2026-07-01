@@ -2,13 +2,15 @@
 
 ## What this is
 
-`hyprmux` is a single-process Hyprland-style tiling **terminal multiplexer**: panes are
-live PTY shells, laid out with dwindle tiling, floating windows, workspaces, animated
-geometry, and tmux-style prefix commands. It is built on the `tui-lipan` TUI framework and
-was ported from that project's `window_manager` example — that example remains the
-reference implementation for the tiling/interaction algorithms.
+`hyprmux` is a Hyprland-style tiling **terminal multiplexer**: panes are live PTY shells,
+laid out with dwindle tiling, floating windows, workspaces, animated geometry, and
+tmux-style prefix commands. It is built on the `tui-lipan` TUI framework and was ported
+from that project's `window_manager` example — that example remains the reference
+implementation for the tiling/interaction algorithms.
 
-There is intentionally **no detach/reattach** (no daemon); PTYs live in the single UI process.
+By default `hyprmux` runs in local single-process mode with PTYs in the UI process. Explicit
+`--attach` / `--session` mode connects to a named session server for detach/reattach-style
+workflows.
 
 ## Commands
 
@@ -131,6 +133,8 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
   module, then re-applies the terminal palette.
 - `control.rs` / `control_ops.rs` — in-process Unix socket protocol, CLI wire types, listener
   bootstrap, and UI-thread execution of automation commands.
+- `session/` — optional named session server/client protocol used by explicit `--attach` /
+  `--session` mode; local non-attached launches still keep PTYs in the UI process.
 - `state.rs` — runtime data model (`State`, `Workspace`, `Pane`, `Mode`, sessions) and tuning
   constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
 - `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,

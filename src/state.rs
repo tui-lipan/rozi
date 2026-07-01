@@ -303,6 +303,7 @@ pub struct ScrollbackSearchState {
     pub matches: Vec<ScrollbackMatch>,
     pub current: usize,
     pub status: String,
+    pub pending_server_requests: Vec<u64>,
 }
 
 impl ScrollbackSearchState {
@@ -314,6 +315,7 @@ impl ScrollbackSearchState {
             matches: Vec::new(),
             current: 0,
             status: "Type to search scrollback".to_string(),
+            pending_server_requests: Vec::new(),
         }
     }
 }
@@ -406,7 +408,11 @@ impl Pane {
             opening: true,
             closing: false,
             activity: PaneActivity::default(),
-            terminal: TerminalPane::new(scrollback),
+            terminal: {
+                let mut terminal = TerminalPane::new(scrollback);
+                terminal.bind_session(id, 0);
+                terminal
+            },
         }
     }
 
@@ -528,6 +534,10 @@ pub struct State {
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
     pub control_socket_path: Option<PathBuf>,
+    pub session_client: Option<crate::session::client::SessionClient>,
+    pub session_name: Option<String>,
+    pub session_attached: bool,
+    pub last_pushed_layout: Option<String>,
 }
 
 impl State {
@@ -576,6 +586,10 @@ impl State {
             scratch_visible: false,
             scratch_return_focus: None,
             control_socket_path: None,
+            session_client: None,
+            session_name: None,
+            session_attached: false,
+            last_pushed_layout: None,
         }
     }
 

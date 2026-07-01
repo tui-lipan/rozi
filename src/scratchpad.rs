@@ -81,6 +81,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
         pane.pty_generation = generation;
+        pane.terminal.bind_session(SCRATCH_PANE_ID, generation);
         pane.terminal.set_palette(terminal_palette(
             &ctx.state.theme,
             pane_frame_background(

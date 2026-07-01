@@ -89,7 +89,7 @@ pub(crate) fn pane_element(
         };
 
         let mut title = pane.display_title(pane.terminal.title());
-        if let Some(subtitle) = pane.subtitle() {
+        if let Some(subtitle) = pane.subtitle_for_title(&title) {
             title.push_str(" — ");
             title.push_str(subtitle);
         }

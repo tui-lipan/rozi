@@ -439,10 +439,45 @@ impl Pane {
             .or(self.identity.cwd.as_deref())
     }
 
+    pub fn subtitle_for_title(&self, title: &str) -> Option<&str> {
+        if let Some(command) = self.identity.command.as_deref() {
+            return Some(command);
+        }
+
+        let cwd = self.identity.cwd.as_deref()?;
+        if title_contains_cwd(title, cwd) {
+            None
+        } else {
+            Some(cwd)
+        }
+    }
+
     /// The shell's current working directory if it can be discovered live, else `None`.
     pub fn live_cwd(&self) -> Option<String> {
         self.terminal.working_directory()
     }
+}
+
+fn title_contains_cwd(title: &str, cwd: &str) -> bool {
+    if cwd.is_empty() || title.contains(cwd) {
+        return !cwd.is_empty();
+    }
+
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
+    let home = home.trim_end_matches('/');
+    if home.is_empty() || !cwd.starts_with(home) {
+        return false;
+    }
+
+    let rest = cwd[home.len()..].trim_start_matches('/');
+    let tilde_cwd = if rest.is_empty() {
+        "~".to_string()
+    } else {
+        format!("~/{rest}")
+    };
+    title.contains(&tilde_cwd)
 }
 
 pub struct Workspace {
@@ -679,5 +714,44 @@ mod tests {
         pane.identity.command = Some("vim src/main.rs".to_string());
 
         assert_eq!(pane.subtitle(), Some("vim src/main.rs"));
+    }
+
+    #[test]
+    fn pane_subtitle_hides_cwd_already_in_terminal_title() {
+        let mut pane = pane();
+        pane.identity.cwd = Some("/tmp/project".to_string());
+
+        assert_eq!(pane.subtitle_for_title("razuer@host:/tmp/project"), None);
+    }
+
+    #[test]
+    fn pane_subtitle_hides_home_relative_cwd_in_terminal_title() {
+        let Ok(home) = std::env::var("HOME") else {
+            return;
+        };
+        let home = home.trim_end_matches('/');
+        if home.is_empty() {
+            return;
+        }
+
+        let mut pane = pane();
+        pane.identity.cwd = Some(format!("{home}/Work/Projects/opencode-tui"));
+
+        assert_eq!(
+            pane.subtitle_for_title("razuer@host:~/Work/Projects/opencode-tui"),
+            None
+        );
+    }
+
+    #[test]
+    fn pane_subtitle_keeps_command_even_when_title_contains_cwd() {
+        let mut pane = pane();
+        pane.identity.cwd = Some("/tmp/project".to_string());
+        pane.identity.command = Some("cargo run".to_string());
+
+        assert_eq!(
+            pane.subtitle_for_title("razuer@host:/tmp/project"),
+            Some("cargo run")
+        );
     }
 }

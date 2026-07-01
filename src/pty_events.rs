@@ -9,7 +9,9 @@ use crate::pane_lifecycle::{begin_close_pane, find_pane_mut};
 use crate::state::PaneId;
 
 pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
-    Toast::new(message.into()).duration(3.0)
+    Toast::new(message.into())
+        .duration(3.0)
+        .padding((0, 1, 0, 0))
 }
 
 pub(crate) fn error_toast(title: impl Into<String>, message: impl Into<String>) -> Toast {
@@ -17,6 +19,7 @@ pub(crate) fn error_toast(title: impl Into<String>, message: impl Into<String>) 
         .title(Some(title.into()))
         .duration(6.0)
         .border(true)
+        .padding((0, 1, 0, 0))
 }
 
 pub(crate) fn forward_key_to_pane(

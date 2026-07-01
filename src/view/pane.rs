@@ -4,8 +4,8 @@ use crate::state::{LayoutKind, Pane, PaneId, TILE_GAP, Workspace};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
-use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
 use super::integrated_scrollbar_config;
+use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
 
 pub(crate) fn pane_element(
     app: &HyprmuxApp,

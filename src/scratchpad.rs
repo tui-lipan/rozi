@@ -77,7 +77,10 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
     if ctx.state.scratch.is_none() {
         let bounds = canvas_bounds_from_viewport(ctx.viewport());
         let rect = scratch_rect(bounds, ctx.state.config.scratchpad.height);
+        let generation = ctx.state.next_pty_generation;
+        ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
+        pane.pty_generation = generation;
         pane.terminal.set_palette(terminal_palette(
             &ctx.state.theme,
             pane_frame_background(
@@ -92,7 +95,8 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         ctx.state.scratch = Some(pane);
         return Update::with_command(spawn_pty_command(
             SCRATCH_PANE_ID,
-            scratch_pty_config(&ctx.state.config),
+            generation,
+            scratch_pty_config(&ctx.state.config, ctx.state.control_socket_path.as_deref()),
             None,
         ));
     }
@@ -119,7 +123,10 @@ pub(crate) fn is_scratch(id: crate::state::PaneId) -> bool {
 
 /// Build the scratch PTY config, honoring `[scratchpad]` command/cwd overrides by reusing the
 /// per-pane config path (a command is wrapped in `shell -lc`).
-fn scratch_pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {
+fn scratch_pty_config(
+    config: &HyprmuxConfig,
+    control_socket_path: Option<&std::path::Path>,
+) -> TerminalPtyConfig {
     let rect = FloatRect {
         x: 0.0,
         y: 0.0,
@@ -129,7 +136,7 @@ fn scratch_pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {
     let mut pane = Pane::new(SCRATCH_PANE_ID, config.scrollback, rect);
     pane.identity.command = config.scratchpad.command.clone();
     pane.identity.cwd = config.scratchpad.cwd.clone();
-    pty_config_for_pane(config, &pane)
+    pty_config_for_pane(config, control_socket_path, &pane)
 }
 
 /// A dimming scrim covering the whole canvas, drawn behind the dropdown so the scratchpad

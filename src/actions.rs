@@ -117,5 +117,19 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
             Update::full()
         }
+        Action::TogglePaneSynchronization => {
+            let synchronized = {
+                let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+                workspace.synchronized = !workspace.synchronized;
+                workspace.synchronized
+            };
+            ctx.toast()
+                .push(crate::pty_events::info_toast(if synchronized {
+                    "Pane synchronization enabled"
+                } else {
+                    "Pane synchronization disabled"
+                }));
+            Update::full()
+        }
     }
 }

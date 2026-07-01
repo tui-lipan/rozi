@@ -108,6 +108,16 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
             ),
             theme,
         )),
+        BarSegment::Activity => {
+            let count = ctx
+                .state
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.panes.iter())
+                .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
+                .count();
+            (count > 0).then(|| bar_text(format!(" ●{count} "), theme))
+        }
         BarSegment::Text(literal) => Some(bar_text(substitute_placeholders(ctx, literal), theme)),
     }
 }

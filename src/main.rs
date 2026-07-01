@@ -1,6 +1,8 @@
 mod actions;
 mod anim;
 mod config;
+mod control;
+mod control_ops;
 mod copy_mode;
 mod focus_ops;
 mod geometry;
@@ -23,6 +25,9 @@ mod tiling;
 mod update;
 mod view;
 
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
@@ -38,6 +43,8 @@ pub struct HyprmuxApp {
     initial_system_theme: Option<Theme>,
     startup_profile: Option<profiles::HyprmuxProfile>,
     startup_messages: Vec<String>,
+    control_listener: Option<std::os::unix::net::UnixListener>,
+    control_guard: Option<control::ControlSocketGuard>,
 }
 
 impl Default for HyprmuxApp {
@@ -49,6 +56,8 @@ impl Default for HyprmuxApp {
             config,
             startup_profile: None,
             startup_messages: Vec::new(),
+            control_listener: None,
+            control_guard: None,
         }
     }
 }
@@ -60,6 +69,8 @@ impl HyprmuxApp {
         initial_system_theme: Option<Theme>,
         startup_profile: Option<profiles::HyprmuxProfile>,
         startup_messages: Vec<String>,
+        control_listener: Option<std::os::unix::net::UnixListener>,
+        control_guard: Option<control::ControlSocketGuard>,
     ) -> Self {
         Self {
             config,
@@ -67,6 +78,8 @@ impl HyprmuxApp {
             initial_system_theme,
             startup_profile,
             startup_messages,
+            control_listener,
+            control_guard,
         }
     }
 }
@@ -109,15 +122,16 @@ pub enum Msg {
     EndResize(PaneId),
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
     ResizeSplit(PaneId, bool, i16, i16),
-    FinishOpen(PaneId),
-    PruneClosed(PaneId),
-    PtyReady(PaneId, TerminalPty),
-    PtyEvent(PaneId, TerminalPtyEvent),
+    FinishOpen(PaneId, u64),
+    PruneClosed(PaneId, u64),
+    PtyReady(PaneId, u64, TerminalPty),
+    PtyEvent(PaneId, u64, TerminalPtyEvent),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
     PaneMouse(PaneId, Vec<u8>),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
+    ControlRequest(control::ControlEnvelope),
 }
 
 impl Component for HyprmuxApp {
@@ -132,6 +146,10 @@ impl Component for HyprmuxApp {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
         state.system_theme = self.initial_system_theme.clone();
+        state.control_socket_path = self
+            .control_guard
+            .as_ref()
+            .map(|guard| guard.path().to_path_buf());
         theme_ops::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -157,9 +175,10 @@ impl Component for HyprmuxApp {
         }
 
         pane_lifecycle::initial_command(
-            startup_spawns(&ctx.state),
+            startup_spawns(&mut ctx.state),
             ctx.state.theme_watcher.is_some(),
             ctx.state.config.bar.has_clock(),
+            self.control_listener.take(),
         )
     }
 
@@ -192,20 +211,31 @@ impl Component for HyprmuxApp {
     }
 }
 
-pub(crate) fn startup_spawns(state: &State) -> Vec<(PaneId, TerminalPtyConfig, Option<Duration>)> {
+pub(crate) fn startup_spawns(
+    state: &mut State,
+) -> Vec<(PaneId, u64, TerminalPtyConfig, Option<Duration>)> {
+    let mut next_generation = state.next_pty_generation;
+    let socket_path = state.control_socket_path.clone();
+    let config = state.config.clone();
+    let mut spawns = Vec::new();
     state
         .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.panes.iter())
+        .iter_mut()
+        .flat_map(|workspace| workspace.panes.iter_mut())
         .filter(|pane| !pane.closing)
-        .map(|pane| {
-            (
+        .for_each(|pane| {
+            let generation = next_generation;
+            next_generation = next_generation.saturating_add(1);
+            pane.pty_generation = generation;
+            spawns.push((
                 pane.id,
-                pane_lifecycle::pty_config_for_pane(&state.config, pane),
+                generation,
+                pane_lifecycle::pty_config_for_pane(&config, socket_path.as_deref(), pane),
                 Some(Duration::ZERO),
-            )
-        })
-        .collect()
+            ));
+        });
+    state.next_pty_generation = next_generation;
+    spawns
 }
 
 impl HyprmuxApp {
@@ -362,6 +392,7 @@ fn main() -> Result<()> {
             print_version();
             return Ok(());
         }
+        Ok(ParsedCli::Control(command)) => return run_control_cli(command),
         Ok(ParsedCli::Run(args)) => args,
         Err(message) => {
             eprintln!("{message}");
@@ -428,6 +459,14 @@ fn main() -> Result<()> {
         loaded_theme.theme
     };
 
+    let (control_listener, control_guard) = match control::bind_control_socket() {
+        Ok((listener, guard)) => (Some(listener), Some(guard)),
+        Err(err) => {
+            startup_messages.push(format!("Control socket unavailable: {err}"));
+            (None, None)
+        }
+    };
+
     let app = App::new()
         .title("hyprmux")
         .theme(theme.clone())
@@ -442,6 +481,8 @@ fn main() -> Result<()> {
         startup_system_theme,
         startup_profile,
         startup_messages,
+        control_listener,
+        control_guard,
     ))
     .run()
 }
@@ -452,15 +493,24 @@ struct CliArgs {
     config_path: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ControlCli {
+    socket: Option<PathBuf>,
+    request: control::ControlRequest,
+}
+
 #[derive(Debug)]
 enum ParsedCli {
     Help,
     Version,
     Run(CliArgs),
+    Control(ControlCli),
 }
 
 fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     let mut cli = CliArgs::default();
+    let mut socket: Option<PathBuf> = None;
+    let mut socket_flag_seen = false;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -484,10 +534,80 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
                 }
                 cli.config_path = Some(path);
             }
+            "--socket" => {
+                socket_flag_seen = true;
+                socket = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--socket requires a path".to_string())?,
+                ));
+            }
+            "list" | "list-panes" => {
+                reject_trailing_control_args(&mut iter, "list-panes")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::ListPanes),
+                }));
+            }
+            "focus" => {
+                let target = iter
+                    .next()
+                    .ok_or_else(|| "focus requires a pane id".to_string())?
+                    .parse()
+                    .map_err(|_| "focus requires a numeric pane id".to_string())?;
+                reject_trailing_control_args(&mut iter, "focus")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::Focus { target }),
+                }));
+            }
+            "send-text" => {
+                let text = iter
+                    .next()
+                    .ok_or_else(|| "send-text requires literal text".to_string())?;
+                reject_trailing_control_args(&mut iter, "send-text")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::SendText {
+                        target: None,
+                        text,
+                    }),
+                }));
+            }
+            "send-keys" => {
+                let text = iter.next().ok_or_else(|| {
+                    "send-keys requires literal text (named keys are not implemented)".to_string()
+                })?;
+                reject_trailing_control_args(&mut iter, "send-keys")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::SendText {
+                        target: None,
+                        text,
+                    }),
+                }));
+            }
+            "split" | "new-pane" => {
+                let command = iter.next();
+                reject_trailing_control_args(&mut iter, "split")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::NewPane {
+                        command,
+                        cwd: None,
+                        title: None,
+                        keep_open: false,
+                    }),
+                }));
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unknown flag `{other}`"));
             }
             name => {
+                if socket_flag_seen {
+                    return Err(format!(
+                        "--socket requires a control command before `{name}`"
+                    ));
+                }
                 if cli.profile.is_some() {
                     return Err(format!("unexpected argument `{name}`"));
                 }
@@ -495,7 +615,103 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
             }
         }
     }
+    if socket_flag_seen {
+        return Err("--socket requires a control command".to_string());
+    }
     Ok(ParsedCli::Run(cli))
+}
+
+fn reject_trailing_control_args(
+    iter: &mut std::vec::IntoIter<String>,
+    command: &str,
+) -> std::result::Result<(), String> {
+    if let Some(extra) = iter.next() {
+        Err(format!("unexpected argument `{extra}` after {command}"))
+    } else {
+        Ok(())
+    }
+}
+
+fn control_request(command: control::ControlCommand) -> control::ControlRequest {
+    control::ControlRequest {
+        command,
+        source_pane: std::env::var("HYPRMUX_PANE")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+    }
+}
+
+fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, String> {
+    if let Some(path) = explicit {
+        return Ok(path);
+    }
+    if let Some(path) = std::env::var_os("HYPRMUX_SOCKET").map(PathBuf::from) {
+        return Ok(path);
+    }
+    let dir =
+        control::runtime_dir().map_err(|err| format!("could not inspect runtime dir: {err}"))?;
+    let live: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map_err(|err| format!("could not read {}: {err}", dir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("control-") && n.ends_with(".sock"))
+                && UnixStream::connect(p).is_ok()
+        })
+        .collect();
+    match live.as_slice() {
+        [path] => Ok(path.clone()),
+        [] => Err(
+            "no live hyprmux control socket found (set HYPRMUX_SOCKET or pass --socket)"
+                .to_string(),
+        ),
+        _ => Err("multiple live hyprmux sockets found; pass --socket PATH".to_string()),
+    }
+}
+
+fn run_control_cli(command: ControlCli) -> Result<()> {
+    let path = match discover_socket(command.socket) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("could not connect to {}: {err}", path.display());
+            std::process::exit(2);
+        }
+    };
+    writeln!(
+        stream,
+        "{}",
+        serde_json::to_string(&command.request).unwrap()
+    )?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line)?;
+    if line.trim().is_empty() {
+        eprintln!("empty response from hyprmux");
+        std::process::exit(2);
+    }
+    println!("{}", line.trim_end());
+    let value: serde_json::Value = match serde_json::from_str(&line) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("invalid JSON response: {err}");
+            std::process::exit(2);
+        }
+    };
+    if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn print_help() {
@@ -507,12 +723,17 @@ USAGE:
     hyprmux [PROFILE]
     hyprmux --profile <NAME>
     hyprmux -p <NAME>
+    hyprmux [--socket PATH] list|list-panes
+    hyprmux [--socket PATH] focus <PANE_ID>
+    hyprmux [--socket PATH] send-text <TEXT>
+    hyprmux [--socket PATH] split [COMMAND]
 
 OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
     -p, --profile <NAME>  Load a named profile from ~/.config/hyprmux/profiles/<NAME>.toml
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
+        --socket <PATH>   Connect CLI control command to this socket
 
 A bare PROFILE positional is equivalent to --profile PROFILE.
 Quit the running app with Ctrl-q."
@@ -551,15 +772,15 @@ mod tests {
         closing.closing = true;
         state.workspaces[1].panes.push(closing);
 
-        let spawns = startup_spawns(&state);
-        let ids: Vec<PaneId> = spawns.iter().map(|(id, _, _)| *id).collect();
+        let spawns = startup_spawns(&mut state);
+        let ids: Vec<PaneId> = spawns.iter().map(|(id, _, _, _)| *id).collect();
 
         assert_eq!(ids, vec![1, 2, 3]);
 
         let restored_config = spawns
             .iter()
-            .find(|(id, _, _)| *id == 3)
-            .map(|(_, config, _)| format!("{config:?}"))
+            .find(|(id, _, _, _)| *id == 3)
+            .map(|(_, _, config, _)| format!("{config:?}"))
             .expect("restored pane spawn config");
 
         assert!(restored_config.contains("/bin/bash"), "{restored_config}");
@@ -568,6 +789,20 @@ mod tests {
         assert!(
             restored_config.contains("/repo/backend"),
             "{restored_config}"
+        );
+        assert!(
+            state.workspaces[0]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 1 && pane.pty_generation > 0)
+        );
+        assert!(
+            state.next_pty_generation
+                > spawns
+                    .iter()
+                    .map(|(_, generation, _, _)| *generation)
+                    .max()
+                    .unwrap()
         );
     }
 
@@ -591,6 +826,59 @@ mod tests {
             parse_cli_args(vec!["-V".into()]).expect("parses"),
             ParsedCli::Version
         ));
+    }
+
+    #[test]
+    fn cli_reserved_control_commands_do_not_parse_as_profiles() {
+        let parsed = parse_cli_args(vec!["list-panes".into()]).expect("parses");
+        assert!(matches!(parsed, ParsedCli::Control(_)));
+
+        let profile = expect_run(
+            parse_cli_args(vec!["--profile".into(), "list-panes".into()]).expect("parses"),
+        );
+        assert_eq!(profile.profile.as_deref(), Some("list-panes"));
+    }
+
+    #[test]
+    fn cli_control_socket_flag_is_preserved() {
+        let parsed = parse_cli_args(vec![
+            "--socket".into(),
+            "/tmp/hyprmux.sock".into(),
+            "send-text".into(),
+            "hi".into(),
+        ])
+        .expect("parses");
+        let ParsedCli::Control(control) = parsed else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            control.socket.as_deref(),
+            Some(std::path::Path::new("/tmp/hyprmux.sock"))
+        );
+        assert!(matches!(
+            control.request.command,
+            control::ControlCommand::SendText { .. }
+        ));
+    }
+
+    #[test]
+    fn cli_control_commands_reject_trailing_args() {
+        assert!(parse_cli_args(vec!["focus".into(), "1".into(), "garbage".into()]).is_err());
+        assert!(
+            parse_cli_args(vec![
+                "list-panes".into(),
+                "--socket".into(),
+                "/tmp/x".into()
+            ])
+            .is_err()
+        );
+        assert!(parse_cli_args(vec!["send-text".into(), "hi".into(), "extra".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_socket_without_control_command_errors() {
+        assert!(parse_cli_args(vec!["--socket".into(), "/tmp/x".into()]).is_err());
+        assert!(parse_cli_args(vec!["--socket".into(), "/tmp/x".into(), "dev".into()]).is_err());
     }
 
     #[test]

@@ -126,6 +126,21 @@ impl Default for HyprmuxClipboardConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HyprmuxNotificationsConfig {
+    pub enabled: bool,
+    pub pane_exit: bool,
+}
+
+impl Default for HyprmuxNotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pane_exit: true,
+        }
+    }
+}
+
 /// Default fraction of the viewport height the dropdown scratchpad occupies.
 pub const SCRATCHPAD_DEFAULT_HEIGHT: f32 = 0.4;
 pub const SCRATCHPAD_MIN_HEIGHT: f32 = 0.1;
@@ -162,6 +177,7 @@ pub struct HyprmuxConfig {
     pub session: HyprmuxSessionConfig,
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
+    pub notifications: HyprmuxNotificationsConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
     pub keymap: Keymap,
@@ -182,6 +198,7 @@ impl Default for HyprmuxConfig {
             session: HyprmuxSessionConfig::default(),
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
+            notifications: HyprmuxNotificationsConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),
             keymap: Keymap::default(),
@@ -198,6 +215,7 @@ pub enum BarSegment {
     Session,
     Clock,
     Layout,
+    Activity,
     Text(String),
 }
 
@@ -213,6 +231,7 @@ impl BarSegment {
             "session" => Some(Self::Session),
             "clock" => Some(Self::Clock),
             "layout" => Some(Self::Layout),
+            "activity" => Some(Self::Activity),
             _ => None,
         }
     }
@@ -276,6 +295,7 @@ struct FileConfig {
     session: SessionFileConfig,
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
+    notifications: NotificationsFileConfig,
     scratchpad: ScratchpadFileConfig,
     bar: BarFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
@@ -475,6 +495,21 @@ mod tests {
     }
 
     #[test]
+    fn file_config_parses_notifications() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [notifications]
+            enabled = true
+            pane_exit = false
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.notifications.enabled, Some(true));
+        assert_eq!(parsed.notifications.pane_exit, Some(false));
+    }
+
+    #[test]
     fn theme_upsert_adds_missing_section() {
         assert_eq!(
             upsert_theme_preset("scrollback = 100\n", "lipan"),
@@ -536,6 +571,13 @@ struct ThemeFileConfig {
 #[serde(default)]
 struct ClipboardFileConfig {
     enable_osc52: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct NotificationsFileConfig {
+    enabled: Option<bool>,
+    pane_exit: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -624,6 +666,12 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
+    }
+    if let Some(enabled) = parsed.notifications.enabled {
+        config.notifications.enabled = enabled;
+    }
+    if let Some(pane_exit) = parsed.notifications.pane_exit {
+        config.notifications.pane_exit = pane_exit;
     }
 
     config.scratchpad.command = non_empty(parsed.scratchpad.command);

@@ -105,6 +105,7 @@ pub fn restore_state_from_profile(
         }
 
         let workspace = &mut workspaces[workspace_profile.index];
+        workspace.synchronized = workspace_profile.synchronized;
         workspace.layout_kind = workspace_profile.layout.into();
         if !workspace_profile.split_ratios.is_empty() {
             workspace.split_ratios = workspace_profile.split_ratios.clone();
@@ -178,6 +179,7 @@ pub fn restore_state_from_profile(
         active_workspace,
         focused_pane,
         next_pane_id,
+        next_pty_generation: 1,
         mode: Mode::Normal,
         moving_pane: None,
         resizing_pane: None,
@@ -200,6 +202,7 @@ pub fn restore_state_from_profile(
         scratch: None,
         scratch_visible: false,
         scratch_return_focus: None,
+        control_socket_path: None,
     }
 }
 
@@ -235,6 +238,7 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
     WorkspaceProfile {
         index,
         name: None,
+        synchronized: workspace.synchronized,
         layout: workspace.layout_kind.into(),
         split_ratios: workspace.split_ratios.clone(),
         focused_pane: workspace
@@ -328,6 +332,7 @@ impl HyprmuxProfile {
 pub struct WorkspaceProfile {
     pub index: usize,
     pub name: Option<String>,
+    pub synchronized: bool,
     pub layout: ProfileLayoutKind,
     pub split_ratios: Vec<f32>,
     pub focused_pane: Option<PaneId>,
@@ -520,6 +525,7 @@ mod tests {
         assert_eq!(profile.version, 1);
         assert_eq!(profile.active_workspace, 0);
         let workspace = &profile.workspaces[0];
+        assert!(!workspace.synchronized);
         assert_eq!(workspace.focused_pane, Some(1));
         assert_eq!(workspace.split_ratios[0], 0.63);
         assert_eq!(workspace.panes.len(), 2);
@@ -644,6 +650,7 @@ mod tests {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
                 name: Some("main".to_string()),
+                synchronized: true,
                 layout: ProfileLayoutKind::Dwindle,
                 split_ratios: vec![0.61, 0.39],
                 focused_pane: Some(1),
@@ -694,6 +701,38 @@ mod tests {
         let decoded = HyprmuxProfile::from_toml_str(&encoded).expect("profile parses");
 
         assert_eq!(decoded, profile);
+    }
+
+    #[test]
+    fn old_profile_without_synchronized_loads_false() {
+        let profile = HyprmuxProfile::from_toml_str(
+            r#"
+            version = 1
+            active_workspace = 0
+
+            [[workspaces]]
+            index = 0
+
+            [[workspaces.panes]]
+            id = 0
+            "#,
+        )
+        .expect("old profile parses");
+
+        assert!(!profile.workspaces[0].synchronized);
+        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        assert!(!state.workspaces[0].synchronized);
+    }
+
+    #[test]
+    fn synchronized_workspace_round_trips_from_state() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.workspaces[0].synchronized = true;
+
+        let profile = profile_from_state(&state);
+        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+
+        assert!(restored.workspaces[0].synchronized);
     }
 
     #[test]

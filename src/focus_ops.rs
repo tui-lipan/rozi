@@ -155,6 +155,7 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     state.active_workspace = index;
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
+    clear_focused_activity(state);
 }
 
 pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) {
@@ -194,13 +195,27 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
-    if state.workspaces[state.active_workspace]
+    if let Some(pane) = state.workspaces[state.active_workspace]
         .panes
-        .iter()
-        .any(|pane| pane.id == id && !pane.closing)
+        .iter_mut()
+        .find(|pane| pane.id == id && !pane.closing)
     {
+        pane.activity.has_unseen_output = false;
         state.focused_pane = Some(id);
         state.workspaces[state.active_workspace].focused_pane = Some(id);
+    }
+}
+
+fn clear_focused_activity(state: &mut State) {
+    let Some(id) = state.focused_pane else {
+        return;
+    };
+    if let Some(pane) = state.workspaces[state.active_workspace]
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == id && !pane.closing)
+    {
+        pane.activity.has_unseen_output = false;
     }
 }
 

@@ -143,6 +143,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
+            if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+                pane.activity.has_unseen_output = false;
+            }
             request_pane_focus(ctx, id);
             Update::full()
         }
@@ -152,6 +155,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             if ctx.state.focused_pane != Some(id) {
                 focus_pane(&mut ctx.state, id);
+                if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+                    pane.activity.has_unseen_output = false;
+                }
                 request_pane_focus(ctx, id);
                 Update::full()
             } else {
@@ -195,8 +201,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ResizeSplit(id, horizontal_split, dx, dy) => {
             crate::resize_move_ops::resize_split_by_drag(ctx, id, horizontal_split, dx, dy)
         }
-        Msg::FinishOpen(id) => {
+        Msg::FinishOpen(id, generation) => {
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+                if pane.pty_generation != generation {
+                    return Update::none();
+                }
                 pane.opening = false;
                 if !pane.closing {
                     ctx.state.animation = GeometryAnimation::Spawn;
@@ -204,18 +213,22 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::PruneClosed(id) => handle_prune_closed(ctx, id),
-        Msg::PtyReady(id, pty) => handle_pty_ready(ctx, id, pty),
-        Msg::PtyEvent(id, event) => handle_pty_event(ctx, id, event),
+        Msg::PruneClosed(id, generation) => handle_prune_closed(ctx, id, generation),
+        Msg::PtyReady(id, generation, pty) => handle_pty_ready(ctx, id, generation, pty),
+        Msg::PtyEvent(id, generation, event) => handle_pty_event(ctx, id, generation, event),
         Msg::PaneInput(id, input) => handle_pane_input(ctx, id, input),
         Msg::PaneKey(id, key) => {
             focus_pane(&mut ctx.state, id);
+            if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+                pane.activity.has_unseen_output = false;
+            }
             let (_handled, update) = handle_key_routing(ctx, key, Some(id));
             update
         }
         Msg::PaneMouse(id, bytes) => handle_pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => handle_pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => handle_pane_scroll(ctx, id, offset),
+        Msg::ControlRequest(envelope) => crate::control_ops::handle_control_request(ctx, envelope),
     };
 
     if crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {

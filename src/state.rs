@@ -1,4 +1,6 @@
 use std::cell::Cell;
+use std::path::PathBuf;
+use std::time::Instant;
 
 use tui_lipan::prelude::*;
 
@@ -373,6 +375,7 @@ impl ProfilePickerState {
 
 pub struct Pane {
     pub id: PaneId,
+    pub pty_generation: u64,
     pub title: String,
     pub identity: PaneIdentity,
     pub floating: bool,
@@ -380,13 +383,21 @@ pub struct Pane {
     pub floating_rect: FloatRect,
     pub opening: bool,
     pub closing: bool,
+    pub activity: PaneActivity,
     pub terminal: TerminalPane,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaneActivity {
+    pub last_activity: Option<Instant>,
+    pub has_unseen_output: bool,
 }
 
 impl Pane {
     pub fn new(id: PaneId, scrollback: usize, floating_rect: FloatRect) -> Self {
         Self {
             id,
+            pty_generation: 0,
             title: "shell".to_string(),
             identity: PaneIdentity::default(),
             floating: false,
@@ -394,6 +405,7 @@ impl Pane {
             floating_rect,
             opening: true,
             closing: false,
+            activity: PaneActivity::default(),
             terminal: TerminalPane::new(scrollback),
         }
     }
@@ -431,6 +443,7 @@ pub struct Workspace {
     pub panes: Vec<Pane>,
     pub tile_tree: Option<DwindleTree>,
     pub focused_pane: Option<PaneId>,
+    pub synchronized: bool,
     pub layout_kind: LayoutKind,
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
@@ -443,6 +456,7 @@ impl Workspace {
             panes: Vec::new(),
             tile_tree: None,
             focused_pane: None,
+            synchronized: false,
             layout_kind: LayoutKind::Dwindle,
             start_axis: if index % 2 == 0 {
                 SplitAxis::Horizontal
@@ -489,6 +503,7 @@ pub struct State {
     pub active_workspace: usize,
     pub focused_pane: Option<PaneId>,
     pub next_pane_id: PaneId,
+    pub next_pty_generation: u64,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
@@ -512,6 +527,7 @@ pub struct State {
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
+    pub control_socket_path: Option<PathBuf>,
 }
 
 impl State {
@@ -536,6 +552,7 @@ impl State {
             active_workspace: 0,
             focused_pane: Some(initial_id),
             next_pane_id: initial_id + 1,
+            next_pty_generation: 1,
             mode: Mode::Normal,
             moving_pane: None,
             resizing_pane: None,
@@ -558,6 +575,7 @@ impl State {
             scratch: None,
             scratch_visible: false,
             scratch_return_focus: None,
+            control_socket_path: None,
         }
     }
 

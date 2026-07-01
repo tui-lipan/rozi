@@ -58,6 +58,10 @@ default = "dev"              # named profile in ~/.config/hyprmux/profiles/
 [clipboard]
 enable_osc52 = true          # allow programs to set the system clipboard via OSC52 (default: true)
 
+[notifications]
+enabled = false              # desktop notifications are opt-in (default: false)
+pane_exit = true             # notify on natural pane process exits when enabled
+
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
@@ -163,6 +167,17 @@ See [Named profiles](profiles.md) and [Project profiles & pane identity](project
 
 See [Terminal features](terminal.md) for clipboard and selection behavior.
 
+## `[notifications]`
+
+Desktop notifications are disabled by default. When enabled, hyprmux currently sends only natural
+pane-exit notifications (not user-initiated pane closes) via `notify-send` if it is available.
+Failures are ignored and never block the UI.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `false` | Master switch for desktop notifications. |
+| `pane_exit` | `true` | Notify when a pane's process exits naturally. |
+
 ## `[session]`
 
 Optional session auto-save: persist the live layout when `hyprmux` exits and restore it on the
@@ -222,4 +237,12 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
 `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
 `open-profile`, `choose-theme`, `command-palette`, `help`,
-`toggle-titles`, `toggle-focus-on-hover`.
+`toggle-titles`, `toggle-focus-on-hover`, `toggle-pane-synchronization`.
+
+## Pane synchronization
+
+The *Toggle pane synchronization* palette command toggles synchronized input for the active
+workspace. When enabled, normal key events sent to the focused/source tiled pane are also sent to
+every tiled, non-floating, non-closing pane in that workspace. Prefix/held window-management
+commands still intercept first; mouse input, paste/raw non-key input, focus reports, floating panes,
+and the scratchpad are not broadcast. The workspace flag is saved in profiles and session autosaves.

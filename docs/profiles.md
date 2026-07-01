@@ -28,7 +28,8 @@ Each pane entry supports:
 | `fullscreen` | Start fullscreen. |
 | `rect` | Floating geometry `{ x, y, w, h }`. |
 
-Omit `tree` in a workspace to let hyprmux auto-build a dwindle tree from pane order.
+Workspace entries may also include `synchronized = true` to restore pane synchronization for that
+workspace. Omit `tree` in a workspace to let hyprmux auto-build a dwindle tree from pane order.
 
 ## Example: lazygit + nvim
 

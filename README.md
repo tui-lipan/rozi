@@ -45,6 +45,7 @@ Full docs live in [`docs/`](docs/):
 - [Terminal features](docs/terminal.md) — PTY, mouse, selection, clipboard, and scrollback search.
 - [Project profiles & pane identity](docs/project-profiles.md) — save and restore layouts.
 - [Named profiles](docs/profiles.md) — profiles directory, CLI launch, keep-open, picker commands.
+- [Control socket](docs/control.md) — pane environment, JSON control protocol, and CLI automation.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

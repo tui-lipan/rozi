@@ -10,17 +10,42 @@ use crate::focus_ops::{
 };
 use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
-use crate::state::{Pane, PaneId, State};
+use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+    let previous_focused = workspace.focused_pane;
+    // A new pane opens in the focused pane's live working directory (falling back to the
+    // configured cwd when the focused pane is floating or its cwd is unknown).
+    let mut identity = PaneIdentity::default();
+    if let Some(cwd) = previous_focused
+        .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
+        .and_then(|pane| pane.live_cwd())
+    {
+        identity.cwd = Some(cwd);
+    }
+
+    spawn_pane_in_workspace(ctx, ctx.state.active_workspace, previous_focused, identity).1
+}
+
+pub(crate) fn spawn_pane_in_workspace(
+    ctx: &mut Context<HyprmuxApp>,
+    workspace_index: usize,
+    previous_focused: Option<PaneId>,
+    identity: PaneIdentity,
+) -> (PaneId, Update) {
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
     let id = ctx.state.next_pane_id;
     ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
+    let generation = ctx.state.next_pty_generation;
+    ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
+    pane.pty_generation = generation;
+    pane.identity = identity;
     pane.terminal.set_palette(terminal_palette(
         &ctx.state.theme,
         pane_frame_background(
@@ -31,31 +56,28 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     ));
     pane.opening = true;
 
-    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-    let previous_focused = workspace.focused_pane;
-    // A new pane opens in the focused pane's live working directory (falling back to the
-    // configured cwd when the focused pane is floating or its cwd is unknown).
-    if let Some(cwd) = previous_focused
-        .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
-        .and_then(|pane| pane.live_cwd())
-    {
-        pane.identity.cwd = Some(cwd);
-    }
-    let pty_config = pty_config_for_pane(&ctx.state.config, &pane);
+    let pty_config = pty_config_for_pane(
+        &ctx.state.config,
+        ctx.state.control_socket_path.as_deref(),
+        &pane,
+    );
 
-    let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+    let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
     place_spawned_pane(workspace, id, previous_focused, bounds);
     workspace.focused_pane = Some(id);
+    ctx.state.active_workspace = workspace_index;
     ctx.state.focused_pane = Some(id);
     request_pane_focus(ctx, id);
     ctx.state.animation = GeometryAnimation::Spawn;
 
-    Update::with_command(spawn_pty_command(
+    let update = Update::with_command(spawn_pty_command(
         id,
+        generation,
         pty_config,
         Some(anim::open_delay(ctx.state.config.animations)),
-    ))
+    ));
+    (id, update)
 }
 
 pub(crate) fn begin_close_pane(
@@ -69,9 +91,11 @@ pub(crate) fn begin_close_pane(
         workspace_target_rects(workspace, bounds)
     };
     let mut closed = false;
+    let mut generation = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && !pane.closing
     {
+        generation = Some(pane.pty_generation);
         pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
         pane.opening = false;
         pane.closing = true;
@@ -83,7 +107,11 @@ pub(crate) fn begin_close_pane(
         ctx.state.animation = GeometryAnimation::Close;
         choose_fallback_focus(&mut ctx.state);
         request_current_pane_focus(ctx);
-        Update::with_command(prune_closed_command(id, anim::close_delay(animations)))
+        Update::with_command(prune_closed_command(
+            id,
+            generation.unwrap_or_default(),
+            anim::close_delay(animations),
+        ))
     } else {
         Update::full()
     }
@@ -147,7 +175,14 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
     }
 }
 
-pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(crate) fn handle_prune_closed(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    generation: u64,
+) -> Update {
+    if !should_prune_closed(&ctx.state, id, generation) {
+        return Update::none();
+    }
     remove_pane(&mut ctx.state, id);
     if ctx
         .state
@@ -166,22 +201,35 @@ pub(crate) fn handle_prune_closed(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> 
     Update::full()
 }
 
+fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
+    state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .any(|pane| pane.id == id && pane.pty_generation == generation && pane.closing)
+}
+
 pub(crate) fn initial_command(
-    spawns: Vec<(PaneId, TerminalPtyConfig, Option<Duration>)>,
+    spawns: Vec<(PaneId, u64, TerminalPtyConfig, Option<Duration>)>,
     theme_tick: bool,
     bar_tick: bool,
+    control_listener: Option<std::os::unix::net::UnixListener>,
 ) -> Option<Command> {
-    if spawns.is_empty() && !theme_tick && !bar_tick {
+    if spawns.is_empty() && !theme_tick && !bar_tick && control_listener.is_none() {
         return None;
     }
     Some(Command::spawn(move |link: CommandLink<Msg>| {
-        for (id, config, finish_open_after) in spawns {
-            spawn_pty(id, config, link.clone());
+        if let Some(listener) = control_listener {
+            let listener_link = link.clone();
+            std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
+        }
+        for (id, generation, config, finish_open_after) in spawns {
+            spawn_pty(id, generation, config, link.clone());
             if let Some(delay) = finish_open_after {
                 if !delay.is_zero() {
                     std::thread::sleep(delay);
                 }
-                link.send(Msg::FinishOpen(id));
+                link.send(Msg::FinishOpen(id, generation));
             }
         }
         if theme_tick {
@@ -220,7 +268,11 @@ fn default_shell() -> String {
         .unwrap_or_else(|| "/bin/sh".to_string())
 }
 
-pub(crate) fn pty_config_for_pane(config: &HyprmuxConfig, pane: &Pane) -> TerminalPtyConfig {
+pub(crate) fn pty_config_for_pane(
+    config: &HyprmuxConfig,
+    control_socket_path: Option<&std::path::Path>,
+    pane: &Pane,
+) -> TerminalPtyConfig {
     let mut pty_config = if let Some(command) = pane
         .identity
         .command
@@ -249,44 +301,58 @@ pub(crate) fn pty_config_for_pane(config: &HyprmuxConfig, pane: &Pane) -> Termin
         pty_config = pty_config.cwd(cwd.clone());
     }
 
+    pty_config = pty_config
+        .env("HYPRMUX", "1")
+        .env("HYPRMUX_PANE", pane.id.to_string());
+    if let Some(path) = control_socket_path {
+        pty_config = pty_config.env("HYPRMUX_SOCKET", path.display().to_string());
+    }
+
     pty_config
 }
 
 pub(crate) fn spawn_pty_command(
     id: PaneId,
+    generation: u64,
     config: TerminalPtyConfig,
     finish_open_after: Option<Duration>,
 ) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
-        spawn_pty(id, config, link.clone());
+        spawn_pty(id, generation, config, link.clone());
         if let Some(delay) = finish_open_after {
             if !delay.is_zero() {
                 std::thread::sleep(delay);
             }
-            link.send(Msg::FinishOpen(id));
+            link.send(Msg::FinishOpen(id, generation));
         }
     })
 }
 
-pub(crate) fn spawn_pty(id: PaneId, config: TerminalPtyConfig, link: CommandLink<Msg>) {
+pub(crate) fn spawn_pty(
+    id: PaneId,
+    generation: u64,
+    config: TerminalPtyConfig,
+    link: CommandLink<Msg>,
+) {
     let event_link = link.clone();
     match TerminalPty::spawn(config, move |event| {
-        event_link.send(Msg::PtyEvent(id, event));
+        event_link.send(Msg::PtyEvent(id, generation, event));
     }) {
-        Ok(pty) => link.send(Msg::PtyReady(id, pty)),
+        Ok(pty) => link.send(Msg::PtyReady(id, generation, pty)),
         Err(err) => link.send(Msg::PtyEvent(
             id,
+            generation,
             TerminalPtyEvent::Error(err.to_string().into()),
         )),
     }
 }
 
-pub(crate) fn prune_closed_command(id: PaneId, delay: Duration) -> Command {
+pub(crate) fn prune_closed_command(id: PaneId, generation: u64, delay: Duration) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
-        link.send(Msg::PruneClosed(id));
+        link.send(Msg::PruneClosed(id, generation));
     })
 }
 
@@ -313,7 +379,7 @@ mod tests {
         pane.identity.cwd = Some("/repo/backend".to_string());
         pane.identity.command = Some("cargo run".to_string());
 
-        let debug = format!("{:?}", pty_config_for_pane(&config, &pane));
+        let debug = format!("{:?}", pty_config_for_pane(&config, None, &pane));
 
         assert!(debug.contains("/bin/bash"), "{debug}");
         assert!(debug.contains("-lc"), "{debug}");
@@ -330,8 +396,20 @@ mod tests {
         pane.identity.command = Some("lazygit".to_string());
         pane.identity.keep_open = true;
 
-        let debug = format!("{:?}", pty_config_for_pane(&config, &pane));
+        let debug = format!("{:?}", pty_config_for_pane(&config, None, &pane));
 
         assert!(debug.contains("lazygit; exec /bin/bash"), "{debug}");
+    }
+
+    #[test]
+    fn stale_prune_token_does_not_match_reused_pane_id() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.workspaces[0].panes[0].pty_generation = 42;
+        state.workspaces[0].panes[0].closing = true;
+        assert!(should_prune_closed(&state, 1, 42));
+        assert!(!should_prune_closed(&state, 1, 41));
+
+        state.workspaces[0].panes[0].closing = false;
+        assert!(!should_prune_closed(&state, 1, 42));
     }
 }

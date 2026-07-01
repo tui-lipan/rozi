@@ -129,6 +129,8 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
   bootstrap), tick scheduling.
 - `update.rs` — `handle_msg`: the flat `Msg` router that delegates each message to a feature
   module, then re-applies the terminal palette.
+- `control.rs` / `control_ops.rs` — in-process Unix socket protocol, CLI wire types, listener
+  bootstrap, and UI-thread execution of automation commands.
 - `state.rs` — runtime data model (`State`, `Workspace`, `Pane`, `Mode`, sessions) and tuning
   constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
 - `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,

@@ -33,6 +33,7 @@ pub enum Action {
     ToggleHelp,
     ToggleTitles,
     ToggleFocusOnHover,
+    TogglePaneSynchronization,
 }
 
 impl Action {
@@ -77,6 +78,7 @@ impl Action {
             Action::ToggleHelp => "help",
             Action::ToggleTitles => "toggle-titles",
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
+            Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::SelectTheme(_) => {
                 return None;
             }
@@ -122,6 +124,7 @@ impl Action {
             "help" => Action::ToggleHelp,
             "toggle-titles" => Action::ToggleTitles,
             "toggle-focus-on-hover" => Action::ToggleFocusOnHover,
+            "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
             _ => return None,
         })
     }
@@ -215,6 +218,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             action: Action::PromoteToMaster,
             label: "Promote to master",
             keys: ".",
+            category: "Panes",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::TogglePaneSynchronization,
+            label: "Toggle pane synchronization",
+            keys: "Command palette",
             category: "Panes",
             palette: true,
         },

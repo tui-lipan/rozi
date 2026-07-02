@@ -469,6 +469,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     let palette = action_search_palette(ctx, entries, "Search themes…")
         .initial_selected_item_index(initial_selected)
+        .sync_selection(true)
         .on_select(
             ctx.link()
                 .callback(|event: SearchEvent<Action>| match event.item.value {

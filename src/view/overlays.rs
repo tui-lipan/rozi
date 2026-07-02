@@ -13,7 +13,7 @@ use super::keys::{
     search_input_key, theme_picker_key,
 };
 use super::{
-    action_palette_modal, fg_only, integrated_scrollbar_config, shared_search_palette, styled_modal,
+    action_palette_modal, fg_only, modal_scrollbar_config, shared_search_palette, styled_modal,
 };
 
 pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -75,7 +75,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .focusable(true)
                 .scroll_wheel(true)
                 .scrollbar(true)
-                .scrollbar_config(integrated_scrollbar_config())
+                .scrollbar_config(modal_scrollbar_config(theme))
                 .height(Length::Flex(1))
                 .key(help_scroll_key()),
         );

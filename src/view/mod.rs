@@ -201,6 +201,12 @@ pub(crate) fn integrated_scrollbar_config() -> ScrollbarConfig {
         .thumb('▐')
 }
 
+pub(crate) fn modal_scrollbar_config(theme: &Theme) -> ScrollbarConfig {
+    integrated_scrollbar_config()
+        .thumb_style(Style::new().fg(theme.border_active))
+        .thumb_focus_style(Style::new().fg(theme.border_active))
+}
+
 pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     ctx: &Context<HyprmuxApp>,
     height: Length,
@@ -228,7 +234,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .input_placeholder_style(fg_only(&theme.muted))
         .list_border(false)
         .list_scrollbar(true)
-        .list_scrollbar_config(integrated_scrollbar_config())
+        .list_scrollbar_config(modal_scrollbar_config(theme))
         .list_selection_full_width(true)
         .list_selection_symbol("")
         .list_unselected_symbol("")

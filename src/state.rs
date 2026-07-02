@@ -384,6 +384,7 @@ pub struct Pane {
     pub fullscreen: bool,
     pub floating_rect: FloatRect,
     pub opening: bool,
+    pub terminal_active: bool,
     pub closing: bool,
     pub activity: PaneActivity,
     pub terminal: TerminalPane,
@@ -406,6 +407,7 @@ impl Pane {
             fullscreen: false,
             floating_rect,
             opening: true,
+            terminal_active: false,
             closing: false,
             activity: PaneActivity::default(),
             terminal: {

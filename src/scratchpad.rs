@@ -93,6 +93,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         // No spawn fade — the dropdown slides in via the rect transition instead, and there
         // is no FinishOpen(scratch) message to clear an `opening` flag.
         pane.opening = false;
+        pane.terminal_active = true;
         ctx.state.scratch = Some(pane);
         return Update::with_command(spawn_pty_command(
             SCRATCH_PANE_ID,

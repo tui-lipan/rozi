@@ -215,6 +215,18 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
+        Msg::ActivatePane(id, generation) => {
+            if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+                if pane.pty_generation != generation {
+                    return Update::none();
+                }
+                pane.terminal_active = true;
+                if !pane.closing && ctx.state.focused_pane == Some(id) {
+                    request_pane_focus(ctx, id);
+                }
+            }
+            Update::full()
+        }
         Msg::PruneClosed(id, generation) => handle_prune_closed(ctx, id, generation),
         Msg::PtyReady(id, generation, pty) => handle_pty_ready(ctx, id, generation, pty),
         Msg::PtyEvent(id, generation, event) => handle_pty_event(ctx, id, generation, event),
@@ -354,7 +366,6 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 }
                 pane.terminal.bind_server_backend(pane_id, generation);
                 if ok {
-                    pane.opening = false;
                     pane.terminal.status = ManagedTerminalStatus::Ready;
                 } else {
                     let message = error
@@ -487,6 +498,7 @@ fn apply_attached_panes(
         }
         if let Some(pane) = find_pane_mut(&mut ctx.state, attached.pane_id) {
             pane.opening = false;
+            pane.terminal_active = true;
             pane.pty_generation = attached.generation;
             pane.terminal
                 .bind_server_backend(attached.pane_id, attached.generation);

@@ -129,6 +129,7 @@ pub enum Msg {
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
     ResizeSplit(PaneId, bool, i16, i16),
     FinishOpen(PaneId, u64),
+    ActivatePane(PaneId, u64),
     PruneClosed(PaneId, u64),
     PtyReady(PaneId, u64, TerminalPty),
     PtyEvent(PaneId, u64, TerminalPtyEvent),
@@ -281,9 +282,7 @@ impl Component for HyprmuxApp {
     }
 }
 
-pub(crate) fn startup_spawns(
-    state: &mut State,
-) -> Vec<(PaneId, u64, TerminalPtyConfig, Option<Duration>)> {
+pub(crate) fn startup_spawns(state: &mut State) -> Vec<pane_lifecycle::StartupSpawn> {
     let mut next_generation = state.next_pty_generation;
     let socket_path = state.control_socket_path.clone();
     let config = state.config.clone();
@@ -302,7 +301,7 @@ pub(crate) fn startup_spawns(
                 pane.id,
                 generation,
                 pane_lifecycle::pty_config_for_pane(&config, socket_path.as_deref(), pane),
-                Some(Duration::ZERO),
+                Some((Duration::ZERO, Duration::ZERO)),
             ));
         });
     state.next_pty_generation = next_generation;
@@ -493,7 +492,7 @@ impl HyprmuxApp {
         }
         if animations.spawn {
             TransitionConfig {
-                duration: animations.close_duration,
+                duration: animations.geometry_duration,
                 easing: Easing::EaseOutQuad,
             }
         } else {

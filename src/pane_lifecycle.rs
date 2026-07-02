@@ -6,7 +6,7 @@ use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
 use crate::config::HyprmuxConfig;
 use crate::focus_ops::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
-    request_current_pane_focus, request_pane_focus, total_visible_panes,
+    request_current_pane_focus, total_visible_panes,
 };
 use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
@@ -14,6 +14,9 @@ use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
+
+pub(crate) type OpenTimers = Option<(Duration, Duration)>;
+pub(crate) type StartupSpawn = (PaneId, u64, TerminalPtyConfig, OpenTimers);
 
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
@@ -89,18 +92,24 @@ pub(crate) fn spawn_pane_in_workspace(
     workspace.focused_pane = Some(id);
     ctx.state.active_workspace = workspace_index;
     ctx.state.focused_pane = Some(id);
-    request_pane_focus(ctx, id);
     ctx.state.animation = GeometryAnimation::Spawn;
+    let open_delay = anim::open_delay(ctx.state.config.animations);
+    let activate_delay = anim::activation_delay(ctx.state.config.animations);
 
     let update = if let Some((client, command, cwd, title, cols, rows, keep_open)) = server_spawn {
         client.spawn_pane(id, generation, command, cwd, cols, rows, keep_open, title);
-        Update::none()
+        Update::with_command(open_timers_command(
+            id,
+            generation,
+            open_delay,
+            activate_delay,
+        ))
     } else {
         Update::with_command(spawn_pty_command(
             id,
             generation,
             pty_config,
-            Some(anim::open_delay(ctx.state.config.animations)),
+            Some((open_delay, activate_delay)),
         ))
     };
     (id, update)
@@ -242,7 +251,7 @@ fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
 }
 
 pub(crate) fn initial_command(
-    spawns: Vec<(PaneId, u64, TerminalPtyConfig, Option<Duration>)>,
+    spawns: Vec<StartupSpawn>,
     theme_tick: bool,
     bar_tick: bool,
     control_listener: Option<std::os::unix::net::UnixListener>,
@@ -255,13 +264,10 @@ pub(crate) fn initial_command(
             let listener_link = link.clone();
             std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
         }
-        for (id, generation, config, finish_open_after) in spawns {
+        for (id, generation, config, open_timers) in spawns {
             spawn_pty(id, generation, config, link.clone());
-            if let Some(delay) = finish_open_after {
-                if !delay.is_zero() {
-                    std::thread::sleep(delay);
-                }
-                link.send(Msg::FinishOpen(id, generation));
+            if let Some((open_delay, activate_delay)) = open_timers {
+                run_open_timers(id, generation, open_delay, activate_delay, link.clone());
             }
         }
         if theme_tick {
@@ -347,17 +353,43 @@ pub(crate) fn spawn_pty_command(
     id: PaneId,
     generation: u64,
     config: TerminalPtyConfig,
-    finish_open_after: Option<Duration>,
+    open_timers: OpenTimers,
 ) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
         spawn_pty(id, generation, config, link.clone());
-        if let Some(delay) = finish_open_after {
-            if !delay.is_zero() {
-                std::thread::sleep(delay);
-            }
-            link.send(Msg::FinishOpen(id, generation));
+        if let Some((open_delay, activate_delay)) = open_timers {
+            run_open_timers(id, generation, open_delay, activate_delay, link);
         }
     })
+}
+
+pub(crate) fn open_timers_command(
+    id: PaneId,
+    generation: u64,
+    open_delay: Duration,
+    activate_delay: Duration,
+) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        run_open_timers(id, generation, open_delay, activate_delay, link);
+    })
+}
+
+fn run_open_timers(
+    id: PaneId,
+    generation: u64,
+    open_delay: Duration,
+    activate_delay: Duration,
+    link: CommandLink<Msg>,
+) {
+    if !open_delay.is_zero() {
+        std::thread::sleep(open_delay);
+    }
+    link.send(Msg::FinishOpen(id, generation));
+    let remaining = activate_delay.saturating_sub(open_delay);
+    if !remaining.is_zero() {
+        std::thread::sleep(remaining);
+    }
+    link.send(Msg::ActivatePane(id, generation));
 }
 
 pub(crate) fn spawn_pty(

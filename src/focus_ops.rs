@@ -327,7 +327,11 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
 }
 
 pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
-    ctx.request_focus(view::pane_terminal_key(id));
+    if crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id)
+        .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
+    {
+        ctx.request_focus(view::pane_terminal_key(id));
+    }
 }
 
 pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {

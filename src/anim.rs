@@ -74,6 +74,14 @@ pub fn open_delay(animations: WindowAnimationConfig) -> Duration {
     }
 }
 
+pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
+    if animations.enabled && animations.spawn {
+        animations.open_delay + animations.geometry_duration
+    } else {
+        Duration::ZERO
+    }
+}
+
 pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
     (geometry_duration / SCRATCH_DURATION_DENOMINATOR) * SCRATCH_DURATION_NUMERATOR
 }

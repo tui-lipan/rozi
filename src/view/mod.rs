@@ -85,13 +85,13 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .filter(|session| session.id == pane.id);
         let canvas_target_rect = if pane.closing {
             close_rect(pane.floating_rect)
+        } else if pane.opening {
+            close_rect(base_rect)
         } else if let Some(session) = moving
             && !pane.fullscreen
         {
             clamp_floating_rect(session.drag_rect, bounds)
         } else {
-            // Spawned panes appear at their tiled slot (and fade in via opacity); only
-            // surrounding panes animate to make room.
             base_rect
         };
         let target_rect = if pane.fullscreen && !pane.closing {
@@ -115,8 +115,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .map(|index| index + 1)
             .unwrap_or_else(|| pane.id as usize)
             .to_string();
-        let render_in_fullscreen_layer =
-            !pane.closing && (pane.fullscreen || animated_rect.y < f32::from(TOP_BAR_HEIGHT));
+        let render_in_fullscreen_layer = !pane.closing && pane.fullscreen;
         let render_rect = if render_in_fullscreen_layer {
             animated_rect
         } else {

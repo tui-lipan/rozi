@@ -8,7 +8,7 @@ use crate::focus_ops::{
 use crate::geometry::{
     canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
     clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, lift_off_float_rect,
-    resize_float_rect_from_corner, tiled_drag_preview_rect, workspace_tile_bounds,
+    resize_float_rect_from_corner, workspace_tile_bounds,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
@@ -30,10 +30,10 @@ pub(crate) fn begin_move(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
     current_rect: FloatRect,
-    from_local_x: u16,
-    from_local_y: u16,
-    target_w: u16,
-    target_h: u16,
+    _from_local_x: u16,
+    _from_local_y: u16,
+    _target_w: u16,
+    _target_h: u16,
     modified: bool,
 ) -> Update {
     if !modified {
@@ -41,25 +41,12 @@ pub(crate) fn begin_move(
     }
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
     let mut session = None;
     if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
         pane.opening = false;
         if !pane.fullscreen {
             let was_floating = pane.floating;
-            let drag_rect = if was_floating {
-                current_rect
-            } else {
-                tiled_drag_preview_rect(
-                    current_rect,
-                    pane.floating_rect,
-                    bounds,
-                    from_local_x,
-                    from_local_y,
-                    target_w,
-                    target_h,
-                )
-            };
+            let drag_rect = current_rect;
             if was_floating {
                 pane.floating_rect = drag_rect;
             }

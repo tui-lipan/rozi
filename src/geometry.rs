@@ -258,6 +258,7 @@ pub fn default_floating_rect(bounds: FloatRect, seed: u32) -> FloatRect {
     )
 }
 
+#[cfg(test)]
 pub fn tiled_drag_preview_rect(
     tile_rect: FloatRect,
     remembered_float_rect: FloatRect,

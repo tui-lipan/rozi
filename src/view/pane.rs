@@ -121,12 +121,13 @@ pub(crate) fn pane_element(
     }
 
     let snapshot = terminal_snapshot_for_pane(ctx, pane);
+    let terminal_ready = pane.terminal_active && !pane.opening && !pane.closing;
     let mut terminal_widget = Terminal::new()
         .snapshot(snapshot)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
-        .focusable(true)
+        .focusable(terminal_ready)
         .width(Length::Flex(1))
         .height(Length::Flex(1))
         .scrollbar_config(
@@ -135,20 +136,23 @@ pub(crate) fn pane_element(
                 .thumb_focus_style(Style::new().fg(frame_fg))
                 .track_style(Style::new().fg(frame_fg).bg(frame_bg)),
         )
-        .scroll_wheel(true)
-        .on_input(ctx.link().callback(move |input| Msg::PaneInput(id, input)))
-        .on_key(
-            ctx.link()
-                .key_handler(move |key| Some(Msg::PaneKey(id, key))),
-        )
+        .scroll_wheel(terminal_ready)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
             Msg::PaneResize(id, viewport.cols, viewport.rows)
         }))
         .on_scroll_to(
             ctx.link()
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
-        )
-        .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+        );
+    if terminal_ready {
+        terminal_widget = terminal_widget
+            .on_input(ctx.link().callback(move |input| Msg::PaneInput(id, input)))
+            .on_key(
+                ctx.link()
+                    .key_handler(move |key| Some(Msg::PaneKey(id, key))),
+            )
+            .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
+    }
     if let Some(selection) = copy_mode_selection(ctx, id) {
         terminal_widget = terminal_widget.selection(Some(selection));
     }

@@ -44,17 +44,14 @@ pub(crate) fn forward_key_to_pane(
                 .push(error_toast(format!("Pane {id}"), "session disconnected"));
             return Update::full();
         }
-        if let Some(bytes) = key_event_bytes(key)
-            && let Some(client) = client
-        {
-            client.send_input(id, pane.pty_generation, bytes);
+        if let Some(client) = client {
+            if let Err(message) = send_key_to_session_client(&client, id, pane.pty_generation, key)
+            {
+                ctx.toast().push(error_toast(format!("Pane {id}"), message));
+                return Update::full();
+            }
             return Update::none();
         }
-        ctx.toast().push(error_toast(
-            format!("Pane {id}"),
-            "key is not representable for session forwarding yet",
-        ));
-        return Update::full();
     }
 
     match pane.terminal.send_key(key) {
@@ -91,13 +88,14 @@ fn forward_key_to_targets(
             if client.is_none() {
                 pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
                 errors.push((*id, "session disconnected".to_string()));
-            } else if let (Some(client), Some(bytes)) = (client.clone(), key_event_bytes(key)) {
-                client.send_input(*id, pane.pty_generation, bytes);
+            } else if let Some(client) = client.clone() {
+                if let Err(message) =
+                    send_key_to_session_client(&client, *id, pane.pty_generation, key)
+                {
+                    errors.push((*id, message));
+                }
             } else {
-                errors.push((
-                    *id,
-                    "key is not representable for session forwarding yet".to_string(),
-                ));
+                errors.push((*id, "session disconnected".to_string()));
             }
             continue;
         }
@@ -317,27 +315,20 @@ pub(crate) fn handle_pane_scroll(
     Update::none()
 }
 
-fn key_event_bytes(key: KeyEvent) -> Option<Vec<u8>> {
-    match key.code {
-        KeyCode::Char(c) if key.mods.ctrl => {
-            let upper = c.to_ascii_uppercase();
-            if upper.is_ascii_uppercase() {
-                Some(vec![(upper as u8) - b'A' + 1])
-            } else {
-                None
-            }
-        }
-        KeyCode::Char(c) => Some(c.to_string().into_bytes()),
-        KeyCode::Enter => Some(b"\r".to_vec()),
-        KeyCode::Tab => Some(b"\t".to_vec()),
-        KeyCode::Backspace => Some(vec![0x7f]),
-        KeyCode::Esc => Some(vec![0x1b]),
-        KeyCode::Up => Some(b"\x1b[A".to_vec()),
-        KeyCode::Down => Some(b"\x1b[B".to_vec()),
-        KeyCode::Right => Some(b"\x1b[C".to_vec()),
-        KeyCode::Left => Some(b"\x1b[D".to_vec()),
-        _ => None,
-    }
+pub(crate) fn terminal_key_event_bytes(key: KeyEvent) -> Option<Vec<u8>> {
+    key_event_to_bytes(key)
+}
+
+pub(crate) fn send_key_to_session_client(
+    client: &crate::session::client::SessionClient,
+    pane_id: PaneId,
+    generation: u64,
+    key: KeyEvent,
+) -> std::result::Result<(), String> {
+    let bytes = terminal_key_event_bytes(key)
+        .ok_or_else(|| "key is not representable for session forwarding yet".to_string())?;
+    client.send_input(pane_id, generation, bytes);
+    Ok(())
 }
 
 pub(crate) fn handle_pty_ready(
@@ -375,6 +366,57 @@ mod tests {
             w: 80.0,
             h: 24.0,
         }
+    }
+
+    fn key(code: KeyCode, mods: KeyMods) -> KeyEvent {
+        KeyEvent { code, mods }
+    }
+
+    #[test]
+    fn terminal_key_encoding_matches_local_terminal_encoder_representatives() {
+        let cases = [
+            (key(KeyCode::Char('x'), KeyMods::NONE), b"x".to_vec()),
+            (key(KeyCode::Char('c'), KeyMods::CTRL), vec![3]),
+            (key(KeyCode::Char('x'), KeyMods::ALT), b"\x1bx".to_vec()),
+            (key(KeyCode::Enter, KeyMods::NONE), b"\r".to_vec()),
+            (key(KeyCode::BackTab, KeyMods::NONE), b"\x1b[Z".to_vec()),
+            (key(KeyCode::Delete, KeyMods::NONE), b"\x1b[3~".to_vec()),
+            (key(KeyCode::Home, KeyMods::NONE), b"\x1b[H".to_vec()),
+            (key(KeyCode::End, KeyMods::NONE), b"\x1b[F".to_vec()),
+            (key(KeyCode::PageUp, KeyMods::NONE), b"\x1b[5~".to_vec()),
+            (key(KeyCode::F(12), KeyMods::NONE), b"\x1b[24~".to_vec()),
+        ];
+
+        for (key, expected) in cases {
+            assert_eq!(terminal_key_event_bytes(key), Some(expected));
+        }
+    }
+
+    #[test]
+    fn server_key_forwarding_enqueues_session_input_bytes() {
+        let (client, rx) = crate::session::client::SessionClient::test_channel();
+
+        send_key_to_session_client(&client, 7, 9, key(KeyCode::F(5), KeyMods::ALT))
+            .expect("modified navigation key forwards");
+        send_key_to_session_client(&client, 7, 9, key(KeyCode::Char('c'), KeyMods::CTRL))
+            .expect("control key forwards");
+
+        assert_eq!(
+            rx.recv().expect("first message"),
+            crate::session::protocol::ClientMessage::Input {
+                pane_id: 7,
+                generation: 9,
+                bytes: b"\x1b\x1b[15~".to_vec(),
+            }
+        );
+        assert_eq!(
+            rx.recv().expect("second message"),
+            crate::session::protocol::ClientMessage::Input {
+                pane_id: 7,
+                generation: 9,
+                bytes: vec![3],
+            }
+        );
     }
 
     #[test]

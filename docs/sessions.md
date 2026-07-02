@@ -19,7 +19,7 @@ Useful commands:
 hyprmux --attach dev        # attach UI to session "dev", starting it if needed
 hyprmux --session dev       # equivalent attach form
 hyprmux --session dev --server  # run the server process directly
-hyprmux list-sessions       # list session sockets that accept connections
+hyprmux list-sessions       # list connectable sessions with pane/layout status
 hyprmux kill-session dev    # attach-handshake then request a clean Shutdown
 ```
 
@@ -53,9 +53,5 @@ On attach, a stale socket that cannot complete the attach handshake is removed a
 started once. The attach handshake has a timeout so an unresponsive socket does not hang the UI
 startup indefinitely.
 
-Known limitations:
-
-- Terminal key encoding for server-backed panes covers common printable/control/navigation keys;
-  full parity with the local PTY key encoder is still a follow-up.
-- `list-sessions` reports connectable session sockets; it does not display pane counts or layout
-  metadata.
+Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign
+sockets are skipped so the command does not hang.

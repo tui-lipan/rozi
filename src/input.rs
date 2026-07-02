@@ -224,7 +224,7 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         CommandBinding {
             action: Action::TogglePaneSynchronization,
             label: "Toggle pane synchronization",
-            keys: "Command palette",
+            keys: "",
             category: "Panes",
             palette: true,
         },
@@ -518,6 +518,19 @@ mod tests {
         assert_eq!(binding.label, "Toggle focus on hover");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "App");
+        assert!(binding.palette);
+    }
+
+    #[test]
+    fn pane_synchronization_binding_is_palette_command_without_fake_key() {
+        let binding = command_bindings()
+            .into_iter()
+            .find(|binding| binding.action == Action::TogglePaneSynchronization)
+            .expect("pane synchronization binding exists");
+
+        assert_eq!(binding.label, "Toggle pane synchronization");
+        assert_eq!(binding.keys, "");
+        assert_eq!(binding.category, "Panes");
         assert!(binding.palette);
     }
 

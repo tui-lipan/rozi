@@ -22,6 +22,18 @@ pub struct SessionClient {
 }
 
 impl SessionClient {
+    #[cfg(test)]
+    pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientMessage>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            Self {
+                tx,
+                next_request_id: Arc::new(AtomicU64::new(1)),
+            },
+            rx,
+        )
+    }
+
     pub fn connect(
         path: &Path,
         session: impl Into<String>,

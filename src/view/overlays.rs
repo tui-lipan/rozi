@@ -25,7 +25,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // entries in the table still gets a single header — matching the command palette.
     let mut groups: Vec<(&'static str, Vec<(String, &'static str)>)> = Vec::new();
     for binding in &crate::input::command_bindings() {
-        let row = (active_keys(ctx, binding), binding.label);
+        let row = (help_keys(ctx, binding), binding.label);
         match groups
             .iter_mut()
             .find(|(name, _)| *name == binding.category)
@@ -409,7 +409,7 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .filter(|binding| binding.palette)
     {
         let mut entry = SearchEntry::item(binding.label, binding.action);
-        let keys = active_keys(ctx, &binding);
+        let keys = palette_keys(ctx, &binding);
         if !keys.is_empty() {
             entry = entry.description(ItemDescription::new().right(keys));
         }
@@ -484,13 +484,30 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .key(theme_picker_key())
 }
 
-/// Display keys for a binding: the user's configured override if any, else the default text.
-fn active_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
+/// Display keys in the command palette: user overrides or real defaults only.
+/// Palette-only commands intentionally do not show a fake key hint here.
+fn palette_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
     ctx.state
         .config
         .keymap
         .keys_for(binding.action)
         .unwrap_or_else(|| binding.keys.to_string())
+}
+
+/// Display keys in the help overlay. Palette-only commands with no shortcut are
+/// labeled as palette commands rather than as unset bindings.
+fn help_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
+    ctx.state
+        .config
+        .keymap
+        .keys_for(binding.action)
+        .unwrap_or_else(|| {
+            if binding.keys.is_empty() && binding.palette {
+                "palette".to_string()
+            } else {
+                binding.keys.to_string()
+            }
+        })
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {

@@ -970,7 +970,7 @@ fn run_list_sessions_cli() -> Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(err.into()),
     };
-    let mut names = Vec::new();
+    let mut rows = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -982,15 +982,60 @@ fn run_list_sessions_cli() -> Result<()> {
         else {
             continue;
         };
-        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-            names.push(name.to_string());
+        if let Some(status) = query_session_socket(name, &path) {
+            rows.push(status);
         }
     }
-    names.sort();
-    for name in names {
-        println!("{name}");
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    for status in rows {
+        println!(
+            "{}\trunning\tpanes={}\tlayout={}",
+            status.name,
+            status.panes,
+            if status.has_layout { "yes" } else { "no" }
+        );
     }
     Ok(())
+}
+
+struct SessionListStatus {
+    name: String,
+    panes: usize,
+    has_layout: bool,
+}
+
+fn query_session_socket(name: &str, path: &std::path::Path) -> Option<SessionListStatus> {
+    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+    use std::time::Duration;
+
+    let mut stream = std::os::unix::net::UnixStream::connect(path).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(250)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(250)))
+        .ok()?;
+    session::protocol::write_frame(
+        &mut stream,
+        &ClientMessage::Attach {
+            session: name.to_string(),
+            protocol_version: PROTOCOL_VERSION,
+        },
+    )
+    .ok()?;
+    let message = session::protocol::read_frame::<_, ServerMessage>(&mut stream).ok()?;
+    let ServerMessage::Attached {
+        panes, layout_blob, ..
+    } = message
+    else {
+        return None;
+    };
+    let _ = session::protocol::write_frame(&mut stream, &ClientMessage::Detach);
+    Some(SessionListStatus {
+        name: name.to_string(),
+        panes: panes.iter().filter(|pane| pane.exited.is_none()).count(),
+        has_layout: layout_blob.is_some(),
+    })
 }
 
 fn run_kill_session_cli(name: &str) -> Result<()> {

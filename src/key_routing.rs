@@ -95,6 +95,15 @@ fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
 }
 
 pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
+    if let Some(id) = ctx.state.focused_pane
+        && ctx.state.workspaces[ctx.state.active_workspace]
+            .panes
+            .iter()
+            .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)
+    {
+        return;
+    }
+
     let framework_focus = framework_focused_pane(ctx);
     if let Some(id) = framework_focus {
         focus_pane(&mut ctx.state, id);

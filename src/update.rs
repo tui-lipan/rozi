@@ -282,7 +282,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::PaneInput(id, input) => handle_pane_input(ctx, id, input),
         Msg::PaneKey(id, key) => {
-            focus_pane(&mut ctx.state, id);
+            if logical_focus_pending_activation(&ctx.state).is_none_or(|pending| pending == id) {
+                focus_pane(&mut ctx.state, id);
+            }
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
                 pane.activity.has_unseen_output = false;
             }
@@ -564,6 +566,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     }
 
     update
+}
+
+fn logical_focus_pending_activation(state: &State) -> Option<crate::state::PaneId> {
+    let id = state.focused_pane?;
+    state.workspaces[state.active_workspace]
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)
+        .then_some(id)
 }
 
 fn apply_attached_panes(

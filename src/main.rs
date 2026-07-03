@@ -733,6 +733,7 @@ fn main() -> Result<()> {
         .theme(theme.clone())
         .terminal_bg(terminal_bg)
         .toast_placement(ToastPlacement::BottomEnd)
+        .toast_margin((1, 2, 1, 1))
         .clipboard_config(clipboard_config(&config))
         .mouse(true);
 

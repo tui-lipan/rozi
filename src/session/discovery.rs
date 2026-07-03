@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
 
+const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiscoveredSessionStatus {
     Running { panes: usize, has_layout: bool },
@@ -25,13 +27,19 @@ pub fn valid_session_name(name: &str) -> bool {
 }
 
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
+    discover_sessions_excluding(None)
+}
+
+pub fn discover_sessions_excluding(
+    exclude_name: Option<&str>,
+) -> std::io::Result<Vec<DiscoveredSession>> {
     let dir = crate::control::runtime_dir()?;
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err),
     };
-    let mut rows = Vec::new();
+    let mut sockets = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -43,7 +51,24 @@ pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
         else {
             continue;
         };
-        rows.push(query_session_socket(name, &path));
+        if exclude_name == Some(name) {
+            continue;
+        }
+        sockets.push((name.to_string(), path));
+    }
+
+    let mut handles = Vec::with_capacity(sockets.len());
+    for (name, path) in sockets {
+        handles.push(std::thread::spawn(move || {
+            query_session_socket(&name, &path)
+        }));
+    }
+
+    let mut rows = Vec::with_capacity(handles.len());
+    for handle in handles {
+        if let Ok(row) = handle.join() {
+            rows.push(row);
+        }
     }
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(rows)
@@ -52,8 +77,8 @@ pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
 pub fn query_session_socket(name: &str, path: &Path) -> DiscoveredSession {
     let status = match std::os::unix::net::UnixStream::connect(path) {
         Ok(mut stream) => {
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
-            let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+            let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
+            let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
             if crate::session::protocol::write_frame(
                 &mut stream,
                 &ClientMessage::Attach {

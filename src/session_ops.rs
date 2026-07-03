@@ -40,10 +40,9 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 fn discovered_with_current(
     ctx: &Context<HyprmuxApp>,
 ) -> std::io::Result<Vec<crate::session::discovery::DiscoveredSession>> {
-    let mut rows = crate::session::discovery::discover_sessions()?;
-    if let Some(name) = &ctx.state.session_name
-        && !rows.iter().any(|row| row.name == *name)
-    {
+    let current_name = ctx.state.session_name.as_deref();
+    let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
+    if let Some(name) = &ctx.state.session_name {
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
             status: crate::session::discovery::DiscoveredSessionStatus::Running {

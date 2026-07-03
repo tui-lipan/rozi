@@ -90,6 +90,8 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
+        Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
+        Action::DetachSession => crate::session_ops::detach_current_session(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::SelectTheme(preset) => {
             select_theme(ctx, preset);

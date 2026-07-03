@@ -27,6 +27,8 @@ pub enum Action {
     OpenSearch,
     SaveProfile,
     OpenProfilePicker,
+    OpenSessionPicker,
+    DetachSession,
     OpenThemePicker,
     SelectTheme(ThemePreset),
     TogglePalette,
@@ -73,6 +75,8 @@ impl Action {
             Action::OpenSearch => "search",
             Action::SaveProfile => "save-profile",
             Action::OpenProfilePicker => "open-profile",
+            Action::OpenSessionPicker => "sessions",
+            Action::DetachSession => "detach-session",
             Action::OpenThemePicker => "choose-theme",
             Action::TogglePalette => "command-palette",
             Action::ToggleHelp => "help",
@@ -119,6 +123,8 @@ impl Action {
             "search" => Action::OpenSearch,
             "save-profile" => Action::SaveProfile,
             "open-profile" => Action::OpenProfilePicker,
+            "sessions" => Action::OpenSessionPicker,
+            "detach-session" => Action::DetachSession,
             "choose-theme" => Action::OpenThemePicker,
             "command-palette" => Action::TogglePalette,
             "help" => Action::ToggleHelp,
@@ -370,9 +376,23 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::OpenProfilePicker,
-            label: "Profiles",
+            label: "Show profiles",
             keys: "",
             category: "Profile",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::OpenSessionPicker,
+            label: "Show sessions",
+            keys: "",
+            category: "Session",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::DetachSession,
+            label: "Detach from session",
+            keys: "",
+            category: "Session",
             palette: true,
         },
         CommandBinding {
@@ -502,7 +522,7 @@ mod tests {
             .find(|binding| binding.action == Action::OpenProfilePicker)
             .expect("profiles binding exists");
 
-        assert_eq!(binding.label, "Profiles");
+        assert_eq!(binding.label, "Show profiles");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Profile");
         assert!(binding.palette);

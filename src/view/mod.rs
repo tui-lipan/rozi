@@ -22,7 +22,7 @@ use crate::state::TOP_BAR_HEIGHT;
 use bar::{empty_workspace_panel, top_bar};
 use overlays::{
     help_overlay, palette_overlay, profile_picker_overlay, rename_overlay, save_profile_overlay,
-    search_overlay, theme_picker_overlay,
+    search_overlay, session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 
@@ -55,7 +55,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.show_theme_picker
         || ctx.state.rename.is_some()
         || ctx.state.save_profile_prompt.is_some()
-        || ctx.state.show_profile_picker;
+        || ctx.state.show_profile_picker
+        || ctx.state.show_session_picker;
     let dialog_dim_progress = ctx.transition::<f32>(
         "hyprmux-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -187,6 +188,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.show_profile_picker {
         root = root.child(profile_picker_overlay(ctx));
+    }
+    if ctx.state.show_session_picker {
+        root = root.child(session_picker_overlay(ctx));
     }
 
     ThemeProvider::new(ctx.state.theme.clone())

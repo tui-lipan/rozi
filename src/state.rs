@@ -7,6 +7,7 @@ use tui_lipan::prelude::*;
 use crate::anim::GeometryAnimation;
 use crate::config::{HyprmuxConfig, ProfileEntry};
 use crate::pane::TerminalPane;
+use crate::session::discovery::DiscoveredSession;
 use crate::tiling::{DwindleTree, append_tiled_window, collect_tree_leaves};
 
 pub type PaneId = u32;
@@ -364,6 +365,24 @@ pub struct ProfilePickerState {
     pub pending_delete: Option<usize>,
 }
 
+pub struct SessionPickerState {
+    pub entries: Vec<DiscoveredSession>,
+    pub input: TextInput,
+    pub selected: usize,
+    pub pending_kill: Option<usize>,
+}
+
+impl SessionPickerState {
+    pub fn new(entries: Vec<DiscoveredSession>) -> Self {
+        Self {
+            entries,
+            input: TextInput::new(""),
+            selected: 0,
+            pending_kill: None,
+        }
+    }
+}
+
 impl ProfilePickerState {
     pub fn new(entries: Vec<ProfileEntry>) -> Self {
         Self {
@@ -547,6 +566,7 @@ pub struct State {
     pub focused_pane: Option<PaneId>,
     pub next_pane_id: PaneId,
     pub next_pty_generation: u64,
+    pub runtime_epoch: u64,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
@@ -565,6 +585,8 @@ pub struct State {
     pub save_profile_prompt: Option<PaneRenameState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
+    pub show_session_picker: bool,
+    pub session_picker: Option<SessionPickerState>,
     pub copy_mode: Option<CopyModeState>,
     pub scratch: Option<Pane>,
     pub scratch_visible: bool,
@@ -574,7 +596,15 @@ pub struct State {
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     pub session_attached: bool,
+    pub pending_session_attach: Option<PendingSessionAttach>,
     pub last_pushed_layout: Option<String>,
+}
+
+pub struct PendingSessionAttach {
+    pub epoch: u64,
+    pub name: String,
+    pub client: Option<crate::session::client::SessionClient>,
+    pub migrate_local_panes: bool,
 }
 
 impl State {
@@ -600,6 +630,7 @@ impl State {
             focused_pane: Some(initial_id),
             next_pane_id: initial_id + 1,
             next_pty_generation: 1,
+            runtime_epoch: 0,
             mode: Mode::Normal,
             moving_pane: None,
             resizing_pane: None,
@@ -618,6 +649,8 @@ impl State {
             save_profile_prompt: None,
             show_profile_picker: false,
             profile_picker: None,
+            show_session_picker: false,
+            session_picker: None,
             copy_mode: None,
             scratch: None,
             scratch_visible: false,
@@ -626,6 +659,7 @@ impl State {
             session_client: None,
             session_name: None,
             session_attached: false,
+            pending_session_attach: None,
             last_pushed_layout: None,
         }
     }

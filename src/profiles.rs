@@ -180,6 +180,7 @@ pub fn restore_state_from_profile(
         focused_pane,
         next_pane_id,
         next_pty_generation: 1,
+        runtime_epoch: 0,
         mode: Mode::Normal,
         moving_pane: None,
         resizing_pane: None,
@@ -198,6 +199,8 @@ pub fn restore_state_from_profile(
         save_profile_prompt: None,
         show_profile_picker: false,
         profile_picker: None,
+        show_session_picker: false,
+        session_picker: None,
         copy_mode: None,
         scratch: None,
         scratch_visible: false,
@@ -206,6 +209,7 @@ pub fn restore_state_from_profile(
         session_client: None,
         session_name: None,
         session_attached: false,
+        pending_session_attach: None,
         last_pushed_layout: None,
     }
 }

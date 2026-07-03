@@ -20,6 +20,7 @@ mod resize_move_ops;
 mod scratchpad;
 mod search_ops;
 mod session;
+mod session_ops;
 mod state;
 mod theme_ops;
 mod tiling;
@@ -118,6 +119,14 @@ pub enum Msg {
     ProfilePickerSetDefault,
     ProfilePickerDelete,
     SelectProfile(usize),
+    CloseSessionPicker,
+    SessionPickerRefresh,
+    SessionPickerQueryChanged(String),
+    SessionPickerSelect(usize),
+    SessionPickerActivate(usize),
+    SessionPickerCreateFromQuery,
+    SessionPickerDetachCurrent,
+    SessionPickerKillSelected,
     FocusPane(PaneId),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -128,11 +137,11 @@ pub enum Msg {
     EndResize(PaneId),
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
     ResizeSplit(PaneId, bool, i16, i16),
-    FinishOpen(PaneId, u64),
-    ActivatePane(PaneId, u64),
-    PruneClosed(PaneId, u64),
-    PtyReady(PaneId, u64, TerminalPty),
-    PtyEvent(PaneId, u64, TerminalPtyEvent),
+    FinishOpen(u64, PaneId, u64),
+    ActivatePane(u64, PaneId, u64),
+    PruneClosed(u64, PaneId, u64),
+    PtyReady(u64, PaneId, u64, TerminalPty),
+    PtyEvent(u64, PaneId, u64, TerminalPtyEvent),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
     PaneMouse(PaneId, Vec<u8>),
@@ -140,44 +149,60 @@ pub enum Msg {
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
     SessionConnected {
+        epoch: u64,
         name: String,
         client: session::client::SessionClient,
     },
-    SessionDisconnected(String),
-    SessionAttachFailed(String),
+    SessionDisconnected {
+        epoch: u64,
+        name: String,
+    },
+    SessionAttachFailed {
+        epoch: u64,
+        message: String,
+    },
     SessionAttached {
+        epoch: u64,
         session: String,
         panes: Vec<session::protocol::AttachedPane>,
         layout_blob: Option<String>,
     },
     SessionSpawnResult {
+        epoch: u64,
         pane_id: PaneId,
         generation: u64,
         ok: bool,
         error: Option<String>,
     },
     SessionSnapshot {
+        epoch: u64,
         pane_id: PaneId,
         generation: u64,
         snapshot: session::protocol::WireSnapshot,
     },
     SessionExited {
+        epoch: u64,
         pane_id: PaneId,
         generation: u64,
         code: i32,
     },
     SessionBell {
+        epoch: u64,
         pane_id: PaneId,
         generation: u64,
     },
     SessionSearchResult {
+        epoch: u64,
         request_id: u64,
         pane_id: PaneId,
         generation: u64,
         query: String,
         matches: Vec<session::protocol::WireSearchMatch>,
     },
-    SessionError(String),
+    SessionError {
+        epoch: u64,
+        message: String,
+    },
 }
 
 impl Component for HyprmuxApp {
@@ -196,7 +221,6 @@ impl Component for HyprmuxApp {
             .control_guard
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
-        state.session_name = self.attach_session.clone();
         theme_ops::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -226,6 +250,13 @@ impl Component for HyprmuxApp {
         if let Some(name) = attach_session {
             let theme_tick = ctx.state.theme_watcher.is_some();
             let bar_tick = ctx.state.config.bar.has_clock();
+            let epoch = ctx.state.runtime_epoch;
+            ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch,
+                name: name.clone(),
+                client: None,
+                migrate_local_panes: true,
+            });
             return Some(Command::spawn(move |link: CommandLink<Msg>| {
                 if let Some(listener) = control_listener {
                     let listener_link = link.clone();
@@ -234,7 +265,7 @@ impl Component for HyprmuxApp {
                     });
                 }
                 let session_link = link.clone();
-                std::thread::spawn(move || attach_session_client(name, session_link));
+                std::thread::spawn(move || attach_session_client(epoch, name, session_link));
                 if theme_tick {
                     std::thread::sleep(std::time::Duration::from_millis(150));
                     link.send(Msg::ThemeTick);
@@ -283,6 +314,7 @@ impl Component for HyprmuxApp {
 }
 
 pub(crate) fn startup_spawns(state: &mut State) -> Vec<pane_lifecycle::StartupSpawn> {
+    let epoch = state.runtime_epoch;
     let mut next_generation = state.next_pty_generation;
     let socket_path = state.control_socket_path.clone();
     let config = state.config.clone();
@@ -298,6 +330,7 @@ pub(crate) fn startup_spawns(state: &mut State) -> Vec<pane_lifecycle::StartupSp
             pane.pty_generation = generation;
             pane.terminal.bind_session(pane.id, generation);
             spawns.push((
+                epoch,
                 pane.id,
                 generation,
                 pane_lifecycle::pty_config_for_pane(&config, socket_path.as_deref(), pane),
@@ -308,14 +341,15 @@ pub(crate) fn startup_spawns(state: &mut State) -> Vec<pane_lifecycle::StartupSp
     spawns
 }
 
-fn attach_session_client(name: String, link: CommandLink<Msg>) {
+pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<Msg>) {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let Ok(path) = session::server::session_socket_path(&name) else {
-        link.send(Msg::SessionAttachFailed(format!(
-            "invalid session name {name:?}"
-        )));
+        link.send(Msg::SessionAttachFailed {
+            epoch,
+            message: format!("invalid session name {name:?}"),
+        });
         return;
     };
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -325,18 +359,28 @@ fn attach_session_client(name: String, link: CommandLink<Msg>) {
         match session::client::SessionClient::connect_attached(&path, name.clone(), tx) {
             Ok((client, attached)) => {
                 link.send(Msg::SessionConnected {
+                    epoch,
                     name: name.clone(),
                     client,
                 });
-                link.send(server_message_to_msg(attached));
+                link.send(server_message_to_msg(epoch, attached));
                 for message in rx {
-                    link.send(server_message_to_msg(message));
+                    link.send(server_message_to_msg(epoch, message));
                 }
-                link.send(Msg::SessionDisconnected(name));
+                link.send(Msg::SessionDisconnected { epoch, name });
                 return;
             }
             Err(err) => {
-                if !spawned {
+                if is_busy_attach_error(&err) {
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!(
+                            "session {name:?} is busy or not accepting clients: {err}"
+                        ),
+                    });
+                    return;
+                }
+                if !spawned && should_autostart_session(&err) {
                     spawned = true;
                     if path.exists() {
                         let _ = std::fs::remove_file(&path);
@@ -353,9 +397,10 @@ fn attach_session_client(name: String, link: CommandLink<Msg>) {
                     }
                 }
                 if Instant::now() >= deadline {
-                    link.send(Msg::SessionAttachFailed(format!(
-                        "could not attach to session {name:?}: {err}"
-                    )));
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("could not attach to session {name:?}: {err}"),
+                    });
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -364,7 +409,21 @@ fn attach_session_client(name: String, link: CommandLink<Msg>) {
     }
 }
 
-fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
+fn should_autostart_session(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+    )
+}
+
+fn is_busy_attach_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+fn server_message_to_msg(epoch: u64, message: session::protocol::ServerMessage) -> Msg {
     use session::protocol::ServerMessage;
     match message {
         ServerMessage::Attached {
@@ -373,6 +432,7 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             layout_blob,
             ..
         } => Msg::SessionAttached {
+            epoch,
             session,
             panes,
             layout_blob,
@@ -382,6 +442,7 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             generation,
             snapshot,
         } => Msg::SessionSnapshot {
+            epoch,
             pane_id,
             generation,
             snapshot,
@@ -391,6 +452,7 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             generation,
             code,
         } => Msg::SessionExited {
+            epoch,
             pane_id,
             generation,
             code,
@@ -399,6 +461,7 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             pane_id,
             generation,
         } => Msg::SessionBell {
+            epoch,
             pane_id,
             generation,
         },
@@ -409,6 +472,7 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             query,
             matches,
         } => Msg::SessionSearchResult {
+            epoch,
             request_id,
             pane_id,
             generation,
@@ -421,12 +485,13 @@ fn server_message_to_msg(message: session::protocol::ServerMessage) -> Msg {
             ok,
             error,
         } => Msg::SessionSpawnResult {
+            epoch,
             pane_id,
             generation,
             ok,
             error,
         },
-        ServerMessage::Error { message, .. } => Msg::SessionError(message),
+        ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
     }
 }
 
@@ -964,78 +1029,23 @@ fn run_server_cli(name: &str) -> Result<()> {
 }
 
 fn run_list_sessions_cli() -> Result<()> {
-    let dir = control::runtime_dir()?;
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err.into()),
-    };
-    let mut rows = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let Some(name) = file_name
-            .strip_prefix("session-")
-            .and_then(|name| name.strip_suffix(".sock"))
-        else {
-            continue;
-        };
-        if let Some(status) = query_session_socket(name, &path) {
-            rows.push(status);
+    for session in session::discovery::discover_sessions()? {
+        match session.status {
+            session::discovery::DiscoveredSessionStatus::Running { panes, has_layout } => println!(
+                "{}\trunning\tpanes={}\tlayout={}",
+                session.name,
+                panes,
+                if has_layout { "yes" } else { "no" }
+            ),
+            session::discovery::DiscoveredSessionStatus::Busy => {
+                println!("{}\tbusy\tpanes=?\tlayout=?", session.name)
+            }
+            session::discovery::DiscoveredSessionStatus::Unknown => {
+                println!("{}\tunknown\tpanes=?\tlayout=?", session.name)
+            }
         }
     }
-    rows.sort_by(|a, b| a.name.cmp(&b.name));
-    for status in rows {
-        println!(
-            "{}\trunning\tpanes={}\tlayout={}",
-            status.name,
-            status.panes,
-            if status.has_layout { "yes" } else { "no" }
-        );
-    }
     Ok(())
-}
-
-struct SessionListStatus {
-    name: String,
-    panes: usize,
-    has_layout: bool,
-}
-
-fn query_session_socket(name: &str, path: &std::path::Path) -> Option<SessionListStatus> {
-    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
-    use std::time::Duration;
-
-    let mut stream = std::os::unix::net::UnixStream::connect(path).ok()?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(250)))
-        .ok()?;
-    stream
-        .set_write_timeout(Some(Duration::from_millis(250)))
-        .ok()?;
-    session::protocol::write_frame(
-        &mut stream,
-        &ClientMessage::Attach {
-            session: name.to_string(),
-            protocol_version: PROTOCOL_VERSION,
-        },
-    )
-    .ok()?;
-    let message = session::protocol::read_frame::<_, ServerMessage>(&mut stream).ok()?;
-    let ServerMessage::Attached {
-        panes, layout_blob, ..
-    } = message
-    else {
-        return None;
-    };
-    let _ = session::protocol::write_frame(&mut stream, &ClientMessage::Detach);
-    Some(SessionListStatus {
-        name: name.to_string(),
-        panes: panes.iter().filter(|pane| pane.exited.is_none()).count(),
-        has_layout: layout_blob.is_some(),
-    })
 }
 
 fn run_kill_session_cli(name: &str) -> Result<()> {
@@ -1143,14 +1153,14 @@ mod tests {
         state.workspaces[1].panes.push(closing);
 
         let spawns = startup_spawns(&mut state);
-        let ids: Vec<PaneId> = spawns.iter().map(|(id, _, _, _)| *id).collect();
+        let ids: Vec<PaneId> = spawns.iter().map(|(_, id, _, _, _)| *id).collect();
 
         assert_eq!(ids, vec![1, 2, 3]);
 
         let restored_config = spawns
             .iter()
-            .find(|(id, _, _, _)| *id == 3)
-            .map(|(_, _, config, _)| format!("{config:?}"))
+            .find(|(_, id, _, _, _)| *id == 3)
+            .map(|(_, _, _, config, _)| format!("{config:?}"))
             .expect("restored pane spawn config");
 
         assert!(restored_config.contains("/bin/bash"), "{restored_config}");
@@ -1170,7 +1180,7 @@ mod tests {
             state.next_pty_generation
                 > spawns
                     .iter()
-                    .map(|(_, generation, _, _)| *generation)
+                    .map(|(_, _, generation, _, _)| *generation)
                     .max()
                     .unwrap()
         );

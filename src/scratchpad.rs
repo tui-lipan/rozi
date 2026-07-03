@@ -96,6 +96,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         pane.terminal_active = true;
         ctx.state.scratch = Some(pane);
         return Update::with_command(spawn_pty_command(
+            ctx.state.runtime_epoch,
             SCRATCH_PANE_ID,
             generation,
             scratch_pty_config(&ctx.state.config, ctx.state.control_socket_path.as_deref()),

@@ -231,6 +231,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     let system_theme = ctx.state.system_theme.clone();
     let control_socket_path = ctx.state.control_socket_path.clone();
     let next_pty_generation = ctx.state.next_pty_generation;
+    let runtime_epoch = ctx.state.runtime_epoch.saturating_add(1);
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
 
@@ -239,6 +240,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     new_state.system_theme = system_theme;
     new_state.control_socket_path = control_socket_path;
     new_state.next_pty_generation = next_pty_generation;
+    new_state.runtime_epoch = runtime_epoch;
     ctx.state = new_state;
     theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast()

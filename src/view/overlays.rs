@@ -5,12 +5,14 @@ use tui_lipan::prelude::*;
 use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::{Action, CommandBinding};
-use crate::state::{ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, ThemePreset};
+use crate::state::{
+    ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, SessionPickerState, ThemePreset,
+};
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
     help_scroll_key, palette_key, profile_picker_key, rename_input_key, save_profile_key,
-    search_input_key, theme_picker_key,
+    search_input_key, session_picker_key, theme_picker_key,
 };
 use super::{
     action_palette_modal, fg_only, modal_scrollbar_config, shared_search_palette, styled_modal,
@@ -396,6 +398,154 @@ fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> List
     .description("again to confirm")
     .description_style(Style::new().fg(fg).italic())
     .style(Style::new().bg(error_bg).fg(fg))
+}
+
+pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Text::new("").into();
+    };
+    let body = VStack::new()
+        .child(session_picker_palette(ctx, picker))
+        .child(session_picker_hints(ctx));
+
+    action_palette_modal(ctx, "Sessions")
+        .on_close(ctx.link().callback(|_| Msg::CloseSessionPicker))
+        .child(body)
+        .key(session_picker_key())
+}
+
+fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
+    let theme = &ctx.state.theme;
+    let hint = |label: &str, key: &str| -> Element {
+        HStack::new()
+            .gap(1)
+            .width(Length::Auto)
+            .child(Text::new(label).style(fg_only(&theme.primary).bold()))
+            .child(Text::new(key).style(fg_only(&theme.muted)))
+            .into()
+    };
+    HStack::new()
+        .padding((1, 1, 0, 1))
+        .justify(Justify::SpaceBetween)
+        .gap(2)
+        .child(hint("open", "enter"))
+        .child(hint("new", "ctrl+n"))
+        .child(hint("detach", "ctrl+d"))
+        .child(hint("kill", "ctrl+k"))
+        .into()
+}
+
+fn session_picker_palette(
+    ctx: &Context<HyprmuxApp>,
+    picker: &SessionPickerState,
+) -> SearchPalette<usize> {
+    let theme = &ctx.state.theme;
+    let query = picker.input.text().trim().to_ascii_lowercase();
+    let current = ctx.state.session_name.as_deref();
+    let entries = picker
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
+        .map(|(index, entry)| {
+            let mut label = entry.name.clone();
+            if current == Some(entry.name.as_str()) {
+                label.push_str("  • current");
+            }
+            SearchEntry::item(label, index)
+                .description(session_description(entry))
+                .active(index == picker.selected)
+        })
+        .collect::<Vec<_>>();
+    let empty_text = if picker.entries.is_empty() {
+        "No sessions — type a name and press Ctrl+N".to_string()
+    } else if query.is_empty() {
+        "Type to filter sessions, or enter a new name".to_string()
+    } else {
+        format!("No sessions match `{query}` — Ctrl+N creates it")
+    };
+
+    let pending_kill = picker.pending_kill;
+    let error_bg = theme.status.error;
+    let selection_style = if pending_kill.is_some() {
+        Style::new()
+            .bg(theme.status.error)
+            .fg(readable_text_color(None, error_bg))
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    } else {
+        Style::new()
+            .fg(theme.surface.backdrop)
+            .bg(theme.border_active)
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    };
+
+    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .entries(entries)
+        .placeholder("Search or name session...")
+        .initial_query(picker.input.text().to_string())
+        .initial_selected_item_index(Some(picker.selected))
+        .sync_selection(true)
+        .empty_text(empty_text)
+        .description_placement(DescriptionPlacement::Right)
+        .list_selection_style(selection_style)
+        .list_unfocused_selection_style(selection_style)
+        .input_key_interceptor(session_picker_key_interceptor(ctx))
+        .on_query_change(
+            ctx.link()
+                .callback(|query: Arc<str>| Msg::SessionPickerQueryChanged(query.to_string())),
+        )
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SessionPickerSelect(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
+        );
+    if pending_kill.is_some() {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            if pending_kill == Some(item.value) {
+                Some(render_pending_delete_item(item, error_bg))
+            } else {
+                None
+            }
+        }));
+    }
+    palette
+}
+
+fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
+    use crate::session::discovery::DiscoveredSessionStatus;
+    match &entry.status {
+        DiscoveredSessionStatus::Running { panes, has_layout } => {
+            ItemDescription::new().right(format!(
+                "running · panes={panes} · layout={}",
+                if *has_layout { "yes" } else { "no" }
+            ))
+        }
+        DiscoveredSessionStatus::Busy => ItemDescription::new().right("busy"),
+        DiscoveredSessionStatus::Unknown => ItemDescription::new().right("unknown"),
+    }
+}
+
+fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+    ctx.link().key_handler(|key| {
+        if key.is(KeyCode::Esc) {
+            Some(Msg::CloseSessionPicker)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+            Some(Msg::SessionPickerCreateFromQuery)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+            Some(Msg::SessionPickerDetachCurrent)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
+            Some(Msg::SessionPickerKillSelected)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+            Some(Msg::SessionPickerRefresh)
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {

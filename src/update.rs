@@ -35,7 +35,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
                 Action::OpenThemePicker => {}
-                Action::SaveProfile | Action::OpenProfilePicker => {}
+                Action::SaveProfile | Action::OpenProfilePicker | Action::OpenSessionPicker => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
                 // previously focused pane on hide); don't override it.
                 Action::ToggleScratchpad => {}
@@ -143,6 +143,35 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
+        Msg::CloseSessionPicker => {
+            ctx.state.show_session_picker = false;
+            ctx.state.session_picker = None;
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Msg::SessionPickerRefresh => crate::session_ops::refresh_session_picker(ctx),
+        Msg::SessionPickerQueryChanged(query) => {
+            if let Some(picker) = ctx.state.session_picker.as_mut() {
+                picker.input.set_text(query);
+                picker.pending_kill = None;
+            }
+            Update::full()
+        }
+        Msg::SessionPickerSelect(index) => {
+            if let Some(picker) = ctx.state.session_picker.as_mut() {
+                picker.selected = index.min(picker.entries.len().saturating_sub(1));
+                if picker.pending_kill != Some(index) {
+                    picker.pending_kill = None;
+                }
+            }
+            Update::full()
+        }
+        Msg::SessionPickerActivate(index) => {
+            crate::session_ops::activate_selected_session(ctx, index)
+        }
+        Msg::SessionPickerCreateFromQuery => crate::session_ops::create_from_query(ctx),
+        Msg::SessionPickerDetachCurrent => crate::session_ops::detach_current_session(ctx),
+        Msg::SessionPickerKillSelected => crate::session_ops::kill_selected_session(ctx),
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -203,7 +232,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ResizeSplit(id, horizontal_split, dx, dy) => {
             crate::resize_move_ops::resize_split_by_drag(ctx, id, horizontal_split, dx, dy)
         }
-        Msg::FinishOpen(id, generation) => {
+        Msg::FinishOpen(epoch, id, generation) => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
                 if pane.pty_generation != generation {
                     return Update::none();
@@ -215,7 +247,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::ActivatePane(id, generation) => {
+        Msg::ActivatePane(epoch, id, generation) => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
                 if pane.pty_generation != generation {
                     return Update::none();
@@ -227,9 +262,24 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::PruneClosed(id, generation) => handle_prune_closed(ctx, id, generation),
-        Msg::PtyReady(id, generation, pty) => handle_pty_ready(ctx, id, generation, pty),
-        Msg::PtyEvent(id, generation, event) => handle_pty_event(ctx, id, generation, event),
+        Msg::PruneClosed(epoch, id, generation) => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            handle_prune_closed(ctx, id, generation)
+        }
+        Msg::PtyReady(epoch, id, generation, pty) => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            handle_pty_ready(ctx, id, generation, pty)
+        }
+        Msg::PtyEvent(epoch, id, generation, event) => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            handle_pty_event(ctx, id, generation, event)
+        }
         Msg::PaneInput(id, input) => handle_pane_input(ctx, id, input),
         Msg::PaneKey(id, key) => {
             focus_pane(&mut ctx.state, id);
@@ -243,12 +293,24 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PaneResize(id, cols, rows) => handle_pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => handle_pane_scroll(ctx, id, offset),
         Msg::ControlRequest(envelope) => crate::control_ops::handle_control_request(ctx, envelope),
-        Msg::SessionConnected { name, client } => {
-            ctx.state.session_name = Some(name);
-            ctx.state.session_client = Some(client);
+        Msg::SessionConnected {
+            epoch,
+            name,
+            client,
+        } => {
+            let Some(pending) = ctx.state.pending_session_attach.as_mut() else {
+                return Update::none();
+            };
+            if pending.epoch != epoch || pending.name != name {
+                return Update::none();
+            }
+            pending.client = Some(client);
             Update::full()
         }
-        Msg::SessionDisconnected(name) => {
+        Msg::SessionDisconnected { epoch, name } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             if ctx.state.session_name.as_deref() == Some(name.as_str()) {
                 ctx.state.session_attached = false;
                 ctx.state.session_client = None;
@@ -269,15 +331,41 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ));
             Update::full()
         }
-        Msg::SessionAttachFailed(message) => {
+        Msg::SessionAttachFailed { epoch, message } => {
+            let expected_pending = ctx
+                .state
+                .pending_session_attach
+                .as_ref()
+                .is_some_and(|pending| pending.epoch == epoch);
+            if !expected_pending {
+                return Update::none();
+            }
+            ctx.state.pending_session_attach = None;
             ctx.toast().push(error_toast("Session Attach", message));
             Update::full()
         }
         Msg::SessionAttached {
+            epoch,
             session,
             panes,
             layout_blob,
         } => {
+            let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
+                return Update::none();
+            };
+            if pending.epoch != epoch || pending.name != session {
+                return Update::none();
+            }
+            let pending = ctx
+                .state
+                .pending_session_attach
+                .take()
+                .expect("pending attach checked above");
+            let Some(client) = pending.client else {
+                return Update::none();
+            };
+            ctx.state.runtime_epoch = epoch;
+            ctx.state.session_client = Some(client);
             ctx.state.session_name = Some(session);
             ctx.state.session_attached = true;
             let mut restore_layout = false;
@@ -294,23 +382,36 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 restored.session_client = client;
                 restored.session_name = name;
                 restored.session_attached = true;
+                restored.runtime_epoch = epoch;
                 restored.last_pushed_layout = None;
                 restored.control_socket_path = control_socket_path;
                 restored.system_theme = system_theme;
                 ctx.state = restored;
             }
             let had_panes = !panes.is_empty();
+            if !had_panes && !pending.migrate_local_panes {
+                replace_with_fresh_server_state(ctx, epoch);
+                spawn_existing_panes_on_session(ctx);
+                return Update::full();
+            }
             apply_attached_panes(ctx, panes, restore_layout);
-            if !had_panes {
+            if !had_panes && pending.migrate_local_panes {
+                ctx.toast().push(crate::pty_events::info_toast(
+                    "Attached to new session; local panes were recreated as server panes",
+                ));
                 spawn_existing_panes_on_session(ctx);
             }
             Update::full()
         }
         Msg::SessionSnapshot {
+            epoch,
             pane_id,
             generation,
             snapshot,
         } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
                 && pane.pty_generation == generation
                 && pane.terminal.is_server_backed()
@@ -329,10 +430,14 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::SessionExited {
+            epoch,
             pane_id,
             generation,
             code,
         } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             let mut should_close = false;
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
                 if pane.pty_generation != generation {
@@ -351,13 +456,22 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Update::full()
             }
         }
-        Msg::SessionBell { .. } => Update::none(),
+        Msg::SessionBell { epoch, .. } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            Update::none()
+        }
         Msg::SessionSpawnResult {
+            epoch,
             pane_id,
             generation,
             ok,
             error,
         } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             let mut should_close = false;
             let mut toast_error = None;
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
@@ -388,12 +502,16 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
         }
         Msg::SessionSearchResult {
+            epoch,
             request_id,
             pane_id,
             generation,
             query,
             matches,
         } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) else {
                 return Update::none();
             };
@@ -422,7 +540,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::SessionError(message) => {
+        Msg::SessionError { epoch, message } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
             ctx.toast().push(error_toast("Session", message));
             Update::full()
         }
@@ -525,6 +646,32 @@ fn apply_attached_panes(
         ctx.state.focused_pane = ctx.state.workspaces[0].panes.first().map(|pane| pane.id);
         ctx.state.workspaces[0].focused_pane = ctx.state.focused_pane;
     }
+}
+
+fn replace_with_fresh_server_state(ctx: &mut Context<HyprmuxApp>, epoch: u64) {
+    let config = ctx.state.config.clone();
+    let theme = ctx.state.theme.clone();
+    let theme_watcher = ctx.state.theme_watcher.take();
+    let system_theme = ctx.state.system_theme.clone();
+    let control_socket_path = ctx.state.control_socket_path.clone();
+    let session_client = ctx.state.session_client.clone();
+    let session_name = ctx.state.session_name.clone();
+    let next_pty_generation = ctx.state.next_pty_generation;
+
+    let mut fresh = State::new(config, theme);
+    fresh.theme_watcher = theme_watcher;
+    fresh.system_theme = system_theme;
+    fresh.control_socket_path = control_socket_path;
+    fresh.session_client = session_client;
+    fresh.session_name = session_name;
+    fresh.session_attached = true;
+    fresh.runtime_epoch = epoch;
+    fresh.next_pty_generation = next_pty_generation;
+    ctx.state = fresh;
+    crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
+    ctx.toast().push(crate::pty_events::info_toast(
+        "Attached to empty session; opened a fresh server pane",
+    ));
 }
 
 fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {

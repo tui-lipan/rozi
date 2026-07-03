@@ -16,7 +16,7 @@ use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
 pub(crate) type OpenTimers = Option<(Duration, Duration)>;
-pub(crate) type StartupSpawn = (PaneId, u64, TerminalPtyConfig, OpenTimers);
+pub(crate) type StartupSpawn = (u64, PaneId, u64, TerminalPtyConfig, OpenTimers);
 
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
@@ -99,6 +99,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let update = if let Some((client, command, cwd, title, cols, rows, keep_open)) = server_spawn {
         client.spawn_pane(id, generation, command, cwd, cols, rows, keep_open, title);
         Update::with_command(open_timers_command(
+            ctx.state.runtime_epoch,
             id,
             generation,
             open_delay,
@@ -106,6 +107,7 @@ pub(crate) fn spawn_pane_in_workspace(
         ))
     } else {
         Update::with_command(spawn_pty_command(
+            ctx.state.runtime_epoch,
             id,
             generation,
             pty_config,
@@ -149,6 +151,7 @@ pub(crate) fn begin_close_pane(
         choose_fallback_focus(&mut ctx.state);
         request_current_pane_focus(ctx);
         Update::with_command(prune_closed_command(
+            ctx.state.runtime_epoch,
             id,
             generation.unwrap_or_default(),
             anim::close_delay(animations),
@@ -264,10 +267,17 @@ pub(crate) fn initial_command(
             let listener_link = link.clone();
             std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
         }
-        for (id, generation, config, open_timers) in spawns {
-            spawn_pty(id, generation, config, link.clone());
+        for (epoch, id, generation, config, open_timers) in spawns {
+            spawn_pty(epoch, id, generation, config, link.clone());
             if let Some((open_delay, activate_delay)) = open_timers {
-                run_open_timers(id, generation, open_delay, activate_delay, link.clone());
+                run_open_timers(
+                    epoch,
+                    id,
+                    generation,
+                    open_delay,
+                    activate_delay,
+                    link.clone(),
+                );
             }
         }
         if theme_tick {
@@ -350,31 +360,34 @@ pub(crate) fn pty_config_for_pane(
 }
 
 pub(crate) fn spawn_pty_command(
+    epoch: u64,
     id: PaneId,
     generation: u64,
     config: TerminalPtyConfig,
     open_timers: OpenTimers,
 ) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
-        spawn_pty(id, generation, config, link.clone());
+        spawn_pty(epoch, id, generation, config, link.clone());
         if let Some((open_delay, activate_delay)) = open_timers {
-            run_open_timers(id, generation, open_delay, activate_delay, link);
+            run_open_timers(epoch, id, generation, open_delay, activate_delay, link);
         }
     })
 }
 
 pub(crate) fn open_timers_command(
+    epoch: u64,
     id: PaneId,
     generation: u64,
     open_delay: Duration,
     activate_delay: Duration,
 ) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
-        run_open_timers(id, generation, open_delay, activate_delay, link);
+        run_open_timers(epoch, id, generation, open_delay, activate_delay, link);
     })
 }
 
 fn run_open_timers(
+    epoch: u64,
     id: PaneId,
     generation: u64,
     open_delay: Duration,
@@ -384,15 +397,16 @@ fn run_open_timers(
     if !open_delay.is_zero() {
         std::thread::sleep(open_delay);
     }
-    link.send(Msg::FinishOpen(id, generation));
+    link.send(Msg::FinishOpen(epoch, id, generation));
     let remaining = activate_delay.saturating_sub(open_delay);
     if !remaining.is_zero() {
         std::thread::sleep(remaining);
     }
-    link.send(Msg::ActivatePane(id, generation));
+    link.send(Msg::ActivatePane(epoch, id, generation));
 }
 
 pub(crate) fn spawn_pty(
+    epoch: u64,
     id: PaneId,
     generation: u64,
     config: TerminalPtyConfig,
@@ -400,10 +414,11 @@ pub(crate) fn spawn_pty(
 ) {
     let event_link = link.clone();
     match TerminalPty::spawn(config, move |event| {
-        event_link.send(Msg::PtyEvent(id, generation, event));
+        event_link.send(Msg::PtyEvent(epoch, id, generation, event));
     }) {
-        Ok(pty) => link.send(Msg::PtyReady(id, generation, pty)),
+        Ok(pty) => link.send(Msg::PtyReady(epoch, id, generation, pty)),
         Err(err) => link.send(Msg::PtyEvent(
+            epoch,
             id,
             generation,
             TerminalPtyEvent::Error(err.to_string().into()),
@@ -411,12 +426,17 @@ pub(crate) fn spawn_pty(
     }
 }
 
-pub(crate) fn prune_closed_command(id: PaneId, generation: u64, delay: Duration) -> Command {
+pub(crate) fn prune_closed_command(
+    epoch: u64,
+    id: PaneId,
+    generation: u64,
+    delay: Duration,
+) -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
-        link.send(Msg::PruneClosed(id, generation));
+        link.send(Msg::PruneClosed(epoch, id, generation));
     })
 }
 

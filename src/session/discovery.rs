@@ -1,0 +1,119 @@
+use std::path::Path;
+use std::time::Duration;
+
+use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DiscoveredSessionStatus {
+    Running { panes: usize, has_layout: bool },
+    Busy,
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredSession {
+    pub name: String,
+    pub status: DiscoveredSessionStatus,
+}
+
+#[allow(dead_code)]
+pub fn valid_session_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
+    let dir = crate::control::runtime_dir()?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut rows = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(name) = file_name
+            .strip_prefix("session-")
+            .and_then(|name| name.strip_suffix(".sock"))
+        else {
+            continue;
+        };
+        rows.push(query_session_socket(name, &path));
+    }
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(rows)
+}
+
+pub fn query_session_socket(name: &str, path: &Path) -> DiscoveredSession {
+    let status = match std::os::unix::net::UnixStream::connect(path) {
+        Ok(mut stream) => {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+            if crate::session::protocol::write_frame(
+                &mut stream,
+                &ClientMessage::Attach {
+                    session: name.to_string(),
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            )
+            .is_err()
+            {
+                DiscoveredSessionStatus::Unknown
+            } else {
+                match crate::session::protocol::read_frame::<_, ServerMessage>(&mut stream) {
+                    Ok(ServerMessage::Attached {
+                        panes, layout_blob, ..
+                    }) => {
+                        let _ = crate::session::protocol::write_frame(
+                            &mut stream,
+                            &ClientMessage::Detach,
+                        );
+                        DiscoveredSessionStatus::Running {
+                            panes: panes.iter().filter(|pane| pane.exited.is_none()).count(),
+                            has_layout: layout_blob.is_some(),
+                        }
+                    }
+                    Err(err)
+                        if matches!(
+                            err.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        DiscoveredSessionStatus::Busy
+                    }
+                    _ => DiscoveredSessionStatus::Unknown,
+                }
+            }
+        }
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            DiscoveredSessionStatus::Busy
+        }
+        Err(_) => DiscoveredSessionStatus::Unknown,
+    };
+    DiscoveredSession {
+        name: name.to_string(),
+        status,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn validates_in_app_session_names() {
+        assert!(valid_session_name("dev_1-prod"));
+        assert!(!valid_session_name(""));
+        assert!(!valid_session_name("bad/name"));
+        assert!(!valid_session_name("bad name"));
+    }
+}

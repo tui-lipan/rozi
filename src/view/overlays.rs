@@ -494,20 +494,13 @@ fn palette_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
         .unwrap_or_else(|| binding.keys.to_string())
 }
 
-/// Display keys in the help overlay. Palette-only commands with no shortcut are
-/// labeled as palette commands rather than as unset bindings.
+/// Display keys in the help overlay. Empty active keys render as `not set`.
 fn help_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
     ctx.state
         .config
         .keymap
         .keys_for(binding.action)
-        .unwrap_or_else(|| {
-            if binding.keys.is_empty() && binding.palette {
-                "palette".to_string()
-            } else {
-                binding.keys.to_string()
-            }
-        })
+        .unwrap_or_else(|| binding.keys.to_string())
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {

@@ -35,6 +35,7 @@ struct UserBinding {
 #[derive(Clone, Debug)]
 pub struct Keymap {
     bindings: Vec<UserBinding>,
+    configured_actions: Vec<Action>,
 }
 
 impl Default for Keymap {
@@ -107,6 +108,7 @@ impl Keymap {
     pub fn empty() -> Self {
         Self {
             bindings: Vec::new(),
+            configured_actions: Vec::new(),
         }
     }
 
@@ -123,6 +125,12 @@ impl Keymap {
     /// Remove all active keys for an action before layering user replacements.
     pub fn clear_action(&mut self, action: Action) {
         self.bindings.retain(|binding| binding.action != action);
+    }
+
+    pub fn mark_configured(&mut self, action: Action) {
+        if !self.configured_actions.contains(&action) {
+            self.configured_actions.push(action);
+        }
     }
 
     pub fn held_action(&self, key: KeyEvent) -> Option<Action> {
@@ -156,7 +164,7 @@ impl Keymap {
             }
         }
         if keys.is_empty() {
-            None
+            self.configured_actions.contains(&action).then(String::new)
         } else {
             Some(keys.join(" / "))
         }

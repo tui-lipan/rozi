@@ -392,6 +392,101 @@ mod tests {
     }
 
     #[test]
+    fn empty_key_specs_clear_default_bindings() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            scratchpad = []
+            spawn = ""
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut warnings = Vec::new();
+        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+
+        assert_eq!(
+            keymap.keys_for(Action::ToggleScratchpad).as_deref(),
+            Some("")
+        );
+        assert_eq!(keymap.keys_for(Action::Spawn).as_deref(), Some(""));
+        assert_eq!(
+            keymap.prefix_action(KeyEvent {
+                code: KeyCode::Char('`'),
+                mods: KeyMods::NONE
+            }),
+            None
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn malformed_key_specs_clear_defaults_and_warn() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            scratchpad = "not-a-real-key"
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut warnings = Vec::new();
+        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+
+        assert_eq!(
+            keymap.keys_for(Action::ToggleScratchpad).as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            keymap.prefix_action(KeyEvent {
+                code: KeyCode::Char('`'),
+                mods: KeyMods::NONE
+            }),
+            None
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("not-a-real-key"));
+        assert!(warnings[0].contains("scratchpad"));
+    }
+
+    #[test]
+    fn no_default_actions_are_bindable() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            toggle-pane-synchronization = "prefix s"
+            save-profile = "alt-s"
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut warnings = Vec::new();
+        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+
+        assert_eq!(
+            keymap
+                .keys_for(Action::TogglePaneSynchronization)
+                .as_deref(),
+            Some("Ctrl+A S")
+        );
+        assert_eq!(
+            keymap.keys_for(Action::SaveProfile).as_deref(),
+            Some("Alt+S")
+        );
+        assert_eq!(
+            keymap.prefix_action(KeyEvent {
+                code: KeyCode::Char('s'),
+                mods: KeyMods::NONE
+            }),
+            Some(Action::TogglePaneSynchronization)
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
     fn file_config_parses_profile_default() {
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -1005,6 +1100,8 @@ fn build_keymap(
             warnings.push(format!("Unknown key action `{action_name}`; skipped"));
             continue;
         };
+        keymap.clear_action(action);
+        keymap.mark_configured(action);
         let mut parsed_bindings = Vec::new();
         for binding in spec.into_vec() {
             for candidate in binding
@@ -1020,11 +1117,8 @@ fn build_keymap(
                 }
             }
         }
-        if !parsed_bindings.is_empty() {
-            keymap.clear_action(action);
-            for (trigger, display) in parsed_bindings {
-                keymap.bind(action, trigger, display);
-            }
+        for (trigger, display) in parsed_bindings {
+            keymap.bind(action, trigger, display);
         }
     }
     keymap

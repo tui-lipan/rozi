@@ -224,10 +224,20 @@ Rebind window-management actions. Each entry maps an **action id** to one tui-li
 string or a list of them. Comma-separated alternatives also work inside one string. A binding is
 either an exact **held chord** (`alt-enter`) or a **prefix sequence** (`prefix c`, or the explicit
 `ctrl-a c`). Prefix bindings also define the held-modifier direct path: `prefix c` can be run as
-`modifier+c`. Configuring an action **replaces** its default keys when at least one replacement
-parses successfully; invalid replacements are warned and skipped. Workspace digits (`1`–`9`) are
-not individually rebindable, and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`)
-shows your active bindings.
+`modifier+c`. Configuring an action **replaces** its default keys. Empty values intentionally clear
+an action's defaults, for example `scratchpad = []` or `scratchpad = ""`. Invalid non-empty
+replacements are warned and skipped. Workspace digits (`1`–`9`) are not individually rebindable,
+and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`) shows real active bindings and
+`not set` for bindable commands with no active key.
+
+Examples:
+
+```toml
+[keys]
+toggle-pane-synchronization = "prefix s"
+save-profile = "prefix S"
+scratchpad = []
+```
 
 The parser is tui-lipan's `KeyBinding` parser. Use names like `shift-=`, not a bare `+`, for
 the plus shortcut because `+` is a modifier separator.

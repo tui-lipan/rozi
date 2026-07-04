@@ -207,7 +207,7 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 fn shutdown_session(name: &str) -> std::io::Result<()> {
     use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION};
     let path = crate::session::server::session_socket_path(name)?;
-    let mut stream = std::os::unix::net::UnixStream::connect(path)?;
+    let mut stream = std::os::unix::net::UnixStream::connect(&path)?;
     stream.set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(1)))?;
     crate::session::protocol::write_frame(
@@ -220,5 +220,9 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
     let _ = crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
         &mut stream,
     )?;
-    crate::session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)
+    crate::session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)?;
+    // The server unlinks its socket only once it finishes tearing down, which races the refresh
+    // that follows a kill. Drop the path now so the dead session leaves the list immediately.
+    let _ = std::fs::remove_file(&path);
+    Ok(())
 }

@@ -66,7 +66,7 @@ pub fn discover_sessions_excluding(
 
     let mut rows = Vec::with_capacity(handles.len());
     for handle in handles {
-        if let Ok(row) = handle.join() {
+        if let Ok(Some(row)) = handle.join() {
             rows.push(row);
         }
     }
@@ -74,7 +74,9 @@ pub fn discover_sessions_excluding(
     Ok(rows)
 }
 
-pub fn query_session_socket(name: &str, path: &Path) -> DiscoveredSession {
+/// Probes one session socket. Returns `None` for a stale socket whose server is gone (connection
+/// refused): the dead file is unlinked so a killed or crashed session stops appearing in the list.
+pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession> {
     let status = match std::os::unix::net::UnixStream::connect(path) {
         Ok(mut stream) => {
             let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
@@ -123,12 +125,15 @@ pub fn query_session_socket(name: &str, path: &Path) -> DiscoveredSession {
         {
             DiscoveredSessionStatus::Busy
         }
-        Err(_) => DiscoveredSessionStatus::Unknown,
+        Err(_) => {
+            let _ = std::fs::remove_file(path);
+            return None;
+        }
     };
-    DiscoveredSession {
+    Some(DiscoveredSession {
         name: name.to_string(),
         status,
-    }
+    })
 }
 
 #[cfg(test)]

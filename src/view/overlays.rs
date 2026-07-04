@@ -414,6 +414,9 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .key(session_picker_key())
 }
 
+/// The footer hint row only advertises keys that would actually act on the current state, so a
+/// hint never lies: `detach` appears only while attached, `kill`/`open` only for a selectable
+/// non-current session, and `new` only once the query is a valid name that isn't already listed.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let hint = |label: &str, key: &str| -> Element {
@@ -424,15 +427,45 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
             .child(Text::new(key).style(fg_only(&theme.muted)))
             .into()
     };
-    HStack::new()
+
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Text::new("").into();
+    };
+    let query = picker.input.text().trim();
+    let query_lower = query.to_ascii_lowercase();
+    let current = ctx.state.session_name.as_deref();
+    let visible = |entry: &crate::session::discovery::DiscoveredSession| {
+        query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
+    };
+    let selected = picker
+        .entries
+        .get(picker.selected)
+        .filter(|entry| visible(entry));
+    // Opening or killing the session you are already attached to is a no-op, so only offer them
+    // for some other session.
+    let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
+    let can_new = !query.is_empty()
+        && crate::session::discovery::valid_session_name(query)
+        && !picker.entries.iter().any(|entry| entry.name == query);
+
+    let mut row = HStack::new()
         .padding((1, 1, 0, 1))
-        .justify(Justify::SpaceBetween)
-        .gap(2)
-        .child(hint("open", "enter"))
-        .child(hint("new", "ctrl+n"))
-        .child(hint("detach", "ctrl+d"))
-        .child(hint("kill", "ctrl+k"))
-        .into()
+        .justify(Justify::Start)
+        .gap(3);
+    if selected_actionable {
+        row = row.child(hint("open", "enter"));
+    }
+    if can_new {
+        row = row.child(hint("new", "ctrl+n"));
+    }
+    if ctx.state.session_attached {
+        row = row.child(hint("detach", "ctrl+d"));
+    }
+    if selected_actionable {
+        row = row.child(hint("kill", "ctrl+k"));
+    }
+    row = row.child(hint("refresh", "ctrl+r"));
+    row.into()
 }
 
 fn session_picker_palette(

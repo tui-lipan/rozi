@@ -1,7 +1,7 @@
 # Configuration
 
 `hyprmux` reads a single TOML config file at startup. All keys are optional; anything you
-omit keeps its default. A read or parse failure does **not** crash the app — it loads
+omit keeps its default. A read or parse failure does **not** crash the app - it loads
 defaults and reports the problem as a startup toast.
 
 ## Config file location

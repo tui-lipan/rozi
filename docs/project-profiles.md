@@ -6,13 +6,13 @@ Profiles do **not** save or restore live PTY state. Restoring a profile starts f
 
 ## Pane identity
 
-Each pane carries an *identity* — the information `hyprmux` knows about it beyond its live
+Each pane carries an *identity* - the information `hyprmux` knows about it beyond its live
 shell:
 
-- **Custom title** — a name you set with the `n` keybinding (or *Rename pane* in the command
+- **Custom title** - a name you set with the `n` keybinding (or *Rename pane* in the command
   palette). It overrides the program's terminal title. Submitting an empty name clears it.
-- **Profile name** — the name a pane was restored with from a profile.
-- **cwd / command** — the working directory and launch command. On Linux the **live** working
+- **Profile name** - the name a pane was restored with from a profile.
+- **cwd / command** - the working directory and launch command. On Linux the **live** working
   directory of the pane's shell is discovered on demand (from `/proc/<pid>/cwd`), so a save
   records where the shell actually is, not just where it was launched. The command is known for
   panes launched from a profile. These appear as the pane's subtitle and are what *Save project
@@ -90,7 +90,7 @@ command = "cargo run; exec ${SHELL:-/bin/sh}"
 ## Session auto-save
 
 Beyond explicit project profiles, `hyprmux` can **auto-save the live layout on quit** and
-restore it on the next launch — a daemon-free way to resume where you left off. Enable it with
+restore it on the next launch - a daemon-free way to resume where you left off. Enable it with
 `[session] autosave = true` (see [Configuration](configuration.md#session)). It reuses the
 profile format and the same honesty caveats: it restores layout and launch intent, not live PTY
 state. An explicit `[profile].path` takes precedence over the autosaved session.

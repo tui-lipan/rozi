@@ -142,7 +142,7 @@ fn pane_z_group(pane: &Pane) -> u8 {
 /// Dwindle split direction for the focused tile: split the longer side so the two halves
 /// stay roughly square (Hyprland compares the node's width vs height). Width is weighted by
 /// [`SPLIT_WIDTH_MULTIPLIER`] for terminal cell aspect. The new pane takes the second
-/// (right/bottom) slot — a fixed side, not the cursor (Hyprland's `force_split = 2`).
+/// (right/bottom) slot - a fixed side, not the cursor (Hyprland's `force_split = 2`).
 pub fn spawn_split_for_rect(rect: FloatRect) -> (SplitAxis, bool) {
     let axis = if rect.w >= rect.h * SPLIT_WIDTH_MULTIPLIER {
         SplitAxis::Horizontal
@@ -230,7 +230,7 @@ pub enum SpawnPlacement {
     Appended,
 }
 
-/// Insert `id` by splitting the focused pane — Hyprland's dwindle behavior: a new pane
+/// Insert `id` by splitting the focused pane - Hyprland's dwindle behavior: a new pane
 /// always splits the currently focused one, never the tile under the cursor. The split
 /// axis alternates by the focused leaf's depth, matching dwindle's regular V/H/V/H growth.
 /// Falls back to a plain append when there is no valid split target (the first pane, or a
@@ -300,7 +300,7 @@ mod tests {
         };
         assert_eq!(spawn_split_for_rect(tall).0, SplitAxis::Vertical);
 
-        // The new pane always takes the second (right/bottom) slot — fixed, not cursor.
+        // The new pane always takes the second (right/bottom) slot - fixed, not cursor.
         assert!(!spawn_split_for_rect(wide).1);
     }
 

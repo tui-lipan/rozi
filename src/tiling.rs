@@ -89,7 +89,7 @@ pub fn collect_tree_leaves(tree: &DwindleTree, out: &mut Vec<PaneId>) {
 }
 
 /// Exchange the screen positions of two tiled leaves by swapping their pane ids in place.
-/// The split structure (axes and ratios) is untouched — only the leaf payloads move — so
+/// The split structure (axes and ratios) is untouched - only the leaf payloads move - so
 /// the two panes trade slots. Returns `true` only when both ids were present.
 pub fn swap_tree_leaves(tree: &mut DwindleTree, a: PaneId, b: PaneId) -> bool {
     // Only mutate when both leaves are present, so a missing id leaves the tree untouched.

@@ -8,7 +8,7 @@ Named profiles are saved workspace layouts stored as TOML files in:
 
 Each profile records workspaces, pane titles, layout metadata, and optional launch
 identity (`cwd`, `command`, `keep_open`, floating geometry). Profiles do **not** save live
-PTY state — loading a profile tears down existing panes and starts fresh shells or commands.
+PTY state - loading a profile tears down existing panes and starts fresh shells or commands.
 
 This is separate from **session autosave** (`[session] autosave`), which silently persists
 your last layout on quit. Named profiles are explicit, shareable layouts you choose to save
@@ -108,7 +108,7 @@ Deleting the default profile clears that config entry when the file is removed.
 ## Command lifetime
 
 Without `keep_open = true`, a pane closes when its `command` exits (`shell -lc` semantics).
-Set `keep_open = true` to drop into an interactive shell instead — hyprmux builds
+Set `keep_open = true` to drop into an interactive shell instead - hyprmux builds
 `command; exec <shell>` automatically.
 
 See also [Project profiles & pane identity](project-profiles.md) for pane titles, saving

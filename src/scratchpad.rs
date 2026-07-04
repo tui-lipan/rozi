@@ -29,7 +29,7 @@ pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32) -> FloatRect
 
 /// The deployed rect translated straight down so its top edge sits at the bottom inset (fully
 /// off-screen). At `progress == 0.0` the dropdown is here; at `1.0` it is at `scratch_rect`.
-/// Only the `y` position moves — width/height are constant, so the PTY never resizes mid-slide.
+/// Only the `y` position moves - width/height are constant, so the PTY never resizes mid-slide.
 fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32) -> FloatRect {
     let shown = scratch_rect(bounds, height_fraction);
     let inset = inset_float_rect(bounds, OUTER_GAP);
@@ -40,7 +40,7 @@ fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32) ->
 
 /// Slide progress for the dropdown: `1.0` fully deployed, `0.0` hidden below the bottom edge.
 /// Sampled every frame from `render` (even while closed) so the keyed transition is seeded at
-/// `0.0` from startup — that way the very first open still slides up instead of snapping in.
+/// `0.0` from startup - that way the very first open still slides up instead of snapping in.
 pub(crate) fn scratch_progress(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> f32 {
     let target = if ctx.state.scratch_visible && ctx.state.scratch.is_some() {
         1.0
@@ -90,7 +90,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
                 ctx.state.config.pane.highlight_focused_background,
             ),
         ));
-        // No spawn fade — the dropdown slides in via the rect transition instead, and there
+        // No spawn fade - the dropdown slides in via the rect transition instead, and there
         // is no FinishOpen(scratch) message to clear an `opening` flag.
         pane.opening = false;
         pane.terminal_active = true;
@@ -154,7 +154,7 @@ pub(crate) fn scratch_backdrop(
     }
     let bounds = canvas_bounds_from_viewport(ctx.viewport());
     // A transparent full-canvas catcher: it swallows clicks meant for the dimmed panes and
-    // dismisses the scratchpad when clicked. It paints nothing — an opaque scrim would occlude
+    // dismisses the scratchpad when clicked. It paints nothing - an opaque scrim would occlude
     // the panes' text and borders, so the "focused layer" cue is the panes dimming instead
     // (see `scratch_dim`, applied to each pane in `view::render`).
     let region: Element = MouseRegion::new()
@@ -169,8 +169,8 @@ pub(crate) fn scratch_backdrop(
 }
 
 /// Opacity multiplier for the workspace panes while a focused layer (the scratchpad, or a
-/// modal dialog) is up. Dimming the panes toward the backdrop — rather than overlaying an
-/// opaque layer — signals the focused layer while keeping the panes' text legible, and tracks
+/// modal dialog) is up. Dimming the panes toward the backdrop - rather than overlaying an
+/// opaque layer - signals the focused layer while keeping the panes' text legible, and tracks
 /// the animation `progress` so the dim eases in and out with it. `progress` is `0.0` (no dim)
 /// to `1.0` (fully deployed/open).
 pub(crate) fn backdrop_dim(progress: f32) -> f32 {

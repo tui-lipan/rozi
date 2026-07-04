@@ -136,10 +136,10 @@ impl Action {
     }
 }
 
-/// A discrete, parameterless binding surfaced in the help overlay, and — when
-/// `palette` is set — in the command palette. The help overlay is the full
+/// A discrete, parameterless binding surfaced in the help overlay, and - when
+/// `palette` is set - in the command palette. The help overlay is the full
 /// keybinding reference: it documents *every* binding. The palette is curated to
-/// commands that are awkward to reach by keyboard — those with no quick shortcut
+/// commands that are awkward to reach by keyboard - those with no quick shortcut
 /// (save profile, toggle titlebars, choose theme, focus-on-hover) plus a few discoverable extras
 /// (search, resize mode, toggle layout, help). Frequent single-key actions
 /// (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help

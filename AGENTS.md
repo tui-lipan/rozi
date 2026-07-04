@@ -5,7 +5,7 @@
 `hyprmux` is a Hyprland-style tiling **terminal multiplexer**: panes are live PTY shells,
 laid out with dwindle tiling, floating windows, workspaces, animated geometry, and
 tmux-style prefix commands. It is built on the `tui-lipan` TUI framework and was ported
-from that project's `window_manager` example — that example remains the reference
+from that project's `window_manager` example - that example remains the reference
 implementation for the tiling/interaction algorithms.
 
 By default `hyprmux` runs in local single-process mode with PTYs in the UI process. Explicit
@@ -15,7 +15,7 @@ workflows.
 ## Project status
 
 Pre-1.0, in active development, and used by a single developer. There are **no external users and
-no backwards-compatibility obligations** — config keys, on-disk formats, protocol wire types, and
+no backwards-compatibility obligations** - config keys, on-disk formats, protocol wire types, and
 public-looking APIs may be renamed or removed outright when it makes the design cleaner. Prefer the
 correct end state over migration shims or deprecation aliases; don't preserve a confusing name or
 stub just to avoid a breaking change.
@@ -82,7 +82,7 @@ Three pieces require reading across modules to understand:
 computes each tiled pane's target `FloatRect`; floating panes carry an explicit rect.
 `view::render` places *every* pane (tiled or floating) into one `Canvas` at an animated rect
 produced by `ctx.transition(key, target, config)`. Animation is therefore entirely app-side
-— there is no engine rect-override. Critically, the policy in `HyprmuxApp::transition_config_for`
+- there is no engine rect-override. Critically, the policy in `HyprmuxApp::transition_config_for`
 animates **position and opacity but effectively snaps size changes** (it returns an instant
 transition during move/resize sessions and viewport changes) to avoid spamming `pty.resize`
 / SIGWINCH and reflowing the shell. Keep that invariant when touching animations.
@@ -134,65 +134,65 @@ Modules are grouped by concern. Feature behavior that reacts to a `Msg` lives in
 module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 
 **Core / runtime**
-- `main.rs` — root `Component`, `init`/`on_key`/`view` wiring, animation/transition policy
+- `main.rs` - root `Component`, `init`/`on_key`/`view` wiring, animation/transition policy
   (`transition_config_for`, opacity/chrome configs), `main()` entry (config + theme + profile
   bootstrap), tick scheduling.
-- `update.rs` — `handle_msg`: the flat `Msg` router that delegates each message to a feature
+- `update.rs` - `handle_msg`: the flat `Msg` router that delegates each message to a feature
   module, then re-applies the terminal palette.
-- `control.rs` / `control_ops.rs` — in-process Unix socket protocol, CLI wire types, listener
+- `control.rs` / `control_ops.rs` - in-process Unix socket protocol, CLI wire types, listener
   bootstrap, and UI-thread execution of automation commands.
-- `session/` — optional named session server/client protocol used by explicit `--attach` /
+- `session/` - optional named session server/client protocol used by explicit `--attach` /
   `--session` mode; local non-attached launches still keep PTYs in the UI process.
-- `state.rs` — runtime data model (`State`, `Workspace`, `Pane`, `Mode`, sessions) and tuning
+- `state.rs` - runtime data model (`State`, `Workspace`, `Pane`, `Mode`, sessions) and tuning
   constants (gaps, ratios, `SPLIT_WIDTH_MULTIPLIER`, `ThemePreset`, `LayoutKind`).
-- `view.rs` — `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,
+- `view.rs` - `render`: the `Canvas` of panes (each a `Frame` + terminal), top bar,
   palette/help/search/rename/theme overlays, and the per-pane mouse/drag/keyboard callbacks.
 
 **Input**
-- `input.rs` — `Action` enum, key→`Action` mapping, `command_bindings()` (single source of truth
+- `input.rs` - `Action` enum, key→`Action` mapping, `command_bindings()` (single source of truth
   for palette + help overlay).
-- `keymap.rs` — `Keymap`/`Trigger`: resolves user-configured key bindings.
-- `key_routing.rs` — `handle_key_routing` + the `Normal`/`Prefix` mode state machine; framework
+- `keymap.rs` - `Keymap`/`Trigger`: resolves user-configured key bindings.
+- `key_routing.rs` - `handle_key_routing` + the `Normal`/`Prefix` mode state machine; framework
   focus sync.
-- `actions.rs` — `execute_action`: dispatches each `Action` to the relevant op.
+- `actions.rs` - `execute_action`: dispatches each `Action` to the relevant op.
 
 **Panes / PTY**
-- `pane.rs` — `TerminalPane`: PTY + screen + snapshot lifecycle, terminal palette, scrollback
+- `pane.rs` - `TerminalPane`: PTY + screen + snapshot lifecycle, terminal palette, scrollback
   search helper, resize.
-- `pane_lifecycle.rs` — spawn/close/prune, `pty_config_for_pane`, startup `initial_command`,
+- `pane_lifecycle.rs` - spawn/close/prune, `pty_config_for_pane`, startup `initial_command`,
   `find_pane_mut`.
-- `pty_events.rs` — `PtyReady`/`PtyEvent`/`PaneInput`/`PaneMouse`/`PaneResize`/`PaneScroll`
+- `pty_events.rs` - `PtyReady`/`PtyEvent`/`PaneInput`/`PaneMouse`/`PaneResize`/`PaneScroll`
   handlers; toast helpers.
 
 **Layout / geometry**
-- `tiling.rs` — `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust, and the
+- `tiling.rs` - `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust, and the
   allocators (`allocate_dwindle`, `allocate_master`, grid/spiral/monocle).
-- `layout.rs` — `Workspace` → placements; `place_spawned_pane` (new pane always splits the
-  *focused* pane, axis from its aspect ratio — Hyprland dwindle, never the cursor).
-- `geometry.rs` — `FloatRect` math: clamps, resize-from-corner, terminal-border resize gate,
+- `layout.rs` - `Workspace` → placements; `place_spawned_pane` (new pane always splits the
+  *focused* pane, axis from its aspect ratio - Hyprland dwindle, never the cursor).
+- `geometry.rs` - `FloatRect` math: clamps, resize-from-corner, terminal-border resize gate,
   split direction, spatial-focus scoring.
-- `resize_move_ops.rs` — interactive move/resize sessions, split-ratio drags, directional
+- `resize_move_ops.rs` - interactive move/resize sessions, split-ratio drags, directional
   move/swap/resize, tiling/fullscreen/layout toggles.
-- `anim.rs` — `GeometryAnimation`, `WindowAnimationConfig`, transition presets.
+- `anim.rs` - `GeometryAnimation`, `WindowAnimationConfig`, transition presets.
 
 **Features**
-- `focus_ops.rs` — focus changes and framework focus requests.
-- `copy_mode.rs` — vi-style copy/selection mode.
-- `search_ops.rs` — scrollback search scan/recompute/navigation, scope cycling.
-- `scratchpad.rs` — the toggleable scratchpad pane and its focus handoff.
-- `identity_ops.rs` — pane rename state apply/close.
-- `profile_ops.rs` — save-by-name prompt, unified profile picker (load/set-default/delete), profile load/switch.
-- `theme_ops.rs` — theme picker/preview, hot-reload tick, terminal-palette application,
+- `focus_ops.rs` - focus changes and framework focus requests.
+- `copy_mode.rs` - vi-style copy/selection mode.
+- `search_ops.rs` - scrollback search scan/recompute/navigation, scope cycling.
+- `scratchpad.rs` - the toggleable scratchpad pane and its focus handoff.
+- `identity_ops.rs` - pane rename state apply/close.
+- `profile_ops.rs` - save-by-name prompt, unified profile picker (load/set-default/delete), profile load/switch.
+- `theme_ops.rs` - theme picker/preview, hot-reload tick, terminal-palette application,
   system-theme derivation.
-- `profiles.rs` — profile/session (de)serialization and `State` restore/persist. Named profiles
+- `profiles.rs` - profile/session (de)serialization and `State` restore/persist. Named profiles
   live in `~/.config/hyprmux/profiles/`; `[profile] default` names the startup profile.
-- `config.rs` — TOML config loading, env/default path handling, theme-file loading, profile
+- `config.rs` - TOML config loading, env/default path handling, theme-file loading, profile
   directory discovery, warning collection.
 
 ## Conventions
 
 - The dwindle/geometry/animation logic is ported from tui-lipan's `examples/window_manager.rs`.
-  When fixing behavior here, check whether the same fix belongs there (and vice-versa) —
+  When fixing behavior here, check whether the same fix belongs there (and vice-versa) -
   several fixes have been kept in sync across both.
 - Split direction follows the focused tile's aspect ratio with `SPLIT_WIDTH_MULTIPLIER`
   correcting for terminal cells being ~2× taller than wide (Hyprland's `split_width_multiplier`).
@@ -204,7 +204,7 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 - **Comments describe the code as it is, never its history.** Write comments only where they aid
   readability or record *why* something non-obvious is the way it is (a tricky invariant, a
   workaround, a subtle ordering constraint). Do **not** write time-oriented or changelog-style
-  comments — nothing about what changed, what was removed and why, what "used to" happen, or how
+  comments - nothing about what changed, what was removed and why, what "used to" happen, or how
   this differs from a previous version. The commit history is the record for that; a reader of the
   file should not be able to tell a refactor ever happened. Delete such comments when you touch
   surrounding code.

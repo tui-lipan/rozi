@@ -47,8 +47,8 @@
 
 ## Recommended Execution Split
 
-- **PR/phase A: Pane identity and rename** — Tasks 1-2. This is independently shippable and low risk.
-- **PR/phase B: Project profiles** — Tasks 3-8 plus docs. Start this phase with Task 3 as a de-risking spike because recursive TOML serialization of `ProfileTree` is the most likely schema issue.
+- **PR/phase A: Pane identity and rename** - Tasks 1-2. This is independently shippable and low risk.
+- **PR/phase B: Project profiles** - Tasks 3-8 plus docs. Start this phase with Task 3 as a de-risking spike because recursive TOML serialization of `ProfileTree` is the most likely schema issue.
 - If implementing everything in one branch, Task 3 may still be run first before Task 1 because it does not depend on pane identity.
 
 ---

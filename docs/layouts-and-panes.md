@@ -12,11 +12,11 @@ them: dwindle → master → grid → spiral → monocle → dwindle.
 ### Dwindle (default)
 
 Panes form a binary split tree. A **new pane always splits the _focused_ pane**, and the
-split axis is chosen from the focused tile's aspect ratio — wide tiles split vertically,
+split axis is chosen from the focused tile's aspect ratio - wide tiles split vertically,
 tall tiles split horizontally (Hyprland's dwindle behavior, never the cursor position).
 
 Because terminal cells are roughly twice as tall as they are wide, the axis decision applies
-a `split_width_multiplier` (2.0) so the visual aspect ratio — not the cell count — drives the
+a `split_width_multiplier` (2.0) so the visual aspect ratio - not the cell count - drives the
 choice.
 
 - **Flip the focused split axis** with `Space`.
@@ -32,7 +32,7 @@ gap with the mouse).
 ### Grid
 
 Panes fill a near-square grid (`ceil(√N)` columns), row-major over the tiled panes. The last
-row stretches its (possibly fewer) cells to fill the width. Order-driven, like master — there
+row stretches its (possibly fewer) cells to fill the width. Order-driven, like master - there
 are no split ratios to adjust.
 
 ### Spiral
@@ -67,11 +67,11 @@ tiled or floating geometry.
 ## Focus and movement
 
 - **Focus** moves *spatially* to the nearest pane in a direction with `h/j/k/l` or the arrow
-  keys — not merely the next pane in a list.
+  keys - not merely the next pane in a list.
 - **Move** the focused pane with `Shift+h/j/k/l` (or `Shift`+arrows). In dwindle this
   rearranges the tile tree; floating panes move in the chosen direction.
 - **Swap** the focused pane with a neighbor (`modifier`+`Ctrl`+`h/j/k/l`) exchanges the two
-  panes' positions *in place* — unlike Move, it does not restructure the split tree.
+  panes' positions *in place* - unlike Move, it does not restructure the split tree.
 - **Cycle focus** through the tiled panes in order with `Tab` (next) / `Shift+Tab` (previous),
   wrapping around. Handy in monocle to bring each pane to the top.
 - **Promote to master** (`.`, or the palette) swaps the focused pane into the first/master
@@ -95,7 +95,7 @@ The displayed title is, in order of preference:
 3. the pane's default label (`shell`).
 
 A pane may also show a subtitle (its launch command, else its working directory) when that
-identity is known — for example, after being restored from a project profile. See
+identity is known - for example, after being restored from a project profile. See
 [Project profiles & pane identity](project-profiles.md).
 
 ## Workspaces

@@ -249,7 +249,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     ctx.state.profile_picker = None;
     // The theme-tick and bar-tick loops started at app launch are
     // self-sustaining and survive the state swap, so don't restart them
-    // here — doing so would spawn duplicate loops on every load.
+    // here - doing so would spawn duplicate loops on every load.
     Update::with_command(pane_lifecycle::initial_command(
         startup_spawns(&mut ctx.state),
         false,

@@ -48,5 +48,5 @@ modifier, prefix, animations, theme, or to enable a project profile, create a co
 [Configuration](configuration.md) for the full reference.
 
 On startup, `hyprmux` shows toast notifications reporting whether the config file, theme file,
-and project profile were loaded — and any parse/read warnings — so a broken config never
+and project profile were loaded - and any parse/read warnings - so a broken config never
 silently pretends to have loaded.

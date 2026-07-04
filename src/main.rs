@@ -598,7 +598,7 @@ impl HyprmuxApp {
         // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
         // verbatim so the user's terminal palette resolves them; blending them animates
         // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
-        // palette and flips the hue mid-fade — e.g. an ANSI theme's `LightCyan` chrome
+        // palette and flips the hue mid-fade - e.g. an ANSI theme's `LightCyan` chrome
         // shows as true cyan while the focus animation runs but as the palette color at
         // rest. Snapping keeps palette themes consistent (and matching the top bar).
         let config = if chrome_color_animates(target) {
@@ -1090,7 +1090,7 @@ fn run_kill_session_cli(name: &str) -> Result<()> {
 fn print_help() {
     println!(
         "\
-hyprmux — Hyprland-style tiling terminal multiplexer
+hyprmux - Hyprland-style tiling terminal multiplexer
 
 USAGE:
     hyprmux [PROFILE]

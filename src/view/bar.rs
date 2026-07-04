@@ -159,7 +159,7 @@ fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
     )
 }
 
-/// The live attached session name, if any — backs the `Session` segment and `{session}` placeholder.
+/// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.
 fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
     ctx.state
         .session_attached

@@ -50,7 +50,7 @@ available, with bitmap rendering as the fallback. Use a font family/path for Ner
 Font captures, or force bitmap rendering for deterministic coarse cell
 deliverables. Do not skip looking at the actual rendered image.
 
-## Step 1 — sketch with Mockup
+## Step 1 - sketch with Mockup
 
 `Mockup` is a `Component` impl that takes a closure returning `Element`. No `State`, no `Message`, no `update()`. It exists for exactly this workflow.
 
@@ -79,11 +79,11 @@ fn login_screen() -> Element {
 }
 ```
 
-Keep view functions plain — no state references, no callbacks wired. The sketch is about composition and visual feel, not behavior.
+Keep view functions plain - no state references, no callbacks wired. The sketch is about composition and visual feel, not behavior.
 
-## Step 2 — render to PNG
+## Step 2 - render to PNG
 
-Use `TestBackend` to render headlessly and `to_png()` to encode. **Capture at multiple viewports** — a single viewport hides flex/layout behavior.
+Use `TestBackend` to render headlessly and `to_png()` to encode. **Capture at multiple viewports** - a single viewport hides flex/layout behavior.
 
 ```rust
 use std::fs;
@@ -97,13 +97,13 @@ fn main() -> Result<()> {
     backend.set_viewport(Rect { x: 0, y: 0, w: 80, h: 24 });
     backend.render();
 
-    // Tight: exactly minimum content size — pure structure check.
+    // Tight: exactly minimum content size - pure structure check.
     let tight = backend
         .capture_frame_with_margin(0, 0)
         .to_png(&PngOptions::default());
     fs::write("/tmp/sketch_tight.png", &tight)?;
 
-    // Roomy: min + margin — reveals flex distribution / floating elements.
+    // Roomy: min + margin - reveals flex distribution / floating elements.
     let roomy = backend
         .capture_frame_with_margin(20, 8)
         .to_png(&PngOptions::default());
@@ -128,7 +128,7 @@ cargo run --example my_sketch --features ui-snapshot-png
 Don't forget root-only imports: `PngOptions` and `PngTextRenderer` are not in the
 prelude.
 
-## Step 3 — look at the PNG
+## Step 3 - look at the PNG
 
 Use the `Read` tool on each `.png` path. The image renders inline.
 
@@ -149,7 +149,7 @@ Common smells the roomy capture exposes that the tight one hides:
 - Sidebar growing wider than intended (HStack Flex(1) on a sized panel)
 - Status bar drifting off the bottom (missing explicit row sizing)
 
-## Step 4 — exercise data states
+## Step 4 - exercise data states
 
 A login form looks fine with `alice@example.com`. It looks wrong with `a-very-long-corporate-email-address@subsidiary.parent-corp.example.com`. Don't ship a sketch that's only been tested with placeholder strings.
 
@@ -162,7 +162,7 @@ Minimum state matrix:
 
 Re-render and re-capture for each.
 
-## Step 5 — promote or hand off
+## Step 5 - promote or hand off
 
 Stay in `Mockup` while the layout is still moving and the answer to all of these is *no*:
 
@@ -196,7 +196,7 @@ impl Component for LoginScreen {
 }
 ```
 
-Keep the view body shape identical to the mockup — only state reads change. That preserves the look you settled on.
+Keep the view body shape identical to the mockup - only state reads change. That preserves the look you settled on.
 
 ## Anti-patterns
 
@@ -205,7 +205,7 @@ Keep the view body shape identical to the mockup — only state reads change. Th
 - **Markdown-only review for design.** Markdown grids are for asserting structure. They cannot show color, focus chrome, or flex behavior. Always look at the PNG too.
 - **Placeholder data forever.** Realistic + adversarial data exposes truncation, alignment, and overflow bugs that a 4-char placeholder string never will.
 - **Promoting before the layout is stable.** Every change after promotion costs more because state plumbing has to follow. Get the picture right first.
-- **Deleting your sketch example.** Once you've promoted to a real Component, keep the sketch file (in `examples/` or a `dev-snapshots/` dir) — regressions during refactors are caught by re-running it.
+- **Deleting your sketch example.** Once you've promoted to a real Component, keep the sketch file (in `examples/` or a `dev-snapshots/` dir) - regressions during refactors are caught by re-running it.
 
 ## Quick-reference cheat sheet
 
@@ -233,7 +233,7 @@ Then: `Read` `/tmp/sketch.png`. Adjust the view. Repeat.
 
 ## See also
 
-- [`tui-lipan-visual-design`](../tui-lipan-visual-design/SKILL.md) — verify/review an existing UI, snapshot-based regression checks.
-- [`tui-lipan-app-builder`](../tui-lipan-app-builder/SKILL.md) — structure the full app once a screen graduates from Mockup.
-- [`tui-lipan-layout-debug`](../tui-lipan-layout-debug/SKILL.md) — when a screen is rendered but the rects are wrong.
+- [`tui-lipan-visual-design`](../tui-lipan-visual-design/SKILL.md) - verify/review an existing UI, snapshot-based regression checks.
+- [`tui-lipan-app-builder`](../tui-lipan-app-builder/SKILL.md) - structure the full app once a screen graduates from Mockup.
+- [`tui-lipan-layout-debug`](../tui-lipan-layout-debug/SKILL.md) - when a screen is rendered but the rects are wrong.
 - Framework docs: `src/mockup.rs`, `docs/quick-start.md` (mockup section), `examples/ui_snapshot.rs`.

@@ -19,10 +19,10 @@ let frame = backend.capture_frame();
 | Method | Returns | Purpose |
 |--------|---------|---------|
 | `TestBackend::new(component)` | backend | Headless app host |
-| `set_viewport(rect)` | — | Layout size |
-| `render()` | — | Full layout + paint |
+| `set_viewport(rect)` | - | Layout size |
+| `render()` | - | Full layout + paint |
 | `dispatch(msg)` | `Result` | Run `update()` |
-| `focus_next()` / `focus_prev()` | — | Move keyboard focus |
+| `focus_next()` / `focus_prev()` | - | Move keyboard focus |
 | `capture_ui_snapshot()` | `UiSnapshot` | Visual + semantic |
 | `capture_ui_snapshot_with_options(&opts)` | `UiSnapshot` | Truncation/chrome toggles |
 | `capture_ui_snapshot_with_margin(20, 8, &opts)` | `UiSnapshot` | Fit-to-content plus design-review margin |
@@ -136,7 +136,7 @@ Pending requests are **last-writer-wins**. Both request methods schedule a **ful
 
 ## JSON wire conventions (ui-snapshot-json)
 
-- Colors: stable strings — `rgb(r,g,b)`, `indexed(n)`, snake_case names (not `Debug`)
+- Colors: stable strings - `rgb(r,g,b)`, `indexed(n)`, snake_case names (not `Debug`)
 - Checkbox: `"unchecked"`, `"checked"`, `"indeterminate"`
 - Keys: reconciliation key strings via `Key::as_ref()`
 

@@ -47,7 +47,7 @@ the `preset` theme and reports a startup warning.
 
 When a custom theme `path` is set, `hyprmux` watches the file and **hot-reloads** it on every
 change (powered by `tui-lipan`'s `theme-reload` feature and `ThemeWatcher`). Edits are picked
-up live — chrome and terminal colors update without restarting. Reload errors are surfaced as
+up live - chrome and terminal colors update without restarting. Reload errors are surfaced as
 toasts.
 
 ## Terminal colors follow the theme
@@ -58,8 +58,8 @@ it to every pane's terminal screen. The mapping uses the theme's status colors (
 success / warning / info), accent, and file-icon colors for the base 8, with lightened
 variants for the bright 8.
 
-This palette is re-applied whenever the theme changes — on a picker selection, on a custom
-theme hot-reload, at startup, and to every newly spawned pane — so terminal colors stay in
+This palette is re-applied whenever the theme changes - on a picker selection, on a custom
+theme hot-reload, at startup, and to every newly spawned pane - so terminal colors stay in
 sync with the chrome.
 
 The `ansi` preset is the exception: it leans on the host terminal's own palette rather than a

@@ -24,7 +24,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let modifier = ctx.state.config.input.modifier.label();
 
     // Group bindings by category (first-seen order), so a category with non-contiguous
-    // entries in the table still gets a single header — matching the command palette.
+    // entries in the table still gets a single header - matching the command palette.
     let mut groups: Vec<(&'static str, Vec<(String, &'static str)>)> = Vec::new();
     for binding in &crate::input::command_bindings() {
         let row = (help_keys(ctx, binding), binding.label);
@@ -319,7 +319,7 @@ fn profile_picker_palette(
         .collect::<Vec<_>>();
 
     let empty_text = if picker.entries.is_empty() {
-        "No saved profiles — save one first".to_string()
+        "No saved profiles - save one first".to_string()
     } else if query.is_empty() {
         "Type to filter profiles".to_string()
     } else {
@@ -491,11 +491,11 @@ fn session_picker_palette(
         })
         .collect::<Vec<_>>();
     let empty_text = if picker.entries.is_empty() {
-        "No sessions — type a name and press Ctrl+N".to_string()
+        "No sessions - type a name and press Ctrl+N".to_string()
     } else if query.is_empty() {
         "Type to filter sessions, or enter a new name".to_string()
     } else {
-        format!("No sessions match `{query}` — Ctrl+N creates it")
+        format!("No sessions match `{query}` - Ctrl+N creates it")
     };
 
     let pending_kill = picker.pending_kill;
@@ -687,8 +687,8 @@ fn help_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {
-    // A horizontal rule with the section title on it — the title in the accent color, the
-    // line muted — so groups read as clear dividers without competing with the key text.
+    // A horizontal rule with the section title on it - the title in the accent color, the
+    // line muted - so groups read as clear dividers without competing with the key text.
     let divider = Divider::horizontal()
         .label(
             Text::new(format!(" {} ", title.to_uppercase())).style(fg_only(&theme.accent).bold()),

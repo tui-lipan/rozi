@@ -209,7 +209,7 @@ pub fn resize_float_rect_from_corner(
 
 /// True when the corner the user grabbed sits on the outer tile-bounds boundary for the
 /// given axis. Such an edge has no split divider, so resizing along that axis would move
-/// the pane's *inner* divider in an inverted direction — callers skip it.
+/// the pane's *inner* divider in an inverted direction - callers skip it.
 pub fn grabbed_edge_on_outer_border(
     focused_rect: FloatRect,
     tile_bounds: FloatRect,

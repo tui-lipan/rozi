@@ -7,7 +7,7 @@ typing that goes straight to the focused shell.
 
 ### 1. Prefix mode (always works)
 
-Press the **prefix key** — `Ctrl-a` by default — then a single command key. This is the most
+Press the **prefix key** - `Ctrl-a` by default - then a single command key. This is the most
 portable path because it does not depend on the terminal delivering modified keys reliably.
 
 - A held modifier with the prefix is ignored; press the prefix *then* release, then the key.
@@ -95,11 +95,11 @@ with a live pane count.
 > your *active* bindings.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard — save profile, choose theme, toggle titlebars, promote to master, plus discoverable
+keyboard - save profile, choose theme, toggle titlebars, promote to master, plus discoverable
 extras (search, copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). Frequent single-key
 actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help overlay only,
 since the key is faster than a search box. Theme selection and "Save project profile" /
-"Toggle pane titlebars" / "Toggle focus on hover" are palette-only — they have no default key.
+"Toggle pane titlebars" / "Toggle focus on hover" are palette-only - they have no default key.
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
 including the workspace digits and mouse gestures.

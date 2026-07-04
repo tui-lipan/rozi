@@ -41,15 +41,15 @@ Use a thin tui-lipan root shell plus focused app operation modules.
 
 Move behavior clusters into modules:
 
-- `update.rs` — central `Msg` dispatcher. It should answer “what happens when this message arrives?” without embedding large behavior bodies.
-- `actions.rs` — converts `Action` values into app operations for prefix commands, command palette commands, and held-modifier shortcuts.
-- `key_routing.rs` — owns `Mode::Normal` / `Mode::Prefix`, terminal-vs-window-manager routing, literal prefix forwarding, unknown-key forwarding, and cancel behavior.
-- `pane_lifecycle.rs` — pane spawn, close, remove, prune, and PTY command helpers.
-- `pty_events.rs` — PTY readiness, terminal output, terminal exit, and resize side effects.
-- `focus_ops.rs` — directional focus, workspace focus/movement, hover/click focus policy, and focus cleanup helpers.
-- `resize_move_ops.rs` — keyboard resize/move, mouse drag/resize session handling, floating/fullscreen transitions, and layout toggles.
-- `search_ops.rs` — scrollback search state transitions, result navigation, and query lifecycle.
-- `theme_ops.rs` — config/theme reload, picker selection, and terminal palette synchronization.
+- `update.rs` - central `Msg` dispatcher. It should answer “what happens when this message arrives?” without embedding large behavior bodies.
+- `actions.rs` - converts `Action` values into app operations for prefix commands, command palette commands, and held-modifier shortcuts.
+- `key_routing.rs` - owns `Mode::Normal` / `Mode::Prefix`, terminal-vs-window-manager routing, literal prefix forwarding, unknown-key forwarding, and cancel behavior.
+- `pane_lifecycle.rs` - pane spawn, close, remove, prune, and PTY command helpers.
+- `pty_events.rs` - PTY readiness, terminal output, terminal exit, and resize side effects.
+- `focus_ops.rs` - directional focus, workspace focus/movement, hover/click focus policy, and focus cleanup helpers.
+- `resize_move_ops.rs` - keyboard resize/move, mouse drag/resize session handling, floating/fullscreen transitions, and layout toggles.
+- `search_ops.rs` - scrollback search state transitions, result navigation, and query lifecycle.
+- `theme_ops.rs` - config/theme reload, picker selection, and terminal palette synchronization.
 
 These modules should expose small `pub(crate)` functions that operate on `State` and tui-lipan `Context` where needed. Prefer plain modules over manager structs unless a struct removes real coupling. Plain modules are easier for agents to inspect and search.
 

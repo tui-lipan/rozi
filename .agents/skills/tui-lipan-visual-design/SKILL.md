@@ -44,7 +44,7 @@ Visual review progress:
 
 ## Fastest path: headless snapshot
 
-Add a focused test, example, or small binary — render, capture, inspect output:
+Add a focused test, example, or small binary - render, capture, inspect output:
 
 ```rust
 use tui_lipan::TestBackend;
@@ -80,7 +80,7 @@ Framework repo reference: `examples/ui_snapshot.rs`, `tests/ui_snapshot.rs`, `do
 |---------|------------|
 | `## Focus` / `focus_key` | Which widget owns keyboard focus |
 | `## Widgets` | Kind, key, rect, selection, labels, values, masking |
-| `## Render` | Fixed-width ASCII grid — spacing, clipping, alignment |
+| `## Render` | Fixed-width ASCII grid - spacing, clipping, alignment |
 
 Semantic fields worth checking:
 

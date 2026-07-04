@@ -14,39 +14,39 @@ cargo run     # quit with Ctrl-q
 
 ## Highlights
 
-- **Dwindle + master tiling** — new panes split the *focused* tile along its aspect ratio
+- **Dwindle + master tiling** - new panes split the *focused* tile along its aspect ratio
   (Hyprland dwindle), or switch to a master/stack layout per workspace.
-- **Floating & fullscreen panes** — toggle any pane to floating or fullscreen; move and
+- **Floating & fullscreen panes** - toggle any pane to floating or fullscreen; move and
   resize floats with the mouse.
 - **9 workspaces** with a top-bar tab strip showing live pane counts.
-- **Animated geometry** — spawn, close, fullscreen, tile/float, and split-axis transitions,
+- **Animated geometry** - spawn, close, fullscreen, tile/float, and split-axis transitions,
   all individually configurable (size changes are snapped to avoid SIGWINCH spam).
-- **tmux-style prefix + held-modifier control** — `Ctrl-a` prefix that always works, plus an
+- **tmux-style prefix + held-modifier control** - `Ctrl-a` prefix that always works, plus an
   `Alt`/`Super` direct path for active command keys.
-- **Command palette & help overlay** — fuzzy command search (`p`) and a full keybinding
+- **Command palette & help overlay** - fuzzy command search (`p`) and a full keybinding
   reference (`?`).
-- **Pane identity** — rename panes (`n`); titles also follow the program's OSC title.
-- **Named profiles** — save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
-- **Scrollback search** — search a pane's scrollback (`/`) and jump between matches.
-- **Themes** — 9 built-in presets, custom theme files, and live hot-reload. Terminal ANSI
+- **Pane identity** - rename panes (`n`); titles also follow the program's OSC title.
+- **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
+- **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.
+- **Themes** - 9 built-in presets, custom theme files, and live hot-reload. Terminal ANSI
   colors are derived from the active theme.
-- **Real terminal** — mouse reporting, text selection, scroll-wheel scrollback, and OSC52
+- **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, and OSC52
   clipboard, provided by `tui-lipan`'s terminal primitives.
 
 ## Documentation
 
 Full docs live in [`docs/`](docs/):
 
-- [Getting started](docs/getting-started.md) — build, run, quit, and the dependency on `tui-lipan`.
-- [Keybindings](docs/keybindings.md) — prefix, held modifier, mouse, and the full key reference.
-- [Configuration](docs/configuration.md) — the complete `hyprmux.toml` reference.
-- [Layouts & panes](docs/layouts-and-panes.md) — dwindle, master, floating, fullscreen, resize.
-- [Themes](docs/themes.md) — presets, custom theme files, hot reload, and terminal colors.
-- [Terminal features](docs/terminal.md) — PTY, mouse, selection, clipboard, and scrollback search.
-- [Project profiles & pane identity](docs/project-profiles.md) — save and restore layouts.
-- [Named profiles](docs/profiles.md) — profiles directory, CLI launch, keep-open, picker commands.
-- [Control socket](docs/control.md) — pane environment, JSON control protocol, and CLI automation.
-- [Sessions](docs/sessions.md) — local vs attached runtime, named sessions, and lifecycle limits.
+- [Getting started](docs/getting-started.md) - build, run, quit, and the dependency on `tui-lipan`.
+- [Keybindings](docs/keybindings.md) - prefix, held modifier, mouse, and the full key reference.
+- [Configuration](docs/configuration.md) - the complete `hyprmux.toml` reference.
+- [Layouts & panes](docs/layouts-and-panes.md) - dwindle, master, floating, fullscreen, resize.
+- [Themes](docs/themes.md) - presets, custom theme files, hot reload, and terminal colors.
+- [Terminal features](docs/terminal.md) - PTY, mouse, selection, clipboard, and scrollback search.
+- [Project profiles & pane identity](docs/project-profiles.md) - save and restore layouts.
+- [Named profiles](docs/profiles.md) - profiles directory, CLI launch, keep-open, picker commands.
+- [Control socket](docs/control.md) - pane environment, JSON control protocol, and CLI automation.
+- [Sessions](docs/sessions.md) - local vs attached runtime, named sessions, and lifecycle limits.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

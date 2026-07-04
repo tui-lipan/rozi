@@ -54,7 +54,7 @@ impl Default for HyprmuxApp {
     fn default() -> Self {
         let config = HyprmuxConfig::default();
         Self {
-            initial_theme: config.theme.preset.theme(),
+            initial_theme: ThemePreset::Lipan.theme(),
             initial_system_theme: None,
             config,
             startup_profile: None,
@@ -97,7 +97,10 @@ pub enum Msg {
     ClosePalette,
     CloseHelp,
     CloseThemePicker,
-    PreviewTheme(ThemePreset),
+    /// Index into [`config::theme_choices`]: preview the highlighted theme.
+    PreviewTheme(usize),
+    /// Index into [`config::theme_choices`]: commit the chosen theme.
+    SelectTheme(usize),
     ThemeTick,
     BarTick,
     ThemeError(String),
@@ -230,14 +233,17 @@ impl Component for HyprmuxApp {
             ctx.toast().push(pty_events::info_toast(message));
         }
 
-        if let Some(path) = &ctx.state.config.theme.path {
-            match ThemeWatcher::new(
-                path.clone(),
-                config::theme_for_preset(ctx.state.config.theme.preset),
-            ) {
+        if let Some(path) =
+            config::resolve_choice(&ctx.state.config.theme.name).and_then(|choice| match choice {
+                config::ThemeChoice::Custom { path, .. } => Some(path),
+                _ => None,
+            })
+        {
+            match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
                 Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
                 Err(err) => {
                     ctx.toast().push(pty_events::error_toast(
+                        &ctx.state.theme,
                         "Theme Watcher",
                         format!("Can't watch theme file: {err}"),
                     ));
@@ -668,9 +674,7 @@ fn main() -> Result<()> {
     }
 
     let loaded = config::load_config();
-    let loaded_theme = config::load_initial_theme(&loaded.config);
     let mut startup_messages = loaded.warnings;
-    startup_messages.extend(loaded_theme.warnings);
     let mut startup_profile = cli.profile.as_ref().and_then(|name| {
         let path = config::profile_path_for_name(name);
         match profiles::load_profile(&path) {
@@ -712,13 +716,9 @@ fn main() -> Result<()> {
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
-    let theme = if config.theme.preset == ThemePreset::System && config.theme.path.is_none() {
-        startup_system_theme
-            .clone()
-            .unwrap_or_else(|| loaded_theme.theme.clone())
-    } else {
-        loaded_theme.theme
-    };
+    let resolved_theme = config::resolve_theme(&config.theme.name, startup_system_theme.as_ref());
+    startup_messages.extend(resolved_theme.warnings);
+    let theme = resolved_theme.theme;
 
     let (control_listener, control_guard) = match control::bind_control_socket() {
         Ok((listener, guard)) => (Some(listener), Some(guard)),

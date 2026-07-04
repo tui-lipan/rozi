@@ -7,8 +7,11 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     match discovered_with_current(ctx) {
         Ok(rows) => ctx.state.session_picker = Some(SessionPickerState::new(rows)),
         Err(err) => {
-            ctx.toast()
-                .push(crate::pty_events::error_toast("Sessions", err.to_string()));
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Sessions",
+                err.to_string(),
+            ));
             ctx.state.session_picker = Some(SessionPickerState::new(Vec::new()));
         }
     }
@@ -30,8 +33,11 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
             ctx.state.session_picker = Some(picker);
         }
         Err(err) => {
-            ctx.toast()
-                .push(crate::pty_events::error_toast("Sessions", err.to_string()));
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Sessions",
+                err.to_string(),
+            ));
         }
     };
     Update::full()
@@ -100,6 +106,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
             "Sessions",
             "Invalid session name",
         ));
@@ -156,6 +163,7 @@ pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
         .unwrap_or_default();
     if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
             "Sessions",
             "Use letters, numbers, _ or - for session names",
         ));
@@ -184,6 +192,7 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(entry.name.as_str())
     {
         ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
             "Sessions",
             "Detach before killing the current session",
         ));
@@ -196,8 +205,11 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             refresh_session_picker(ctx)
         }
         Err(err) => {
-            ctx.toast()
-                .push(crate::pty_events::error_toast("Sessions", err.to_string()));
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Sessions",
+                err.to_string(),
+            ));
             Update::full()
         }
     }

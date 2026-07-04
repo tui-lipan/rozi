@@ -162,11 +162,10 @@ pub enum ThemePreset {
     SolarizedDark,
     Monokai,
     Ansi,
-    System,
 }
 
 impl ThemePreset {
-    pub fn all() -> [Self; 11] {
+    pub fn all() -> [Self; 10] {
         [
             Self::Lipan,
             Self::OneDark,
@@ -178,15 +177,7 @@ impl ThemePreset {
             Self::SolarizedDark,
             Self::Monokai,
             Self::Ansi,
-            Self::System,
         ]
-    }
-
-    pub fn index(self) -> usize {
-        Self::all()
-            .iter()
-            .position(|preset| *preset == self)
-            .unwrap_or(0)
     }
 
     pub fn id(self) -> &'static str {
@@ -201,7 +192,6 @@ impl ThemePreset {
             Self::SolarizedDark => "solarized-dark",
             Self::Monokai => "monokai",
             Self::Ansi => "ansi",
-            Self::System => "system",
         }
     }
 
@@ -217,7 +207,6 @@ impl ThemePreset {
             Self::SolarizedDark => "Solarized Dark",
             Self::Monokai => "Monokai",
             Self::Ansi => "ANSI",
-            Self::System => "System",
         }
     }
 
@@ -238,7 +227,6 @@ impl ThemePreset {
             "solarized-dark" | "solarized" => Some(Self::SolarizedDark),
             "monokai" => Some(Self::Monokai),
             "ansi" => Some(Self::Ansi),
-            "system" => Some(Self::System),
             _ => None,
         }
     }
@@ -255,7 +243,6 @@ impl ThemePreset {
             Self::SolarizedDark => Theme::solarized_dark(),
             Self::Monokai => Theme::monokai(),
             Self::Ansi => Theme::ansi(),
-            Self::System => Theme::default(),
         }
     }
 }

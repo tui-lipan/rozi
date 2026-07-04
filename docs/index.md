@@ -16,7 +16,7 @@ named session server for persistent PTYs.
 | [Keybindings](keybindings.md) | Prefix mode, held modifier, mouse gestures, resize mode, and the full key table. |
 | [Configuration](configuration.md) | The complete `hyprmux.toml` reference: shell, input, animations, theme, profile, clipboard. |
 | [Layouts & panes](layouts-and-panes.md) | Dwindle vs master tiling, floating, fullscreen, split ratios, focus and movement. |
-| [Themes](themes.md) | The 9 built-in presets, custom theme files, live hot-reload, and terminal ANSI colors. |
+| [Themes](themes.md) | The 10 built-in presets, the `system` theme, custom theme files, live hot-reload, and terminal ANSI colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |

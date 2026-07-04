@@ -64,15 +64,45 @@ impl Default for InputConfig {
 
 #[derive(Clone, Debug)]
 pub struct HyprmuxThemeConfig {
-    pub preset: ThemePreset,
-    pub path: Option<PathBuf>,
+    /// Name of the active theme: a built-in preset id, the reserved name `system` (derive
+    /// colors from the host terminal), or the file stem of a custom theme in [`themes_dir`].
+    /// A custom file shadows a built-in of the same name.
+    pub name: String,
 }
 
 impl Default for HyprmuxThemeConfig {
     fn default() -> Self {
         Self {
-            preset: ThemePreset::Lipan,
-            path: None,
+            name: ThemePreset::Lipan.id().to_string(),
+        }
+    }
+}
+
+/// A selectable theme: a built-in preset, the host-derived system theme, or a named custom
+/// theme file in the themes directory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThemeChoice {
+    System,
+    Builtin(ThemePreset),
+    Custom { name: String, path: PathBuf },
+}
+
+impl ThemeChoice {
+    /// Human-facing name shown in the theme picker.
+    pub fn label(&self) -> String {
+        match self {
+            Self::System => "System".to_string(),
+            Self::Builtin(preset) => preset.label().to_string(),
+            Self::Custom { name, .. } => name.clone(),
+        }
+    }
+
+    /// Config-facing id persisted as `[theme].name`.
+    pub fn id(&self) -> String {
+        match self {
+            Self::System => "system".to_string(),
+            Self::Builtin(preset) => preset.id().to_string(),
+            Self::Custom { name, .. } => name.clone(),
         }
     }
 }
@@ -273,12 +303,6 @@ impl BarConfig {
 #[derive(Debug)]
 pub struct LoadedConfig {
     pub config: HyprmuxConfig,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug)]
-pub struct LoadedTheme {
-    pub theme: Theme,
     pub warnings: Vec<String>,
 }
 
@@ -607,22 +631,53 @@ mod tests {
     }
 
     #[test]
+    fn theme_choices_lead_with_system_then_builtins() {
+        let choices = build_theme_choices(Vec::new());
+        assert_eq!(choices.first(), Some(&ThemeChoice::System));
+        assert_eq!(choices.len(), 1 + ThemePreset::all().len());
+        assert!(choices.contains(&ThemeChoice::Builtin(ThemePreset::Dracula)));
+    }
+
+    #[test]
+    fn custom_theme_shadows_same_named_builtin() {
+        let custom = vec![("dracula".to_string(), PathBuf::from("/themes/dracula.toml"))];
+        let choices = build_theme_choices(custom);
+        // The built-in dracula is dropped in favour of the custom file of the same name.
+        assert!(!choices.contains(&ThemeChoice::Builtin(ThemePreset::Dracula)));
+        assert_eq!(
+            choices.last(),
+            Some(&ThemeChoice::Custom {
+                name: "dracula".to_string(),
+                path: PathBuf::from("/themes/dracula.toml"),
+            })
+        );
+        assert_eq!(choices.iter().filter(|c| c.label() == "dracula").count(), 1);
+    }
+
+    #[test]
+    fn resolve_theme_falls_back_to_lipan_for_unknown_name() {
+        let resolved = resolve_theme("definitely-not-a-real-theme-xyz", None);
+        assert!(!resolved.warnings.is_empty());
+        assert!(resolved.watch_path.is_none());
+    }
+
+    #[test]
     fn theme_upsert_adds_missing_section() {
         assert_eq!(
-            upsert_theme_preset("scrollback = 100\n", "lipan"),
-            "scrollback = 100\n\n[theme]\npreset = \"lipan\"\n"
+            upsert_theme_name("scrollback = 100\n", "lipan"),
+            "scrollback = 100\n\n[theme]\nname = \"lipan\"\n"
         );
     }
 
     #[test]
-    fn theme_upsert_replaces_preset_and_removes_custom_path() {
-        let updated = upsert_theme_preset(
+    fn theme_upsert_replaces_name_and_removes_legacy_keys() {
+        let updated = upsert_theme_name(
             "[theme]\npreset = \"dracula\"\npath = \"~/theme.toml\"\n\n[session]\nautosave = true\n",
-            "system",
+            "my-nord",
         );
         assert_eq!(
             updated,
-            "[theme]\npreset = \"system\"\n\n[session]\nautosave = true\n"
+            "[theme]\nname = \"my-nord\"\n\n[session]\nautosave = true\n"
         );
     }
 
@@ -660,8 +715,7 @@ struct InputFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ThemeFileConfig {
-    preset: Option<String>,
-    path: Option<String>,
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -737,14 +791,8 @@ pub fn load_config() -> LoadedConfig {
     config.input = input;
     apply_animations(&mut config.animations, parsed.animations);
 
-    if let Some(preset) = parsed.theme.preset {
-        match ThemePreset::parse(&preset) {
-            Some(preset) => config.theme.preset = preset,
-            None => warnings.push(format!("Unknown theme preset `{preset}`; using lipan")),
-        }
-    }
-    if let Some(path) = non_empty(parsed.theme.path) {
-        config.theme.path = Some(expand_path(path));
+    if let Some(name) = non_empty(parsed.theme.name) {
+        config.theme.name = name;
     }
     if let Some(name) = non_empty(parsed.profile.default) {
         config.profile.default = Some(name);
@@ -790,32 +838,119 @@ pub fn load_config() -> LoadedConfig {
     LoadedConfig { config, warnings }
 }
 
-pub fn load_initial_theme(config: &HyprmuxConfig) -> LoadedTheme {
-    let fallback = theme_for_preset(config.theme.preset);
-    let mut warnings = Vec::new();
-    let theme = if let Some(path) = &config.theme.path {
-        match load_theme_from_toml(path, fallback.clone()) {
-            Ok(theme) => theme,
-            Err(err) => {
-                warnings.push(format!("Theme load failed for {}: {err}", path.display()));
-                fallback
-            }
-        }
-    } else {
-        fallback
-    };
-    LoadedTheme { theme, warnings }
+/// Directory holding custom theme files. Each `*.toml` file is a theme named by its stem.
+pub fn themes_dir() -> PathBuf {
+    config_home().join("hyprmux/themes")
 }
 
-pub fn theme_for_preset(preset: ThemePreset) -> Theme {
-    if preset == ThemePreset::System {
-        ThemePreset::Lipan.theme()
-    } else {
-        preset.theme()
+/// Path a custom theme named `name` would live at (whether or not it exists).
+pub fn custom_theme_path(name: &str) -> PathBuf {
+    themes_dir().join(format!("{name}.toml"))
+}
+
+/// Every custom theme file in [`themes_dir`], as `(name, path)`, sorted by name.
+pub fn list_custom_themes() -> Vec<(String, PathBuf)> {
+    let Ok(read_dir) = fs::read_dir(themes_dir()) else {
+        return Vec::new();
+    };
+    let mut entries = read_dir
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "toml"))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_stem()?.to_string_lossy().into_owned();
+            Some((name, path))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries
+}
+
+/// The ordered set of selectable themes: `System`, every built-in preset not shadowed by a
+/// same-named custom file, then every custom theme in [`themes_dir`].
+pub fn theme_choices() -> Vec<ThemeChoice> {
+    build_theme_choices(list_custom_themes())
+}
+
+fn build_theme_choices(custom: Vec<(String, PathBuf)>) -> Vec<ThemeChoice> {
+    let mut choices = vec![ThemeChoice::System];
+    for preset in ThemePreset::all() {
+        if !custom.iter().any(|(name, _)| name == preset.id()) {
+            choices.push(ThemeChoice::Builtin(preset));
+        }
+    }
+    for (name, path) in custom {
+        choices.push(ThemeChoice::Custom { name, path });
+    }
+    choices
+}
+
+/// Resolve a `[theme].name` to its choice. A custom file shadows the reserved `system` name
+/// and any built-in preset. Returns `None` when the name matches nothing.
+pub fn resolve_choice(name: &str) -> Option<ThemeChoice> {
+    let path = custom_theme_path(name);
+    if path.is_file() {
+        return Some(ThemeChoice::Custom {
+            name: name.to_string(),
+            path,
+        });
+    }
+    if name.eq_ignore_ascii_case("system") {
+        return Some(ThemeChoice::System);
+    }
+    ThemePreset::parse(name).map(ThemeChoice::Builtin)
+}
+
+#[derive(Debug)]
+pub struct ResolvedTheme {
+    pub theme: Theme,
+    /// The file to hot-reload while this theme is active (custom themes only).
+    pub watch_path: Option<PathBuf>,
+    pub warnings: Vec<String>,
+}
+
+/// Resolve a `[theme].name` to a concrete theme. `system_theme` supplies the host-derived
+/// theme for the reserved `system` name; unknown names and load failures fall back to Lipan
+/// with a warning.
+pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme {
+    let fallback = ThemePreset::Lipan.theme();
+    let mut warnings = Vec::new();
+    let choice = match resolve_choice(name) {
+        Some(choice) => choice,
+        None => {
+            warnings.push(format!("Unknown theme `{name}`; using lipan"));
+            ThemeChoice::Builtin(ThemePreset::Lipan)
+        }
+    };
+    match choice {
+        ThemeChoice::System => ResolvedTheme {
+            theme: system_theme.cloned().unwrap_or(fallback),
+            watch_path: None,
+            warnings,
+        },
+        ThemeChoice::Builtin(preset) => ResolvedTheme {
+            theme: preset.theme(),
+            watch_path: None,
+            warnings,
+        },
+        ThemeChoice::Custom { path, .. } => {
+            let theme = match load_theme_from_toml(&path, fallback.clone()) {
+                Ok(theme) => theme,
+                Err(err) => {
+                    warnings.push(format!("Theme load failed for {}: {err}", path.display()));
+                    fallback
+                }
+            };
+            ResolvedTheme {
+                theme,
+                watch_path: Some(path),
+                warnings,
+            }
+        }
     }
 }
 
-pub fn persist_theme_selection(preset: ThemePreset) -> std::result::Result<PathBuf, String> {
+pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -823,7 +958,7 @@ pub fn persist_theme_selection(preset: ThemePreset) -> std::result::Result<PathB
         Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
     };
 
-    let updated = upsert_theme_preset(&text, preset.id());
+    let updated = upsert_theme_name(&text, name);
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -840,19 +975,19 @@ pub fn persist_theme_selection(preset: ThemePreset) -> std::result::Result<PathB
     Ok(path)
 }
 
-fn upsert_theme_preset(text: &str, preset_id: &str) -> String {
+fn upsert_theme_name(text: &str, name: &str) -> String {
     let mut output = String::new();
     let mut in_theme = false;
     let mut saw_theme = false;
-    let mut wrote_preset = false;
+    let mut wrote_name = false;
 
     for line in text.lines() {
         let trimmed = line.trim();
         let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
         if section_starts {
-            if in_theme && !wrote_preset {
-                output.push_str(&format!("preset = \"{preset_id}\"\n"));
-                wrote_preset = true;
+            if in_theme && !wrote_name {
+                output.push_str(&format!("name = \"{name}\"\n"));
+                wrote_name = true;
             }
             in_theme = trimmed == "[theme]";
             saw_theme |= in_theme;
@@ -861,11 +996,11 @@ fn upsert_theme_preset(text: &str, preset_id: &str) -> String {
         if in_theme
             && trimmed
                 .split_once('=')
-                .is_some_and(|(key, _)| matches!(key.trim(), "preset" | "path"))
+                .is_some_and(|(key, _)| matches!(key.trim(), "name" | "preset" | "path"))
         {
-            if trimmed.starts_with("preset") && !wrote_preset {
-                output.push_str(&format!("preset = \"{preset_id}\"\n"));
-                wrote_preset = true;
+            if !wrote_name {
+                output.push_str(&format!("name = \"{name}\"\n"));
+                wrote_name = true;
             }
             continue;
         }
@@ -874,14 +1009,14 @@ fn upsert_theme_preset(text: &str, preset_id: &str) -> String {
         output.push('\n');
     }
 
-    if in_theme && !wrote_preset {
-        output.push_str(&format!("preset = \"{preset_id}\"\n"));
+    if in_theme && !wrote_name {
+        output.push_str(&format!("name = \"{name}\"\n"));
     } else if !saw_theme {
         if !output.is_empty() && !output.ends_with("\n\n") {
             output.push('\n');
         }
         output.push_str("[theme]\n");
-        output.push_str(&format!("preset = \"{preset_id}\"\n"));
+        output.push_str(&format!("name = \"{name}\"\n"));
     }
 
     output

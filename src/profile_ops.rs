@@ -50,7 +50,8 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
                 .push(info_toast(format!("Saved profile `{name}`")));
         }
         Err(message) => {
-            ctx.toast().push(error_toast("Save Profile", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Save Profile", message));
         }
     }
 
@@ -133,8 +134,11 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
                 .push(info_toast(format!("Default profile `{}`", entry.name)));
         }
         Err(message) => {
-            ctx.toast()
-                .push(error_toast("Set Default Profile", message));
+            ctx.toast().push(error_toast(
+                &ctx.state.theme,
+                "Set Default Profile",
+                message,
+            ));
         }
     }
     Update::full()
@@ -179,8 +183,11 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
                     }
                     Ok(None) => {}
                     Err(message) => {
-                        ctx.toast()
-                            .push(error_toast("Clear Default Profile", message));
+                        ctx.toast().push(error_toast(
+                            &ctx.state.theme,
+                            "Clear Default Profile",
+                            message,
+                        ));
                     }
                 }
             }
@@ -189,7 +196,8 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
                 .push(info_toast(format!("Deleted profile `{name}`")));
         }
         Err(message) => {
-            ctx.toast().push(error_toast("Delete Profile", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Delete Profile", message));
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
@@ -211,7 +219,8 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            ctx.toast().push(error_toast("Load Profile", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Load Profile", message));
             ctx.state.show_profile_picker = false;
             ctx.state.profile_picker = None;
             return Update::full();

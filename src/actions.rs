@@ -15,7 +15,7 @@ use crate::resize_move_ops::{
 };
 use crate::search_ops::open_search;
 use crate::state::Mode;
-use crate::theme_ops::{open_theme_picker, select_theme};
+use crate::theme_ops::open_theme_picker;
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     match action {
@@ -93,10 +93,6 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
         Action::DetachSession => crate::session_ops::detach_current_session(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
-        Action::SelectTheme(preset) => {
-            select_theme(ctx, preset);
-            Update::full()
-        }
         Action::TogglePalette => {
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {

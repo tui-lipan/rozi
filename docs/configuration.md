@@ -49,8 +49,7 @@ focus_chrome_ms = 160        # focus-chrome transition duration (default: 160)
 open_delay_ms = 36           # delay before a spawned pane fades in (default: 36)
 
 [theme]
-preset = "one-dark"         # built-in preset (default: one-dark)
-path = "~/.config/hyprmux/theme.toml"  # optional custom theme file (hot-reloaded)
+name = "tokyo-night"        # built-in preset, `system`, or a file in ~/.config/hyprmux/themes/
 
 [profile]
 default = "dev"              # named profile in ~/.config/hyprmux/profiles/
@@ -144,12 +143,12 @@ milliseconds.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `preset` | `one-dark` | One of the built-in presets (see [Themes](themes.md)). |
-| `path` | _none_ | A custom theme TOML file. When set, it is loaded at startup and **hot-reloaded** on change. |
+| `name` | `lipan` | The active theme: a built-in preset id, `system` (host-derived colors), or the stem of a file in `~/.config/hyprmux/themes/`. A custom file shadows a built-in of the same name. |
 
-If `path` is set and the file fails to load, `hyprmux` falls back to the `preset` theme and
-reports a warning. See [Themes](themes.md) for the preset list and how terminal ANSI colors
-are derived from the active theme.
+Custom themes are **hot-reloaded** on change while active. If the name matches nothing, or a
+custom file fails to load, `hyprmux` falls back to `lipan` and reports a warning. See
+[Themes](themes.md) for the preset list and how terminal ANSI colors are derived from the
+active theme.
 
 ## `[profile]`
 

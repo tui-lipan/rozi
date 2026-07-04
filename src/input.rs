@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::config::InputConfig;
 use crate::keymap::Keymap;
-use crate::state::{Direction, RATIO_STEP, ThemePreset};
+use crate::state::{Direction, RATIO_STEP};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
@@ -30,7 +30,6 @@ pub enum Action {
     OpenSessionPicker,
     DetachSession,
     OpenThemePicker,
-    SelectTheme(ThemePreset),
     TogglePalette,
     ToggleHelp,
     ToggleTitles,
@@ -83,7 +82,7 @@ impl Action {
             Action::ToggleTitles => "toggle-titles",
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
-            Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::SelectTheme(_) => {
+            Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) => {
                 return None;
             }
         })

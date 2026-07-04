@@ -49,16 +49,21 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) -> Update {
+pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     if !ctx.state.show_theme_picker {
         return Update::none();
     }
+    let choices = crate::config::theme_choices();
+    let Some(choice) = choices.get(index) else {
+        return Update::none();
+    };
     if ctx.state.theme_picker_preview.is_none() {
         ctx.state.theme_picker_preview = Some(ThemePickerPreview {
             theme: ctx.state.theme.clone(),
         });
     }
-    ctx.state.theme = theme_for_preset_from_context(ctx, preset);
+    let system_theme = ctx.state.system_theme.clone();
+    ctx.state.theme = crate::config::resolve_theme(&choice.id(), system_theme.as_ref()).theme;
     apply_terminal_palette_to_state(&mut ctx.state);
     Update::full()
 }
@@ -71,28 +76,61 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
     ctx.state.show_theme_picker = false;
 }
 
-pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, preset: ThemePreset) {
-    ctx.state.config.theme.preset = preset;
-    ctx.state.config.theme.path = None;
+pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let choices = crate::config::theme_choices();
+    let Some(choice) = choices.get(index) else {
+        ctx.state.show_theme_picker = false;
+        return Update::full();
+    };
+    let name = choice.id();
+    let system_theme = ctx.state.system_theme.clone();
+    let resolved = crate::config::resolve_theme(&name, system_theme.as_ref());
+    for warning in &resolved.warnings {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Theme",
+            warning.clone(),
+        ));
+    }
+
+    // Watch the active theme's file only when it is a custom file; start the reload tick loop
+    // if it was not already running (switching between custom files keeps it running).
+    let had_watcher = ctx.state.theme_watcher.is_some();
     ctx.state.theme_watcher = None;
-    ctx.state.theme = theme_for_preset_from_context(ctx, preset);
+    let mut start_tick = false;
+    if let Some(path) = &resolved.watch_path {
+        match ThemeWatcher::new(path.clone(), ThemePreset::Lipan.theme()) {
+            Ok(watcher) => {
+                ctx.state.theme_watcher = Some(watcher);
+                start_tick = !had_watcher;
+            }
+            Err(err) => {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Theme Watcher",
+                    format!("Can't watch theme file: {err}"),
+                ));
+            }
+        }
+    }
+
+    ctx.state.config.theme.name = name.clone();
+    ctx.state.theme = resolved.theme;
     ctx.state.theme_picker_preview = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
-    if let Err(err) = crate::config::persist_theme_selection(preset) {
-        ctx.toast()
-            .push(crate::pty_events::error_toast("Theme not saved", err));
+    if let Err(err) = crate::config::persist_theme_name(&name) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Theme not saved",
+            err,
+        ));
     }
-}
 
-fn theme_for_preset_from_context(ctx: &Context<HyprmuxApp>, preset: ThemePreset) -> Theme {
-    if preset == ThemePreset::System {
-        ctx.state
-            .system_theme
-            .clone()
-            .unwrap_or_else(|| ThemePreset::Lipan.theme())
+    if start_tick {
+        Update::with_command(schedule_theme_tick())
     } else {
-        preset.theme()
+        Update::full()
     }
 }
 

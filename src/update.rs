@@ -22,7 +22,7 @@ use crate::pty_events::{
 use crate::resize_move_ops::{begin_move, begin_resize, end_move, move_pane, resize_pane};
 use crate::search_ops::{recompute_search, search_next, select_search_match};
 use crate::state::State;
-use crate::theme_ops::{cancel_theme_picker, preview_theme, theme_tick};
+use crate::theme_ops::{cancel_theme_picker, preview_theme, select_theme, theme_tick};
 use crate::tiling::append_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
@@ -58,7 +58,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             Update::full()
         }
-        Msg::PreviewTheme(preset) => preview_theme(ctx, preset),
+        Msg::PreviewTheme(index) => preview_theme(ctx, index),
+        Msg::SelectTheme(index) => select_theme(ctx, index),
         Msg::ThemeTick => theme_tick(ctx),
         Msg::BarTick => {
             // Repaint for the clock, then reschedule only while a clock segment is configured.
@@ -69,7 +70,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
         }
         Msg::ThemeError(message) => {
-            ctx.toast().push(error_toast("Theme Reload", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Theme Reload", message));
             Update::full()
         }
         Msg::CloseSearch => {
@@ -327,8 +329,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                         ManagedTerminalStatus::Error("session disconnected".into());
                 }
             }
-            ctx.toast()
-                .push(error_toast("Session", format!("{name} disconnected")));
+            ctx.toast().push(error_toast(
+                &ctx.state.theme,
+                "Session",
+                format!("{name} disconnected"),
+            ));
             Update::full()
         }
         Msg::SessionAttachFailed { epoch, message } => {
@@ -341,7 +346,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::none();
             }
             ctx.state.pending_session_attach = None;
-            ctx.toast().push(error_toast("Session Attach", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Session Attach", message));
             Update::full()
         }
         Msg::SessionAttached {
@@ -423,7 +429,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                         pane.terminal.apply_snapshot(render_snapshot, title, cwd)
                     }
                     Err(err) => {
-                        ctx.toast().push(error_toast("Session", err.to_string()));
+                        ctx.toast()
+                            .push(error_toast(&ctx.state.theme, "Session", err.to_string()));
                     }
                 }
             }
@@ -493,7 +500,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 toast_error = Some(error);
             }
             if let Some(error) = toast_error {
-                ctx.toast().push(error_toast("Session Spawn", error));
+                ctx.toast()
+                    .push(error_toast(&ctx.state.theme, "Session Spawn", error));
             }
             if should_close {
                 begin_close_pane(ctx, pane_id, ctx.state.config.animations)
@@ -544,7 +552,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();
             }
-            ctx.toast().push(error_toast("Session", message));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Session", message));
             Update::full()
         }
     };
@@ -637,7 +646,8 @@ fn apply_attached_panes(
             match crate::session::client::apply_wire_snapshot(attached.snapshot) {
                 Ok(snapshot) => pane.terminal.apply_snapshot(snapshot, title, cwd),
                 Err(err) => {
-                    ctx.toast().push(error_toast("Session", err.to_string()));
+                    ctx.toast()
+                        .push(error_toast(&ctx.state.theme, "Session", err.to_string()));
                 }
             }
         }
@@ -678,8 +688,9 @@ fn replace_with_fresh_server_state(ctx: &mut Context<HyprmuxApp>, epoch: u64) {
     fresh.next_pty_generation = next_pty_generation;
     ctx.state = fresh;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast()
-        .push(crate::pty_events::info_toast("Attached; opened a fresh pane"));
+    ctx.toast().push(crate::pty_events::info_toast(
+        "Attached; opened a fresh pane",
+    ));
 }
 
 fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {

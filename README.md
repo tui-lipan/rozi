@@ -28,8 +28,8 @@ cargo run     # quit with Ctrl-q
 - **Pane identity** - rename panes (`n`); titles also follow the program's OSC title.
 - **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
 - **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.
-- **Themes** - 9 built-in presets, custom theme files, and live hot-reload. Terminal ANSI
-  colors are derived from the active theme.
+- **Themes** - 10 built-in presets, a host-derived `system` theme, drop-in custom theme files,
+  and live hot-reload. Terminal ANSI colors are derived from the active theme.
 - **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, and OSC52
   clipboard, provided by `tui-lipan`'s terminal primitives.
 

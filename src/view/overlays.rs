@@ -6,7 +6,7 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::{Action, CommandBinding};
 use crate::state::{
-    ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, SessionPickerState, ThemePreset,
+    ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, SessionPickerState,
 };
 use crate::{HyprmuxApp, Msg};
 
@@ -634,31 +634,36 @@ fn action_search_palette(
 }
 
 pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let current = ctx.state.config.theme.preset;
-    let applied_builtin = ctx.state.config.theme.path.is_none();
-    let initial_selected = Some(current.index());
+    // Built-in presets plus every custom theme file, selected by index into the same list.
+    let choices = crate::config::theme_choices();
+    let current = &ctx.state.config.theme.name;
+    let initial_selected = choices.iter().position(|choice| &choice.id() == current);
 
-    // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
-    let entries: Vec<SearchEntry<Action>> = ThemePreset::all()
-        .into_iter()
-        .map(|preset| {
-            let mut entry = SearchEntry::item(preset.label(), Action::SelectTheme(preset));
-            if applied_builtin && preset == current {
+    let entries: Vec<SearchEntry<usize>> = choices
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            let mut entry = SearchEntry::item(choice.label(), index);
+            if Some(index) == initial_selected {
                 entry = entry.description(ItemDescription::new().right("current"));
             }
             entry
         })
         .collect();
 
-    let palette = action_search_palette(ctx, entries, "Search themes…")
+    // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
+    let palette = shared_search_palette::<usize>(ctx, Length::Auto, true)
+        .entries(entries)
+        .placeholder("Search themes…")
         .initial_selected_item_index(initial_selected)
         .sync_selection(true)
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<Action>| match event.item.value {
-                    Action::SelectTheme(preset) => Msg::PreviewTheme(preset),
-                    _ => Msg::RunAction(event.item.value),
-                }),
+                .callback(|event: SearchEvent<usize>| Msg::PreviewTheme(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::SelectTheme(event.item.value)),
         );
 
     action_palette_modal(ctx, "Choose theme")

@@ -50,8 +50,11 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
                     ctx.toast().push(crate::pty_events::info_toast("Copied"));
                 }
                 Err(err) => {
-                    ctx.toast()
-                        .push(crate::pty_events::error_toast("Copy failed", err.to_string()));
+                    ctx.toast().push(crate::pty_events::error_toast(
+                        &ctx.state.theme,
+                        "Copy failed",
+                        err.to_string(),
+                    ));
                 }
             }
         }

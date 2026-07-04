@@ -12,14 +12,21 @@ pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
         .copyable(true)
+        .copy_affordance(ToastCopyAffordance::None)
         .padding((0, 1, 0, 0))
 }
 
-pub(crate) fn error_toast(title: impl Into<String>, message: impl Into<String>) -> Toast {
+pub(crate) fn error_toast(
+    theme: &Theme,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> Toast {
     Toast::new(message.into())
         .title(Some(title.into()))
         .duration(6.0)
         .border(true)
+        .frame_style(Style::new().fg(theme.status.error))
+        .title_style(Style::new().fg(theme.status.error).bold())
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
         .padding((0, 1, 0, 0))
@@ -150,7 +157,8 @@ pub(crate) fn handle_pty_event(
         }
         PaneEventOutcome::StatusChanged => {
             if let Some(message) = status_text.strip_prefix("error: ").map(str::to_string) {
-                ctx.toast().push(error_toast(format!("Pane {id}"), message));
+                ctx.toast()
+                    .push(error_toast(&ctx.state.theme, format!("Pane {id}"), message));
             }
             Update::full()
         }
@@ -325,7 +333,8 @@ pub(crate) fn handle_pty_ready(
         }
     }
     if let Some(message) = error {
-        ctx.toast().push(error_toast(format!("Pane {id}"), message));
+        ctx.toast()
+            .push(error_toast(&ctx.state.theme, format!("Pane {id}"), message));
     }
     Update::full()
 }

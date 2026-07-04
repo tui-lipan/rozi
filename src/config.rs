@@ -207,6 +207,7 @@ impl Default for HyprmuxConfig {
 }
 
 /// One segment of the configurable top bar. `Workspaces` is the workspace tab strip;
+/// `Session` is the live attach-connection badge (invisible until attached to a named session);
 /// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BarSegment {
@@ -250,10 +251,11 @@ pub struct BarConfig {
 
 impl Default for BarConfig {
     fn default() -> Self {
-        // Matches today's bar: the badge then the workspace tabs, nothing on the right.
+        // Badge + workspace tabs on the left; the session badge sits on the right but stays
+        // invisible until an attach connection exists, so local mode looks unchanged.
         Self {
             left: vec![BarSegment::Title, BarSegment::Workspaces],
-            right: Vec::new(),
+            right: vec![BarSegment::Session],
             clock_format: "%H:%M".to_string(),
         }
     }
@@ -642,7 +644,7 @@ mod tests {
     fn bar_config_default_matches_current_layout() {
         let bar = BarConfig::default();
         assert_eq!(bar.left, vec![BarSegment::Title, BarSegment::Workspaces]);
-        assert!(bar.right.is_empty());
+        assert_eq!(bar.right, vec![BarSegment::Session]);
         assert!(!bar.has_clock());
         assert_eq!(bar.clock_format, "%H:%M");
     }

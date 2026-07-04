@@ -12,6 +12,14 @@ By default `hyprmux` runs in local single-process mode with PTYs in the UI proce
 `--attach` / `--session` mode connects to a named session server for detach/reattach-style
 workflows.
 
+## Project status
+
+Pre-1.0, in active development, and used by a single developer. There are **no external users and
+no backwards-compatibility obligations** — config keys, on-disk formats, protocol wire types, and
+public-looking APIs may be renamed or removed outright when it makes the design cleaner. Prefer the
+correct end state over migration shims or deprecation aliases; don't preserve a confusing name or
+stub just to avoid a breaking change.
+
 ## Commands
 
 - Build: `cargo build`
@@ -193,3 +201,10 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
   Lifecycle, event-plumbing, and pure-data modules keep plain names (`pane_lifecycle`,
   `pty_events`, `key_routing`, `profiles`, `config`). New modules should follow this split rather
   than inventing a third convention.
+- **Comments describe the code as it is, never its history.** Write comments only where they aid
+  readability or record *why* something non-obvious is the way it is (a tricky invariant, a
+  workaround, a subtle ordering constraint). Do **not** write time-oriented or changelog-style
+  comments — nothing about what changed, what was removed and why, what "used to" happen, or how
+  this differs from a previous version. The commit history is the record for that; a reader of the
+  file should not be able to tell a refactor ever happened. Delete such comments when you touch
+  surrounding code.

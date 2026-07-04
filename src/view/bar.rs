@@ -91,7 +91,7 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
                 .into(),
         ),
         BarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
-        BarSegment::Session => session_name(ctx).map(|name| bar_text(format!(" {name} "), theme)),
+        BarSegment::Session => session_indicator(ctx),
         BarSegment::Clock => {
             let now = chrono::Local::now();
             Some(bar_text(
@@ -138,11 +138,33 @@ fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
             "{layout}",
             state.workspaces[state.active_workspace].layout_kind.label(),
         )
-        .replace("{session}", &session_name(ctx).unwrap_or_default())
+        .replace("{session}", &attached_session_name(ctx).unwrap_or_default())
 }
 
-fn session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
-    ctx.state.config.profile.default.clone()
+/// The `Session` bar segment: an accented badge naming the attached session server. Renders
+/// nothing while unattached, so in local mode the segment simply takes no space.
+fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
+    let theme = &ctx.state.theme;
+    let name = attached_session_name(ctx)?;
+    Some(
+        Text::new(format!(" 󰛤 {name} "))
+            .style(
+                Style::new()
+                    .fg(theme.surface.backdrop)
+                    .bg(theme.border_active)
+                    .bold(),
+            )
+            .height(Length::Px(1))
+            .into(),
+    )
+}
+
+/// The live attached session name, if any — backs the `Session` segment and `{session}` placeholder.
+fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
+    ctx.state
+        .session_attached
+        .then(|| ctx.state.session_name.clone())
+        .flatten()
 }
 
 fn bar_hostname() -> String {

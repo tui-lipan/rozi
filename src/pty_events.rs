@@ -11,6 +11,7 @@ use crate::state::PaneId;
 pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
+        .copyable(true)
         .padding((0, 1, 0, 0))
 }
 
@@ -19,6 +20,8 @@ pub(crate) fn error_toast(title: impl Into<String>, message: impl Into<String>) 
         .title(Some(title.into()))
         .duration(6.0)
         .border(true)
+        .copyable(true)
+        .copy_affordance(ToastCopyAffordance::None)
         .padding((0, 1, 0, 0))
 }
 
@@ -40,16 +43,10 @@ pub(crate) fn forward_key_to_pane(
     if pane.terminal.is_server_backed() {
         if client.is_none() {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-            ctx.toast()
-                .push(error_toast(format!("Pane {id}"), "session disconnected"));
             return Update::full();
         }
         if let Some(client) = client {
-            if let Err(message) = send_key_to_session_client(&client, id, pane.pty_generation, key)
-            {
-                ctx.toast().push(error_toast(format!("Pane {id}"), message));
-                return Update::full();
-            }
+            let _ = send_key_to_session_client(&client, id, pane.pty_generation, key);
             return Update::none();
         }
     }
@@ -63,10 +60,7 @@ pub(crate) fn forward_key_to_pane(
             }
         }
         Err(message) => {
-            let toast_message = message.clone();
             pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-            ctx.toast()
-                .push(error_toast(format!("Pane {id}"), toast_message));
             Update::full()
         }
     }
@@ -78,37 +72,27 @@ fn forward_key_to_targets(
     key: KeyEvent,
 ) -> Update {
     let mut repaint = false;
-    let mut errors = Vec::new();
     let client = ctx.state.session_client.clone();
     for id in targets {
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
         };
         if pane.terminal.is_server_backed() {
-            if client.is_none() {
-                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                errors.push((*id, "session disconnected".to_string()));
-            } else if let Some(client) = client.clone() {
-                if let Err(message) =
-                    send_key_to_session_client(&client, *id, pane.pty_generation, key)
-                {
-                    errors.push((*id, message));
-                }
+            if let Some(client) = client.clone() {
+                let _ = send_key_to_session_client(&client, *id, pane.pty_generation, key);
             } else {
-                errors.push((*id, "session disconnected".to_string()));
+                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+                repaint = true;
             }
             continue;
         }
         match pane.terminal.send_key(key) {
             Ok(result) => repaint |= result.repaint,
             Err(message) => {
-                pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message.clone()));
-                errors.push((*id, message));
+                pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+                repaint = true;
             }
         }
-    }
-    for (id, message) in errors {
-        ctx.toast().push(error_toast(format!("Pane {id}"), message));
     }
     if repaint {
         Update::full()
@@ -179,8 +163,11 @@ pub(crate) fn handle_pty_event(
                 return Update::full();
             }
             maybe_notify_pane_exit(&ctx.state.config, id, code);
-            ctx.toast()
-                .push(info_toast(format!("Pane {id} exited with code {code}")));
+            // A clean exit closes the pane on its own; only a failure code is worth surfacing.
+            if code != 0 {
+                ctx.toast()
+                    .push(info_toast(format!("Pane {id} exited ({code})")));
+            }
             begin_close_pane(ctx, id, ctx.state.config.animations)
         }
     }
@@ -217,17 +204,12 @@ pub(crate) fn handle_pane_input(
                 client.send_input(id, pane.pty_generation, input.bytes.to_vec());
             } else {
                 pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                ctx.toast()
-                    .push(error_toast(format!("Pane {id}"), "session disconnected"));
                 return Update::full();
             }
             return Update::none();
         }
         if let Err(message) = pane.terminal.send_bytes(&input.bytes) {
-            let toast_message = message.clone();
             pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-            ctx.toast()
-                .push(error_toast(format!("Pane {id}"), toast_message));
             return Update::full();
         }
     }
@@ -239,7 +221,7 @@ pub(crate) fn handle_pane_mouse(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> Update {
-    let mut error = None;
+    let mut error = false;
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.terminal.is_server_backed() {
@@ -247,19 +229,16 @@ pub(crate) fn handle_pane_mouse(
                 client.send_input(id, pane.pty_generation, bytes);
             } else {
                 pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                ctx.toast()
-                    .push(error_toast(format!("Pane {id}"), "session disconnected"));
                 return Update::full();
             }
             return Update::none();
         }
         if let Err(message) = pane.terminal.send_bytes(&bytes) {
-            error = Some(message.clone());
+            error = true;
             pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
         }
     }
-    if let Some(message) = error {
-        ctx.toast().push(error_toast(format!("Pane {id}"), message));
+    if error {
         Update::full()
     } else {
         Update::none()
@@ -283,10 +262,7 @@ pub(crate) fn handle_pane_resize(
             Ok(true) => Update::full(),
             Ok(false) => Update::none(),
             Err(message) => {
-                let toast_message = message.clone();
                 pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-                ctx.toast()
-                    .push(error_toast(format!("Pane {id}"), toast_message));
                 Update::full()
             }
         }

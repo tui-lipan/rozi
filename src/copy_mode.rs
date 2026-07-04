@@ -47,14 +47,11 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         if !text.is_empty() {
             match ctx.clipboard().copy(&text) {
                 Ok(()) => {
-                    ctx.toast()
-                        .push(crate::pty_events::info_toast("Copied selection"));
+                    ctx.toast().push(crate::pty_events::info_toast("Copied"));
                 }
                 Err(err) => {
-                    ctx.toast().push(crate::pty_events::error_toast(
-                        "Copy",
-                        format!("Clipboard copy failed: {err}"),
-                    ));
+                    ctx.toast()
+                        .push(crate::pty_events::error_toast("Copy failed", err.to_string()));
                 }
             }
         }

@@ -87,7 +87,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state = fresh;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast()
-        .push(info_toast("Detached; remote session remains running"));
+        .push(info_toast("Detached (session still running)"));
     Update::with_command(pane_lifecycle::initial_command(
         startup_spawns(&mut ctx.state),
         false,
@@ -111,8 +111,7 @@ pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String
         return Update::full();
     }
     if ctx.state.pending_session_attach.is_some() {
-        ctx.toast()
-            .push(info_toast("A session attach is already in progress"));
+        ctx.toast().push(info_toast("Attach already in progress"));
         return Update::full();
     }
     if let Some(client) = ctx.state.session_client.clone() {

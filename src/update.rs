@@ -327,10 +327,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                         ManagedTerminalStatus::Error("session disconnected".into());
                 }
             }
-            ctx.toast().push(error_toast(
-                "Session",
-                format!("session {name} disconnected"),
-            ));
+            ctx.toast()
+                .push(error_toast("Session", format!("{name} disconnected")));
             Update::full()
         }
         Msg::SessionAttachFailed { epoch, message } => {
@@ -399,7 +397,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             apply_attached_panes(ctx, panes, restore_layout);
             if !had_panes && pending.migrate_local_panes {
                 ctx.toast().push(crate::pty_events::info_toast(
-                    "Attached to new session; local panes were recreated as server panes",
+                    "Attached; local panes moved to session",
                 ));
                 spawn_existing_panes_on_session(ctx);
             }
@@ -680,9 +678,8 @@ fn replace_with_fresh_server_state(ctx: &mut Context<HyprmuxApp>, epoch: u64) {
     fresh.next_pty_generation = next_pty_generation;
     ctx.state = fresh;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast().push(crate::pty_events::info_toast(
-        "Attached to empty session; opened a fresh server pane",
-    ));
+    ctx.toast()
+        .push(crate::pty_events::info_toast("Attached; opened a fresh pane"));
 }
 
 fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {

@@ -239,7 +239,7 @@ impl Component for HyprmuxApp {
                 Err(err) => {
                     ctx.toast().push(pty_events::error_toast(
                         "Theme Watcher",
-                        format!("Could not watch {}: {err}", path.display()),
+                        format!("Can't watch theme file: {err}"),
                     ));
                 }
             }

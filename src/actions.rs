@@ -127,9 +127,9 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             };
             ctx.toast()
                 .push(crate::pty_events::info_toast(if synchronized {
-                    "Pane synchronization enabled"
+                    "Sync on"
                 } else {
-                    "Pane synchronization disabled"
+                    "Sync off"
                 }));
             Update::full()
         }

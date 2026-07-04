@@ -46,10 +46,8 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     let profile = profile_from_state(&ctx.state);
     match save_profile(&path, &profile) {
         Ok(()) => {
-            ctx.toast().push(info_toast(format!(
-                "Saved profile `{name}` to {}",
-                path.display()
-            )));
+            ctx.toast()
+                .push(info_toast(format!("Saved profile `{name}`")));
         }
         Err(message) => {
             ctx.toast().push(error_toast("Save Profile", message));
@@ -126,16 +124,13 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
     };
 
     match persist_default_profile(&entry.name) {
-        Ok(path) => {
+        Ok(_) => {
             ctx.state.config.profile.default = Some(entry.name.clone());
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
-            ctx.toast().push(info_toast(format!(
-                "Default profile set to `{}` in {}",
-                entry.name,
-                path.display()
-            )));
+            ctx.toast()
+                .push(info_toast(format!("Default profile `{}`", entry.name)));
         }
         Err(message) => {
             ctx.toast()
@@ -178,12 +173,9 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
         Ok(()) => {
             if ctx.state.config.profile.default.as_deref() == Some(name.as_str()) {
                 match clear_default_profile(&name) {
-                    Ok(Some(config_path)) => {
+                    Ok(Some(_)) => {
                         ctx.state.config.profile.default = None;
-                        ctx.toast().push(info_toast(format!(
-                            "Cleared startup default in {}",
-                            config_path.display()
-                        )));
+                        ctx.toast().push(info_toast("Cleared startup default"));
                     }
                     Ok(None) => {}
                     Err(message) => {

@@ -50,6 +50,11 @@ Full docs live in [`docs/`](docs/):
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 
+## Sponsor
+
+If hyprmux is useful to you, consider
+[sponsoring its development](https://github.com/sponsors/Razuer) ♥
+
 ## License
 
 MIT OR Apache-2.0.

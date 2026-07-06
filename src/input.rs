@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::config::InputConfig;
 use crate::keymap::Keymap;
-use crate::state::{Direction, RATIO_STEP};
+use crate::state::{Direction, Pane, RATIO_STEP, SCRATCH_PANE_ID, State};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
@@ -172,14 +172,14 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::ToggleFloat,
-            label: "Toggle floating",
+            label: "Floating",
             keys: "t",
             category: "Panes",
             palette: false,
         },
         CommandBinding {
             action: Action::ToggleFullscreen,
-            label: "Toggle fullscreen",
+            label: "Fullscreen",
             keys: "f",
             category: "Panes",
             palette: false,
@@ -228,7 +228,7 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::TogglePaneSynchronization,
-            label: "Toggle pane synchronization",
+            label: "Pane synchronization",
             keys: "",
             category: "Panes",
             palette: true,
@@ -340,7 +340,7 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::ToggleHelp,
-            label: "Show keybindings",
+            label: "Keybindings",
             keys: "?",
             category: "App",
             palette: true,
@@ -403,14 +403,14 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::ToggleTitles,
-            label: "Toggle pane titlebars",
+            label: "Pane titlebars",
             keys: "",
             category: "App",
             palette: true,
         },
         CommandBinding {
             action: Action::ToggleFocusOnHover,
-            label: "Toggle focus on hover",
+            label: "Focus on hover",
             keys: "",
             category: "App",
             palette: true,
@@ -423,6 +423,70 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: false,
         },
     ]
+}
+
+/// Resolve the user-facing label for a command, reflecting current state for toggle actions.
+pub fn command_label(action: Action, state: &State) -> String {
+    if let Some(label) = toggle_command_label(action, state) {
+        return label;
+    }
+
+    if action == Action::ToggleLayout {
+        let layout = state.workspaces[state.active_workspace]
+            .layout_kind
+            .label();
+        return format!("Switch layout (current: {layout})");
+    }
+
+    command_bindings()
+        .into_iter()
+        .find(|binding| binding.action == action)
+        .map(|binding| binding.label.to_string())
+        .unwrap_or_else(|| action.id().unwrap_or("command").to_string())
+}
+
+fn toggle_command_label(action: Action, state: &State) -> Option<String> {
+    Some(match action {
+        Action::ToggleFloat => {
+            let enabled = focused_pane(state).is_some_and(|pane| pane.floating);
+            enable_disable_label("floating", enabled)
+        }
+        Action::ToggleFullscreen => {
+            let enabled = focused_pane(state).is_some_and(|pane| pane.fullscreen);
+            enable_disable_label("fullscreen", enabled)
+        }
+        Action::TogglePaneSynchronization => {
+            let enabled = state.workspaces[state.active_workspace].synchronized;
+            enable_disable_label("pane synchronization", enabled)
+        }
+        Action::ToggleTitles => enable_disable_label("pane titlebars", state.show_titles),
+        Action::ToggleFocusOnHover => {
+            enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
+        }
+        Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
+        Action::ToggleHelp => enable_disable_label("keybindings", state.show_help),
+        Action::TogglePalette => enable_disable_label("command palette", state.show_palette),
+        _ => return None,
+    })
+}
+
+fn enable_disable_label(feature: &str, enabled: bool) -> String {
+    if enabled {
+        format!("Disable {feature}")
+    } else {
+        format!("Enable {feature}")
+    }
+}
+
+fn focused_pane(state: &State) -> Option<&Pane> {
+    let id = state.focused_pane?;
+    if id == SCRATCH_PANE_ID {
+        return state.scratch.as_ref();
+    }
+    state.workspaces[state.active_workspace]
+        .panes
+        .iter()
+        .find(|pane| pane.id == id && !pane.closing)
 }
 
 pub fn is_prefix_key(key: KeyEvent, config: &InputConfig) -> bool {
@@ -534,7 +598,7 @@ mod tests {
             .find(|binding| binding.action == Action::ToggleFocusOnHover)
             .expect("focus-on-hover binding exists");
 
-        assert_eq!(binding.label, "Toggle focus on hover");
+        assert_eq!(binding.label, "Focus on hover");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "App");
         assert!(binding.palette);
@@ -547,10 +611,62 @@ mod tests {
             .find(|binding| binding.action == Action::TogglePaneSynchronization)
             .expect("pane synchronization binding exists");
 
-        assert_eq!(binding.label, "Toggle pane synchronization");
+        assert_eq!(binding.label, "Pane synchronization");
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "Panes");
         assert!(binding.palette);
+    }
+
+    #[test]
+    fn command_label_reflects_toggle_state() {
+        use crate::config::HyprmuxConfig;
+        use tui_lipan::Theme;
+
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        assert_eq!(
+            command_label(Action::ToggleFocusOnHover, &state),
+            "Disable focus on hover"
+        );
+        assert_eq!(
+            command_label(Action::ToggleTitles, &state),
+            "Disable pane titlebars"
+        );
+        assert_eq!(
+            command_label(Action::TogglePaneSynchronization, &state),
+            "Enable pane synchronization"
+        );
+
+        state.config.pane.focus_on_hover = false;
+        state.show_titles = false;
+        state.workspaces[0].synchronized = true;
+        state.scratch_visible = true;
+        state.workspaces[0].panes[0].floating = true;
+        state.workspaces[0].panes[0].fullscreen = true;
+
+        assert_eq!(
+            command_label(Action::ToggleFocusOnHover, &state),
+            "Enable focus on hover"
+        );
+        assert_eq!(
+            command_label(Action::ToggleTitles, &state),
+            "Enable pane titlebars"
+        );
+        assert_eq!(
+            command_label(Action::TogglePaneSynchronization, &state),
+            "Disable pane synchronization"
+        );
+        assert_eq!(
+            command_label(Action::ToggleScratchpad, &state),
+            "Disable scratchpad"
+        );
+        assert_eq!(
+            command_label(Action::ToggleFloat, &state),
+            "Disable floating"
+        );
+        assert_eq!(
+            command_label(Action::ToggleFullscreen, &state),
+            "Disable fullscreen"
+        );
     }
 
     #[test]

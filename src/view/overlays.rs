@@ -25,9 +25,12 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     // Group bindings by category (first-seen order), so a category with non-contiguous
     // entries in the table still gets a single header - matching the command palette.
-    let mut groups: Vec<(&'static str, Vec<(String, &'static str)>)> = Vec::new();
+    let mut groups: Vec<(&'static str, Vec<(String, String)>)> = Vec::new();
     for binding in &crate::input::command_bindings() {
-        let row = (help_keys(ctx, binding), binding.label);
+        let row = (
+            help_keys(ctx, binding),
+            crate::input::command_label(binding.action, &ctx.state),
+        );
         match groups
             .iter_mut()
             .find(|(name, _)| *name == binding.category)
@@ -40,16 +43,16 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     groups.push((
         "Workspaces",
         vec![
-            ("1-9".to_string(), "Switch to workspace"),
-            ("Shift+1-9".to_string(), "Move pane to workspace"),
+            ("1-9".to_string(), "Switch to workspace".to_string()),
+            ("Shift+1-9".to_string(), "Move pane to workspace".to_string()),
         ],
     ));
     groups.push((
         "Mouse",
         vec![
-            ("mod-drag".to_string(), "Move pane (left-drag)"),
-            ("mod-right-drag".to_string(), "Resize pane from corner"),
-            ("drag gap".to_string(), "Resize a tiled split"),
+            ("mod-drag".to_string(), "Move pane (left-drag)".to_string()),
+            ("mod-right-drag".to_string(), "Resize pane from corner".to_string()),
+            ("drag gap".to_string(), "Resize a tiled split".to_string()),
         ],
     ));
 
@@ -591,14 +594,7 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .into_iter()
         .filter(|binding| binding.palette)
     {
-        let label = if binding.action == Action::ToggleLayout {
-            let layout = ctx.state.workspaces[ctx.state.active_workspace]
-                .layout_kind
-                .label();
-            format!("Switch layout (current: {layout})")
-        } else {
-            binding.label.to_string()
-        };
+        let label = crate::input::command_label(binding.action, &ctx.state);
         let mut entry = SearchEntry::item(label, binding.action);
         let keys = palette_keys(ctx, &binding);
         if !keys.is_empty() {

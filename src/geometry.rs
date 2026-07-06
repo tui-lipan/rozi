@@ -31,23 +31,12 @@ pub fn empty_workspace_rect(bounds: FloatRect) -> FloatRect {
     }
 }
 
-pub fn inset_float_rect(rect: FloatRect, inset: f32) -> FloatRect {
-    let horizontal = inset * 2.0;
-    let vertical = inset * 2.0;
-    FloatRect {
-        x: rect.x + inset.min(rect.w / 2.0),
-        y: rect.y + inset.min(rect.h / 2.0),
-        w: (rect.w - horizontal).max(1.0),
-        h: (rect.h - vertical).max(1.0),
-    }
-}
-
 pub fn workspace_tile_bounds(bounds: FloatRect, gap: f32) -> FloatRect {
     let top = gap.min(bounds.h / 2.0);
     FloatRect {
-        x: bounds.x + gap.min(bounds.w / 2.0),
+        x: bounds.x,
         y: bounds.y + top,
-        w: (bounds.w - gap * 2.0).max(1.0),
+        w: bounds.w.max(1.0),
         h: (bounds.h - top).max(1.0),
     }
 }
@@ -565,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_tile_bounds_preserves_top_gap_and_removes_bottom_gap() {
+    fn workspace_tile_bounds_preserves_top_gap_only() {
         let bounds = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -576,9 +565,9 @@ mod tests {
         assert_eq!(
             workspace_tile_bounds(bounds, 1.0),
             FloatRect {
-                x: 1.0,
+                x: 0.0,
                 y: 1.0,
-                w: 98.0,
+                w: 100.0,
                 h: 39.0,
             }
         );
@@ -587,18 +576,18 @@ mod tests {
     #[test]
     fn grabbed_edge_on_outer_border_detects_terminal_edges() {
         let tile_bounds = FloatRect {
-            x: 1.0,
+            x: 0.0,
             y: 1.0,
-            w: 98.0,
-            h: 38.0,
+            w: 100.0,
+            h: 39.0,
         };
         // Left-column tile flush to the left/top/bottom borders; its right edge is the
         // inner divider against the neighbouring column.
         let left_tile = FloatRect {
-            x: 1.0,
+            x: 0.0,
             y: 1.0,
-            w: 48.0,
-            h: 38.0,
+            w: 50.0,
+            h: 39.0,
         };
 
         // Lower-left corner sits on the terminal border on both axes -> both blocked.

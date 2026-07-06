@@ -164,7 +164,6 @@ pub(crate) fn pane_element(
         .border_style(border_style)
         .style(frame_style)
         .focus_style(Style::default())
-        .padding((0, 1, 0, 1))
         .child(terminal)
         .into();
     let body = body.key(pane_body_key(id));

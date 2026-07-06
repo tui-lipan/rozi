@@ -4,7 +4,7 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::config::{HyprmuxConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
-use crate::geometry::{canvas_bounds_from_viewport, inset_float_rect};
+use crate::geometry::{canvas_bounds_from_viewport, workspace_tile_bounds};
 use crate::pane_lifecycle::{pty_config_for_pane, spawn_pty_command};
 use crate::state::{OUTER_GAP, Pane, SCRATCH_PANE_ID};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
@@ -14,26 +14,26 @@ use crate::view;
 const SCRATCH_ANIM_EPSILON: f32 = 0.01;
 
 /// Bottom-anchored dropdown rect when fully deployed: full tile width, `height_fraction` of
-/// the tile height, flush with the bottom inset. The pane slides up from below to reach it.
+/// the tile height, flush with the bottom tile edge. The pane slides up from below to reach it.
 pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32) -> FloatRect {
-    let inset = inset_float_rect(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
     let fraction = height_fraction.clamp(SCRATCHPAD_MIN_HEIGHT, SCRATCHPAD_MAX_HEIGHT);
-    let h = (inset.h * fraction).round().max(1.0);
+    let h = (tile_bounds.h * fraction).round().max(1.0);
     FloatRect {
-        x: inset.x,
-        y: inset.y + inset.h - h,
-        w: inset.w,
+        x: tile_bounds.x,
+        y: tile_bounds.y + tile_bounds.h - h,
+        w: tile_bounds.w,
         h,
     }
 }
 
-/// The deployed rect translated straight down so its top edge sits at the bottom inset (fully
+/// The deployed rect translated straight down so its top edge sits at the bottom tile edge (fully
 /// off-screen). At `progress == 0.0` the dropdown is here; at `1.0` it is at `scratch_rect`.
 /// Only the `y` position moves - width/height are constant, so the PTY never resizes mid-slide.
 fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32) -> FloatRect {
     let shown = scratch_rect(bounds, height_fraction);
-    let inset = inset_float_rect(bounds, OUTER_GAP);
-    let hidden_y = inset.y + inset.h;
+    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    let hidden_y = tile_bounds.y + tile_bounds.h;
     let y = hidden_y + (shown.y - hidden_y) * progress.clamp(0.0, 1.0);
     FloatRect { y, ..shown }
 }
@@ -208,12 +208,12 @@ mod tests {
             h: 40.0,
         };
         let rect = scratch_rect(bounds, 0.4);
-        let inset = inset_float_rect(bounds, OUTER_GAP);
-        assert_eq!(rect.x, inset.x);
-        assert_eq!(rect.w, inset.w);
-        assert!((rect.h - inset.h * 0.4).abs() <= 1.0);
-        // Flush with the bottom inset.
-        assert!(((rect.y + rect.h) - (inset.y + inset.h)).abs() <= 1.0);
+        let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+        assert_eq!(rect.x, tile_bounds.x);
+        assert_eq!(rect.w, tile_bounds.w);
+        assert!((rect.h - tile_bounds.h * 0.4).abs() <= 1.0);
+        // Flush with the bottom tile edge.
+        assert!(((rect.y + rect.h) - (tile_bounds.y + tile_bounds.h)).abs() <= 1.0);
     }
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
             h: 40.0,
         };
         let tall = scratch_rect(bounds, 5.0);
-        let inset = inset_float_rect(bounds, OUTER_GAP);
-        assert!(tall.h <= inset.h * SCRATCHPAD_MAX_HEIGHT + 1.0);
+        let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+        assert!(tall.h <= tile_bounds.h * SCRATCHPAD_MAX_HEIGHT + 1.0);
     }
 }

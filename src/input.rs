@@ -39,6 +39,8 @@ pub enum Action {
     ToggleFocusOnHover,
     ToggleHighlightFocusedBackground,
     TogglePaneSynchronization,
+    ReloadConfig,
+    OpenConfigFile,
     /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
     /// [`crate::config::build_keymap`]), so - like workspace digits - it has no static id and
     /// isn't independently rebindable or listed in [`command_bindings`].
@@ -94,6 +96,8 @@ impl Action {
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
             Action::ToggleHighlightFocusedBackground => "toggle-highlight-focused-background",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
+            Action::ReloadConfig => "reload-config",
+            Action::OpenConfigFile => "open-config",
             Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::RunUserCommand(_) => {
                 return None;
             }
@@ -146,6 +150,8 @@ impl Action {
             "toggle-focus-on-hover" => Action::ToggleFocusOnHover,
             "toggle-highlight-focused-background" => Action::ToggleHighlightFocusedBackground,
             "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
+            "reload-config" => Action::ReloadConfig,
+            "open-config" => Action::OpenConfigFile,
             _ => return None,
         })
     }
@@ -466,6 +472,20 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             category: "App",
             palette: false,
         },
+        CommandBinding {
+            action: Action::ReloadConfig,
+            label: "Reload config",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::OpenConfigFile,
+            label: "Open config file",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
     ]
 }
 
@@ -651,6 +671,35 @@ mod tests {
         assert_eq!(binding.keys, "");
         assert_eq!(binding.category, "App");
         assert!(binding.palette);
+    }
+
+    #[test]
+    fn reload_and_open_config_bindings_are_palette_commands_without_default_keys() {
+        let bindings = command_bindings();
+        for action in [Action::ReloadConfig, Action::OpenConfigFile] {
+            let binding = bindings
+                .iter()
+                .find(|binding| binding.action == action)
+                .expect("binding exists");
+            assert_eq!(binding.keys, "");
+            assert_eq!(binding.category, "App");
+            assert!(binding.palette);
+        }
+    }
+
+    #[test]
+    fn every_command_binding_action_id_round_trips() {
+        for binding in command_bindings() {
+            let id = binding
+                .action
+                .id()
+                .expect("every command_bindings() entry has a stable id");
+            assert_eq!(
+                Action::from_id(id),
+                Some(binding.action),
+                "id `{id}` should round-trip"
+            );
+        }
     }
 
     #[test]

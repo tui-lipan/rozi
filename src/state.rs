@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -601,6 +601,10 @@ pub struct State {
     /// command string. Refreshed on a background timer per command; empty until the first run
     /// completes.
     pub bar_command_output: HashMap<String, String>,
+    /// Commands that already have a background poller thread running (see
+    /// [`crate::pane_lifecycle::spawn_bar_command_pollers`]). A config reload spawns pollers
+    /// only for commands newly added by the reload, since existing pollers never stop.
+    pub bar_commands_running: HashSet<String>,
 }
 
 pub struct PendingSessionAttach {
@@ -665,6 +669,7 @@ impl State {
             pending_session_attach: None,
             last_pushed_layout: None,
             bar_command_output: HashMap::new(),
+            bar_commands_running: HashSet::new(),
         }
     }
 

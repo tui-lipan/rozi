@@ -218,6 +218,7 @@ pub fn restore_state_from_profile(
         pending_session_attach: None,
         last_pushed_layout: None,
         bar_command_output: std::collections::HashMap::new(),
+        bar_commands_running: std::collections::HashSet::new(),
     }
 }
 

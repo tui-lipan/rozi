@@ -216,6 +216,8 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
+        Action::ReloadConfig => crate::config_ops::reload_config(ctx),
+        Action::OpenConfigFile => crate::config_ops::open_config_file(ctx),
         Action::TogglePaneSynchronization => {
             let synchronized = {
                 let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];

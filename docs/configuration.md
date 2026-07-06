@@ -15,6 +15,21 @@ defaults and reports the problem as a startup toast.
 On startup a toast reports `Loaded config from <path>` on success, or a warning if the file
 could not be read or parsed.
 
+### Reloading and editing
+
+Two command-palette entries avoid a restart after hand-editing the file:
+
+- **Open config file** (`open-config`) opens it in `$EDITOR` (falling back to `$VISUAL`, then
+  `vi`) in a new pane.
+- **Reload config** (`reload-config`) re-reads the file and applies it live - config fields,
+  `[keys]` bindings/user commands, theme (including switching which file the theme watcher
+  follows), and bar segments - without touching running panes, workspaces, or the active
+  session. A parse failure reloads to defaults and reports it as a toast, same as at startup;
+  fix the file and reload again.
+
+Both are ordinary actions, so they also work as `hyprmux run-action reload-config` /
+`hyprmux run-action open-config` over the control socket (see `docs/control.md`).
+
 ## Full example
 
 ```toml
@@ -267,10 +282,11 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `choose-theme`, `command-palette`, `help`,
-`toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`, `toggle-highlight-focused-background`,
-`toggle-pane-synchronization`. These same ids also work with `hyprmux run-action <id>` over the
-control socket (see `docs/control.md`).
+`save-profile`, `open-profile`, `sessions`, `detach-session`, `choose-theme`, `command-palette`,
+`help`, `toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`,
+`toggle-highlight-focused-background`, `toggle-pane-synchronization`, `reload-config`,
+`open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
+(see `docs/control.md`).
 
 `paste` (default `v`) reads the system clipboard and sends it to the focused pane's PTY, wrapped
 in bracketed-paste markers so shells/editors that opt in treat it as one paste instead of

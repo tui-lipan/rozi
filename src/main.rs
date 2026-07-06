@@ -1,6 +1,7 @@
 mod actions;
 mod anim;
 mod config;
+mod config_ops;
 mod control;
 mod control_ops;
 mod copy_mode;
@@ -262,6 +263,7 @@ impl Component for HyprmuxApp {
             let theme_tick = ctx.state.theme_watcher.is_some();
             let bar_tick = ctx.state.config.bar.has_clock();
             let bar_commands = ctx.state.config.bar.command_specs();
+            ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
             let epoch = ctx.state.runtime_epoch;
             ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
                 epoch,
@@ -289,11 +291,13 @@ impl Component for HyprmuxApp {
             }));
         }
         let spawns = startup_spawns(&mut ctx.state);
+        let bar_commands = ctx.state.config.bar.command_specs();
+        ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
         pane_lifecycle::initial_command(
             spawns,
             ctx.state.theme_watcher.is_some(),
             ctx.state.config.bar.has_clock(),
-            ctx.state.config.bar.command_specs(),
+            bar_commands,
             control_listener,
         )
     }

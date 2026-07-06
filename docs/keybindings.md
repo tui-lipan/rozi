@@ -116,6 +116,8 @@ extras (search, copy mode, scratchpad, resize mode, toggle layout, toggle focus 
 actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help overlay only,
 since the key is faster than a search box. Theme selection and "Save project profile" /
 "Toggle pane titlebars" / "Toggle focus on hover" are palette-only - they have no default key.
+So are "Open config file" and "Reload config" - see
+[Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
 including the workspace digits and mouse gestures.

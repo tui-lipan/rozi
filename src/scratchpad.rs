@@ -4,9 +4,9 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::config::{HyprmuxConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
-use crate::geometry::{canvas_bounds_from_viewport, workspace_tile_bounds};
+use crate::geometry::{workspace_tile_bounds};
 use crate::pane_lifecycle::{pty_config_for_pane, spawn_pty_command};
-use crate::state::{OUTER_GAP, Pane, SCRATCH_PANE_ID};
+use crate::state::{Pane, SCRATCH_PANE_ID};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::view;
 
@@ -15,8 +15,8 @@ const SCRATCH_ANIM_EPSILON: f32 = 0.01;
 
 /// Bottom-anchored dropdown rect when fully deployed: full tile width, `height_fraction` of
 /// the tile height, flush with the bottom tile edge. The pane slides up from below to reach it.
-pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32) -> FloatRect {
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32, top_gap: f32) -> FloatRect {
+    let tile_bounds = workspace_tile_bounds(bounds, top_gap);
     let fraction = height_fraction.clamp(SCRATCHPAD_MIN_HEIGHT, SCRATCHPAD_MAX_HEIGHT);
     let h = (tile_bounds.h * fraction).round().max(1.0);
     FloatRect {
@@ -30,9 +30,9 @@ pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32) -> FloatRect
 /// The deployed rect translated straight down so its top edge sits at the bottom tile edge (fully
 /// off-screen). At `progress == 0.0` the dropdown is here; at `1.0` it is at `scratch_rect`.
 /// Only the `y` position moves - width/height are constant, so the PTY never resizes mid-slide.
-fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32) -> FloatRect {
-    let shown = scratch_rect(bounds, height_fraction);
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32, top_gap: f32) -> FloatRect {
+    let shown = scratch_rect(bounds, height_fraction, top_gap);
+    let tile_bounds = workspace_tile_bounds(bounds, top_gap);
     let hidden_y = tile_bounds.y + tile_bounds.h;
     let y = hidden_y + (shown.y - hidden_y) * progress.clamp(0.0, 1.0);
     FloatRect { y, ..shown }
@@ -75,8 +75,9 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
     request_pane_focus(ctx, SCRATCH_PANE_ID);
 
     if ctx.state.scratch.is_none() {
-        let bounds = canvas_bounds_from_viewport(ctx.viewport());
-        let rect = scratch_rect(bounds, ctx.state.config.scratchpad.height);
+        let bounds = ctx.state.canvas_bounds(ctx.viewport());
+        let top_gap = ctx.state.workspace_top_gap();
+        let rect = scratch_rect(bounds, ctx.state.config.scratchpad.height, top_gap);
         let generation = ctx.state.next_pty_generation;
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
@@ -152,7 +153,7 @@ pub(crate) fn scratch_backdrop(
     if progress <= SCRATCH_ANIM_EPSILON {
         return None;
     }
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
     // A transparent full-canvas catcher: it swallows clicks meant for the dimmed panes and
     // dismisses the scratchpad when clicked. It paints nothing - an opaque scrim would occlude
     // the panes' text and borders, so the "focused layer" cue is the panes dimming instead
@@ -189,8 +190,9 @@ pub(crate) fn scratch_placement(
         return None;
     }
     let pane = ctx.state.scratch.as_ref()?;
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
-    let rect = scratch_slide_rect(bounds, ctx.state.config.scratchpad.height, progress);
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
+    let rect = scratch_slide_rect(bounds, ctx.state.config.scratchpad.height, progress, top_gap);
     let element = view::pane_element(app, ctx, pane, rect, Some(SCRATCH_PANE_ID), "S");
     Some((rect, element))
 }
@@ -198,6 +200,7 @@ pub(crate) fn scratch_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::OUTER_GAP;
 
     #[test]
     fn scratch_rect_is_bottom_anchored_full_width() {
@@ -207,7 +210,7 @@ mod tests {
             w: 100.0,
             h: 40.0,
         };
-        let rect = scratch_rect(bounds, 0.4);
+        let rect = scratch_rect(bounds, 0.4, OUTER_GAP);
         let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
         assert_eq!(rect.x, tile_bounds.x);
         assert_eq!(rect.w, tile_bounds.w);
@@ -224,9 +227,9 @@ mod tests {
             w: 100.0,
             h: 40.0,
         };
-        let shown = scratch_rect(bounds, 0.4);
-        let deployed = scratch_slide_rect(bounds, 0.4, 1.0);
-        let hidden = scratch_slide_rect(bounds, 0.4, 0.0);
+        let shown = scratch_rect(bounds, 0.4, OUTER_GAP);
+        let deployed = scratch_slide_rect(bounds, 0.4, 1.0, OUTER_GAP);
+        let hidden = scratch_slide_rect(bounds, 0.4, 0.0, OUTER_GAP);
         // Fully deployed matches scratch_rect; the slide only moves y, never the size.
         assert_eq!(deployed.y, shown.y);
         assert_eq!(deployed.h, shown.h);
@@ -243,7 +246,7 @@ mod tests {
             w: 100.0,
             h: 40.0,
         };
-        let tall = scratch_rect(bounds, 5.0);
+        let tall = scratch_rect(bounds, 5.0, OUTER_GAP);
         let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
         assert!(tall.h <= tile_bounds.h * SCRATCHPAD_MAX_HEIGHT + 1.0);
     }

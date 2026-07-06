@@ -13,8 +13,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::geometry::{
-    canvas_bounds_from_viewport, clamp_float_rect, clamp_floating_rect, close_rect,
-    empty_workspace_rect, viewport_bounds,
+    clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
 use crate::state::TOP_BAR_HEIGHT;
@@ -35,14 +34,17 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .replace(Some(viewport))
         .is_some_and(|previous| previous != viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-    let bounds = canvas_bounds_from_viewport(viewport);
+    let bounds = ctx.state.canvas_bounds(viewport);
+    let top_chrome = ctx.state.top_chrome_height();
+    let top_gap = ctx.state.workspace_top_gap();
     let root_bounds = viewport_bounds(viewport);
     let moving_tiled = ctx
         .state
         .moving_pane
         .filter(|session| !session.was_floating)
         .map(|session| session.id);
-    let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled);
+    let placements =
+        workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap);
     let focused_pane = workspace.focused_pane.or(ctx.state.focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
@@ -98,7 +100,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let target_rect = if pane.fullscreen && !pane.closing {
             root_bounds
         } else {
-            canvas_rect_to_root(canvas_target_rect)
+            canvas_rect_to_root(canvas_target_rect, top_chrome)
         };
         let config = app.transition_config_for(ctx, pane, viewport_changed);
         let animated_rect = ctx.transition(
@@ -120,7 +122,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let render_rect = if render_in_fullscreen_layer {
             animated_rect
         } else {
-            root_rect_to_canvas(animated_rect)
+            root_rect_to_canvas(animated_rect, top_chrome)
         };
         let mut element = pane_element(app, ctx, pane, render_rect, focused_pane, &display_number);
         // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
@@ -156,10 +158,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    let app_root = VStack::new()
-        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
-        .child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)))
-        .child(canvas);
+    let mut app_root = VStack::new()
+        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
+    if ctx.state.show_top_bar {
+        app_root = app_root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
+    }
+    app_root = app_root.child(canvas);
     let mut root = ZStack::new()
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
         .child(app_root);
@@ -292,16 +296,16 @@ pub(crate) fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Mo
     styled_modal(ctx, title, 60).height(Length::Auto).padding(0)
 }
 
-fn canvas_rect_to_root(rect: FloatRect) -> FloatRect {
+fn canvas_rect_to_root(rect: FloatRect, top_chrome: u16) -> FloatRect {
     FloatRect {
-        y: rect.y + f32::from(TOP_BAR_HEIGHT),
+        y: rect.y + f32::from(top_chrome),
         ..rect
     }
 }
 
-fn root_rect_to_canvas(rect: FloatRect) -> FloatRect {
+fn root_rect_to_canvas(rect: FloatRect, top_chrome: u16) -> FloatRect {
     FloatRect {
-        y: rect.y - f32::from(TOP_BAR_HEIGHT),
+        y: rect.y - f32::from(top_chrome),
         ..rect
     }
 }

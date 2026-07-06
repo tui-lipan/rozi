@@ -2,7 +2,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{
-    LayoutKind, OUTER_GAP, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
+    LayoutKind, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
 };
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
@@ -10,17 +10,22 @@ use crate::tiling::{
     prune_tree_to_ids, ratio_at, tree_contains,
 };
 
-pub fn workspace_target_rects(workspace: &Workspace, bounds: FloatRect) -> Vec<PanePlacement> {
-    workspace_target_rects_excluding(workspace, bounds, None)
+pub fn workspace_target_rects(
+    workspace: &Workspace,
+    bounds: FloatRect,
+    top_gap: f32,
+) -> Vec<PanePlacement> {
+    workspace_target_rects_excluding(workspace, bounds, None, top_gap)
 }
 
 pub fn workspace_target_rects_excluding(
     workspace: &Workspace,
     bounds: FloatRect,
     exclude_tiled: Option<PaneId>,
+    top_gap: f32,
 ) -> Vec<PanePlacement> {
     let mut placements = Vec::new();
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, top_gap);
     match workspace.layout_kind {
         LayoutKind::Dwindle => {
             if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
@@ -177,9 +182,10 @@ pub fn insert_tiled_pane_at_point(
     id: PaneId,
     point: (f32, f32),
     bounds: FloatRect,
+    top_gap: f32,
 ) -> Option<(PaneId, bool)> {
     let target = {
-        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id));
+        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
         let tiled_ids: Vec<PaneId> = workspace
             .tiled_ids()
             .into_iter()
@@ -235,6 +241,7 @@ pub fn place_spawned_pane(
     id: PaneId,
     previous_focused: Option<PaneId>,
     bounds: FloatRect,
+    top_gap: f32,
 ) -> SpawnPlacement {
     // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
     // new pane simply appends to the end. Dwindle splits the focused tile.
@@ -247,7 +254,7 @@ pub fn place_spawned_pane(
     }
 
     if let Some(target) = previous_focused.filter(|target| *target != id) {
-        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id));
+        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
         if let Some(rect) = placement_for(&placements, target) {
             let axis = spawn_split_for_target(workspace, id, target)
                 .unwrap_or_else(|| spawn_split_for_rect(rect).0);
@@ -312,7 +319,7 @@ mod tests {
         for id in 1..=5 {
             let previous_focused = workspace.focused_pane;
             workspace.panes.push(Pane::new(id, 100, bounds));
-            place_spawned_pane(&mut workspace, id, previous_focused, bounds);
+            place_spawned_pane(&mut workspace, id, previous_focused, bounds, 0.0);
             workspace.focused_pane = Some(id);
         }
 

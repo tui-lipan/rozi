@@ -1,13 +1,13 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{OFFSCREEN_MIN_VISIBLE, PaneId, ResizeCorner, SplitAxis, TOP_BAR_HEIGHT};
+use crate::state::{OFFSCREEN_MIN_VISIBLE, PaneId, ResizeCorner, SplitAxis};
 
-pub fn canvas_bounds_from_viewport(viewport: Rect) -> FloatRect {
+pub fn canvas_bounds_from_viewport(viewport: Rect, top_chrome_height: u16) -> FloatRect {
     FloatRect {
         x: 0.0,
         y: 0.0,
         w: f32::from(viewport.w),
-        h: f32::from(viewport.h.saturating_sub(TOP_BAR_HEIGHT)),
+        h: f32::from(viewport.h.saturating_sub(top_chrome_height)),
     }
 }
 
@@ -280,10 +280,15 @@ pub fn tiled_drag_preview_rect(
     )
 }
 
-pub fn canvas_local_point_from_mouse(x: u16, y: u16, bounds: FloatRect) -> (f32, f32) {
+pub fn canvas_local_point_from_mouse(
+    x: u16,
+    y: u16,
+    bounds: FloatRect,
+    top_chrome_height: u16,
+) -> (f32, f32) {
     (
         f32::from(x).clamp(bounds.x, bounds.x + bounds.w),
-        f32::from(y.saturating_sub(TOP_BAR_HEIGHT)).clamp(bounds.y, bounds.y + bounds.h),
+        f32::from(y.saturating_sub(top_chrome_height)).clamp(bounds.y, bounds.y + bounds.h),
     )
 }
 
@@ -569,6 +574,15 @@ mod tests {
                 y: 1.0,
                 w: 100.0,
                 h: 39.0,
+            }
+        );
+        assert_eq!(
+            workspace_tile_bounds(bounds, 0.0),
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 40.0,
             }
         );
     }

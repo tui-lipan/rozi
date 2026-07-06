@@ -558,6 +558,7 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     pub show_palette: bool,
     pub show_help: bool,
+    pub show_top_bar: bool,
     pub show_titles: bool,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
@@ -622,6 +623,7 @@ impl State {
             last_viewport: Cell::new(None),
             show_palette: false,
             show_help: false,
+            show_top_bar: true,
             show_titles: true,
             show_theme_picker: false,
             theme_picker_preview: None,
@@ -654,6 +656,26 @@ impl State {
         profile: crate::profiles::HyprmuxProfile,
     ) -> Self {
         crate::profiles::restore_state_from_profile(config, theme, profile)
+    }
+
+    pub fn top_chrome_height(&self) -> u16 {
+        if self.show_top_bar {
+            TOP_BAR_HEIGHT
+        } else {
+            0
+        }
+    }
+
+    pub fn workspace_top_gap(&self) -> f32 {
+        if self.show_top_bar {
+            OUTER_GAP
+        } else {
+            0.0
+        }
+    }
+
+    pub fn canvas_bounds(&self, viewport: Rect) -> FloatRect {
+        crate::geometry::canvas_bounds_from_viewport(viewport, self.top_chrome_height())
     }
 }
 

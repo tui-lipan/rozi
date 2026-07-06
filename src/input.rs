@@ -33,6 +33,7 @@ pub enum Action {
     TogglePalette,
     ToggleHelp,
     ToggleTitles,
+    ToggleTopBar,
     ToggleFocusOnHover,
     TogglePaneSynchronization,
 }
@@ -80,6 +81,7 @@ impl Action {
             Action::TogglePalette => "command-palette",
             Action::ToggleHelp => "help",
             Action::ToggleTitles => "toggle-titles",
+            Action::ToggleTopBar => "toggle-top-bar",
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) => {
@@ -128,6 +130,7 @@ impl Action {
             "command-palette" => Action::TogglePalette,
             "help" => Action::ToggleHelp,
             "toggle-titles" => Action::ToggleTitles,
+            "toggle-top-bar" => Action::ToggleTopBar,
             "toggle-focus-on-hover" => Action::ToggleFocusOnHover,
             "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
             _ => return None,
@@ -409,6 +412,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
+            action: Action::ToggleTopBar,
+            label: "Top bar",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
             action: Action::ToggleFocusOnHover,
             label: "Focus on hover",
             keys: "",
@@ -460,6 +470,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("pane synchronization", enabled)
         }
         Action::ToggleTitles => enable_disable_label("pane titlebars", state.show_titles),
+        Action::ToggleTopBar => enable_disable_label("top bar", state.show_top_bar),
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
         }
@@ -640,6 +651,7 @@ mod tests {
         state.show_titles = false;
         state.workspaces[0].synchronized = true;
         state.scratch_visible = true;
+        state.show_top_bar = false;
         state.workspaces[0].panes[0].floating = true;
         state.workspaces[0].panes[0].fullscreen = true;
 
@@ -666,6 +678,16 @@ mod tests {
         assert_eq!(
             command_label(Action::ToggleFullscreen, &state),
             "Disable fullscreen"
+        );
+        assert_eq!(
+            command_label(Action::ToggleTopBar, &state),
+            "Enable top bar"
+        );
+
+        state.show_top_bar = true;
+        assert_eq!(
+            command_label(Action::ToggleTopBar, &state),
+            "Disable top bar"
         );
     }
 

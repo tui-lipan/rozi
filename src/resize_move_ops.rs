@@ -6,7 +6,7 @@ use crate::focus_ops::{
     self, active_pane_is_fullscreen, active_pane_mut, focus_pane, request_pane_focus,
 };
 use crate::geometry::{
-    canvas_bounds_from_viewport, canvas_local_point_from_mouse, clamp_float_rect,
+    canvas_local_point_from_mouse, clamp_float_rect,
     clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, lift_off_float_rect,
     resize_float_rect_from_corner, workspace_tile_bounds,
 };
@@ -15,7 +15,7 @@ use crate::layout::{
     workspace_target_rects, workspace_target_rects_excluding,
 };
 use crate::state::{
-    self, Direction, LayoutKind, MoveSession, MoveSwapHint, OUTER_GAP, PaneId, RATIO_STEP,
+    self, Direction, LayoutKind, MoveSession, MoveSwapHint, PaneId, RATIO_STEP,
     ResizeCorner, ResizeSession, State, TILE_GAP, Workspace,
 };
 use crate::tiling::{
@@ -89,7 +89,7 @@ pub(crate) fn move_pane(
     if !modified {
         return Update::none();
     }
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let mut persisted_floating_rect = None;
     if let Some(session) = ctx
         .state
@@ -183,7 +183,7 @@ fn resize_pane_state(
     viewport: Rect,
 ) {
     focus_pane(state, id);
-    let bounds = canvas_bounds_from_viewport(viewport);
+    let bounds = state.canvas_bounds(viewport);
     let Some(pane) = active_pane_mut(state, id) else {
         return;
     };
@@ -214,11 +214,14 @@ fn resize_pane_state(
 
     let layout_kind = state.workspaces[state.active_workspace].layout_kind;
     if layout_kind == LayoutKind::Master {
-        let bounds = canvas_bounds_from_viewport(viewport);
-        let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+        let bounds = state.canvas_bounds(viewport);
+        let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
         let focused_rect = {
-            let placements =
-                workspace_target_rects(&state.workspaces[state.active_workspace], bounds);
+            let placements = workspace_target_rects(
+                &state.workspaces[state.active_workspace],
+                bounds,
+                state.workspace_top_gap(),
+            );
             placement_for(&placements, id)
         };
         if focused_rect.is_some_and(|rect| {
@@ -239,7 +242,7 @@ fn resize_pane_state(
         return;
     }
 
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
     ensure_tile_tree(&mut state.workspaces[state.active_workspace]);
     let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
     else {
@@ -298,11 +301,13 @@ fn split_edge_for_corner(axis: state::SplitAxis, corner: ResizeCorner) -> SplitE
 
 fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
     state.animation = GeometryAnimation::TileFloat;
-    let bounds = canvas_bounds_from_viewport(viewport);
-    let drop_point = canvas_local_point_from_mouse(x, y, bounds);
+    let bounds = state.canvas_bounds(viewport);
+    let top_gap = state.workspace_top_gap();
+    let drop_point = canvas_local_point_from_mouse(x, y, bounds, state.top_chrome_height());
     let target = {
         let workspace = &state.workspaces[state.active_workspace];
-        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id));
+        let placements =
+            workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
         let tiled_ids: Vec<PaneId> = workspace
             .tiled_ids()
             .into_iter()
@@ -326,10 +331,11 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     let Some(id) = ctx.state.focused_pane else {
         return;
     };
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let current_rect = {
         let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-        placement_for(&workspace_target_rects(workspace, bounds), id)
+        placement_for(&workspace_target_rects(workspace, bounds, top_gap), id)
     };
 
     let mut insert_tiled_at = None;
@@ -356,7 +362,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     if insert_tiled_at.is_some() || remove_from_tiling {
         let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
         if let Some(point) = insert_tiled_at {
-            if insert_tiled_pane_at_point(workspace, id, point, bounds).is_none() {
+            if insert_tiled_pane_at_point(workspace, id, point, bounds, top_gap).is_none() {
                 append_tiled_window(workspace, id);
             }
         } else if remove_from_tiling {
@@ -370,10 +376,11 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(id) = ctx.state.focused_pane else {
         return Update::full();
     };
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let placements = {
         let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-        workspace_target_rects(workspace, bounds)
+        workspace_target_rects(workspace, bounds, top_gap)
     };
 
     let mut toggled = false;
@@ -498,7 +505,8 @@ fn master_available_width(tile_bounds: FloatRect) -> f32 {
 }
 
 pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let workspace_index = ctx.state.active_workspace;
     let Some(focused) = ctx.state.focused_pane else {
         return;
@@ -508,7 +516,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
     }
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
-    if swap_tiled_neighbor_in_direction(workspace, bounds, focused, direction) {
+    if swap_tiled_neighbor_in_direction(workspace, bounds, top_gap, focused, direction) {
         workspace.focused_pane = Some(focused);
         ctx.state.focused_pane = Some(focused);
         ctx.state.animation = GeometryAnimation::AxisChange;
@@ -519,7 +527,8 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
 /// This trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
 /// there is no neighbor in that direction.
 pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let workspace_index = ctx.state.active_workspace;
     let Some(focused) = ctx.state.focused_pane else {
         return;
@@ -529,7 +538,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
     }
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
-    if swap_tiled_neighbor_in_direction(workspace, bounds, focused, direction) {
+    if swap_tiled_neighbor_in_direction(workspace, bounds, top_gap, focused, direction) {
         workspace.focused_pane = Some(focused);
         ctx.state.focused_pane = Some(focused);
         ctx.state.animation = GeometryAnimation::AxisChange;
@@ -539,6 +548,7 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
 fn swap_tiled_neighbor_in_direction(
     workspace: &mut Workspace,
     bounds: FloatRect,
+    top_gap: f32,
     focused: PaneId,
     direction: Direction,
 ) -> bool {
@@ -547,7 +557,7 @@ fn swap_tiled_neighbor_in_direction(
         if !tiled_ids.contains(&focused) {
             return false;
         }
-        let placements: Vec<_> = workspace_target_rects(workspace, bounds)
+        let placements: Vec<_> = workspace_target_rects(workspace, bounds, top_gap)
             .into_iter()
             .filter(|placement| tiled_ids.contains(&placement.id))
             .collect();
@@ -697,8 +707,8 @@ pub(crate) fn resize_split_by_drag(
     };
 
     let workspace_index = ctx.state.active_workspace;
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
@@ -742,8 +752,8 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         return;
     }
     let workspace_index = ctx.state.active_workspace;
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
-    let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
@@ -842,6 +852,7 @@ mod tests {
         assert!(swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             3,
             Direction::Left,
         ));
@@ -869,12 +880,14 @@ mod tests {
         assert!(swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             3,
             Direction::Left,
         ));
         assert!(swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             3,
             Direction::Right,
         ));
@@ -889,18 +902,21 @@ mod tests {
         assert!(!swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             1,
             Direction::Down,
         ));
         assert!(!swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             1,
             Direction::Up,
         ));
         assert!(swap_tiled_neighbor_in_direction(
             &mut workspace,
             bounds,
+            0.0,
             2,
             Direction::Down,
         ));

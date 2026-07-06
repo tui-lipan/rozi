@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::geometry::{canvas_bounds_from_viewport, closest_pane_to_rect, directional_score};
+use crate::geometry::{closest_pane_to_rect, directional_score};
 use crate::layout::{placement_for, workspace_target_rects};
 use crate::state::{Direction, Pane, PaneId, State, Workspace};
 use crate::tiling::{self, append_tiled_window, remove_tiled_window};
@@ -27,9 +27,9 @@ pub(crate) fn focus_in_direction(
     direction: Direction,
     viewport: Rect,
 ) -> Option<PaneId> {
-    let bounds = canvas_bounds_from_viewport(viewport);
+    let bounds = state.canvas_bounds(viewport);
     let workspace = &state.workspaces[state.active_workspace];
-    let placements = workspace_target_rects(workspace, bounds);
+    let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
     let candidates: Vec<_> = workspace
         .panes
         .iter()
@@ -278,8 +278,8 @@ pub(crate) fn visible_pane_placements(
     workspace: &Workspace,
 ) -> Vec<(PaneId, FloatRect)> {
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = canvas_bounds_from_viewport(viewport);
-        let placements = workspace_target_rects(workspace, bounds);
+        let bounds = state.canvas_bounds(viewport);
+        let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
         return workspace
             .panes
             .iter()
@@ -306,8 +306,8 @@ pub(crate) fn reference_pane_rect(
         return Some(rect);
     }
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = canvas_bounds_from_viewport(viewport);
-        let placements = workspace_target_rects(workspace, bounds);
+        let bounds = state.canvas_bounds(viewport);
+        let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
         if let Some(rect) = placement_for(&placements, id) {
             return Some(rect);
         }

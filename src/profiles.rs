@@ -188,6 +188,7 @@ pub fn restore_state_from_profile(
         last_viewport: std::cell::Cell::new(None),
         show_palette: false,
         show_help: false,
+        show_top_bar: true,
         show_titles: true,
         show_theme_picker: false,
         theme_picker_preview: None,

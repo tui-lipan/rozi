@@ -111,6 +111,10 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             ctx.state.show_titles = !ctx.state.show_titles;
             Update::full()
         }
+        Action::ToggleTopBar => {
+            ctx.state.show_top_bar = !ctx.state.show_top_bar;
+            Update::full()
+        }
         Action::ToggleFocusOnHover => {
             ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
             Update::full()

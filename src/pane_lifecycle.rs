@@ -8,7 +8,7 @@ use crate::focus_ops::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
     request_current_pane_focus, total_visible_panes,
 };
-use crate::geometry::{canvas_bounds_from_viewport, default_floating_rect};
+use crate::geometry::default_floating_rect;
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
 use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
@@ -40,7 +40,8 @@ pub(crate) fn spawn_pane_in_workspace(
     previous_focused: Option<PaneId>,
     identity: PaneIdentity,
 ) -> (PaneId, Update) {
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let id = ctx.state.next_pane_id;
     ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
     let generation = ctx.state.next_pty_generation;
@@ -88,7 +89,7 @@ pub(crate) fn spawn_pane_in_workspace(
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
-    place_spawned_pane(workspace, id, previous_focused, bounds);
+    place_spawned_pane(workspace, id, previous_focused, bounds, top_gap);
     workspace.focused_pane = Some(id);
     ctx.state.active_workspace = workspace_index;
     ctx.state.focused_pane = Some(id);
@@ -122,10 +123,11 @@ pub(crate) fn begin_close_pane(
     id: PaneId,
     animations: WindowAnimationConfig,
 ) -> Update {
-    let bounds = canvas_bounds_from_viewport(ctx.viewport());
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
     let placements = {
         let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-        workspace_target_rects(workspace, bounds)
+        workspace_target_rects(workspace, bounds, top_gap)
     };
     let mut closed = false;
     let mut generation = None;

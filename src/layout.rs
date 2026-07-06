@@ -6,8 +6,8 @@ use crate::state::{
 };
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
-    allocate_spiral, append_tiled_window, build_dwindle_tree, insert_leaf_around_target,
-    leaf_depth, prune_tree_to_ids, ratio_at, tree_contains,
+    append_tiled_window, build_dwindle_tree, insert_leaf_around_target, leaf_depth,
+    prune_tree_to_ids, ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(workspace: &Workspace, bounds: FloatRect) -> Vec<PanePlacement> {
@@ -44,11 +44,6 @@ pub fn workspace_target_rects_excluding(
         LayoutKind::Monocle => {
             let ids = order_driven_ids(workspace, exclude_tiled);
             allocate_monocle(&ids, tile_bounds, &mut placements);
-        }
-        LayoutKind::Spiral => {
-            if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
-                allocate_spiral(&tree, tile_bounds, TILE_GAP, &mut placements);
-            }
         }
     }
 
@@ -242,7 +237,7 @@ pub fn place_spawned_pane(
     bounds: FloatRect,
 ) -> SpawnPlacement {
     // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
-    // new pane simply appends to the end. Dwindle and spiral split the focused tile.
+    // new pane simply appends to the end. Dwindle splits the focused tile.
     if matches!(
         workspace.layout_kind,
         LayoutKind::Master | LayoutKind::Grid | LayoutKind::Monocle

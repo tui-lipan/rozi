@@ -25,6 +25,19 @@ use crate::tiling::{
     resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge, swap_tree_leaves,
 };
 
+/// Whether tree-based split resizing applies to this layout. Grid and monocle place panes
+/// purely by formula - there is no ratio to adjust, and writing into the dwindle tree
+/// would silently rearrange the layouts that do read it.
+fn layout_has_resizable_splits(kind: LayoutKind) -> bool {
+    kind == LayoutKind::Dwindle
+}
+
+fn ensure_tile_tree(workspace: &mut Workspace) {
+    if workspace.tile_tree.is_none() {
+        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn begin_move(
     ctx: &mut Context<HyprmuxApp>,
@@ -199,7 +212,8 @@ fn resize_pane_state(
         ResizeCorner::LowerLeft | ResizeCorner::LowerRight => dy,
     };
 
-    if state.workspaces[state.active_workspace].layout_kind == LayoutKind::Master {
+    let layout_kind = state.workspaces[state.active_workspace].layout_kind;
+    if layout_kind == LayoutKind::Master {
         let bounds = canvas_bounds_from_viewport(viewport);
         let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
         let focused_rect = {
@@ -221,8 +235,12 @@ fn resize_pane_state(
         state.animation = GeometryAnimation::None;
         return;
     }
+    if !layout_has_resizable_splits(layout_kind) {
+        return;
+    }
 
     let tile_bounds = workspace_tile_bounds(bounds, OUTER_GAP);
+    ensure_tile_tree(&mut state.workspaces[state.active_workspace]);
     let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
     else {
         return;
@@ -379,7 +397,10 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
         return;
     };
     let workspace = &mut state.workspaces[state.active_workspace];
-    if workspace.layout_kind == LayoutKind::Master {
+    // Only dwindle renders the stored split axes: master/grid/monocle place panes by
+    // formula, so flipping would change nothing on screen while still scrambling the tree
+    // dwindle falls back to.
+    if workspace.layout_kind != LayoutKind::Dwindle {
         return;
     }
     if !workspace
@@ -409,9 +430,10 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
         }
         return;
     }
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    if !layout_has_resizable_splits(workspace.layout_kind) {
+        return;
     }
+    ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_mut() else {
         return;
     };
@@ -420,14 +442,20 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
     }
 }
 
-pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
     let workspace_index = ctx.state.active_workspace;
-    {
+    let layout_label = {
         let workspace = &mut ctx.state.workspaces[workspace_index];
         workspace.layout_kind = workspace.layout_kind.toggled();
         workspace.last_move_swap = None;
-    }
+        workspace.layout_kind.label()
+    };
     ctx.state.animation = GeometryAnimation::AxisChange;
+    if show_toast {
+        ctx.toast().push(crate::pty_events::info_toast(format!(
+            "Layout mode: {layout_label}"
+        )));
+    }
 }
 
 fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {
@@ -688,10 +716,11 @@ pub(crate) fn resize_split_by_drag(
         ctx.state.animation = GeometryAnimation::None;
         return Update::full();
     }
-
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    if !layout_has_resizable_splits(workspace.layout_kind) {
+        return Update::none();
     }
+
+    ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_ref() else {
         return Update::none();
     };
@@ -737,10 +766,11 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         }
         return;
     }
-
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = layout::effective_tile_tree(workspace, None);
+    if !layout_has_resizable_splits(workspace.layout_kind) {
+        return;
     }
+
+    ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_ref() else {
         return;
     };

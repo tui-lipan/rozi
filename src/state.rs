@@ -60,7 +60,6 @@ pub enum LayoutKind {
     Dwindle,
     Master,
     Grid,
-    Spiral,
     Monocle,
 }
 
@@ -72,7 +71,6 @@ impl LayoutKind {
             Self::Dwindle,
             Self::Master,
             Self::Grid,
-            Self::Spiral,
             Self::Monocle,
         ]
     }
@@ -82,7 +80,6 @@ impl LayoutKind {
             Self::Dwindle => "dwindle",
             Self::Master => "master",
             Self::Grid => "grid",
-            Self::Spiral => "spiral",
             Self::Monocle => "monocle",
         }
     }
@@ -685,16 +682,15 @@ mod tests {
     fn layout_kind_cycles_through_every_layout() {
         assert_eq!(LayoutKind::Dwindle.toggled(), LayoutKind::Master);
         assert_eq!(LayoutKind::Master.toggled(), LayoutKind::Grid);
-        assert_eq!(LayoutKind::Grid.toggled(), LayoutKind::Spiral);
-        assert_eq!(LayoutKind::Spiral.toggled(), LayoutKind::Monocle);
+        assert_eq!(LayoutKind::Grid.toggled(), LayoutKind::Monocle);
         assert_eq!(LayoutKind::Monocle.toggled(), LayoutKind::Dwindle);
-        assert_eq!(LayoutKind::all().len(), 5);
+        assert_eq!(LayoutKind::all().len(), 4);
     }
 
     #[test]
     fn layout_kind_labels_are_distinct() {
         let labels: Vec<&str> = LayoutKind::all().iter().map(|k| k.label()).collect();
-        assert_eq!(labels, ["dwindle", "master", "grid", "spiral", "monocle"]);
+        assert_eq!(labels, ["dwindle", "master", "grid", "monocle"]);
     }
 
     #[test]

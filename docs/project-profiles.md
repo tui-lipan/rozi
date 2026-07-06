@@ -36,7 +36,7 @@ On startup, `hyprmux` loads that file when it exists and shows a startup message
 ## Profile shape
 
 Each profile has a version, the active workspace, and workspace entries. A workspace's `layout`
-is one of `dwindle`, `master`, `grid`, `spiral`, or `monocle`. Pane entries can use these
+is one of `dwindle`, `master`, `grid`, or `monocle`. Pane entries can use these
 fields:
 
 - `name`: pane title shown by `hyprmux` and restored on startup.

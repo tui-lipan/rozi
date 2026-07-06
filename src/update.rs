@@ -29,7 +29,11 @@ use crate::{HyprmuxApp, Msg};
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
     let mut update = match msg {
         Msg::RunAction(action) => {
-            ctx.state.show_palette = false;
+            let cycle_layout_in_palette =
+                matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
+            if !cycle_layout_in_palette {
+                ctx.state.show_palette = false;
+            }
             let update = execute_action(ctx, action);
             match action {
                 Action::OpenSearch => request_search_focus(ctx),
@@ -39,6 +43,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 // The scratchpad manages its own focus (the scratch terminal on show, the
                 // previously focused pane on hide); don't override it.
                 Action::ToggleScratchpad => {}
+                Action::ToggleLayout if cycle_layout_in_palette => {}
                 _ => request_current_pane_focus(ctx),
             }
             update

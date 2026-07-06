@@ -298,14 +298,16 @@ fn active_search_match_style() -> Style {
 
 /// Draggable strips in the gaps between adjacent tiled panes. Each strip resizes the split on
 /// that boundary. Only dwindle (both axes) and master (the master/stack divider) have
-/// adjustable ratios, so other layouts get no strips.
+/// adjustable ratios, so grid and monocle get no strips.
 pub(crate) fn tiled_resize_strips(
     ctx: &Context<HyprmuxApp>,
     placements: &[PanePlacement],
     workspace: &Workspace,
 ) -> Vec<(FloatRect, Element)> {
     let master = matches!(workspace.layout_kind, LayoutKind::Master);
-    if !master && !matches!(workspace.layout_kind, LayoutKind::Dwindle) {
+    if !master
+        && workspace.layout_kind != LayoutKind::Dwindle
+    {
         return Vec::new();
     }
 

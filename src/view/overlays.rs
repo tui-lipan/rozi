@@ -591,7 +591,15 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .into_iter()
         .filter(|binding| binding.palette)
     {
-        let mut entry = SearchEntry::item(binding.label, binding.action);
+        let label = if binding.action == Action::ToggleLayout {
+            let layout = ctx.state.workspaces[ctx.state.active_workspace]
+                .layout_kind
+                .label();
+            format!("Switch layout (current: {layout})")
+        } else {
+            binding.label.to_string()
+        };
+        let mut entry = SearchEntry::item(label, binding.action);
         let keys = palette_keys(ctx, &binding);
         if !keys.is_empty() {
             entry = entry.description(ItemDescription::new().right(keys));

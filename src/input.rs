@@ -291,7 +291,7 @@ pub fn command_bindings() -> Vec<CommandBinding> {
         },
         CommandBinding {
             action: Action::ToggleLayout,
-            label: "Toggle layout",
+            label: "Switch layout",
             keys: "m",
             category: "Layout",
             palette: true,

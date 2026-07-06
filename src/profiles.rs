@@ -434,7 +434,6 @@ pub enum ProfileLayoutKind {
     Dwindle,
     Master,
     Grid,
-    Spiral,
     Monocle,
 }
 
@@ -444,7 +443,6 @@ impl From<LayoutKind> for ProfileLayoutKind {
             LayoutKind::Dwindle => Self::Dwindle,
             LayoutKind::Master => Self::Master,
             LayoutKind::Grid => Self::Grid,
-            LayoutKind::Spiral => Self::Spiral,
             LayoutKind::Monocle => Self::Monocle,
         }
     }
@@ -456,7 +454,6 @@ impl From<ProfileLayoutKind> for LayoutKind {
             ProfileLayoutKind::Dwindle => Self::Dwindle,
             ProfileLayoutKind::Master => Self::Master,
             ProfileLayoutKind::Grid => Self::Grid,
-            ProfileLayoutKind::Spiral => Self::Spiral,
             ProfileLayoutKind::Monocle => Self::Monocle,
         }
     }

@@ -514,40 +514,6 @@ pub fn allocate_grid(
     }
 }
 
-/// Spiral: the dwindle tree, but each split's axis is re-derived from its sub-rect's live
-/// aspect (the longer side is split, weighted by [`SPLIT_WIDTH_MULTIPLIER`]) instead of the
-/// tree's stored axis. Because nesting always continues in the second child, successive
-/// panes wind into a Fibonacci spiral. Ratios still come from the tree.
-pub fn allocate_spiral(
-    tree: &DwindleTree,
-    rect: FloatRect,
-    gap: f32,
-    placements: &mut Vec<PanePlacement>,
-) {
-    match tree {
-        DwindleTree::Leaf(id) => placements.push(PanePlacement { id: *id, rect }),
-        DwindleTree::Split {
-            ratio,
-            first,
-            second,
-            ..
-        } => {
-            let axis = spiral_axis_for_rect(rect);
-            let (first_rect, second_rect) = split_float_rect(rect, axis, *ratio, gap);
-            allocate_spiral(first, first_rect, gap, placements);
-            allocate_spiral(second, second_rect, gap, placements);
-        }
-    }
-}
-
-fn spiral_axis_for_rect(rect: FloatRect) -> SplitAxis {
-    if rect.w >= rect.h * crate::state::SPLIT_WIDTH_MULTIPLIER {
-        SplitAxis::Horizontal
-    } else {
-        SplitAxis::Vertical
-    }
-}
-
 /// Split `rect` into `count` flush, gapped segments along `axis`, keeping boundaries on
 /// whole cells the way [`split_float_rect`] does. The last segment absorbs the rounding
 /// remainder so the segments exactly tile `rect`.
@@ -1105,28 +1071,6 @@ mod tests {
         for placement in placements {
             assert_eq!(placement.rect, rect);
         }
-    }
-
-    #[test]
-    fn spiral_winds_into_shrinking_regions() {
-        let tree = build_dwindle_tree(&[1, 2, 3, 4], SplitAxis::Horizontal, &[0.5, 0.5, 0.5])
-            .expect("tree");
-        let rect = FloatRect {
-            x: 0.0,
-            y: 0.0,
-            w: 100.0,
-            h: 40.0,
-        };
-        let mut placements = Vec::new();
-        allocate_spiral(&tree, rect, 1.0, &mut placements);
-
-        assert_eq!(
-            placements.iter().map(|p| p.id).collect::<Vec<_>>(),
-            [1, 2, 3, 4]
-        );
-        // Each successive pane occupies a strictly smaller area as the spiral winds in.
-        let areas: Vec<f32> = placements.iter().map(|p| p.rect.w * p.rect.h).collect();
-        assert!(areas[0] > areas[3], "{areas:?}");
     }
 
     #[test]

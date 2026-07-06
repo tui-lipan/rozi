@@ -82,7 +82,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::ToggleLayout => {
-            toggle_layout(ctx);
+            toggle_layout(ctx, !ctx.state.show_palette);
             Update::full()
         }
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),

@@ -166,7 +166,7 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 
 **Layout / geometry**
 - `tiling.rs` - `DwindleTree` algorithms: split/insert/remove/flip, ratio adjust, and the
-  allocators (`allocate_dwindle`, `allocate_master`, grid/spiral/monocle).
+  allocators (`allocate_dwindle`, `allocate_master`, grid/monocle).
 - `layout.rs` - `Workspace` → placements; `place_spawned_pane` (new pane always splits the
   *focused* pane, axis from its aspect ratio - Hyprland dwindle, never the cursor).
 - `geometry.rs` - `FloatRect` math: clamps, resize-from-corner, terminal-border resize gate,

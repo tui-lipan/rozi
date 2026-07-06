@@ -64,7 +64,7 @@ Spatial focus moves to the nearest pane in a direction (not just the next in a l
 | Grow split | `]` or `+` |
 | Shrink split | `-` |
 | Enter resize mode | `r` |
-| Cycle layout (dwindle → master → grid → spiral → monocle) | `m` |
+| Cycle layout (dwindle → master → grid → monocle) | `m` |
 
 See [Layouts and panes](layouts-and-panes.md) for what each layout does. "Zoom" is provided by
 *Toggle fullscreen* (`f`), which temporarily maximizes the focused pane.

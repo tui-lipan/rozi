@@ -7,7 +7,7 @@ target rectangle. Each workspace carries its own layout.
 ## Tiled layouts
 
 Each workspace has a **layout kind**. `m` (*Toggle layout* in the palette) **cycles** through
-them: dwindle → master → grid → spiral → monocle → dwindle.
+them: dwindle → master → grid → monocle → dwindle.
 
 ### Dwindle (default)
 
@@ -34,11 +34,6 @@ gap with the mouse).
 Panes fill a near-square grid (`ceil(√N)` columns), row-major over the tiled panes. The last
 row stretches its (possibly fewer) cells to fill the width. Order-driven, like master - there
 are no split ratios to adjust.
-
-### Spiral
-
-Like dwindle, but each split's axis is re-derived from its region's live aspect ratio, so
-successive panes wind into a Fibonacci spiral. Split ratios are adjustable.
 
 ### Monocle
 

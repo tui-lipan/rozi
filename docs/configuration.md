@@ -296,8 +296,10 @@ alt-t = { run = "btop" }
   skipped.
 - The map key here is the trigger itself (`prefix g`, `alt-t`, ...), parsed the same way as a
   binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
-- These commands have no stable id: they aren't listed in the help overlay's rebind reference,
-  the command palette, or `hyprmux run-action`, and only exist for the trigger you configure.
+- Each command shows up in the help overlay (under "Custom") and the command palette with a
+  generated label (`Run: lazygit`, `Send: ls -la\n`), so its trigger stays discoverable even
+  though it has no stable action id. It still can't be rebound elsewhere or invoked via
+  `hyprmux run-action` - only the trigger you configured runs it.
 
 ## Pane synchronization
 

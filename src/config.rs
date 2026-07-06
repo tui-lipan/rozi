@@ -236,6 +236,43 @@ pub struct UserCommand {
     pub action: UserCommandAction,
 }
 
+impl UserCommand {
+    /// Human-facing description for the help overlay and command palette, since these have no
+    /// static label of their own the way a built-in [`crate::input::CommandBinding`] does.
+    pub fn label(&self) -> String {
+        match &self.action {
+            UserCommandAction::Run(command) => format!("Run: {}", truncate_for_label(command)),
+            UserCommandAction::Send(text) => {
+                format!("Send: {}", truncate_for_label(&escape_for_label(text)))
+            }
+        }
+    }
+}
+
+/// Renders control characters visibly (e.g. a trailing `\n` reads as `\n`, not a line break)
+/// so a `send` command's label stays on one line.
+fn escape_for_label(text: &str) -> String {
+    text.chars()
+        .map(|ch| match ch {
+            '\n' => "\\n".to_string(),
+            '\t' => "\\t".to_string(),
+            '\r' => "\\r".to_string(),
+            other => other.to_string(),
+        })
+        .collect()
+}
+
+fn truncate_for_label(text: &str) -> String {
+    const MAX_LEN: usize = 40;
+    if text.chars().count() <= MAX_LEN {
+        text.to_string()
+    } else {
+        let mut truncated: String = text.chars().take(MAX_LEN).collect();
+        truncated.push('…');
+        truncated
+    }
+}
+
 impl Default for HyprmuxConfig {
     fn default() -> Self {
         Self {
@@ -586,6 +623,30 @@ mod tests {
         assert!(user_commands.is_empty());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("both"));
+    }
+
+    #[test]
+    fn user_command_label_describes_run_and_send() {
+        let run = UserCommand {
+            action: UserCommandAction::Run("lazygit".to_string()),
+        };
+        assert_eq!(run.label(), "Run: lazygit");
+
+        let send = UserCommand {
+            action: UserCommandAction::Send("ls -la\n".to_string()),
+        };
+        assert_eq!(send.label(), "Send: ls -la\\n");
+    }
+
+    #[test]
+    fn user_command_label_truncates_long_commands() {
+        let run = UserCommand {
+            action: UserCommandAction::Run("x".repeat(60)),
+        };
+        let label = run.label();
+        assert!(label.starts_with("Run: "));
+        assert!(label.ends_with('…'));
+        assert!(label.chars().count() < 60);
     }
 
     #[test]

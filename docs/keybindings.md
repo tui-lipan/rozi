@@ -106,8 +106,9 @@ Names are saved with profiles and session autosave.
 
 Beyond rebinding, `[keys]` can also define brand new key-triggered commands that open a
 program in a new pane or send text to the focused pane's PTY - see [User-defined command
-keybindings](configuration.md#user-defined-command-keybindings). These are config-only: they
-have no stable id, so they don't appear in the help overlay or command palette.
+keybindings](configuration.md#user-defined-command-keybindings). They show up in the help
+overlay (under "Custom") and command palette with a generated label, but are config-only: they
+have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - save profile, choose theme, toggle titlebars, promote to master, plus discoverable

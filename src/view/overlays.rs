@@ -61,6 +61,20 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ("drag gap".to_string(), "Resize a tiled split".to_string()),
         ],
     ));
+    // User-defined `[keys]` commands have no static CommandBinding (they're config-only, with
+    // no stable id), so list them from the config directly.
+    if !ctx.state.config.user_commands.is_empty() {
+        groups.push((
+            "Custom",
+            ctx.state
+                .config
+                .user_commands
+                .iter()
+                .enumerate()
+                .map(|(index, command)| (user_command_keys(ctx, index), command.label()))
+                .collect(),
+        ));
+    }
     // Copy mode's internal keys aren't discrete actions, so they aren't in the command table.
     groups.push((
         "Copy mode",
@@ -681,6 +695,26 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             None => groups.push((binding.category, vec![entry])),
         }
     }
+    if !ctx.state.config.user_commands.is_empty() {
+        let items = ctx
+            .state
+            .config
+            .user_commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                let action = Action::RunUserCommand(index);
+                let mut entry = SearchEntry::item(command.label(), action);
+                let keys = user_command_keys(ctx, index);
+                if !keys.is_empty() {
+                    entry = entry.description(ItemDescription::new().right(keys));
+                }
+                entry
+            })
+            .collect();
+        groups.push(("Custom", items));
+    }
+
     let mut entries: Vec<SearchEntry<Action>> = Vec::new();
     for (category, items) in groups {
         entries.push(SearchEntry::header(category));
@@ -757,6 +791,16 @@ fn palette_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
         .keymap
         .keys_for(binding.action)
         .unwrap_or_else(|| binding.keys.to_string())
+}
+
+/// Display keys for a `[keys]`-defined user command. Unlike a [`CommandBinding`], the trigger
+/// *is* the config - `bind_user_command` always registers exactly one, so this is never empty.
+fn user_command_keys(ctx: &Context<HyprmuxApp>, index: usize) -> String {
+    ctx.state
+        .config
+        .keymap
+        .keys_for(Action::RunUserCommand(index))
+        .unwrap_or_default()
 }
 
 /// Display keys in the help overlay. Empty active keys render as `not set`.

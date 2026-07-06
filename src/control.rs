@@ -38,6 +38,23 @@ pub enum ControlCommand {
         #[serde(default)]
         keep_open: bool,
     },
+    /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
+    RunAction {
+        action: String,
+    },
+    /// Capture the plain text of a pane's current visible snapshot grid.
+    CapturePane {
+        #[serde(default)]
+        target: Option<PaneId>,
+    },
+    /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
+    SwitchWorkspace {
+        index: usize,
+    },
+    /// Move the focused pane to another workspace. `index` is 1-based (1-9).
+    MoveToWorkspace {
+        index: usize,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -236,6 +253,63 @@ mod tests {
         assert_eq!(mode, 0o777);
 
         let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn run_action_command_round_trips_through_json() {
+        let request = ControlRequest {
+            command: ControlCommand::RunAction {
+                action: "toggle-float".to_string(),
+            },
+            source_pane: Some(3),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            json,
+            r#"{"cmd":"run-action","action":"toggle-float","source_pane":3}"#
+        );
+        let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, request);
+    }
+
+    #[test]
+    fn capture_pane_command_round_trips_through_json() {
+        let request = ControlRequest {
+            command: ControlCommand::CapturePane { target: Some(5) },
+            source_pane: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, request);
+
+        let defaulted: ControlRequest = serde_json::from_str(r#"{"cmd":"capture-pane"}"#).unwrap();
+        assert_eq!(
+            defaulted.command,
+            ControlCommand::CapturePane { target: None }
+        );
+    }
+
+    #[test]
+    fn switch_and_move_workspace_commands_round_trip_through_json() {
+        let switch = ControlRequest {
+            command: ControlCommand::SwitchWorkspace { index: 3 },
+            source_pane: None,
+        };
+        let json = serde_json::to_string(&switch).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            switch
+        );
+
+        let move_to = ControlRequest {
+            command: ControlCommand::MoveToWorkspace { index: 4 },
+            source_pane: None,
+        };
+        let json = serde_json::to_string(&move_to).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            move_to
+        );
     }
 
     #[test]

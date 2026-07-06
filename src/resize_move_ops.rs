@@ -6,17 +6,17 @@ use crate::focus_ops::{
     self, active_pane_is_fullscreen, active_pane_mut, focus_pane, request_pane_focus,
 };
 use crate::geometry::{
-    canvas_local_point_from_mouse, clamp_float_rect,
-    clamp_floating_rect, directional_score, grabbed_edge_on_outer_border, lift_off_float_rect,
-    resize_float_rect_from_corner, workspace_tile_bounds,
+    canvas_local_point_from_mouse, clamp_float_rect, clamp_floating_rect, directional_score,
+    grabbed_edge_on_outer_border, lift_off_float_rect, resize_float_rect_from_corner,
+    workspace_tile_bounds,
 };
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
     workspace_target_rects, workspace_target_rects_excluding,
 };
 use crate::state::{
-    self, Direction, LayoutKind, MoveSession, MoveSwapHint, PaneId, RATIO_STEP,
-    ResizeCorner, ResizeSession, State, TILE_GAP, Workspace,
+    self, Direction, LayoutKind, MoveSession, MoveSwapHint, PaneId, RATIO_STEP, ResizeCorner,
+    ResizeSession, State, TILE_GAP, Workspace,
 };
 use crate::tiling::{
     SplitEdge, adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle,
@@ -306,8 +306,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     let drop_point = canvas_local_point_from_mouse(x, y, bounds, state.top_chrome_height());
     let target = {
         let workspace = &state.workspaces[state.active_workspace];
-        let placements =
-            workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
+        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
         let tiled_ids: Vec<PaneId> = workspace
             .tiled_ids()
             .into_iter()

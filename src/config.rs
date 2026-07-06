@@ -217,6 +217,23 @@ pub struct HyprmuxConfig {
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
     pub keymap: Keymap,
+    /// User-defined `[keys]` entries keyed by a literal trigger binding (rather than a built-in
+    /// action id): `Action::RunUserCommand(index)` indexes into this list. See
+    /// [`build_keymap`]'s table-value handling.
+    pub user_commands: Vec<UserCommand>,
+}
+
+/// What a user-defined keybinding does: `Run` spawns a new pane running the shell command;
+/// `Send` writes literal text to the focused pane's PTY (TOML escapes like `\n` already work).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UserCommandAction {
+    Run(String),
+    Send(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserCommand {
+    pub action: UserCommandAction,
 }
 
 impl Default for HyprmuxConfig {
@@ -238,13 +255,18 @@ impl Default for HyprmuxConfig {
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),
             keymap: Keymap::default(),
+            user_commands: Vec::new(),
         }
     }
 }
 
+/// Default refresh interval for a `command:` bar segment that doesn't specify one.
+pub const DEFAULT_BAR_COMMAND_INTERVAL_SECS: u64 = 60;
+
 /// One segment of the configurable top bar. `Workspaces` is the workspace tab strip;
 /// `Session` is the live attach-connection badge (invisible until attached to a named session);
-/// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders.
+/// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders;
+/// `Command` runs a shell command on a timer and shows the first line of its stdout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BarSegment {
     Title,
@@ -254,6 +276,7 @@ pub enum BarSegment {
     Layout,
     Activity,
     Text(String),
+    Command { command: String, interval_secs: u64 },
 }
 
 impl BarSegment {
@@ -261,6 +284,9 @@ impl BarSegment {
         let value = value.trim();
         if let Some(literal) = value.strip_prefix("text:") {
             return Some(Self::Text(literal.to_string()));
+        }
+        if let Some(rest) = value.strip_prefix("command:") {
+            return Some(Self::parse_command(rest));
         }
         match value.to_ascii_lowercase().as_str() {
             "title" => Some(Self::Title),
@@ -270,6 +296,24 @@ impl BarSegment {
             "layout" => Some(Self::Layout),
             "activity" => Some(Self::Activity),
             _ => None,
+        }
+    }
+
+    /// Parses the part of a `command:` segment after the prefix: either `<command>` (default
+    /// interval) or `<interval_secs>:<command>` when the part before the first colon is a
+    /// plain integer.
+    fn parse_command(rest: &str) -> Self {
+        if let Some((secs, command)) = rest.split_once(':') {
+            if let Ok(interval_secs) = secs.trim().parse::<u64>() {
+                return Self::Command {
+                    command: command.to_string(),
+                    interval_secs: interval_secs.max(1),
+                };
+            }
+        }
+        Self::Command {
+            command: rest.to_string(),
+            interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
         }
     }
 
@@ -304,6 +348,24 @@ impl BarConfig {
             .chain(self.right.iter())
             .any(BarSegment::is_clock)
     }
+
+    /// Unique `(command, interval_secs)` pairs across both bar sides, one background poller
+    /// per distinct command string even if it appears in multiple segments.
+    pub fn command_specs(&self) -> Vec<(String, u64)> {
+        let mut seen = std::collections::HashSet::new();
+        self.left
+            .iter()
+            .chain(self.right.iter())
+            .filter_map(|segment| match segment {
+                BarSegment::Command {
+                    command,
+                    interval_secs,
+                } => Some((command.clone(), *interval_secs)),
+                _ => None,
+            })
+            .filter(|(command, _)| seen.insert(command.clone()))
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -333,12 +395,14 @@ struct FileConfig {
     keys: HashMap<String, KeyBindingSpec>,
 }
 
-/// A `[keys]` value: one binding string or a list of them.
+/// A `[keys]` value: one binding string, a list of them, or a `{ run = ".." }` /
+/// `{ send = ".." }` table defining a user command (see [`build_keymap`]).
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum KeyBindingSpec {
     One(String),
     Many(Vec<String>),
+    UserCommand(UserCommandTableSpec),
 }
 
 impl KeyBindingSpec {
@@ -346,8 +410,16 @@ impl KeyBindingSpec {
         match self {
             Self::One(value) => vec![value],
             Self::Many(values) => values,
+            Self::UserCommand(_) => Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct UserCommandTableSpec {
+    run: Option<String>,
+    send: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -406,7 +478,7 @@ mod tests {
 
         let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
 
         let alt_enter = KeyEvent {
             code: KeyCode::Enter,
@@ -426,6 +498,97 @@ mod tests {
     }
 
     #[test]
+    fn keys_table_value_registers_a_run_user_command() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            "prefix g" = { run = "lazygit" }
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut user_commands = Vec::new();
+        let mut warnings = Vec::new();
+        let keymap = build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(user_commands.len(), 1);
+        assert_eq!(
+            user_commands[0].action,
+            UserCommandAction::Run("lazygit".to_string())
+        );
+        let g = KeyEvent {
+            code: KeyCode::Char('g'),
+            mods: KeyMods::NONE,
+        };
+        assert_eq!(keymap.prefix_action(g), Some(Action::RunUserCommand(0)));
+    }
+
+    #[test]
+    fn keys_table_value_registers_a_send_user_command() {
+        let parsed: FileConfig = toml::from_str(
+            "
+            [keys]
+            alt-g = { send = \"echo hi\\n\" }
+            ",
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut user_commands = Vec::new();
+        let mut warnings = Vec::new();
+        let _keymap = build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(user_commands.len(), 1);
+        assert_eq!(
+            user_commands[0].action,
+            UserCommandAction::Send("echo hi\n".to_string())
+        );
+    }
+
+    #[test]
+    fn keys_table_value_without_run_or_send_warns_and_is_skipped() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            "prefix g" = {}
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut user_commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+
+        assert!(user_commands.is_empty());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("run"));
+    }
+
+    #[test]
+    fn keys_table_value_with_both_run_and_send_warns_and_is_skipped() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            "prefix g" = { run = "lazygit", send = "hi" }
+            "#,
+        )
+        .expect("config parses");
+
+        let prefix = InputConfig::default().prefix;
+        let mut user_commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+
+        assert!(user_commands.is_empty());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("both"));
+    }
+
+    #[test]
     fn empty_key_specs_clear_default_bindings() {
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -438,7 +601,7 @@ mod tests {
 
         let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
 
         assert_eq!(
             keymap.keys_for(Action::ToggleScratchpad).as_deref(),
@@ -467,7 +630,7 @@ mod tests {
 
         let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
 
         assert_eq!(
             keymap.keys_for(Action::ToggleScratchpad).as_deref(),
@@ -498,7 +661,7 @@ mod tests {
 
         let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut warnings);
+        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
 
         assert_eq!(
             keymap
@@ -724,12 +887,62 @@ mod tests {
     }
 
     #[test]
+    fn bar_segment_parses_command_with_and_without_interval() {
+        assert_eq!(
+            BarSegment::parse("command:uptime -p"),
+            Some(BarSegment::Command {
+                command: "uptime -p".to_string(),
+                interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
+            })
+        );
+        assert_eq!(
+            BarSegment::parse("command:5:uptime -p"),
+            Some(BarSegment::Command {
+                command: "uptime -p".to_string(),
+                interval_secs: 5,
+            })
+        );
+        // A command containing colons but no valid leading integer keeps the default interval
+        // and the whole remainder as the command.
+        assert_eq!(
+            BarSegment::parse("command:echo 12:34"),
+            Some(BarSegment::Command {
+                command: "echo 12:34".to_string(),
+                interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
+            })
+        );
+    }
+
+    #[test]
     fn bar_config_default_matches_current_layout() {
         let bar = BarConfig::default();
         assert_eq!(bar.left, vec![BarSegment::Title, BarSegment::Workspaces]);
         assert_eq!(bar.right, vec![BarSegment::Session]);
         assert!(!bar.has_clock());
         assert_eq!(bar.clock_format, "%H:%M");
+        assert!(bar.command_specs().is_empty());
+    }
+
+    #[test]
+    fn bar_config_command_specs_dedups_by_command_string() {
+        let mut bar = BarConfig::default();
+        bar.left.push(BarSegment::Command {
+            command: "uptime -p".to_string(),
+            interval_secs: 10,
+        });
+        bar.right.push(BarSegment::Command {
+            command: "uptime -p".to_string(),
+            interval_secs: 30,
+        });
+        bar.right.push(BarSegment::Command {
+            command: "whoami".to_string(),
+            interval_secs: 5,
+        });
+        let specs = bar.command_specs();
+        assert_eq!(
+            specs,
+            vec![("uptime -p".to_string(), 10), ("whoami".to_string(), 5),]
+        );
     }
 }
 
@@ -867,7 +1080,14 @@ pub fn load_config() -> LoadedConfig {
     }
 
     apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
-    config.keymap = build_keymap(parsed.keys, &config.input.prefix, &mut warnings);
+    let mut user_commands = Vec::new();
+    config.keymap = build_keymap(
+        parsed.keys,
+        &config.input.prefix,
+        &mut user_commands,
+        &mut warnings,
+    );
+    config.user_commands = user_commands;
 
     LoadedConfig { config, warnings }
 }
@@ -1338,12 +1558,21 @@ fn apply_input_config(
 fn build_keymap(
     keys: HashMap<String, KeyBindingSpec>,
     prefix: &KeyBinding,
+    user_commands: &mut Vec<UserCommand>,
     warnings: &mut Vec<String>,
 ) -> Keymap {
     let mut keymap = Keymap::default();
-    for (action_name, spec) in keys {
-        let Some(action) = Action::from_id(&action_name) else {
-            warnings.push(format!("Unknown key action `{action_name}`; skipped"));
+    for (key, spec) in keys {
+        // A table value (`{ run = ".." }` / `{ send = ".." }`) defines a brand new user
+        // command rather than rebinding a built-in action; here the map *key* is the literal
+        // trigger binding (e.g. `"prefix g"`), not an action id.
+        if let KeyBindingSpec::UserCommand(table) = spec {
+            bind_user_command(&mut keymap, user_commands, &key, table, prefix, warnings);
+            continue;
+        }
+
+        let Some(action) = Action::from_id(&key) else {
+            warnings.push(format!("Unknown key action `{key}`; skipped"));
             continue;
         };
         keymap.clear_action(action);
@@ -1358,7 +1587,7 @@ fn build_keymap(
                 match parse_binding(candidate, prefix) {
                     Some(parsed) => parsed_bindings.push(parsed),
                     None => warnings.push(format!(
-                        "Could not parse binding `{candidate}` for `{action_name}`; skipped"
+                        "Could not parse binding `{candidate}` for `{key}`; skipped"
                     )),
                 }
             }
@@ -1368,6 +1597,45 @@ fn build_keymap(
         }
     }
     keymap
+}
+
+fn bind_user_command(
+    keymap: &mut Keymap,
+    user_commands: &mut Vec<UserCommand>,
+    key: &str,
+    table: UserCommandTableSpec,
+    prefix: &KeyBinding,
+    warnings: &mut Vec<String>,
+) {
+    // Trim `run` (a shell command) but keep `send` byte-for-byte: trailing `\n`/whitespace is
+    // often exactly the point (e.g. `send = "ls -la\n"` to submit the command).
+    let run = table.run.map(|value| value.trim().to_string());
+    let send = table.send.filter(|value| !value.is_empty());
+    let action = match (run.filter(|value| !value.is_empty()), send) {
+        (Some(run), None) => UserCommandAction::Run(run),
+        (None, Some(send)) => UserCommandAction::Send(send),
+        (None, None) => {
+            warnings.push(format!(
+                "User command `{key}` needs a `run` or `send` value; skipped"
+            ));
+            return;
+        }
+        (Some(_), Some(_)) => {
+            warnings.push(format!(
+                "User command `{key}` has both `run` and `send`; skipped"
+            ));
+            return;
+        }
+    };
+    let Some((trigger, display)) = parse_binding(key, prefix) else {
+        warnings.push(format!(
+            "Could not parse binding `{key}` for a user command; skipped"
+        ));
+        return;
+    };
+    let index = user_commands.len();
+    user_commands.push(UserCommand { action });
+    keymap.bind(Action::RunUserCommand(index), trigger, display);
 }
 
 /// Parse a binding string into a [`Trigger`] and its display text. A binding is a prefix

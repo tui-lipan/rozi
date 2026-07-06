@@ -40,12 +40,17 @@ You can also configure an exact held chord in `[keys]`, for example `spawn = "al
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
+| Paste from clipboard | `v` |
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
 | Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `Ctrl+←/↓/↑/→` |
 | Promote pane to master | `.` (also palette) |
 
 **Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the
 tree); *Swap* exchanges the two panes' positions in place without restructuring.
+
+**Paste** reads the system clipboard and sends it to the focused pane's PTY, wrapped in
+bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
+simulated keystrokes.
 
 ### Focus
 
@@ -78,6 +83,11 @@ with a live pane count.
 | --- | --- |
 | Switch to workspace _N_ | `1`–`9` |
 | Move focused pane to workspace _N_ | `Shift+1`–`Shift+9` (or the shifted symbols `!@#$%^&*(`) |
+| Rename workspace | *Rename workspace* in the command palette (no default key) |
+
+A named workspace shows as `<number>:<name>` in the tabs (e.g. `1:code`) instead of just the
+number, and the `{workspace}` [bar placeholder](configuration.md#bar) resolves to the name.
+Names are saved with profiles and session autosave.
 
 ### App & overlays
 
@@ -93,6 +103,11 @@ with a live pane count.
 > All of the commands above (except `Ctrl-q`) can be rebound from `hyprmux.toml`. See the
 > `[keys]` section in [Configuration](configuration.md). The help overlay (`?`) always shows
 > your *active* bindings.
+
+Beyond rebinding, `[keys]` can also define brand new key-triggered commands that open a
+program in a new pane or send text to the focused pane's PTY - see [User-defined command
+keybindings](configuration.md#user-defined-command-keybindings). These are config-only: they
+have no stable id, so they don't appear in the help overlay or command palette.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - save profile, choose theme, toggle titlebars, promote to master, plus discoverable
@@ -113,18 +128,23 @@ adjust the focused pane's split ratios, and `Esc` to leave. The top bar shows a 
 ## Copy mode
 
 Press `[` (or run *Copy mode* from the palette) to enter **copy mode**: a keyboard-driven way
-to review scrollback and yank text without a mouse. The top bar shows a **COPY hjkl v y Esc**
-indicator while active.
+to review scrollback and yank text without a mouse. The top bar shows a **COPY hjkl wbe 0$^ v y
+Esc** indicator while active.
 
 | Key | Action |
 | --- | --- |
 | `h/j/k/l` or arrows | Move the cursor (scrolls into history / toward live at the edges) |
+| `w` / `b` / `e` | Word forward / backward / to word end |
+| `W` / `B` / `E` | WORD (whitespace-delimited) forward / backward / to WORD end |
+| `0` / `^` / `$` | Line start / first non-blank / line end |
 | `Ctrl-u` / `Ctrl-d` | Half-page up / down |
 | `g` / `G` | Jump to the top of history / the live bottom |
 | `v` or `Space` | Start a selection at the cursor |
 | `y` or `Enter` | Copy the selection to the system clipboard and exit |
 | `Esc` or `q` | Exit without copying |
 
+The word/line motions are confined to the current row (they don't wrap to the next line) and
+reuse `tui-lipan`'s vim-mode `TextArea` motion algorithms rather than a separate implementation.
 The copy uses the system clipboard, working over SSH via OSC52 when `[clipboard].enable_osc52`
 is on.
 

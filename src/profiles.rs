@@ -105,6 +105,12 @@ pub fn restore_state_from_profile(
         }
 
         let workspace = &mut workspaces[workspace_profile.index];
+        workspace.name = workspace_profile
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
         workspace.synchronized = workspace_profile.synchronized;
         workspace.layout_kind = workspace_profile.layout.into();
         if !workspace_profile.split_ratios.is_empty() {
@@ -195,6 +201,7 @@ pub fn restore_state_from_profile(
         theme_watcher: None,
         search: None,
         rename: None,
+        rename_workspace: None,
         save_profile_prompt: None,
         show_profile_picker: false,
         profile_picker: None,
@@ -210,6 +217,7 @@ pub fn restore_state_from_profile(
         session_attached: false,
         pending_session_attach: None,
         last_pushed_layout: None,
+        bar_command_output: std::collections::HashMap::new(),
     }
 }
 
@@ -244,7 +252,7 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
 
     WorkspaceProfile {
         index,
-        name: None,
+        name: workspace.name.clone(),
         synchronized: workspace.synchronized,
         layout: workspace.layout_kind.into(),
         split_ratios: workspace.split_ratios.clone(),
@@ -795,6 +803,30 @@ mod tests {
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
         assert!(restored.workspaces[0].synchronized);
+    }
+
+    #[test]
+    fn named_workspace_round_trips_from_state() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.workspaces[0].name = Some("code".to_string());
+
+        let profile = profile_from_state(&state);
+        assert_eq!(profile.workspaces[0].name.as_deref(), Some("code"));
+
+        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        assert_eq!(restored.workspaces[0].name.as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn blank_workspace_name_restores_as_unnamed() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.workspaces[0].name = Some("code".to_string());
+        let mut profile = profile_from_state(&state);
+        profile.workspaces[0].name = Some("   ".to_string());
+
+        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+
+        assert_eq!(restored.workspaces[0].name, None);
     }
 
     #[test]

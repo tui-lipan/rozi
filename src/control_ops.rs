@@ -2,10 +2,15 @@ use serde::Serialize;
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
+use crate::actions::execute_action;
 use crate::control::{ControlCommand, ControlEnvelope, ControlResponse};
-use crate::focus_ops::{focus_pane, request_pane_focus};
+use crate::focus_ops::{
+    focus_pane, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
+    switch_workspace,
+};
+use crate::input::Action;
 use crate::pane_lifecycle::{find_pane_mut, spawn_pane_in_workspace};
-use crate::state::{PaneId, PaneIdentity};
+use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
 #[derive(Serialize)]
 struct PaneInfo {
@@ -22,6 +27,12 @@ struct NewPaneAccepted {
     id: PaneId,
     accepted: bool,
     pty_ready: bool,
+}
+
+#[derive(Serialize)]
+struct PaneCapture {
+    id: PaneId,
+    text: String,
 }
 
 pub(crate) fn handle_control_request(
@@ -50,6 +61,14 @@ pub(crate) fn handle_control_request(
                 envelope.reply,
             );
         }
+        ControlCommand::RunAction { action } => {
+            return run_action(ctx, &action, envelope.reply);
+        }
+        ControlCommand::CapturePane { target } => {
+            capture_pane(ctx, target.or(envelope.request.source_pane))
+        }
+        ControlCommand::SwitchWorkspace { index } => switch_workspace_command(ctx, index),
+        ControlCommand::MoveToWorkspace { index } => move_to_workspace_command(ctx, index),
     };
     let _ = envelope.reply.send(response);
     Update::full()
@@ -127,6 +146,67 @@ fn send_text(
     match pane.terminal.send_bytes(text.as_bytes()) {
         Ok(()) => ControlResponse::empty(),
         Err(err) => ControlResponse::error(err),
+    }
+}
+
+/// Run any keybindable action by its stable id, the same names used in `[keys]` config and the
+/// command palette (see `Action::id`/`Action::from_id`).
+fn run_action(
+    ctx: &mut Context<HyprmuxApp>,
+    action_id: &str,
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) -> Update {
+    let Some(action) = Action::from_id(action_id) else {
+        let _ = reply.send(ControlResponse::error(format!(
+            "unknown action `{action_id}`"
+        )));
+        return Update::full();
+    };
+    let update = execute_action(ctx, action);
+    let _ = reply.send(ControlResponse::empty());
+    update
+}
+
+fn capture_pane(ctx: &mut Context<HyprmuxApp>, target: Option<PaneId>) -> ControlResponse {
+    let Some(id) = target.or(ctx.state.focused_pane) else {
+        return ControlResponse::error("no target pane and no focused pane");
+    };
+    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+        return ControlResponse::error(format!("pane {id} not found"));
+    };
+    ControlResponse::ok(PaneCapture {
+        id,
+        text: pane.terminal.capture_text(),
+    })
+}
+
+fn switch_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {
+    let Some(response) = validate_workspace_index(index) else {
+        switch_workspace(&mut ctx.state, index - 1);
+        request_current_pane_focus(ctx);
+        return ControlResponse::empty();
+    };
+    response
+}
+
+fn move_to_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {
+    let Some(response) = validate_workspace_index(index) else {
+        move_focused_to_workspace(&mut ctx.state, index - 1);
+        request_current_pane_focus(ctx);
+        return ControlResponse::empty();
+    };
+    response
+}
+
+/// `Some(error response)` when `index` (1-based) is out of the `1..=WORKSPACE_COUNT` range,
+/// `None` when it is valid.
+fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
+    if index == 0 || index > WORKSPACE_COUNT {
+        Some(ControlResponse::error(format!(
+            "workspace index must be between 1 and {WORKSPACE_COUNT}"
+        )))
+    } else {
+        None
     }
 }
 
@@ -209,5 +289,13 @@ mod tests {
         state.workspaces[1].panes.push(Pane::new(7, 100, rect()));
         assert_eq!(workspace_for_source(&state, None), Ok(2));
         assert_eq!(workspace_for_source(&state, Some(7)), Ok(1));
+    }
+
+    #[test]
+    fn validate_workspace_index_rejects_out_of_range() {
+        assert!(validate_workspace_index(0).is_some());
+        assert!(validate_workspace_index(1).is_none());
+        assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT).is_none());
+        assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT + 1).is_some());
     }
 }

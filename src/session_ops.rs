@@ -98,6 +98,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         startup_spawns(&mut ctx.state),
         false,
         false,
+        Vec::new(),
         None,
     ))
 }

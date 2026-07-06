@@ -358,6 +358,24 @@ impl TerminalPane {
         self.snapshot.total_scrollback_rows
     }
 
+    /// Plain text of the current visible snapshot grid (reflecting whatever scrollback offset
+    /// is currently applied), one row per line, joined with `\n`.
+    pub fn capture_text(&self) -> String {
+        self.snapshot.text.to_string()
+    }
+
+    /// Plain, right-trimmed text of a single row in the current snapshot grid, or an empty
+    /// string when `row` is out of range.
+    pub fn row_text(&self, row: usize) -> String {
+        self.snapshot
+            .text
+            .lines()
+            .nth(row)
+            .unwrap_or("")
+            .trim_end()
+            .to_string()
+    }
+
     /// Extract the text covered by a selection from the current snapshot grid. `anchor` and
     /// `cursor` are `(row, col)` in visible-viewport coordinates; ordering is normalized.
     /// Trailing whitespace is trimmed per line and lines are joined with `\n`.

@@ -1,21 +1,91 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
+use crate::config::UserCommandAction;
 use crate::focus_ops::{
     cycle_focus_in_tiled_order, focus_in_direction, move_focused_to_workspace,
     promote_focused_to_master, request_current_pane_focus, request_pane_focus, switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
-use crate::pane_lifecycle::{close_focused_pane, spawn_pane};
+use crate::pane_lifecycle::{
+    close_focused_pane, find_pane_mut, spawn_pane, spawn_pane_in_workspace,
+};
 use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::search_ops::open_search;
-use crate::state::Mode;
+use crate::state::{Mode, PaneIdentity};
 use crate::theme_ops::{apply_terminal_palette_to_state, open_theme_picker};
+
+/// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
+/// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
+fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(id) = ctx.state.focused_pane else {
+        return Update::full();
+    };
+    let text = match ctx.clipboard().read() {
+        Ok(text) => text,
+        Err(err) => {
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Paste failed",
+                err.to_string(),
+            ));
+            return Update::full();
+        }
+    };
+    if text.is_empty() {
+        return Update::full();
+    }
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
+        && let Err(err) = pane.terminal.send_bytes(&wrap_bracketed_paste(&text))
+    {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Paste failed",
+            err,
+        ));
+    }
+    Update::full()
+}
+
+/// Dispatch a `[keys]`-defined user command: `Run` opens a new pane running the shell command
+/// (the same `identity.command` hook the scratchpad and control socket's `NewPane` use), `Send`
+/// writes the literal text straight to the focused pane's PTY.
+fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(command) = ctx.state.config.user_commands.get(index).cloned() else {
+        return Update::none();
+    };
+    match command.action {
+        UserCommandAction::Run(command) => {
+            let workspace_index = ctx.state.active_workspace;
+            let previous_focused = ctx.state.workspaces[workspace_index].focused_pane;
+            let identity = PaneIdentity {
+                command: Some(command),
+                ..PaneIdentity::default()
+            };
+            spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity).1
+        }
+        UserCommandAction::Send(text) => {
+            let Some(id) = ctx.state.focused_pane else {
+                return Update::full();
+            };
+            if let Some(pane) = find_pane_mut(&mut ctx.state, id)
+                && let Err(err) = pane.terminal.send_bytes(text.as_bytes())
+            {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Command failed",
+                    err,
+                ));
+            }
+            Update::full()
+        }
+    }
+}
 
 fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
@@ -59,6 +129,8 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         }
         Action::ToggleFullscreen => toggle_fullscreen(ctx),
         Action::RenamePane => open_rename_pane(ctx),
+        Action::RenameWorkspace => crate::identity_ops::open_rename_workspace(ctx),
+        Action::Paste => paste_from_focused_pane(ctx),
         Action::Swap(direction) => {
             swap_focused_in_direction(ctx, direction);
             request_current_pane_focus(ctx);
@@ -129,11 +201,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         }
         Action::ToggleFocusOnHover => {
             ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
-            persist_pane_toggle(
-                ctx,
-                "focus_on_hover",
-                ctx.state.config.pane.focus_on_hover,
-            );
+            persist_pane_toggle(ctx, "focus_on_hover", ctx.state.config.pane.focus_on_hover);
             Update::full()
         }
         Action::ToggleHighlightFocusedBackground => {
@@ -147,6 +215,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             apply_terminal_palette_to_state(&mut ctx.state);
             Update::full()
         }
+        Action::RunUserCommand(index) => run_user_command(ctx, index),
         Action::TogglePaneSynchronization => {
             let synchronized = {
                 let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];

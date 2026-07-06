@@ -259,9 +259,15 @@ pub(crate) fn initial_command(
     spawns: Vec<StartupSpawn>,
     theme_tick: bool,
     bar_tick: bool,
+    bar_commands: Vec<(String, u64)>,
     control_listener: Option<std::os::unix::net::UnixListener>,
 ) -> Option<Command> {
-    if spawns.is_empty() && !theme_tick && !bar_tick && control_listener.is_none() {
+    if spawns.is_empty()
+        && !theme_tick
+        && !bar_tick
+        && bar_commands.is_empty()
+        && control_listener.is_none()
+    {
         return None;
     }
     Some(Command::spawn(move |link: CommandLink<Msg>| {
@@ -289,7 +295,48 @@ pub(crate) fn initial_command(
         if bar_tick {
             link.send(Msg::BarTick);
         }
+        spawn_bar_command_pollers(bar_commands, &link);
     }))
+}
+
+/// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
+/// command, sends its output, sleeps, and repeats for the life of the app - the same
+/// fire-and-forget pattern as the PTY read threads.
+pub(crate) fn spawn_bar_command_pollers(bar_commands: Vec<(String, u64)>, link: &CommandLink<Msg>) {
+    for (command, interval_secs) in bar_commands {
+        let poller_link = link.clone();
+        std::thread::spawn(move || {
+            loop {
+                let output = run_bar_command(&command);
+                poller_link.send(Msg::BarCommandOutput(command.clone(), output));
+                std::thread::sleep(Duration::from_secs(interval_secs.max(1)));
+            }
+        });
+    }
+}
+
+/// Runs a `command:` bar segment's shell command through the user's shell and returns the
+/// first line of stdout, trimmed. Failures (missing shell, non-zero exit, no output) collapse
+/// to an empty string rather than surfacing an error in the bar.
+fn run_bar_command(command: &str) -> String {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+    std::process::Command::new(shell)
+        .arg("-c")
+        .arg(command)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {

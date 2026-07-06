@@ -55,6 +55,8 @@ impl Default for Keymap {
         keymap.bind_default(Action::ToggleFullscreen, "shift-f", "f");
         keymap.bind_default(Action::RenamePane, "n", "n");
         keymap.bind_default(Action::RenamePane, "shift-n", "n");
+        keymap.bind_default(Action::Paste, "v", "v");
+        keymap.bind_default(Action::Paste, "shift-v", "v");
         keymap.bind_default(Action::Swap(Direction::Left), "ctrl-h", "Ctrl+h");
         keymap.bind_default(Action::Swap(Direction::Left), "ctrl-left", "Ctrl+Left");
         keymap.bind_default(Action::Swap(Direction::Down), "ctrl-j", "Ctrl+j");

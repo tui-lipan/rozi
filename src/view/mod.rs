@@ -4,8 +4,8 @@ mod overlays;
 mod pane;
 
 pub use keys::{
-    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key, save_profile_key,
-    search_input_key, theme_picker_key,
+    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
+    rename_workspace_input_key, save_profile_key, search_input_key, theme_picker_key,
 };
 pub(crate) use pane::pane_element;
 
@@ -20,8 +20,9 @@ use crate::state::TOP_BAR_HEIGHT;
 
 use bar::{empty_workspace_panel, top_bar};
 use overlays::{
-    help_overlay, palette_overlay, profile_picker_overlay, rename_overlay, save_profile_overlay,
-    search_overlay, session_picker_overlay, theme_picker_overlay,
+    help_overlay, palette_overlay, profile_picker_overlay, rename_overlay,
+    rename_workspace_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
+    theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 
@@ -43,8 +44,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .moving_pane
         .filter(|session| !session.was_floating)
         .map(|session| session.id);
-    let placements =
-        workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap);
+    let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap);
     let focused_pane = workspace.focused_pane.or(ctx.state.focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
@@ -56,6 +56,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.show_help
         || ctx.state.show_theme_picker
         || ctx.state.rename.is_some()
+        || ctx.state.rename_workspace.is_some()
         || ctx.state.save_profile_prompt.is_some()
         || ctx.state.show_profile_picker
         || ctx.state.show_session_picker;
@@ -158,8 +159,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    let mut app_root = VStack::new()
-        .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
+    let mut app_root =
+        VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
     if ctx.state.config.pane.show_top_bar {
         app_root = app_root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
     }
@@ -186,6 +187,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.rename.is_some() {
         root = root.child(rename_overlay(ctx));
+    }
+    if ctx.state.rename_workspace.is_some() {
+        root = root.child(rename_workspace_overlay(ctx));
     }
     if ctx.state.save_profile_prompt.is_some() {
         root = root.child(save_profile_overlay(ctx));

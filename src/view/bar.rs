@@ -62,7 +62,7 @@ pub(crate) fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
         );
     } else if state.mode == Mode::Copy {
         row = row.child(
-            Text::new(" COPY hjkl v y Esc ")
+            Text::new(" COPY hjkl wbe 0$^ v y Esc ")
                 .style(
                     Style::new()
                         .fg(theme.surface.backdrop)
@@ -119,6 +119,15 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
             (count > 0).then(|| bar_text(format!(" ●{count} "), theme))
         }
         BarSegment::Text(literal) => Some(bar_text(substitute_placeholders(ctx, literal), theme)),
+        BarSegment::Command { command, .. } => {
+            let output = ctx
+                .state
+                .bar_command_output
+                .get(command)
+                .map(String::as_str)
+                .unwrap_or("");
+            Some(bar_text(format!(" {output} "), theme))
+        }
     }
 }
 
@@ -131,14 +140,24 @@ fn bar_text(text: impl Into<String>, theme: &Theme) -> Element {
 
 fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
     let state = &ctx.state;
+    let active = &state.workspaces[state.active_workspace];
     literal
         .replace("{host}", &bar_hostname())
-        .replace("{workspace}", &(state.active_workspace + 1).to_string())
         .replace(
-            "{layout}",
-            state.workspaces[state.active_workspace].layout_kind.label(),
+            "{workspace}",
+            &workspace_placeholder_label(active.name.as_deref(), state.active_workspace),
         )
+        .replace("{layout}", active.layout_kind.label())
         .replace("{session}", &attached_session_name(ctx).unwrap_or_default())
+}
+
+/// Value substituted for the `{workspace}` bar placeholder: the workspace's custom name when
+/// set, otherwise its 1-based number.
+fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
+    match name {
+        Some(name) if !name.is_empty() => name.to_string(),
+        _ => (index + 1).to_string(),
+    }
 }
 
 /// The `Session` bar segment: an accented badge naming the attached session server. Renders
@@ -188,11 +207,7 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
     let tabs: Vec<Tab> = (0..shown)
         .map(|idx| {
             let count = state.workspaces[idx].visible_count();
-            let label = if count > 0 {
-                format!("{} ·{count}", idx + 1)
-            } else {
-                format!("{}", idx + 1)
-            };
+            let label = workspace_tab_label(state.workspaces[idx].name.as_deref(), idx, count);
             Tab::new(label)
         })
         .collect();
@@ -221,6 +236,20 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
         )
         .into()
+}
+
+/// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
+/// with a ` ·<count>` suffix while it holds panes.
+fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
+    let base = match name {
+        Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),
+        _ => (index + 1).to_string(),
+    };
+    if pane_count > 0 {
+        format!("{base} ·{pane_count}")
+    } else {
+        base
+    }
 }
 
 /// Number of workspace tabs to show: at least 5, growing to include the active
@@ -262,4 +291,29 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
                 ))),
         )
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{workspace_placeholder_label, workspace_tab_label};
+
+    #[test]
+    fn workspace_tab_label_falls_back_to_number_without_a_name() {
+        assert_eq!(workspace_tab_label(None, 0, 0), "1");
+        assert_eq!(workspace_tab_label(Some(""), 0, 0), "1");
+        assert_eq!(workspace_tab_label(None, 0, 3), "1 ·3");
+    }
+
+    #[test]
+    fn workspace_tab_label_prefixes_the_custom_name_with_the_number() {
+        assert_eq!(workspace_tab_label(Some("code"), 0, 0), "1:code");
+        assert_eq!(workspace_tab_label(Some("code"), 0, 2), "1:code ·2");
+    }
+
+    #[test]
+    fn workspace_placeholder_label_prefers_the_custom_name() {
+        assert_eq!(workspace_placeholder_label(None, 2), "3");
+        assert_eq!(workspace_placeholder_label(Some(""), 2), "3");
+        assert_eq!(workspace_placeholder_label(Some("code"), 2), "code");
+    }
 }

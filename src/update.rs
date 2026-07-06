@@ -4,9 +4,11 @@ use crate::actions::execute_action;
 use crate::anim::GeometryAnimation;
 use crate::focus_ops::{
     focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
-    request_save_profile_focus, request_search_focus,
+    request_rename_workspace_focus, request_save_profile_focus, request_search_focus,
 };
-use crate::identity_ops::{apply_rename_pane, close_rename_pane};
+use crate::identity_ops::{
+    apply_rename_pane, apply_rename_workspace, close_rename_pane, close_rename_workspace,
+};
 use crate::input::Action;
 use crate::key_routing::handle_key_routing;
 use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed};
@@ -38,6 +40,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             match action {
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
+                Action::RenameWorkspace => request_rename_workspace_focus(ctx),
                 Action::OpenThemePicker => {}
                 Action::SaveProfile | Action::OpenProfilePicker | Action::OpenSessionPicker => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
@@ -73,6 +76,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             } else {
                 Update::none()
             }
+        }
+        Msg::BarCommandOutput(command, output) => {
+            ctx.state.bar_command_output.insert(command, output);
+            Update::full()
         }
         Msg::ThemeError(message) => {
             ctx.toast()
@@ -116,6 +123,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SubmitRenamePane => {
             let update = apply_rename_pane(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::CloseRenameWorkspace => {
+            let update = close_rename_workspace(ctx);
+            request_current_pane_focus(ctx);
+            update
+        }
+        Msg::RenameWorkspaceChanged(event) => {
+            if let Some(rename) = ctx.state.rename_workspace.as_mut() {
+                event.apply_to(&mut rename.input);
+            }
+            request_rename_workspace_focus(ctx);
+            Update::full()
+        }
+        Msg::SubmitRenameWorkspace => {
+            let update = apply_rename_workspace(ctx);
             request_current_pane_focus(ctx);
             update
         }

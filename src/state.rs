@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -67,12 +68,7 @@ impl LayoutKind {
     /// Every layout in cycle order. `toggled` walks this list, so the order here
     /// is the order `Action::ToggleLayout` rotates through.
     pub fn all() -> &'static [LayoutKind] {
-        &[
-            Self::Dwindle,
-            Self::Master,
-            Self::Grid,
-            Self::Monocle,
-        ]
+        &[Self::Dwindle, Self::Master, Self::Grid, Self::Monocle]
     }
 
     pub fn label(self) -> &'static str {
@@ -340,6 +336,21 @@ impl PaneRenameState {
     }
 }
 
+/// Rename prompt state for a workspace, keyed by its index rather than a `PaneId`.
+pub struct WorkspaceRenameState {
+    pub target: usize,
+    pub input: TextInput,
+}
+
+impl WorkspaceRenameState {
+    pub fn new(target: usize, initial: impl AsRef<str>) -> Self {
+        Self {
+            target,
+            input: TextInput::new(initial.as_ref()),
+        }
+    }
+}
+
 pub struct ProfilePickerState {
     pub entries: Vec<ProfileEntry>,
     pub input: TextInput,
@@ -494,6 +505,9 @@ pub struct Workspace {
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
     pub last_move_swap: Option<MoveSwapHint>,
+    /// User-assigned label shown in the top bar in place of (or alongside) the workspace
+    /// number. `None` keeps the default numeric display.
+    pub name: Option<String>,
 }
 
 impl Workspace {
@@ -511,6 +525,7 @@ impl Workspace {
             },
             split_ratios: vec![DEFAULT_RATIO; 16],
             last_move_swap: None,
+            name: None,
         }
     }
 
@@ -565,6 +580,7 @@ pub struct State {
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
+    pub rename_workspace: Option<WorkspaceRenameState>,
     pub save_profile_prompt: Option<PaneRenameState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
@@ -581,6 +597,10 @@ pub struct State {
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
     pub last_pushed_layout: Option<String>,
+    /// Cached first-line stdout for each configured `BarSegment::Command`, keyed by the raw
+    /// command string. Refreshed on a background timer per command; empty until the first run
+    /// completes.
+    pub bar_command_output: HashMap<String, String>,
 }
 
 pub struct PendingSessionAttach {
@@ -628,6 +648,7 @@ impl State {
             theme_watcher: None,
             search: None,
             rename: None,
+            rename_workspace: None,
             save_profile_prompt: None,
             show_profile_picker: false,
             profile_picker: None,
@@ -643,6 +664,7 @@ impl State {
             session_attached: false,
             pending_session_attach: None,
             last_pushed_layout: None,
+            bar_command_output: HashMap::new(),
         }
     }
 

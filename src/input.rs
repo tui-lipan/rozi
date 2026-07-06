@@ -15,6 +15,8 @@ pub enum Action {
     ToggleFloat,
     ToggleFullscreen,
     RenamePane,
+    RenameWorkspace,
+    Paste,
     Swap(Direction),
     CycleFocus(bool),
     PromoteToMaster,
@@ -37,6 +39,10 @@ pub enum Action {
     ToggleFocusOnHover,
     ToggleHighlightFocusedBackground,
     TogglePaneSynchronization,
+    /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
+    /// [`crate::config::build_keymap`]), so - like workspace digits - it has no static id and
+    /// isn't independently rebindable or listed in [`command_bindings`].
+    RunUserCommand(usize),
 }
 
 impl Action {
@@ -66,6 +72,8 @@ impl Action {
             Action::ToggleFloat => "toggle-float",
             Action::ToggleFullscreen => "toggle-fullscreen",
             Action::RenamePane => "rename-pane",
+            Action::RenameWorkspace => "rename-workspace",
+            Action::Paste => "paste",
             Action::FlipSplit => "flip-split",
             Action::AdjustRatio(delta) if delta >= 0.0 => "grow-split",
             Action::AdjustRatio(_) => "shrink-split",
@@ -86,7 +94,7 @@ impl Action {
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
             Action::ToggleHighlightFocusedBackground => "toggle-highlight-focused-background",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
-            Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) => {
+            Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::RunUserCommand(_) => {
                 return None;
             }
         })
@@ -116,6 +124,8 @@ impl Action {
             "toggle-float" => Action::ToggleFloat,
             "toggle-fullscreen" => Action::ToggleFullscreen,
             "rename-pane" => Action::RenamePane,
+            "rename-workspace" => Action::RenameWorkspace,
+            "paste" => Action::Paste,
             "flip-split" => Action::FlipSplit,
             "grow-split" => Action::AdjustRatio(RATIO_STEP),
             "shrink-split" => Action::AdjustRatio(-RATIO_STEP),
@@ -196,6 +206,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             keys: "n",
             category: "Panes",
             palette: false,
+        },
+        CommandBinding {
+            action: Action::Paste,
+            label: "Paste from clipboard",
+            keys: "v",
+            category: "Panes",
+            palette: true,
         },
         CommandBinding {
             action: Action::Swap(Left),
@@ -299,6 +316,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             action: Action::ToggleLayout,
             label: "Switch layout",
             keys: "m",
+            category: "Layout",
+            palette: true,
+        },
+        CommandBinding {
+            action: Action::RenameWorkspace,
+            label: "Rename workspace",
+            keys: "",
             category: "Layout",
             palette: true,
         },
@@ -452,9 +476,7 @@ pub fn command_label(action: Action, state: &State) -> String {
     }
 
     if action == Action::ToggleLayout {
-        let layout = state.workspaces[state.active_workspace]
-            .layout_kind
-            .label();
+        let layout = state.workspaces[state.active_workspace].layout_kind.label();
         return format!("Switch layout (current: {layout})");
     }
 

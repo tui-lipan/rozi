@@ -103,6 +103,8 @@ pub enum Msg {
     SelectTheme(usize),
     ThemeTick,
     BarTick,
+    /// A `BarSegment::Command` poller produced fresh output: (command string, first output line).
+    BarCommandOutput(String, String),
     ThemeError(String),
     CloseSearch,
     SearchQueryChanged(String),
@@ -113,6 +115,9 @@ pub enum Msg {
     CloseRenamePane,
     RenamePaneChanged(InputEvent),
     SubmitRenamePane,
+    CloseRenameWorkspace,
+    RenameWorkspaceChanged(InputEvent),
+    SubmitRenameWorkspace,
     CloseSaveProfile,
     SaveProfileNameChanged(InputEvent),
     SubmitSaveProfile,
@@ -256,6 +261,7 @@ impl Component for HyprmuxApp {
         if let Some(name) = attach_session {
             let theme_tick = ctx.state.theme_watcher.is_some();
             let bar_tick = ctx.state.config.bar.has_clock();
+            let bar_commands = ctx.state.config.bar.command_specs();
             let epoch = ctx.state.runtime_epoch;
             ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
                 epoch,
@@ -279,6 +285,7 @@ impl Component for HyprmuxApp {
                 if bar_tick {
                     link.send(Msg::BarTick);
                 }
+                pane_lifecycle::spawn_bar_command_pollers(bar_commands, &link);
             }));
         }
         let spawns = startup_spawns(&mut ctx.state);
@@ -286,6 +293,7 @@ impl Component for HyprmuxApp {
             spawns,
             ctx.state.theme_watcher.is_some(),
             ctx.state.config.bar.has_clock(),
+            ctx.state.config.bar.command_specs(),
             control_listener,
         )
     }
@@ -909,6 +917,66 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
                     }),
                 }));
             }
+            "run-action" => {
+                let action = iter
+                    .next()
+                    .ok_or_else(|| "run-action requires an action id".to_string())?;
+                reject_trailing_control_args(&mut iter, "run-action")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::RunAction { action }),
+                }));
+            }
+            "capture-pane" => {
+                let mut target = None;
+                if let Some(next) = iter.next() {
+                    if next == "--target" {
+                        let value = iter
+                            .next()
+                            .ok_or_else(|| "--target requires a pane id".to_string())?;
+                        target = Some(
+                            value
+                                .parse()
+                                .map_err(|_| "--target requires a numeric pane id".to_string())?,
+                        );
+                    } else {
+                        return Err(format!("unexpected argument `{next}` after capture-pane"));
+                    }
+                }
+                reject_trailing_control_args(&mut iter, "capture-pane")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::CapturePane { target }),
+                }));
+            }
+            "switch-workspace" => {
+                let index = iter
+                    .next()
+                    .ok_or_else(|| "switch-workspace requires a workspace number".to_string())?
+                    .parse()
+                    .map_err(|_| {
+                        "switch-workspace requires a numeric workspace number".to_string()
+                    })?;
+                reject_trailing_control_args(&mut iter, "switch-workspace")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::SwitchWorkspace { index }),
+                }));
+            }
+            "move-to-workspace" => {
+                let index = iter
+                    .next()
+                    .ok_or_else(|| "move-to-workspace requires a workspace number".to_string())?
+                    .parse()
+                    .map_err(|_| {
+                        "move-to-workspace requires a numeric workspace number".to_string()
+                    })?;
+                reject_trailing_control_args(&mut iter, "move-to-workspace")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::MoveToWorkspace { index }),
+                }));
+            }
             other if other.starts_with('-') => {
                 return Err(format!("unknown flag `{other}`"));
             }
@@ -1100,6 +1168,10 @@ USAGE:
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
     hyprmux [--socket PATH] split [COMMAND]
+    hyprmux [--socket PATH] run-action <ACTION_ID>
+    hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
+    hyprmux [--socket PATH] switch-workspace <1-9>
+    hyprmux [--socket PATH] move-to-workspace <1-9>
     hyprmux --attach <NAME>
     hyprmux --session <NAME>
     hyprmux list-sessions
@@ -1240,6 +1312,66 @@ mod tests {
             control.request.command,
             control::ControlCommand::SendText { .. }
         ));
+    }
+
+    #[test]
+    fn cli_parses_run_action_capture_pane_and_workspace_commands() {
+        let ParsedCli::Control(run_action) =
+            parse_cli_args(vec!["run-action".into(), "toggle-float".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            run_action.request.command,
+            control::ControlCommand::RunAction {
+                action: "toggle-float".to_string()
+            }
+        );
+
+        let ParsedCli::Control(capture) =
+            parse_cli_args(vec!["capture-pane".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            capture.request.command,
+            control::ControlCommand::CapturePane { target: None }
+        );
+
+        let ParsedCli::Control(capture_target) =
+            parse_cli_args(vec!["capture-pane".into(), "--target".into(), "7".into()])
+                .expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            capture_target.request.command,
+            control::ControlCommand::CapturePane { target: Some(7) }
+        );
+
+        let ParsedCli::Control(switch) =
+            parse_cli_args(vec!["switch-workspace".into(), "3".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            switch.request.command,
+            control::ControlCommand::SwitchWorkspace { index: 3 }
+        );
+
+        let ParsedCli::Control(move_to) =
+            parse_cli_args(vec!["move-to-workspace".into(), "4".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            move_to.request.command,
+            control::ControlCommand::MoveToWorkspace { index: 4 }
+        );
+
+        assert!(parse_cli_args(vec!["run-action".into()]).is_err());
+        assert!(parse_cli_args(vec!["switch-workspace".into(), "nope".into()]).is_err());
+        assert!(parse_cli_args(vec!["capture-pane".into(), "--bogus".into()]).is_err());
     }
 
     #[test]

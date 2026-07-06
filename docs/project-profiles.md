@@ -35,9 +35,10 @@ On startup, `hyprmux` loads that file when it exists and shows a startup message
 
 ## Profile shape
 
-Each profile has a version, the active workspace, and workspace entries. A workspace's `layout`
-is one of `dwindle`, `master`, `grid`, or `monocle`. Pane entries can use these
-fields:
+Each profile has a version, the active workspace, and workspace entries. A workspace entry may
+set `name` (its custom name, settable at runtime with *Rename workspace* - see
+[Keybindings](keybindings.md#workspaces)) and `layout`, one of `dwindle`, `master`, `grid`, or
+`monocle`. Pane entries can use these fields:
 
 - `name`: pane title shown by `hyprmux` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
@@ -54,6 +55,7 @@ active_workspace = 0
 
 [[workspaces]]
 index = 0
+name = "code"
 layout = "dwindle"
 focused_pane = 0
 

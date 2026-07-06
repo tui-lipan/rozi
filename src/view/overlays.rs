@@ -11,8 +11,8 @@ use crate::state::{
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    help_scroll_key, palette_key, profile_picker_key, rename_input_key, save_profile_key,
-    search_input_key, session_picker_key, theme_picker_key,
+    help_scroll_key, palette_key, profile_picker_key, rename_input_key, rename_workspace_input_key,
+    save_profile_key, search_input_key, session_picker_key, theme_picker_key,
 };
 use super::{
     action_palette_modal, fg_only, modal_scrollbar_config, shared_search_palette, styled_modal,
@@ -44,15 +44,51 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         "Workspaces",
         vec![
             ("1-9".to_string(), "Switch to workspace".to_string()),
-            ("Shift+1-9".to_string(), "Move pane to workspace".to_string()),
+            (
+                "Shift+1-9".to_string(),
+                "Move pane to workspace".to_string(),
+            ),
         ],
     ));
     groups.push((
         "Mouse",
         vec![
             ("mod-drag".to_string(), "Move pane (left-drag)".to_string()),
-            ("mod-right-drag".to_string(), "Resize pane from corner".to_string()),
+            (
+                "mod-right-drag".to_string(),
+                "Resize pane from corner".to_string(),
+            ),
             ("drag gap".to_string(), "Resize a tiled split".to_string()),
+        ],
+    ));
+    // Copy mode's internal keys aren't discrete actions, so they aren't in the command table.
+    groups.push((
+        "Copy mode",
+        vec![
+            ("hjkl / arrows".to_string(), "Move cursor".to_string()),
+            (
+                "w / b / e".to_string(),
+                "Word forward / back / end".to_string(),
+            ),
+            (
+                "W / B / E".to_string(),
+                "WORD forward / back / end".to_string(),
+            ),
+            (
+                "0 / ^ / $".to_string(),
+                "Line start / first non-blank / end".to_string(),
+            ),
+            (
+                "g / G".to_string(),
+                "Top / bottom of scrollback".to_string(),
+            ),
+            (
+                "Ctrl+u / Ctrl+d".to_string(),
+                "Half page up / down".to_string(),
+            ),
+            ("v / Space".to_string(), "Start selection".to_string()),
+            ("y / Enter".to_string(), "Copy selection & exit".to_string()),
+            ("Esc / q".to_string(), "Exit copy mode".to_string()),
         ],
     ));
 
@@ -222,6 +258,43 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .padding((1, 2, 1, 2))
         .on_close(ctx.link().callback(|_| Msg::CloseRenamePane))
         .child(input.key(rename_input_key()))
+        .into()
+}
+
+pub(crate) fn rename_workspace_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(rename) = ctx.state.rename_workspace.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let input = Input::bound(&rename.input)
+        .placeholder("Workspace name, empty clears it")
+        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+        .focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .on_change(ctx.link().callback(Msg::RenameWorkspaceChanged))
+        .on_key(ctx.link().key_handler(|key| {
+            if key.is(KeyCode::Esc) {
+                Some(Msg::CloseRenameWorkspace)
+            } else if key.code == KeyCode::Enter
+                && !key.mods.ctrl
+                && !key.mods.alt
+                && !key.mods.super_key
+            {
+                Some(Msg::SubmitRenameWorkspace)
+            } else {
+                None
+            }
+        }));
+
+    styled_modal(ctx, &format!("Rename workspace {}", rename.target + 1), 56)
+        .padding((1, 2, 1, 2))
+        .on_close(ctx.link().callback(|_| Msg::CloseRenameWorkspace))
+        .child(input.key(rename_workspace_input_key()))
         .into()
 }
 

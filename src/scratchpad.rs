@@ -4,7 +4,7 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::config::{HyprmuxConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
-use crate::geometry::{workspace_tile_bounds};
+use crate::geometry::workspace_tile_bounds;
 use crate::pane_lifecycle::{pty_config_for_pane, spawn_pty_command};
 use crate::state::{Pane, SCRATCH_PANE_ID};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
@@ -30,7 +30,12 @@ pub(crate) fn scratch_rect(bounds: FloatRect, height_fraction: f32, top_gap: f32
 /// The deployed rect translated straight down so its top edge sits at the bottom tile edge (fully
 /// off-screen). At `progress == 0.0` the dropdown is here; at `1.0` it is at `scratch_rect`.
 /// Only the `y` position moves - width/height are constant, so the PTY never resizes mid-slide.
-fn scratch_slide_rect(bounds: FloatRect, height_fraction: f32, progress: f32, top_gap: f32) -> FloatRect {
+fn scratch_slide_rect(
+    bounds: FloatRect,
+    height_fraction: f32,
+    progress: f32,
+    top_gap: f32,
+) -> FloatRect {
     let shown = scratch_rect(bounds, height_fraction, top_gap);
     let tile_bounds = workspace_tile_bounds(bounds, top_gap);
     let hidden_y = tile_bounds.y + tile_bounds.h;
@@ -192,7 +197,12 @@ pub(crate) fn scratch_placement(
     let pane = ctx.state.scratch.as_ref()?;
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
-    let rect = scratch_slide_rect(bounds, ctx.state.config.scratchpad.height, progress, top_gap);
+    let rect = scratch_slide_rect(
+        bounds,
+        ctx.state.config.scratchpad.height,
+        progress,
+        top_gap,
+    );
     let element = view::pane_element(app, ctx, pane, rect, Some(SCRATCH_PANE_ID), "S");
     Some((rect, element))
 }

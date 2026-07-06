@@ -304,9 +304,7 @@ pub(crate) fn tiled_resize_strips(
     workspace: &Workspace,
 ) -> Vec<(FloatRect, Element)> {
     let master = matches!(workspace.layout_kind, LayoutKind::Master);
-    if !master
-        && workspace.layout_kind != LayoutKind::Dwindle
-    {
+    if !master && workspace.layout_kind != LayoutKind::Dwindle {
         return Vec::new();
     }
 

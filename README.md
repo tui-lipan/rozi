@@ -26,12 +26,23 @@ cargo run     # quit with Ctrl-q
 - **Command palette & help overlay** - fuzzy command search (`p`) and a full keybinding
   reference (`?`).
 - **Pane identity** - rename panes (`n`); titles also follow the program's OSC title.
+- **Named workspaces** - rename a workspace to show `<number>:<name>` in the tabs, usable in the
+  `{workspace}` bar placeholder, saved with profiles and session autosave.
 - **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
 - **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.
+- **Copy mode** - vi-style scrollback review with `hjkl`, word/WORD (`w`/`b`/`e`) and line
+  (`0`/`^`/`$`) motions, and clipboard yank - the motions reuse `tui-lipan`'s vim-mode `TextArea`
+  algorithms rather than a separate implementation.
 - **Themes** - 10 built-in presets, a host-derived `system` theme, drop-in custom theme files,
   and live hot-reload. Terminal ANSI colors are derived from the active theme.
-- **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, and OSC52
-  clipboard, provided by `tui-lipan`'s terminal primitives.
+- **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, clipboard paste
+  (`v`), and OSC52 clipboard, provided by `tui-lipan`'s terminal primitives.
+- **Scriptable control socket** - a per-run Unix socket and `hyprmux` CLI (`list-panes`, `focus`,
+  `send-text`, `new-pane`, `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`)
+  for external automation.
+- **Extensible bar & keybindings** - bar segments can run a shell command on a timer, and
+  `[keys]` entries can define new key-triggered commands that open a pane or send text, beyond
+  rebinding built-in actions.
 
 ## Documentation
 

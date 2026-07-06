@@ -47,17 +47,22 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
 - **OSC52 clipboard** - programs running in a pane can set the system clipboard via the OSC52
   escape sequence. This is enabled by default and can be turned off with
   `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard).
+- **Paste** (`v`, or *Paste from clipboard* in the palette) reads the system clipboard and sends
+  it to the focused pane's PTY, wrapped in bracketed-paste markers so shells/editors that opt in
+  treat it as one paste instead of simulated keystrokes.
 
 ## Copy mode
 
 Press `[` (or *Copy mode* in the palette) for a keyboard-driven way to review scrollback and
 yank text without the mouse. A cursor moves with `h/j/k/l`/arrows (scrolling into history or
-toward the live view at the top/bottom edges), `Ctrl-u`/`Ctrl-d` page by half a screen, and
-`g`/`G` jump to the top of history / the live bottom. Press `v` (or `Space`) to start a
-selection, then `y` (or `Enter`) to copy it to the system clipboard and exit, or `Esc`/`q` to
-leave without copying. The top bar shows a **COPY** indicator while active, and the selection
-is highlighted with the theme's selection color. Yank uses the system clipboard, reaching it
-over SSH via OSC52 when enabled.
+toward the live view at the top/bottom edges); `w`/`b`/`e` and `W`/`B`/`E` move by word/WORD
+(forward, backward, to word end), `0`/`^`/`$` jump to the line start, first non-blank, or line
+end (these row-local motions reuse `tui-lipan`'s vim-mode `TextArea` motion algorithms);
+`Ctrl-u`/`Ctrl-d` page by half a screen; and `g`/`G` jump to the top of history / the live
+bottom. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
+system clipboard and exit, or `Esc`/`q` to leave without copying. The top bar shows a **COPY**
+indicator while active, and the selection is highlighted with the theme's selection color. Yank
+uses the system clipboard, reaching it over SSH via OSC52 when enabled.
 
 ## Window / program titles
 

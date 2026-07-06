@@ -217,10 +217,27 @@ enabled.
 | `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
 
 Segment kinds: `title` (the badge), `workspaces` (the tabs), `session` (the active profile/
-session name), `clock`, `layout` (active workspace layout name), and `text:<literal>` with
-`{host}`, `{workspace}`, `{layout}`, `{session}` placeholders. Unknown segment names emit a
-warning and are skipped. A `clock` segment enables a once-a-second repaint; without one the bar
-never wakes an idle app.
+session name), `clock`, `layout` (active workspace layout name), `text:<literal>` with
+`{host}`, `{workspace}`, `{layout}`, `{session}` placeholders, and `command:<shell command>` /
+`command:<interval_secs>:<shell command>` to run a shell command on a timer and show the first
+line of its stdout. Unknown segment names emit a warning and are skipped. A `clock` segment
+enables a once-a-second repaint; without one the bar never wakes an idle app.
+
+A `command` segment runs through `$SHELL -c` on a background thread (never the UI thread) and
+refreshes every `interval_secs` (default `60`, minimum `1`); a failing command or one with no
+output renders as blank rather than an error. The same command string reuses one poller even if
+it appears in multiple segments.
+
+```toml
+[bar]
+right = ["command:30:uptime -p", "session"]
+```
+
+Workspaces can be given a custom name with the *Rename workspace* command palette entry (action id
+`rename-workspace`). Once set, the `workspaces` tabs show `<number>:<name>` (e.g. `1:code`) and the
+`{workspace}` placeholder resolves to the name instead of the number. Names are saved with profiles
+and the session autosave (`[[workspaces]] name` in the profile TOML - see
+[Project profiles](project-profiles.md)).
 
 ## `[keys]`
 
@@ -248,11 +265,39 @@ the plus shortcut because `+` is a modifier separator.
 
 Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/right`,
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
-`toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
-`resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
-`open-profile`, `choose-theme`, `command-palette`, `help`,
+`toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
+`grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
+`save-profile`, `open-profile`, `choose-theme`, `command-palette`, `help`,
 `toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`, `toggle-highlight-focused-background`,
-`toggle-pane-synchronization`.
+`toggle-pane-synchronization`. These same ids also work with `hyprmux run-action <id>` over the
+control socket (see `docs/control.md`).
+
+`paste` (default `v`) reads the system clipboard and sends it to the focused pane's PTY, wrapped
+in bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
+simulated keystrokes.
+
+### User-defined command keybindings
+
+Instead of an action id, a `[keys]` entry can map a **literal trigger binding** to a table
+defining a new command that doesn't otherwise exist as an `Action`:
+
+```toml
+[keys]
+"prefix g" = { run = "lazygit" }
+alt-t = { run = "btop" }
+"prefix e" = { send = "ls -la\n" }
+```
+
+- `run = "<command>"` opens a new pane running that shell command (the same mechanism as the
+  scratchpad's `command`), so full-screen interactive programs like `lazygit` or `btop` work.
+- `send = "<text>"` writes the literal text straight to the focused pane's PTY - TOML escapes
+  like `\n` work as usual, so a binding can submit a ready-to-run command.
+- Exactly one of `run`/`send` must be set; a table with both or neither is warned about and
+  skipped.
+- The map key here is the trigger itself (`prefix g`, `alt-t`, ...), parsed the same way as a
+  binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
+- These commands have no stable id: they aren't listed in the help overlay's rebind reference,
+  the command palette, or `hyprmux run-action`, and only exist for the trigger you configure.
 
 ## Pane synchronization
 

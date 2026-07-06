@@ -1,9 +1,9 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::focus_ops::request_rename_focus;
+use crate::focus_ops::{request_rename_focus, request_rename_workspace_focus};
 use crate::pane_lifecycle::find_pane_mut;
-use crate::state::{Mode, PaneId, PaneRenameState, Workspace};
+use crate::state::{Mode, PaneId, PaneRenameState, Workspace, WorkspaceRenameState};
 
 pub(crate) fn rename_pane_in_workspaces(workspaces: &mut [Workspace], id: PaneId, title: &str) {
     if let Some(pane) = workspaces
@@ -49,6 +49,44 @@ pub(crate) fn apply_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(crate) fn close_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.rename = None;
+    Update::full()
+}
+
+pub(crate) fn open_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let target = ctx.state.active_workspace;
+    let initial = ctx.state.workspaces[target]
+        .name
+        .clone()
+        .unwrap_or_default();
+
+    ctx.state.rename_workspace = Some(WorkspaceRenameState::new(target, initial));
+    ctx.state.show_palette = false;
+    ctx.state.show_help = false;
+    ctx.state.search = None;
+    ctx.state.mode = Mode::Normal;
+    request_rename_workspace_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn apply_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some((target, name)) = ctx
+        .state
+        .rename_workspace
+        .as_ref()
+        .map(|rename| (rename.target, rename.input.text().trim().to_string()))
+    else {
+        return Update::none();
+    };
+
+    if let Some(workspace) = ctx.state.workspaces.get_mut(target) {
+        workspace.name = (!name.is_empty()).then_some(name);
+    }
+    ctx.state.rename_workspace = None;
+    Update::full()
+}
+
+pub(crate) fn close_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.rename_workspace = None;
     Update::full()
 }
 

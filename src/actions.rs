@@ -15,7 +15,17 @@ use crate::resize_move_ops::{
 };
 use crate::search_ops::open_search;
 use crate::state::Mode;
-use crate::theme_ops::open_theme_picker;
+use crate::theme_ops::{apply_terminal_palette_to_state, open_theme_picker};
+
+fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
+    if let Err(err) = crate::config::persist_pane_flag(key, value) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Preference not saved",
+            err,
+        ));
+    }
+}
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     match action {
@@ -108,15 +118,33 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::ToggleTitles => {
-            ctx.state.show_titles = !ctx.state.show_titles;
+            ctx.state.config.pane.show_titles = !ctx.state.config.pane.show_titles;
+            persist_pane_toggle(ctx, "show_titles", ctx.state.config.pane.show_titles);
             Update::full()
         }
         Action::ToggleTopBar => {
-            ctx.state.show_top_bar = !ctx.state.show_top_bar;
+            ctx.state.config.pane.show_top_bar = !ctx.state.config.pane.show_top_bar;
+            persist_pane_toggle(ctx, "show_top_bar", ctx.state.config.pane.show_top_bar);
             Update::full()
         }
         Action::ToggleFocusOnHover => {
             ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
+            persist_pane_toggle(
+                ctx,
+                "focus_on_hover",
+                ctx.state.config.pane.focus_on_hover,
+            );
+            Update::full()
+        }
+        Action::ToggleHighlightFocusedBackground => {
+            ctx.state.config.pane.highlight_focused_background =
+                !ctx.state.config.pane.highlight_focused_background;
+            persist_pane_toggle(
+                ctx,
+                "highlight_focused_background",
+                ctx.state.config.pane.highlight_focused_background,
+            );
+            apply_terminal_palette_to_state(&mut ctx.state);
             Update::full()
         }
         Action::TogglePaneSynchronization => {

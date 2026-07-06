@@ -134,6 +134,10 @@ pub struct HyprmuxPaneConfig {
     pub highlight_focused_background: bool,
     /// Whether moving the mouse over a pane focuses it.
     pub focus_on_hover: bool,
+    /// Whether the top bar (workspace tabs, mode chips, etc.) is shown.
+    pub show_top_bar: bool,
+    /// Whether tiled/floating panes render their titlebars.
+    pub show_titles: bool,
 }
 
 impl Default for HyprmuxPaneConfig {
@@ -141,6 +145,8 @@ impl Default for HyprmuxPaneConfig {
         Self {
             highlight_focused_background: false,
             focus_on_hover: true,
+            show_top_bar: true,
+            show_titles: true,
         }
     }
 }
@@ -378,6 +384,8 @@ struct SessionFileConfig {
 struct PaneFileConfig {
     highlight_focused_background: Option<bool>,
     focus_on_hover: Option<bool>,
+    show_top_bar: Option<bool>,
+    show_titles: Option<bool>,
 }
 
 #[cfg(test)]
@@ -607,12 +615,32 @@ mod tests {
             [pane]
             highlight_focused_background = true
             focus_on_hover = false
+            show_top_bar = false
+            show_titles = false
             "#,
         )
         .expect("config parses");
 
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
+        assert_eq!(parsed.pane.show_top_bar, Some(false));
+        assert_eq!(parsed.pane.show_titles, Some(false));
+    }
+
+    #[test]
+    fn upsert_bool_in_section_replaces_and_preserves_comments() {
+        let text = "# chrome prefs\n[pane]\nfocus_on_hover = true\n# keep\n";
+        let updated = upsert_bool_in_section(text, "pane", "focus_on_hover", false);
+        assert!(updated.contains("# chrome prefs"));
+        assert!(updated.contains("focus_on_hover = false"));
+        assert!(updated.contains("# keep"));
+        assert!(!updated.contains("focus_on_hover = true"));
+    }
+
+    #[test]
+    fn upsert_bool_in_section_appends_missing_section() {
+        let updated = upsert_bool_in_section("", "pane", "show_top_bar", true);
+        assert_eq!(updated, "[pane]\nshow_top_bar = true\n");
     }
 
     #[test]
@@ -808,6 +836,12 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
         config.pane.focus_on_hover = focus_on_hover;
+    }
+    if let Some(show_top_bar) = parsed.pane.show_top_bar {
+        config.pane.show_top_bar = show_top_bar;
+    }
+    if let Some(show_titles) = parsed.pane.show_titles {
+        config.pane.show_titles = show_titles;
     }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
@@ -1017,6 +1051,81 @@ fn upsert_theme_name(text: &str, name: &str) -> String {
         }
         output.push_str("[theme]\n");
         output.push_str(&format!("name = \"{name}\"\n"));
+    }
+
+    output
+}
+
+pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_bool_in_section(&text, "pane", key, value);
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&path, updated)
+        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    Ok(path)
+}
+
+fn upsert_bool_in_section(text: &str, section: &str, key: &str, value: bool) -> String {
+    let section_header = format!("[{section}]");
+    let line_value = if value { "true" } else { "false" };
+    let mut output = String::new();
+    let mut in_section = false;
+    let mut saw_section = false;
+    let mut wrote_key = false;
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
+        if section_starts {
+            if in_section && !wrote_key {
+                output.push_str(&format!("{key} = {line_value}\n"));
+                wrote_key = true;
+            }
+            in_section = trimmed == section_header;
+            saw_section |= in_section;
+        }
+
+        if in_section
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(candidate, _)| candidate.trim() == key)
+        {
+            if !wrote_key {
+                output.push_str(&format!("{key} = {line_value}\n"));
+                wrote_key = true;
+            }
+            continue;
+        }
+
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    if in_section && !wrote_key {
+        output.push_str(&format!("{key} = {line_value}\n"));
+    } else if !saw_section {
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            output.push('\n');
+        }
+        output.push_str(&section_header);
+        output.push('\n');
+        output.push_str(&format!("{key} = {line_value}\n"));
     }
 
     output

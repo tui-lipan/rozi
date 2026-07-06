@@ -160,7 +160,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 
     let mut app_root = VStack::new()
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
-    if ctx.state.show_top_bar {
+    if ctx.state.config.pane.show_top_bar {
         app_root = app_root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
     }
     app_root = app_root.child(canvas);

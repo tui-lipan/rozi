@@ -34,6 +34,8 @@ prefix = "ctrl-a"
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
+show_top_bar = true           # top bar with workspace tabs and mode chips (default: true)
+show_titles = true            # pane titlebars (default: true)
 
 [animations]
 enabled = true               # master switch (default: true)
@@ -111,8 +113,10 @@ Pane focus and chrome behavior.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The *Toggle focus on hover* palette command changes this for the current run. |
-| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. |
+| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
+| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
+| `show_top_bar` | `true` | Show the top bar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
+| `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
 
 ## `[animations]`
 
@@ -203,7 +207,8 @@ The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
 ## `[bar]`
 
 Customize the top bar. The default reproduces the original bar (the `hyprmux` badge then the
-workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips always render regardless of config.
+workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_top_bar` is
+enabled.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -246,7 +251,8 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `flip-split`, `grow-split`, `shrink-split`,
 `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`, `save-profile`,
 `open-profile`, `choose-theme`, `command-palette`, `help`,
-`toggle-titles`, `toggle-focus-on-hover`, `toggle-pane-synchronization`.
+`toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`, `toggle-highlight-focused-background`,
+`toggle-pane-synchronization`.
 
 ## Pane synchronization
 

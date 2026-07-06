@@ -35,6 +35,7 @@ pub enum Action {
     ToggleTitles,
     ToggleTopBar,
     ToggleFocusOnHover,
+    ToggleHighlightFocusedBackground,
     TogglePaneSynchronization,
 }
 
@@ -83,6 +84,7 @@ impl Action {
             Action::ToggleTitles => "toggle-titles",
             Action::ToggleTopBar => "toggle-top-bar",
             Action::ToggleFocusOnHover => "toggle-focus-on-hover",
+            Action::ToggleHighlightFocusedBackground => "toggle-highlight-focused-background",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) => {
                 return None;
@@ -132,6 +134,7 @@ impl Action {
             "toggle-titles" => Action::ToggleTitles,
             "toggle-top-bar" => Action::ToggleTopBar,
             "toggle-focus-on-hover" => Action::ToggleFocusOnHover,
+            "toggle-highlight-focused-background" => Action::ToggleHighlightFocusedBackground,
             "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
             _ => return None,
         })
@@ -426,6 +429,13 @@ pub fn command_bindings() -> Vec<CommandBinding> {
             palette: true,
         },
         CommandBinding {
+            action: Action::ToggleHighlightFocusedBackground,
+            label: "Focused pane background",
+            keys: "",
+            category: "App",
+            palette: true,
+        },
+        CommandBinding {
             action: Action::TogglePalette,
             label: "Command palette",
             keys: "p",
@@ -469,11 +479,17 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             let enabled = state.workspaces[state.active_workspace].synchronized;
             enable_disable_label("pane synchronization", enabled)
         }
-        Action::ToggleTitles => enable_disable_label("pane titlebars", state.show_titles),
-        Action::ToggleTopBar => enable_disable_label("top bar", state.show_top_bar),
+        Action::ToggleTitles => {
+            enable_disable_label("pane titlebars", state.config.pane.show_titles)
+        }
+        Action::ToggleTopBar => enable_disable_label("top bar", state.config.pane.show_top_bar),
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
         }
+        Action::ToggleHighlightFocusedBackground => enable_disable_label(
+            "focused pane background",
+            state.config.pane.highlight_focused_background,
+        ),
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => enable_disable_label("keybindings", state.show_help),
         Action::TogglePalette => enable_disable_label("command palette", state.show_palette),
@@ -648,10 +664,10 @@ mod tests {
         );
 
         state.config.pane.focus_on_hover = false;
-        state.show_titles = false;
+        state.config.pane.show_titles = false;
         state.workspaces[0].synchronized = true;
         state.scratch_visible = true;
-        state.show_top_bar = false;
+        state.config.pane.show_top_bar = false;
         state.workspaces[0].panes[0].floating = true;
         state.workspaces[0].panes[0].fullscreen = true;
 
@@ -683,11 +699,20 @@ mod tests {
             command_label(Action::ToggleTopBar, &state),
             "Enable top bar"
         );
+        assert_eq!(
+            command_label(Action::ToggleHighlightFocusedBackground, &state),
+            "Enable focused pane background"
+        );
 
-        state.show_top_bar = true;
+        state.config.pane.show_top_bar = true;
+        state.config.pane.highlight_focused_background = true;
         assert_eq!(
             command_label(Action::ToggleTopBar, &state),
             "Disable top bar"
+        );
+        assert_eq!(
+            command_label(Action::ToggleHighlightFocusedBackground, &state),
+            "Disable focused pane background"
         );
     }
 

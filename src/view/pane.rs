@@ -63,7 +63,7 @@ pub(crate) fn pane_element(
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
 
     let mut window_stack = VStack::new().align(Align::Stretch).style(frame_style);
-    if ctx.state.show_titles {
+    if ctx.state.config.pane.show_titles {
         let title_bar_bg_target = if focused {
             theme.border_active
         } else {

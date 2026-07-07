@@ -46,7 +46,11 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ("1-9".to_string(), "Switch to workspace".to_string()),
             (
                 "Shift+1-9".to_string(),
-                "Move pane to workspace".to_string(),
+                "Move pane to workspace (follow)".to_string(),
+            ),
+            (
+                "Ctrl+Shift+1-9".to_string(),
+                "Move workspace to workspace (follow)".to_string(),
             ),
         ],
     ));

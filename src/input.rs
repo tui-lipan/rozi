@@ -12,6 +12,9 @@ pub enum Action {
     Move(Direction),
     SwitchWorkspace(usize),
     MoveToWorkspace(usize),
+    /// Move every pane (and the workspace name) from the active workspace into the target slot,
+    /// then switch there. Triggered by `Ctrl+Shift+1`–`9` in prefix/modifier mode.
+    RelocateWorkspace(usize),
     ToggleFloat,
     ToggleFullscreen,
     RenamePane,
@@ -98,7 +101,10 @@ impl Action {
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::ReloadConfig => "reload-config",
             Action::OpenConfigFile => "open-config",
-            Action::SwitchWorkspace(_) | Action::MoveToWorkspace(_) | Action::RunUserCommand(_) => {
+            Action::SwitchWorkspace(_)
+            | Action::MoveToWorkspace(_)
+            | Action::RelocateWorkspace(_)
+            | Action::RunUserCommand(_) => {
                 return None;
             }
         })
@@ -577,7 +583,10 @@ pub fn action_for_held(key: KeyEvent, config: &InputConfig, keymap: &Keymap) -> 
 /// Workspace digits remain generated as a range rather than individual bindings.
 pub fn action_for_prefix(key: KeyEvent, keymap: &Keymap) -> Option<Action> {
     if let Some((index, symbol_implies_shift)) = workspace_key(key) {
-        return Some(if key.mods.shift || symbol_implies_shift {
+        let shifted = key.mods.shift || symbol_implies_shift;
+        return Some(if key.mods.ctrl && shifted {
+            Action::RelocateWorkspace(index)
+        } else if shifted {
             Action::MoveToWorkspace(index)
         } else {
             Action::SwitchWorkspace(index)
@@ -886,6 +895,57 @@ mod tests {
         assert_eq!(
             action_for_held(key, &InputConfig::default(), &keymap),
             Some(Action::RenamePane)
+        );
+    }
+
+    #[test]
+    fn prefix_ctrl_shift_workspace_digit_relocates_workspace() {
+        let key = KeyEvent {
+            code: KeyCode::Char('3'),
+            mods: KeyMods {
+                ctrl: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        };
+
+        assert_eq!(
+            action_for_prefix(key, &Keymap::default()),
+            Some(Action::RelocateWorkspace(2))
+        );
+    }
+
+    #[test]
+    fn prefix_shift_workspace_digit_moves_pane_without_ctrl() {
+        let key = KeyEvent {
+            code: KeyCode::Char('3'),
+            mods: KeyMods {
+                shift: true,
+                ..KeyMods::NONE
+            },
+        };
+
+        assert_eq!(
+            action_for_prefix(key, &Keymap::default()),
+            Some(Action::MoveToWorkspace(2))
+        );
+    }
+
+    #[test]
+    fn modifier_alt_ctrl_shift_workspace_digit_relocates_workspace() {
+        let key = KeyEvent {
+            code: KeyCode::Char('3'),
+            mods: KeyMods {
+                alt: true,
+                ctrl: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        };
+
+        assert_eq!(
+            action_for_held(key, &InputConfig::default(), &Keymap::default()),
+            Some(Action::RelocateWorkspace(2))
         );
     }
 

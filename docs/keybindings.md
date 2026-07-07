@@ -82,7 +82,8 @@ with a live pane count.
 | Command | Keys |
 | --- | --- |
 | Switch to workspace _N_ | `1`–`9` |
-| Move focused pane to workspace _N_ | `Shift+1`–`Shift+9` (or the shifted symbols `!@#$%^&*(`) |
+| Move focused pane to workspace _N_ | `Shift+1`–`Shift+9` (or the shifted symbols `!@#$%^&*(`); switches to the target workspace |
+| Move whole workspace to workspace _N_ | `Ctrl+Shift+1`–`Ctrl+Shift+9`; moves every pane, the layout, and the workspace name, then switches there. An empty target slot receives the content; an occupied target swaps with the source so both layouts stay intact |
 | Rename workspace | *Rename workspace* in the command palette (no default key) |
 
 A named workspace shows as `<number>:<name>` in the tabs (e.g. `1:code`) instead of just the

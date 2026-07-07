@@ -180,18 +180,123 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
     };
 
     let mut pane = state.workspaces[source_index].panes.remove(position);
-    if !pane.floating {
+    let tiled = !pane.floating;
+    if tiled {
         remove_tiled_window(&mut state.workspaces[source_index], pane.id);
     }
     pane.opening = false;
     pane.closing = false;
-    state.workspaces[target_index].focused_pane = Some(pane.id);
-    if !pane.floating {
+
+    choose_fallback_focus(state);
+
+    if tiled {
         append_tiled_window(&mut state.workspaces[target_index], pane.id);
     }
     state.workspaces[target_index].panes.push(pane);
+
+    state.active_workspace = target_index;
+    state.focused_pane = Some(focused);
+    state.workspaces[target_index].focused_pane = Some(focused);
+    clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
-    choose_fallback_focus(state);
+}
+
+/// Move every pane from the active workspace into `target_index`, carry the source workspace
+/// name and layout over when set, then switch to the target workspace and keep focus on the
+/// previously focused pane when it moved with the batch. An empty target slot receives the
+/// source content wholesale; a occupied target swaps content with the source so both layouts
+/// stay intact.
+pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) {
+    if target_index >= state.workspaces.len() {
+        return;
+    }
+    let source_index = state.active_workspace;
+    if source_index == target_index {
+        return;
+    }
+
+    let previous_focus = state.focused_pane;
+    let source_empty = workspace_is_empty(&state.workspaces[source_index]);
+    if source_empty {
+        state.active_workspace = target_index;
+        choose_fallback_focus(state);
+        state.animation = GeometryAnimation::None;
+        return;
+    }
+
+    let target_empty = workspace_is_empty(&state.workspaces[target_index]);
+    if target_empty {
+        transfer_workspace_content(state, source_index, target_index);
+    } else {
+        swap_workspace_content(state, source_index, target_index);
+    }
+
+    let target = &mut state.workspaces[target_index];
+    if let Some(id) = previous_focus
+        && target
+            .panes
+            .iter()
+            .any(|pane| pane.id == id && !pane.closing)
+    {
+        target.focused_pane = Some(id);
+    } else if target.focused_pane.is_none() {
+        target.focused_pane = first_visible_pane(target);
+    }
+
+    state.active_workspace = target_index;
+    state.focused_pane = target.focused_pane;
+    clear_focused_activity(state);
+    state.animation = GeometryAnimation::None;
+}
+
+fn workspace_is_empty(workspace: &Workspace) -> bool {
+    !workspace.panes.iter().any(|pane| !pane.closing)
+}
+
+fn swap_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
+    if source_index < target_index {
+        let (left, right) = state.workspaces.split_at_mut(target_index);
+        swap_workspace_fields(&mut left[source_index], &mut right[0]);
+    } else {
+        let (left, right) = state.workspaces.split_at_mut(source_index);
+        swap_workspace_fields(&mut right[0], &mut left[target_index]);
+    }
+}
+
+fn transfer_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
+    if source_index < target_index {
+        let (left, right) = state.workspaces.split_at_mut(target_index);
+        transfer_workspace_fields(&mut left[source_index], &mut right[0]);
+        left[source_index] = Workspace::new(source_index);
+    } else {
+        let (left, right) = state.workspaces.split_at_mut(source_index);
+        transfer_workspace_fields(&mut right[0], &mut left[target_index]);
+        right[0] = Workspace::new(source_index);
+    }
+}
+
+fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
+    std::mem::swap(&mut a.panes, &mut b.panes);
+    std::mem::swap(&mut a.tile_tree, &mut b.tile_tree);
+    std::mem::swap(&mut a.focused_pane, &mut b.focused_pane);
+    std::mem::swap(&mut a.synchronized, &mut b.synchronized);
+    std::mem::swap(&mut a.layout_kind, &mut b.layout_kind);
+    std::mem::swap(&mut a.start_axis, &mut b.start_axis);
+    std::mem::swap(&mut a.split_ratios, &mut b.split_ratios);
+    std::mem::swap(&mut a.last_move_swap, &mut b.last_move_swap);
+    std::mem::swap(&mut a.name, &mut b.name);
+}
+
+fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
+    to.panes = std::mem::take(&mut from.panes);
+    to.tile_tree = from.tile_tree.take();
+    to.focused_pane = from.focused_pane.take();
+    to.synchronized = from.synchronized;
+    to.layout_kind = from.layout_kind;
+    to.start_axis = from.start_axis;
+    to.split_ratios.clone_from(&from.split_ratios);
+    to.last_move_swap = from.last_move_swap.take();
+    to.name = from.name.take();
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
@@ -376,7 +481,7 @@ pub(crate) fn total_visible_panes(state: &State) -> usize {
 mod tests {
     use super::*;
     use crate::config::HyprmuxConfig;
-    use crate::state::Pane;
+    use crate::state::{LayoutKind, Pane};
     use crate::tiling::{append_tiled_window, collect_tree_leaves};
     use tui_lipan::prelude::Theme;
 
@@ -406,6 +511,85 @@ mod tests {
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    #[test]
+    fn move_focused_pane_switches_to_target_workspace() {
+        let mut state = state_with_tiled(&[1, 2]);
+        state.workspaces[1].panes.push(Pane::new(
+            3,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        ));
+        append_tiled_window(&mut state.workspaces[1], 3);
+        state.active_workspace = 0;
+        state.focused_pane = Some(2);
+
+        move_focused_to_workspace(&mut state, 1);
+
+        assert_eq!(state.active_workspace, 1);
+        assert_eq!(state.focused_pane, Some(2));
+        assert!(state.workspaces[0].panes.iter().any(|pane| pane.id == 1));
+        assert!(!state.workspaces[0].panes.iter().any(|pane| pane.id == 2));
+        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 2));
+    }
+
+    #[test]
+    fn relocate_active_workspace_swaps_content_when_target_is_occupied() {
+        let mut state = state_with_tiled(&[1, 2]);
+        state.workspaces[0].name = Some("code".to_string());
+        state.workspaces[0].split_ratios[0] = 0.71;
+        state.workspaces[1].panes.push(Pane::new(
+            3,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        ));
+        append_tiled_window(&mut state.workspaces[1], 3);
+        state.workspaces[1].split_ratios[0] = 0.42;
+        state.active_workspace = 0;
+        state.focused_pane = Some(2);
+
+        relocate_active_workspace(&mut state, 1);
+
+        assert_eq!(state.active_workspace, 1);
+        assert_eq!(state.focused_pane, Some(2));
+        assert_eq!(state.workspaces[0].panes.len(), 1);
+        assert!(state.workspaces[0].panes.iter().any(|pane| pane.id == 3));
+        assert_eq!(state.workspaces[0].split_ratios[0], 0.42);
+        assert_eq!(state.workspaces[1].name.as_deref(), Some("code"));
+        assert_eq!(state.workspaces[1].split_ratios[0], 0.71);
+        assert_eq!(state.workspaces[1].panes.len(), 2);
+        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 1));
+        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 2));
+    }
+
+    #[test]
+    fn relocate_active_workspace_preserves_layout_on_empty_target() {
+        let mut state = state_with_tiled(&[1, 2]);
+        state.workspaces[0].layout_kind = LayoutKind::Master;
+        state.workspaces[0].split_ratios[0] = 0.71;
+        let source_tree = state.workspaces[0].tile_tree.clone();
+        state.active_workspace = 0;
+        state.focused_pane = Some(2);
+
+        relocate_active_workspace(&mut state, 2);
+
+        assert_eq!(state.active_workspace, 2);
+        assert_eq!(state.workspaces[2].layout_kind, LayoutKind::Master);
+        assert_eq!(state.workspaces[2].split_ratios[0], 0.71);
+        assert_eq!(state.workspaces[2].tile_tree, source_tree);
+        assert_eq!(state.workspaces[2].panes.len(), 2);
+        assert_eq!(state.workspaces[0].panes.len(), 0);
     }
 
     #[test]

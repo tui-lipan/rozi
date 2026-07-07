@@ -4,7 +4,8 @@ use crate::HyprmuxApp;
 use crate::config::UserCommandAction;
 use crate::focus_ops::{
     cycle_focus_in_tiled_order, focus_in_direction, move_focused_to_workspace,
-    promote_focused_to_master, request_current_pane_focus, request_pane_focus, switch_workspace,
+    promote_focused_to_master, relocate_active_workspace, request_current_pane_focus,
+    request_pane_focus, switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
@@ -120,6 +121,11 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         }
         Action::MoveToWorkspace(index) => {
             move_focused_to_workspace(&mut ctx.state, index);
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Action::RelocateWorkspace(index) => {
+            relocate_active_workspace(&mut ctx.state, index);
             request_current_pane_focus(ctx);
             Update::full()
         }

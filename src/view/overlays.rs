@@ -14,7 +14,8 @@ use super::keys::{
     save_profile_key, search_input_key, session_picker_key, theme_picker_key,
 };
 use super::{
-    action_palette_modal, fg_only, modal_scrollbar_config, shared_search_palette, styled_modal,
+    action_palette_frame, action_palette_modal, fg_only, modal_scrollbar_config,
+    shared_search_palette, styled_modal,
 };
 
 pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -148,7 +149,7 @@ pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         &format!("Search · {} · Tab: scope", search.scope.label()),
     )
     .on_close(ctx.link().callback(|_| Msg::CloseSearch))
-    .child(scrollback_search_palette(ctx, search))
+    .child(action_palette_frame(scrollback_search_palette(ctx, search)))
     .key(search_input_key())
 }
 
@@ -349,14 +350,13 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         return Text::new("").into();
     };
 
-    let palette = profile_picker_palette(ctx, picker);
     let body = VStack::new()
-        .child(palette)
+        .child(profile_picker_palette(ctx, picker))
         .child(profile_picker_hints(ctx));
 
     action_palette_modal(ctx, "Profiles")
         .on_close(ctx.link().callback(|_| Msg::CloseProfilePicker))
-        .child(body)
+        .child(action_palette_frame(body))
         .key(profile_picker_key())
 }
 
@@ -495,7 +495,7 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     action_palette_modal(ctx, "Sessions")
         .on_close(ctx.link().callback(|_| Msg::CloseSessionPicker))
-        .child(body)
+        .child(action_palette_frame(body))
         .key(session_picker_key())
 }
 
@@ -695,12 +695,11 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         entries.push(SearchEntry::header(category));
         entries.extend(items);
     }
-
     let palette = action_search_palette(ctx, entries, "Search commands…");
 
     action_palette_modal(ctx, "Commands")
         .on_close(ctx.link().callback(|_| Msg::ClosePalette))
-        .child(palette)
+        .child(action_palette_frame(palette))
         .key(palette_key())
 }
 
@@ -756,7 +755,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     action_palette_modal(ctx, "Choose theme")
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
-        .child(palette)
+        .child(action_palette_frame(palette))
         .key(theme_picker_key())
 }
 

@@ -1210,6 +1210,7 @@ fn print_version() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
 
     fn rect() -> FloatRect {
         FloatRect {
@@ -1279,6 +1280,127 @@ mod tests {
 
         let positional = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(positional.profile.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn command_palette_modal_is_capped_to_sixty_five_percent_of_viewport() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 40,
+                });
+                backend.state_mut().show_palette = true;
+                backend.render();
+
+                let snapshot =
+                    backend.capture_ui_snapshot_with_options(&UiSnapshotOptions::default());
+                let modal = snapshot
+                    .widgets
+                    .iter()
+                    .find(|widget| {
+                        widget.kind == UiWidgetKind::Frame
+                            && widget.title.as_deref() == Some("Commands")
+                    })
+                    .expect("commands modal frame");
+                let content_frame = snapshot
+                    .widgets
+                    .iter()
+                    .find(|widget| {
+                        widget.kind == UiWidgetKind::Frame
+                            && widget.title.is_none()
+                            && widget.rect.x >= modal.rect.x
+                            && widget.rect.y > modal.rect.y
+                            && widget.rect.w <= modal.rect.w
+                            && widget.rect.h <= 26
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("commands palette content frame\n{}", snapshot.to_markdown())
+                    });
+
+                assert!(
+                    modal.rect.h <= 26,
+                    "commands modal height {} exceeded 65% of 40-row viewport\n{}",
+                    modal.rect.h,
+                    snapshot.to_markdown()
+                );
+                assert!(
+                    content_frame.rect.h <= 26,
+                    "commands content frame height {} exceeded 65% of 40-row viewport\n{}",
+                    content_frame.rect.h,
+                    snapshot.to_markdown()
+                );
+            })
+            .expect("spawn snapshot test thread")
+            .join()
+            .expect("snapshot test thread completes");
+    }
+
+    #[test]
+    fn command_palette_shrinks_to_filtered_matches_without_moving_its_top() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 40,
+                });
+                backend.state_mut().show_palette = true;
+                backend.render();
+
+                let commands_modal = |backend: &TestBackend<HyprmuxApp>| {
+                    backend
+                        .capture_ui_snapshot_with_options(&UiSnapshotOptions::default())
+                        .widgets
+                        .iter()
+                        .find(|w| {
+                            w.kind == UiWidgetKind::Frame && w.title.as_deref() == Some("Commands")
+                        })
+                        .expect("commands modal frame")
+                        .rect
+                };
+
+                // Unfiltered: the full command list overflows, so the modal is capped at 65% of
+                // the 40-row viewport (26 rows).
+                let unfiltered = commands_modal(&backend);
+                assert_eq!(unfiltered.h, 26, "unfiltered modal should hit the 65% cap");
+
+                // Type a query that narrows to a couple of matches.
+                for c in ['q', 'u', 'i', 't'] {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(c),
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("send key");
+                }
+                backend.render();
+
+                let filtered = commands_modal(&backend);
+                // The modal hugs the filtered rows (well under the cap)...
+                assert!(
+                    filtered.h < unfiltered.h,
+                    "filtered modal height {} should shrink below the capped {}",
+                    filtered.h,
+                    unfiltered.h
+                );
+                // ...while its top edge stays put instead of re-centering.
+                assert_eq!(
+                    filtered.y, unfiltered.y,
+                    "filtered modal top drifted from {} to {}",
+                    unfiltered.y, filtered.y
+                );
+            })
+            .expect("spawn snapshot test thread")
+            .join()
+            .expect("snapshot test thread completes");
     }
 
     #[test]

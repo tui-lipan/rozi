@@ -28,6 +28,7 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update 
 
 pub(crate) fn close_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.save_profile_prompt = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -39,6 +40,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
         .and_then(|prompt| normalize_profile_name(prompt.input.text()))
     else {
         ctx.state.save_profile_prompt = None;
+        ctx.state.commands_dirty = true;
         return Update::full();
     };
 
@@ -56,6 +58,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 
     ctx.state.save_profile_prompt = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -87,6 +90,7 @@ pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn cancel_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -223,6 +227,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
                 .push(error_toast(&ctx.state.theme, "Load Profile", message));
             ctx.state.show_profile_picker = false;
             ctx.state.profile_picker = None;
+            ctx.state.commands_dirty = true;
             return Update::full();
         }
     };
@@ -243,6 +248,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     new_state.next_pty_generation = next_pty_generation;
     new_state.runtime_epoch = runtime_epoch;
     ctx.state = new_state;
+    ctx.state.commands_dirty = true;
     theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast()
         .push(info_toast(format!("Loaded profile `{}`", entry.name)));

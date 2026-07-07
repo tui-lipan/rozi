@@ -38,18 +38,7 @@ pub(crate) fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
         }
     }
 
-    if state.mode == Mode::Prefix {
-        row = row.child(
-            Text::new(" PREFIX ")
-                .style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.status.warning)
-                        .bold(),
-                )
-                .height(Length::Px(1)),
-        );
-    } else if state.mode == Mode::Resize {
+    if state.mode == Mode::Resize {
         row = row.child(
             Text::new(" RESIZE hjkl Esc ")
                 .style(

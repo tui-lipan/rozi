@@ -1,13 +1,15 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::actions::execute_action;
 use crate::focus_ops::{focus_pane, request_current_pane_focus};
-use crate::input;
 use crate::resize_move_ops::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId};
 use crate::view;
 
+/// Route a key that reached hyprmux's own handling: app command chords (leader/modifier) are
+/// resolved natively by tui-lipan before this runs (see `App::key_dispatch_policy` /
+/// `terminal_key_policy` in `main.rs`), so by the time a key gets here it is either a
+/// `Resize`/`Copy` mode key or plain PTY input.
 pub(crate) fn handle_key_routing(
     ctx: &mut Context<HyprmuxApp>,
     key: KeyEvent,
@@ -15,46 +17,10 @@ pub(crate) fn handle_key_routing(
 ) -> (bool, Update) {
     match ctx.state.mode {
         Mode::Normal => {
-            if input::is_prefix_key(key, &ctx.state.config.input) {
-                ctx.state.mode = Mode::Prefix;
-                return (true, Update::full());
-            }
-
-            if let Some(action) =
-                input::action_for_held(key, &ctx.state.config.input, &ctx.state.config.keymap)
-            {
-                return (true, execute_action(ctx, action));
-            }
-
             if let Some(id) = source_pane {
                 return (true, crate::pty_events::forward_key_to_pane(ctx, id, key));
             }
-
             (false, Update::none())
-        }
-        Mode::Prefix => {
-            ctx.state.mode = Mode::Normal;
-            if input::is_prefix_key(key, &ctx.state.config.input) {
-                let id = source_pane.or(ctx.state.focused_pane);
-                let update = id
-                    .map(|id| crate::pty_events::forward_key_to_pane(ctx, id, key))
-                    .unwrap_or_else(Update::none);
-                return (true, update);
-            }
-
-            if key.is(KeyCode::Esc) {
-                return (true, Update::full());
-            }
-
-            if let Some(action) = input::action_for_prefix(key, &ctx.state.config.keymap) {
-                return (true, execute_action(ctx, action));
-            }
-
-            let id = source_pane.or(ctx.state.focused_pane);
-            let update = id
-                .map(|id| crate::pty_events::forward_key_to_pane(ctx, id, key))
-                .unwrap_or_else(Update::none);
-            (true, update)
         }
         Mode::Resize => handle_resize_mode_key(ctx, key),
         Mode::Copy => crate::copy_mode::handle_copy_key(ctx, key),
@@ -64,6 +30,7 @@ pub(crate) fn handle_key_routing(
 fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
     if key.is(KeyCode::Esc) || key.is(KeyCode::Enter) {
         ctx.state.mode = Mode::Normal;
+        ctx.state.commands_dirty = true;
         request_current_pane_focus(ctx);
         return (true, Update::full());
     }

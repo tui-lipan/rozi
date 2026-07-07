@@ -10,7 +10,6 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
-use crate::keymap::{Keymap, Trigger};
 use crate::state::ThemePreset;
 
 // === Config schema ===
@@ -216,10 +215,12 @@ pub struct HyprmuxConfig {
     pub notifications: HyprmuxNotificationsConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
-    pub keymap: Keymap,
+    /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
+    /// present with an empty list is an explicit unbind; an id absent here uses the built-in
+    /// defaults (see `crate::commands`).
+    pub key_overrides: HashMap<String, Vec<KeyBinding>>,
     /// User-defined `[keys]` entries keyed by a literal trigger binding (rather than a built-in
-    /// action id): `Action::RunUserCommand(index)` indexes into this list. See
-    /// [`build_keymap`]'s table-value handling.
+    /// action id): each becomes its own generated command (see `crate::commands`).
     pub user_commands: Vec<UserCommand>,
 }
 
@@ -234,11 +235,12 @@ pub enum UserCommandAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserCommand {
     pub action: UserCommandAction,
+    pub binding: KeyBinding,
 }
 
 impl UserCommand {
     /// Human-facing description for the help overlay and command palette, since these have no
-    /// static label of their own the way a built-in [`crate::input::CommandBinding`] does.
+    /// static label of their own the way a built-in command does.
     pub fn label(&self) -> String {
         match &self.action {
             UserCommandAction::Run(command) => format!("Run: {}", truncate_for_label(command)),
@@ -291,7 +293,7 @@ impl Default for HyprmuxConfig {
             notifications: HyprmuxNotificationsConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),
-            keymap: Keymap::default(),
+            key_overrides: HashMap::new(),
             user_commands: Vec::new(),
         }
     }
@@ -433,7 +435,7 @@ struct FileConfig {
 }
 
 /// A `[keys]` value: one binding string, a list of them, or a `{ run = ".." }` /
-/// `{ send = ".." }` table defining a user command (see [`build_keymap`]).
+/// `{ send = ".." }` table defining a user command (see [`build_key_overrides`]).
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum KeyBindingSpec {
@@ -502,32 +504,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_overlay_parses_held_and_prefix_bindings() {
+    fn key_overrides_parse_native_bindings_and_warn_on_unknown_action() {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
             spawn = ["alt-enter"]
-            close = "prefix q"
+            close = "ctrl-b q"
             notanaction = "x"
             "#,
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
 
-        let alt_enter = KeyEvent {
-            code: KeyCode::Enter,
-            mods: KeyMods::ALT,
-        };
-        assert_eq!(keymap.held_action(alt_enter), Some(Action::Spawn));
-
-        let q = KeyEvent {
-            code: KeyCode::Char('q'),
-            mods: KeyMods::NONE,
-        };
-        assert_eq!(keymap.prefix_action(q), Some(Action::Close));
+        assert_eq!(
+            overrides.get("spawn"),
+            Some(&vec![KeyBinding::from_str("alt-enter").unwrap()])
+        );
+        assert_eq!(
+            overrides.get("close"),
+            Some(&vec![KeyBinding::from_str("ctrl-b q").unwrap()])
+        );
 
         // Unknown action id yields exactly one warning and is skipped.
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -539,15 +537,14 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
-            "prefix g" = { run = "lazygit" }
+            "ctrl-a g" = { run = "lazygit" }
             "#,
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
 
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(user_commands.len(), 1);
@@ -555,11 +552,10 @@ mod tests {
             user_commands[0].action,
             UserCommandAction::Run("lazygit".to_string())
         );
-        let g = KeyEvent {
-            code: KeyCode::Char('g'),
-            mods: KeyMods::NONE,
-        };
-        assert_eq!(keymap.prefix_action(g), Some(Action::RunUserCommand(0)));
+        assert_eq!(
+            user_commands[0].binding,
+            KeyBinding::from_str("ctrl-a g").unwrap()
+        );
     }
 
     #[test]
@@ -572,10 +568,9 @@ mod tests {
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        let _keymap = build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
 
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(user_commands.len(), 1);
@@ -590,15 +585,14 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
-            "prefix g" = {}
+            "ctrl-a g" = {}
             "#,
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
 
         assert!(user_commands.is_empty());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -610,15 +604,14 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
-            "prefix g" = { run = "lazygit", send = "hi" }
+            "ctrl-a g" = { run = "lazygit", send = "hi" }
             "#,
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_keymap(parsed.keys, &prefix, &mut user_commands, &mut warnings);
+        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
 
         assert!(user_commands.is_empty());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -629,11 +622,13 @@ mod tests {
     fn user_command_label_describes_run_and_send() {
         let run = UserCommand {
             action: UserCommandAction::Run("lazygit".to_string()),
+            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
         };
         assert_eq!(run.label(), "Run: lazygit");
 
         let send = UserCommand {
             action: UserCommandAction::Send("ls -la\n".to_string()),
+            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
         };
         assert_eq!(send.label(), "Send: ls -la\\n");
     }
@@ -642,6 +637,7 @@ mod tests {
     fn user_command_label_truncates_long_commands() {
         let run = UserCommand {
             action: UserCommandAction::Run("x".repeat(60)),
+            binding: KeyBinding::from_str("ctrl-a g").unwrap(),
         };
         let label = run.label();
         assert!(label.starts_with("Run: "));
@@ -650,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_key_specs_clear_default_bindings() {
+    fn empty_key_specs_record_an_explicit_unbind() {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
@@ -660,27 +656,16 @@ mod tests {
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
 
-        assert_eq!(
-            keymap.keys_for(Action::ToggleScratchpad).as_deref(),
-            Some("")
-        );
-        assert_eq!(keymap.keys_for(Action::Spawn).as_deref(), Some(""));
-        assert_eq!(
-            keymap.prefix_action(KeyEvent {
-                code: KeyCode::Char('`'),
-                mods: KeyMods::NONE
-            }),
-            None
-        );
+        assert_eq!(overrides.get("scratchpad"), Some(&Vec::new()));
+        assert_eq!(overrides.get("spawn"), Some(&Vec::new()));
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
-    fn malformed_key_specs_clear_defaults_and_warn() {
+    fn malformed_key_specs_keep_defaults_and_warn() {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
@@ -689,24 +674,18 @@ mod tests {
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
 
-        assert_eq!(
-            keymap.keys_for(Action::ToggleScratchpad).as_deref(),
-            Some("")
-        );
-        assert_eq!(
-            keymap.prefix_action(KeyEvent {
-                code: KeyCode::Char('`'),
-                mods: KeyMods::NONE
-            }),
-            None
-        );
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        // A fully-unparseable spec is a config error, not an intentional unbind - no override
+        // is recorded, so `resolve_shortcuts` falls back to `scratchpad`'s default shortcuts
+        // instead of leaving it unreachable.
+        assert_eq!(overrides.get("scratchpad"), None);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
         assert!(warnings[0].contains("not-a-real-key"));
         assert!(warnings[0].contains("scratchpad"));
+        assert!(warnings[1].contains("scratchpad"));
+        assert!(warnings[1].contains("default"));
     }
 
     #[test]
@@ -714,32 +693,22 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
-            toggle-pane-synchronization = "prefix s"
+            toggle-pane-synchronization = "ctrl-a s"
             save-profile = "alt-s"
             "#,
         )
         .expect("config parses");
 
-        let prefix = InputConfig::default().prefix;
         let mut warnings = Vec::new();
-        let keymap = build_keymap(parsed.keys, &prefix, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
 
         assert_eq!(
-            keymap
-                .keys_for(Action::TogglePaneSynchronization)
-                .as_deref(),
-            Some("Ctrl+A S")
+            overrides.get("toggle-pane-synchronization"),
+            Some(&vec![KeyBinding::from_str("ctrl-a s").unwrap()])
         );
         assert_eq!(
-            keymap.keys_for(Action::SaveProfile).as_deref(),
-            Some("Alt+S")
-        );
-        assert_eq!(
-            keymap.prefix_action(KeyEvent {
-                code: KeyCode::Char('s'),
-                mods: KeyMods::NONE
-            }),
-            Some(Action::TogglePaneSynchronization)
+            overrides.get("save-profile"),
+            Some(&vec![KeyBinding::from_str("alt-s").unwrap()])
         );
         assert!(warnings.is_empty(), "{warnings:?}");
     }
@@ -1142,12 +1111,7 @@ pub fn load_config() -> LoadedConfig {
 
     apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
     let mut user_commands = Vec::new();
-    config.keymap = build_keymap(
-        parsed.keys,
-        &config.input.prefix,
-        &mut user_commands,
-        &mut warnings,
-    );
+    config.key_overrides = build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
     config.user_commands = user_commands;
 
     LoadedConfig { config, warnings }
@@ -1616,56 +1580,67 @@ fn apply_input_config(
     }
 }
 
-fn build_keymap(
+/// Build `[keys]` overrides: for each TOML entry, either register a user command (table value
+/// with `run`/`send`, keyed by its own literal binding string) or record an explicit shortcut
+/// override for a built-in command id (string or list of native `KeyBinding` syntax; an empty
+/// list unbinds). Bindings are plain tui-lipan `KeyBinding` strings (e.g. `"ctrl-a c"`,
+/// `"alt-c"`) - there is no `prefix` sugar.
+fn build_key_overrides(
     keys: HashMap<String, KeyBindingSpec>,
-    prefix: &KeyBinding,
     user_commands: &mut Vec<UserCommand>,
     warnings: &mut Vec<String>,
-) -> Keymap {
-    let mut keymap = Keymap::default();
+) -> HashMap<String, Vec<KeyBinding>> {
+    let mut overrides = HashMap::new();
     for (key, spec) in keys {
         // A table value (`{ run = ".." }` / `{ send = ".." }`) defines a brand new user
         // command rather than rebinding a built-in action; here the map *key* is the literal
-        // trigger binding (e.g. `"prefix g"`), not an action id.
+        // trigger binding (e.g. `"ctrl-a g"`), not a command id.
         if let KeyBindingSpec::UserCommand(table) = spec {
-            bind_user_command(&mut keymap, user_commands, &key, table, prefix, warnings);
+            bind_user_command(user_commands, &key, table, warnings);
             continue;
         }
 
-        let Some(action) = Action::from_id(&key) else {
+        if Action::from_id(&key).is_none() {
             warnings.push(format!("Unknown key action `{key}`; skipped"));
             continue;
-        };
-        keymap.clear_action(action);
-        keymap.mark_configured(action);
+        }
+
         let mut parsed_bindings = Vec::new();
+        let mut candidate_count = 0;
         for binding in spec.into_vec() {
             for candidate in binding
                 .split(',')
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                match parse_binding(candidate, prefix) {
-                    Some(parsed) => parsed_bindings.push(parsed),
-                    None => warnings.push(format!(
+                candidate_count += 1;
+                match KeyBinding::from_str(candidate) {
+                    Ok(parsed) => parsed_bindings.push(parsed),
+                    Err(_) => warnings.push(format!(
                         "Could not parse binding `{candidate}` for `{key}`; skipped"
                     )),
                 }
             }
         }
-        for (trigger, display) in parsed_bindings {
-            keymap.bind(action, trigger, display);
+        // Only an explicit `= []` (no candidates at all) means "unbind". If every candidate
+        // was present but failed to parse (e.g. the pre-tui-lipan `"prefix c"` grammar), that's
+        // a config error, not intent to unbind - keep the default shortcuts rather than
+        // silently making the action unreachable, and say so plainly.
+        if candidate_count > 0 && parsed_bindings.is_empty() {
+            warnings.push(format!(
+                "No valid bindings for `{key}`; keeping its default shortcuts"
+            ));
+            continue;
         }
+        overrides.insert(key, parsed_bindings);
     }
-    keymap
+    overrides
 }
 
 fn bind_user_command(
-    keymap: &mut Keymap,
     user_commands: &mut Vec<UserCommand>,
     key: &str,
     table: UserCommandTableSpec,
-    prefix: &KeyBinding,
     warnings: &mut Vec<String>,
 ) {
     // Trim `run` (a shell command) but keep `send` byte-for-byte: trailing `\n`/whitespace is
@@ -1688,46 +1663,13 @@ fn bind_user_command(
             return;
         }
     };
-    let Some((trigger, display)) = parse_binding(key, prefix) else {
+    let Ok(binding) = KeyBinding::from_str(key) else {
         warnings.push(format!(
             "Could not parse binding `{key}` for a user command; skipped"
         ));
         return;
     };
-    let index = user_commands.len();
-    user_commands.push(UserCommand { action });
-    keymap.bind(Action::RunUserCommand(index), trigger, display);
-}
-
-/// Parse a binding string into a [`Trigger`] and its display text. A binding is a prefix
-/// sequence when it starts with the literal `prefix` keyword or the configured prefix key
-/// (e.g. `prefix c`, `ctrl-a c`); otherwise it is a held-modifier chord (e.g. `alt-enter`).
-fn parse_binding(spec: &str, prefix: &KeyBinding) -> Option<(Trigger, String)> {
-    let parts: Vec<&str> = spec.split_whitespace().collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    if parts.len() >= 2 {
-        let starts_with_prefix = parts[0].eq_ignore_ascii_case("prefix")
-            || KeyBinding::from_str(parts[0]).is_ok_and(|key| key == *prefix);
-        if starts_with_prefix {
-            let raw_key = parts[1..].join(" ");
-            let key = KeyBinding::from_str(&raw_key).ok()?;
-            if key.step_count() != 1 {
-                return None;
-            }
-            let display = format!("{prefix} {key}");
-            return Some((Trigger::Prefix(key), display));
-        }
-    }
-
-    let key = KeyBinding::from_str(spec).ok()?;
-    if key.step_count() != 1 {
-        return None;
-    }
-    let display = key.to_string();
-    Some((Trigger::Held(key), display))
+    user_commands.push(UserCommand { action, binding });
 }
 
 fn apply_bar_config(bar: &mut BarConfig, raw: BarFileConfig, warnings: &mut Vec<String>) {

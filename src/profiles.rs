@@ -59,6 +59,15 @@ pub fn persist_session_if_enabled(state: &State) {
     if !state.config.session.autosave {
         return;
     }
+    persist_session_to_disk(state);
+}
+
+/// Always write the live layout on detach from local mode so leaving the client is recoverable.
+pub fn persist_session_on_detach(state: &State) {
+    persist_session_to_disk(state);
+}
+
+fn persist_session_to_disk(state: &State) {
     let Some(path) = session_path(&state.config) else {
         return;
     };
@@ -216,9 +225,11 @@ pub fn restore_state_from_profile(
         session_name: None,
         session_attached: false,
         pending_session_attach: None,
+        pending_destructive: None,
         last_pushed_layout: None,
         bar_command_output: std::collections::HashMap::new(),
         bar_commands_running: std::collections::HashSet::new(),
+        commands_dirty: false,
     }
 }
 

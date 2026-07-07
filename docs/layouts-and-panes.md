@@ -101,7 +101,7 @@ include the highest occupied one and the active one), each labeled with its numb
 pane count. Tabs are clickable.
 
 When a workspace empties, it shows an "Empty workspace" panel prompting you to spawn a shell.
-When the **last pane in the whole app** closes, `hyprmux` quits.
+The app keeps running until you detach or quit explicitly.
 
 ## Animation policy
 

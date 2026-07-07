@@ -4,8 +4,9 @@ mod overlays;
 mod pane;
 
 pub use keys::{
-    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
-    rename_workspace_input_key, save_profile_key, search_input_key, theme_picker_key,
+    pane_terminal_key, pane_window_key, palette_key, profile_picker_key, rename_input_key,
+    rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
+    theme_picker_key,
 };
 pub(crate) use pane::pane_element;
 

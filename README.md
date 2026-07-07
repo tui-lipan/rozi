@@ -9,7 +9,7 @@ By default hyprmux runs in local single-process mode. Explicit `--attach` / `--s
 connects to a named always-on session server for detach/reattach-style workflows.
 
 ```bash
-cargo run     # quit with Ctrl-q
+cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 ```
 
 ## Highlights

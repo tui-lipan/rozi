@@ -27,7 +27,7 @@ named session server for persistent PTYs.
   for active command keys. See [Keybindings](keybindings.md).
 - **Layouts** - dwindle tiling by default, master/stack per workspace, plus floating and
   fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
-- **Quit** - `Ctrl-q` quits at any time.
+- **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
 - **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
   [Configuration](configuration.md).
 - **Architecture / internals** - see [AGENTS.md](../AGENTS.md) at the repo root.

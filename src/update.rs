@@ -53,11 +53,13 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::ClosePalette => {
             ctx.state.show_palette = false;
+            ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
         }
         Msg::CloseHelp => {
             ctx.state.show_help = false;
+            ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
         }
@@ -88,6 +90,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::CloseSearch => {
             ctx.state.search = None;
+            ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
         }
@@ -105,6 +108,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SearchActivate(index) => {
             select_search_match(ctx, index);
             ctx.state.search = None;
+            ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
         }
@@ -177,6 +181,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::CloseSessionPicker => {
             ctx.state.show_session_picker = false;
             ctx.state.session_picker = None;
+            ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
         }
@@ -590,6 +595,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     if crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);
+    }
+
+    if ctx.state.commands_dirty {
+        ctx.state.commands_dirty = false;
+        crate::commands::sync(ctx);
     }
 
     if ctx.state.session_attached

@@ -4,7 +4,6 @@ use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
 use tui_lipan::utils::color_contrast::readable_text_color;
 
-use crate::input::{Action, CommandBinding};
 use crate::state::{
     ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, SessionPickerState,
 };
@@ -23,25 +22,30 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let prefix = ctx.state.config.input.prefix.to_string();
     let modifier = ctx.state.config.input.modifier.label();
 
-    // Group bindings by category (first-seen order), so a category with non-contiguous
-    // entries in the table still gets a single header - matching the command palette.
-    let mut groups: Vec<(&'static str, Vec<(String, String)>)> = Vec::new();
-    for binding in &crate::input::command_bindings() {
+    // Group commands by category (first-seen order), so a category with non-contiguous
+    // entries still gets a single header - matching the command palette. Commands (labels,
+    // categories, live keybinding hints) come straight from the registry `commands.rs` builds,
+    // so this always reflects the actual active bindings, including `[keys]` overrides and
+    // user-defined commands (registered under category "Custom").
+    let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    for entry in ctx.command_registry().entries() {
+        // Workspace digit switches are described generically below rather than as 27 rows.
+        if entry.id.as_str().starts_with("workspace.") {
+            continue;
+        }
+        let category = entry.category.as_deref().unwrap_or("Other").to_string();
         let row = (
-            help_keys(ctx, binding),
-            crate::input::command_label(binding.action, &ctx.state),
+            entry.keybinding_hint.as_deref().unwrap_or("").to_string(),
+            entry.label.to_string(),
         );
-        match groups
-            .iter_mut()
-            .find(|(name, _)| *name == binding.category)
-        {
+        match groups.iter_mut().find(|(name, _)| *name == category) {
             Some((_, rows)) => rows.push(row),
-            None => groups.push((binding.category, vec![row])),
+            None => groups.push((category, vec![row])),
         }
     }
-    // Workspace digits and mouse gestures aren't in the command table; append them.
+    // Workspace digits and mouse gestures aren't individual registry entries; append them.
     groups.push((
-        "Workspaces",
+        "Workspaces".to_string(),
         vec![
             ("1-9".to_string(), "Switch to workspace".to_string()),
             (
@@ -55,7 +59,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         ],
     ));
     groups.push((
-        "Mouse",
+        "Mouse".to_string(),
         vec![
             ("mod-drag".to_string(), "Move pane (left-drag)".to_string()),
             (
@@ -65,23 +69,10 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ("drag gap".to_string(), "Resize a tiled split".to_string()),
         ],
     ));
-    // User-defined `[keys]` commands have no static CommandBinding (they're config-only, with
-    // no stable id), so list them from the config directly.
-    if !ctx.state.config.user_commands.is_empty() {
-        groups.push((
-            "Custom",
-            ctx.state
-                .config
-                .user_commands
-                .iter()
-                .enumerate()
-                .map(|(index, command)| (user_command_keys(ctx, index), command.label()))
-                .collect(),
-        ));
-    }
-    // Copy mode's internal keys aren't discrete actions, so they aren't in the command table.
+    // User `[keys]` commands are already covered by the registry loop above (category
+    // "Custom"). Copy mode's internal keys aren't discrete commands, so they aren't registered.
     groups.push((
-        "Copy mode",
+        "Copy mode".to_string(),
         vec![
             ("hjkl / arrows".to_string(), "Move cursor".to_string()),
             (
@@ -676,50 +667,30 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
 }
 
 pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    // Commands are sourced from the single binding table; only entries flagged for
-    // the palette appear here. The help overlay remains the full keybinding reference.
-    // Group by category (first-seen order) so each category header appears once even
-    // when bindings of the same category are not declared contiguously.
-    let mut groups: Vec<(&'static str, Vec<SearchEntry<Action>>)> = Vec::new();
-    for binding in crate::input::command_bindings()
-        .into_iter()
-        .filter(|binding| binding.palette)
-    {
-        let label = crate::input::command_label(binding.action, &ctx.state);
-        let mut entry = SearchEntry::item(label, binding.action);
-        let keys = palette_keys(ctx, &binding);
-        if !keys.is_empty() {
-            entry = entry.description(ItemDescription::new().right(keys));
+    // Commands (labels, categories, live keybinding hints, and the handler to run) come
+    // straight from the registry `commands.rs` builds. Only palette-eligible ids appear here
+    // (see `commands::is_palette_eligible`); the help overlay remains the full reference,
+    // including frequent single-key actions this intentionally omits. Group by category
+    // (first-seen order) so each category header appears once even when entries of the same
+    // category aren't registered contiguously.
+    let mut groups: Vec<(String, Vec<SearchEntry<Callback<()>>>)> = Vec::new();
+    for entry in ctx.command_registry().entries() {
+        if !crate::commands::is_palette_eligible(entry.id.as_str()) {
+            continue;
         }
-        match groups
-            .iter_mut()
-            .find(|(category, _)| *category == binding.category)
-        {
-            Some((_, items)) => items.push(entry),
-            None => groups.push((binding.category, vec![entry])),
+        let category = entry.category.as_deref().unwrap_or("Other").to_string();
+        let mut item = SearchEntry::item(entry.label.to_string(), entry.handler.clone());
+        let hint = entry.keybinding_hint.as_deref().unwrap_or("");
+        if !hint.is_empty() {
+            item = item.description(ItemDescription::new().right(hint.to_string()));
         }
-    }
-    if !ctx.state.config.user_commands.is_empty() {
-        let items = ctx
-            .state
-            .config
-            .user_commands
-            .iter()
-            .enumerate()
-            .map(|(index, command)| {
-                let action = Action::RunUserCommand(index);
-                let mut entry = SearchEntry::item(command.label(), action);
-                let keys = user_command_keys(ctx, index);
-                if !keys.is_empty() {
-                    entry = entry.description(ItemDescription::new().right(keys));
-                }
-                entry
-            })
-            .collect();
-        groups.push(("Custom", items));
+        match groups.iter_mut().find(|(name, _)| *name == category) {
+            Some((_, items)) => items.push(item),
+            None => groups.push((category, vec![item])),
+        }
     }
 
-    let mut entries: Vec<SearchEntry<Action>> = Vec::new();
+    let mut entries: Vec<SearchEntry<Callback<()>>> = Vec::new();
     for (category, items) in groups {
         entries.push(SearchEntry::header(category));
         entries.extend(items);
@@ -735,17 +706,19 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
 fn action_search_palette(
     ctx: &Context<HyprmuxApp>,
-    entries: Vec<SearchEntry<Action>>,
+    entries: Vec<SearchEntry<Callback<()>>>,
     placeholder: &str,
-) -> SearchPalette<Action> {
-    shared_search_palette::<Action>(ctx, Length::Auto, true)
+) -> SearchPalette<Callback<()>> {
+    shared_search_palette::<Callback<()>>(ctx, Length::Auto, true)
         .entries(entries)
         .placeholder(placeholder)
         .preserve_groups(true)
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<Action>| Msg::RunAction(event.item.value)),
-        )
+        // Run the command's own handler directly rather than looking it up by id through
+        // `CommandRegistry::execute`, since that call also enforces the `commands_active`
+        // gate - which is false while this very palette is open (see `commands::sync`).
+        .on_activate(Callback::new(|event: SearchEvent<Callback<()>>| {
+            event.item.value.emit(());
+        }))
 }
 
 pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -785,35 +758,6 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
         .child(palette)
         .key(theme_picker_key())
-}
-
-/// Display keys in the command palette: user overrides or real defaults only.
-/// Palette-only commands intentionally do not show a fake key hint here.
-fn palette_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
-    ctx.state
-        .config
-        .keymap
-        .keys_for(binding.action)
-        .unwrap_or_else(|| binding.keys.to_string())
-}
-
-/// Display keys for a `[keys]`-defined user command. Unlike a [`CommandBinding`], the trigger
-/// *is* the config - `bind_user_command` always registers exactly one, so this is never empty.
-fn user_command_keys(ctx: &Context<HyprmuxApp>, index: usize) -> String {
-    ctx.state
-        .config
-        .keymap
-        .keys_for(Action::RunUserCommand(index))
-        .unwrap_or_default()
-}
-
-/// Display keys in the help overlay. Empty active keys render as `not set`.
-fn help_keys(ctx: &Context<HyprmuxApp>, binding: &CommandBinding) -> String {
-    ctx.state
-        .config
-        .keymap
-        .keys_for(binding.action)
-        .unwrap_or_else(|| binding.keys.to_string())
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {

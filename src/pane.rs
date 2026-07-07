@@ -104,6 +104,13 @@ impl TerminalPane {
         matches!(self.status, ManagedTerminalStatus::Ready)
     }
 
+    pub fn is_running(&self) -> bool {
+        matches!(
+            self.status,
+            ManagedTerminalStatus::Starting | ManagedTerminalStatus::Ready
+        )
+    }
+
     pub fn accepts_input(&self) -> bool {
         match &self.backend {
             TerminalBackend::Local { pty, .. } => pty.is_some() && self.is_ready(),

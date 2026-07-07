@@ -118,7 +118,6 @@ pub struct MoveSwapHint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    Prefix,
     Resize,
     Copy,
 }
@@ -367,6 +366,13 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingDestructive {
+    ClosePane(PaneId),
+    KillWorkspace(usize),
+    KillSession,
+}
+
 impl SessionPickerState {
     pub fn new(entries: Vec<DiscoveredSession>) -> Self {
         Self {
@@ -596,6 +602,7 @@ pub struct State {
     pub session_name: Option<String>,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
+    pub pending_destructive: Option<PendingDestructive>,
     pub last_pushed_layout: Option<String>,
     /// Cached first-line stdout for each configured `BarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run
@@ -605,6 +612,11 @@ pub struct State {
     /// [`crate::pane_lifecycle::spawn_bar_command_pollers`]). A config reload spawns pollers
     /// only for commands newly added by the reload, since existing pollers never stop.
     pub bar_commands_running: HashSet<String>,
+    /// Set whenever something `crate::commands::sync` needs to see (shortcuts, dynamic labels,
+    /// or the `commands_active` gate) may have changed. Checked once per message at the tail of
+    /// `update::handle_msg` rather than resyncing unconditionally, since high-frequency messages
+    /// (PTY output, keystrokes forwarded to a pane) never affect it.
+    pub commands_dirty: bool,
 }
 
 pub struct PendingSessionAttach {
@@ -667,9 +679,11 @@ impl State {
             session_name: None,
             session_attached: false,
             pending_session_attach: None,
+            pending_destructive: None,
             last_pushed_layout: None,
             bar_command_output: HashMap::new(),
             bar_commands_running: HashSet::new(),
+            commands_dirty: false,
         }
     }
 

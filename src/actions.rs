@@ -5,13 +5,11 @@ use crate::config::UserCommandAction;
 use crate::focus_ops::{
     cycle_focus_in_tiled_order, focus_in_direction, move_focused_to_workspace,
     promote_focused_to_master, relocate_active_workspace, request_current_pane_focus,
-    request_pane_focus, switch_workspace,
+    request_palette_focus, request_pane_focus, switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
-use crate::pane_lifecycle::{
-    close_focused_pane, find_pane_mut, spawn_pane, spawn_pane_in_workspace,
-};
+use crate::pane_lifecycle::{find_pane_mut, spawn_pane, spawn_pane_in_workspace};
 use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
@@ -99,9 +97,14 @@ fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
 }
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+    // Any action can flip a dynamic label (a toggle, layout cycling), the `commands_active`
+    // gate (mode/overlay changes), or - for `ReloadConfig` - the shortcuts themselves. Marking
+    // dirty unconditionally here covers both the `Msg::RunAction` path and control-socket
+    // `RunAction` requests (`control_ops::run_action`), which call this directly.
+    ctx.state.commands_dirty = true;
     match action {
         Action::Spawn => spawn_pane(ctx),
-        Action::Close => close_focused_pane(ctx),
+        Action::Close => crate::exit_ops::close_focused_pane(ctx),
         Action::Focus(direction) => {
             let viewport = ctx.viewport();
             if let Some(id) = focus_in_direction(&mut ctx.state, direction, viewport) {
@@ -179,12 +182,16 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
-        Action::DetachSession => crate::session_ops::detach_current_session(ctx),
+        Action::Detach => crate::exit_ops::detach(ctx),
+        Action::Quit => crate::exit_ops::quit_client(ctx),
+        Action::KillWorkspace => crate::exit_ops::kill_workspace(ctx),
+        Action::KillSession => crate::exit_ops::kill_session(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::TogglePalette => {
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {
                 ctx.state.show_help = false;
+                request_palette_focus(ctx);
             }
             Update::full()
         }

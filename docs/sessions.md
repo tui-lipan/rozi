@@ -31,10 +31,11 @@ does not kill arbitrary processes or remove unrelated files.
 Attached panes are server-backed. The UI receives terminal snapshots from the server and sends
 input, resize, scroll, palette, search, and kill requests back through the session protocol.
 
-`Ctrl-q` quits the UI. In attached mode this detaches the UI process; server PTYs remain in the
-session until the panes exit naturally or the session is shut down. If the server disconnects while
-the UI is attached, server-backed panes are marked errored and input is rejected with a toast rather
-than silently dropped.
+`prefix d` (detach) leaves the UI. In attached mode the session server and its PTYs keep
+running until panes exit naturally or the session is shut down. Use **Kill session** from the
+command palette (or bind `kill-session`) to shut down the current attached session. If the
+server disconnects while the UI is attached, server-backed panes are marked errored and input
+is rejected with a toast rather than silently dropped.
 
 ## Layout persistence
 

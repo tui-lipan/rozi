@@ -27,7 +27,9 @@ forwarded to the focused shell.
 
 You can also configure an exact held chord in `[keys]`, for example `spawn = "alt-enter"`.
 
-> `Ctrl-q` quits the app and is handled before any routing, so it always works.
+All exit and lifecycle commands are prefix/modifier actions like everything else. hyprmux
+disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); bind
+`quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux.
 
 ## Command reference
 
@@ -36,7 +38,7 @@ You can also configure an exact held chord in `[keys]`, for example `spawn = "al
 | Command | Keys |
 | --- | --- |
 | New shell pane | `Enter` or `c` |
-| Close focused pane | `w` or `x` |
+| Close focused pane | `w` or `x` (confirm again if the shell is still running) |
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
@@ -99,11 +101,18 @@ Names are saved with profiles and session autosave.
 | Copy mode | `[` |
 | Search scrollback | `/` |
 | Toggle scratchpad | `` ` `` (backtick) |
-| Quit | `Ctrl-q` |
 
-> All of the commands above (except `Ctrl-q`) can be rebound from `hyprmux.toml`. See the
-> `[keys]` section in [Configuration](configuration.md). The help overlay (`?`) always shows
-> your *active* bindings.
+### Leaving and lifecycle
+
+| Command | Default keys | What it does |
+| --- | --- | --- |
+| Detach | `d` | Attached: leave the session and return to a fresh local client (server keeps running). Local: save the live layout unconditionally, then exit the client. |
+| Quit client | *(palette only)* | Exit this UI. Attached: server keeps running. Local: saves only when `[session] autosave` is enabled. |
+| Kill workspace | `q` | Close every pane on the active workspace (press twice to confirm). |
+| Kill session | *(palette only)* | Shut down the attached named session and exit (press twice to confirm). |
+
+> All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
+> [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
 
 Beyond rebinding, `[keys]` can also define brand new key-triggered commands that open a
 program in a new pane or send text to the focused pane's PTY - see [User-defined command

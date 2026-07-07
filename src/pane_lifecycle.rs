@@ -123,13 +123,30 @@ pub(crate) fn begin_close_pane(
     id: PaneId,
     animations: WindowAnimationConfig,
 ) -> Update {
+    match close_pane_state(ctx, id) {
+        Some(generation) => Update::with_command(prune_closed_command(
+            ctx.state.runtime_epoch,
+            id,
+            generation,
+            anim::close_delay(animations),
+        )),
+        None => Update::full(),
+    }
+}
+
+/// Mark a pane closing, kill its terminal/PTY, and update fallback focus + the close animation,
+/// without scheduling the delayed prune. Callers that close a single pane wrap the returned
+/// generation in one [`prune_closed_command`]; callers that close several panes at once (e.g.
+/// [`crate::exit_ops::kill_workspace`]) collect generations across multiple calls and schedule
+/// one combined [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
+/// Returns `None` (no state change) if the pane was already closing.
+pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let placements = {
         let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
         workspace_target_rects(workspace, bounds, top_gap)
     };
-    let mut closed = false;
     let mut generation = None;
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
@@ -145,29 +162,26 @@ pub(crate) fn begin_close_pane(
         pane.opening = false;
         pane.closing = true;
         pane.terminal.kill();
-        closed = true;
     }
 
-    if closed {
+    if generation.is_some() {
         ctx.state.animation = GeometryAnimation::Close;
         choose_fallback_focus(&mut ctx.state);
         request_current_pane_focus(ctx);
-        Update::with_command(prune_closed_command(
-            ctx.state.runtime_epoch,
-            id,
-            generation.unwrap_or_default(),
-            anim::close_delay(animations),
-        ))
-    } else {
-        Update::full()
     }
+    generation
 }
 
-pub(crate) fn close_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
-        return Update::full();
-    };
-    begin_close_pane(ctx, id, ctx.state.config.animations)
+pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
+    // The scratchpad lives outside the workspace lists; route its events here too.
+    if let Some(pane) = state.scratch.as_ref().filter(|pane| pane.id == id) {
+        return Some(pane);
+    }
+    state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .find(|pane| pane.id == id)
 }
 
 pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
@@ -237,11 +251,11 @@ pub(crate) fn handle_prune_closed(
         .is_some_and(|search| search.target == id)
     {
         ctx.state.search = None;
+        ctx.state.commands_dirty = true;
     }
     if total_visible_panes(&ctx.state) == 0 {
-        crate::profiles::persist_session_if_enabled(&ctx.state);
-        ctx.quit();
-        return Update::none();
+        request_current_pane_focus(ctx);
+        return Update::full();
     }
     request_current_pane_focus(ctx);
     Update::full()
@@ -486,6 +500,23 @@ pub(crate) fn prune_closed_command(
             std::thread::sleep(delay);
         }
         link.send(Msg::PruneClosed(epoch, id, generation));
+    })
+}
+
+/// Prune several panes closed in the same batch (e.g. [`crate::exit_ops::kill_workspace`])
+/// after one shared delay, since an [`Update`] can only carry a single [`Command`].
+pub(crate) fn prune_closed_batch_command(
+    epoch: u64,
+    targets: Vec<(PaneId, u64)>,
+    delay: Duration,
+) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        for (id, generation) in targets {
+            link.send(Msg::PruneClosed(epoch, id, generation));
+        }
     })
 }
 

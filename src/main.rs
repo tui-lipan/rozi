@@ -1,16 +1,17 @@
 mod actions;
 mod anim;
+mod commands;
 mod config;
 mod config_ops;
 mod control;
 mod control_ops;
 mod copy_mode;
+mod exit_ops;
 mod focus_ops;
 mod geometry;
 mod identity_ops;
 mod input;
 mod key_routing;
-mod keymap;
 mod layout;
 mod pane;
 mod pane_lifecycle;
@@ -235,6 +236,8 @@ impl Component for HyprmuxApp {
     }
 
     fn init(&mut self, ctx: &mut Context<Self>) -> Option<Command> {
+        commands::sync(ctx);
+
         for message in std::mem::take(&mut self.startup_messages) {
             ctx.toast().push(pty_events::info_toast(message));
         }
@@ -307,17 +310,15 @@ impl Component for HyprmuxApp {
     }
 
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
-        if key.mods.ctrl && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('Q')) {
-            profiles::persist_session_if_enabled(&ctx.state);
-            ctx.quit();
-            return KeyUpdate::handled(Update::none());
-        }
-
         key_routing::sync_focus_from_framework(ctx);
         let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
         if theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
             let command = update.command.take();
             update = Update::with_command(command);
+        }
+        if ctx.state.commands_dirty {
+            ctx.state.commands_dirty = false;
+            commands::sync(ctx);
         }
         if handled {
             KeyUpdate::handled(update)
@@ -747,7 +748,14 @@ fn main() -> Result<()> {
         .toast_placement(ToastPlacement::BottomEnd)
         .toast_margin((1, 2, 1, 1))
         .clipboard_config(clipboard_config(&config))
-        .mouse(true);
+        .mouse(true)
+        // Leader chords (`ctrl-a c`) and WM-modifier chords (`alt-c`) are executable command
+        // shortcuts (see `commands.rs`), not a framework keymap file - resolve them ahead of
+        // focused widgets/terminal passthrough so they win regardless of what has focus.
+        .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+        .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+        // Ctrl-q is unbound: hyprmux's own `quit`/`detach` commands own client lifecycle exits.
+        .global_quit(None);
 
     app.mount(HyprmuxApp::new(
         config,
@@ -1191,7 +1199,7 @@ OPTIONS:
         --socket <PATH>   Connect CLI control command to this socket
 
 A bare PROFILE positional is equivalent to --profile PROFILE.
-Quit the running app with Ctrl-q."
+Leave the running app with prefix d (detach) or a configured quit binding."
     );
 }
 

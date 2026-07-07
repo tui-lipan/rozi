@@ -469,6 +469,14 @@ pub(crate) fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(view::theme_picker_key());
 }
 
+pub(crate) fn request_palette_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::palette_key());
+}
+
+pub(crate) fn request_session_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.request_focus(view::session_picker_key());
+}
+
 pub(crate) fn total_visible_panes(state: &State) -> usize {
     state
         .workspaces

@@ -14,7 +14,7 @@ identity, and scrollback search on top.
 - Resizing a pane resizes both the emulator and the PTY (a single SIGWINCH after the geometry
   settles - size changes are snapped rather than animated; see
   [Layouts & panes](layouts-and-panes.md#animation-policy)).
-- When the shell process exits, its pane closes. When the last pane closes, the app quits.
+- When the shell process exits, its pane closes. The app keeps running until you detach or quit.
 
 The shell and starting directory come from the [config](configuration.md) (`shell`, `cwd`),
 falling back to the system `$SHELL` and the launch directory.

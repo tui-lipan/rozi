@@ -73,6 +73,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     let Some(state) = ctx.state.copy_mode else {
         ctx.state.mode = Mode::Normal;
+        ctx.state.commands_dirty = true;
         return Update::full();
     };
 
@@ -102,6 +103,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     }
     ctx.state.copy_mode = None;
     ctx.state.mode = Mode::Normal;
+    ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }

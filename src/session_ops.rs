@@ -1,5 +1,6 @@
 use tui_lipan::prelude::*;
 
+use crate::focus_ops::request_session_picker_focus;
 use crate::state::SessionPickerState;
 use crate::{HyprmuxApp, pane_lifecycle, pty_events::info_toast, startup_spawns};
 
@@ -16,6 +17,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
         }
     }
     ctx.state.show_session_picker = true;
+    request_session_picker_focus(ctx);
     Update::full()
 }
 
@@ -91,6 +93,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     fresh.control_socket_path = control_socket_path;
     fresh.runtime_epoch = epoch;
     ctx.state = fresh;
+    ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast()
         .push(info_toast("Detached (session still running)"));
@@ -131,6 +134,7 @@ pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String
     }
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
+    ctx.state.commands_dirty = true;
     let epoch = ctx.state.runtime_epoch.saturating_add(1);
     ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,

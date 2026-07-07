@@ -256,14 +256,20 @@ and the session autosave (`[[workspaces]] name` in the profile TOML - see
 
 ## `[keys]`
 
-Rebind window-management actions. Each entry maps an **action id** to one tui-lipan keybinding
-string or a list of them. Comma-separated alternatives also work inside one string. A binding is
-either an exact **held chord** (`alt-enter`) or a **prefix sequence** (`prefix c`, or the explicit
-`ctrl-a c`). Prefix bindings also define the held-modifier direct path: `prefix c` can be run as
-`modifier+c`. Configuring an action **replaces** its default keys. Empty values intentionally clear
-an action's defaults, for example `scratchpad = []` or `scratchpad = ""`. Invalid non-empty
-replacements are warned and skipped. Workspace digits (`1`–`9`) are not individually rebindable,
-and `Ctrl-q` (quit) is always hardwired. The help overlay (`?`) shows real active bindings and
+Rebind window-management actions. Each entry maps an **action id** to one native tui-lipan
+`KeyBinding` string or a list of them, e.g. `"ctrl-a c"` (prefix chord) or `"alt-c"` (held
+modifier) - there is no `prefix` sugar. Comma-separated alternatives also work inside one string.
+Configuring an action **replaces** both of its default keys (the leader-prefix chord and the
+WM-modifier chord). Empty values intentionally clear an action's defaults, for example
+`scratchpad = []` or `scratchpad = ""`. If every binding for an action fails to parse, that
+action keeps its default keys rather than becoming unbound; invalid bindings are warned and
+skipped either way. Workspace digits (`1`–`9`) are not individually rebindable.
+
+hyprmux disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so it never
+conflicts with app routing. Use hyprmux `[keys]` actions (`detach`, `quit`, …) instead; for
+example `quit = "ctrl-q"` restores a direct quit shortcut through hyprmux routing.
+
+The help overlay (`?`) shows real active bindings and
 `not set` for bindable commands with no active key.
 
 Examples:
@@ -282,7 +288,8 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `detach-session`, `choose-theme`, `command-palette`,
+`save-profile`, `open-profile`, `sessions`, `detach`, `quit`, `kill-workspace`, `kill-session`,
+`choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `toggle-pane-synchronization`, `reload-config`,
 `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket

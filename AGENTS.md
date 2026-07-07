@@ -23,7 +23,7 @@ stub just to avoid a breaking change.
 ## Commands
 
 - Build: `cargo build`
-- Run: `cargo run` (then quit the app with `Ctrl-q`); launch a named profile with `cargo run -- dev` or `cargo run -- --profile dev`
+- Run: `cargo run` (then leave with `prefix d` / detach, or bind `quit` in config); launch a named profile with `cargo run -- dev` or `cargo run -- --profile dev`
 - Lint: `cargo clippy`
 - Test: `cargo test`; a single test by name substring, e.g.
   `cargo test spawn_split_direction_follows_focused_tile_aspect`
@@ -62,8 +62,8 @@ stub just to avoid a breaking change.
 ## Verification Habits
 
 - For app-only Rust changes, prefer at least `cargo test` and `cargo clippy` from this repo.
-- For broad feature work, run `cargo build` too. `cargo run` needs a real terminal; quit with
-  `Ctrl-q`.
+- For broad feature work, run `cargo build` too. `cargo run` needs a real terminal; leave with
+  `prefix d` (detach) or a configured `quit` binding.
 - `cargo fmt` may reformat older one-line code outside your logical change. If that happens, decide
   whether to include the formatting intentionally or restore it before committing scoped work.
 - `git diff --check` is cheap and should be clean before commit.
@@ -92,7 +92,7 @@ wrapping a `TerminalScreen` (VT emulator) + an optional `TerminalPty`. PTYs are 
 background thread via `Command::spawn` → `spawn_pty` (`main.rs`), which sends `Msg::PtyReady`
 then streams `Msg::PtyEvent`. Output bytes feed `screen.process_bytes` and re-render the
 snapshot; `TerminalPtyEvent::Exited` closes the pane (`remove_pane`, with dwindle-tree +
-focus cleanup; quitting when the last pane closes). Pane geometry size changes call
+focus cleanup; the app stays running when panes close). Pane geometry size changes call
 `TerminalPane::resize`, which resizes both the screen and the PTY.
 
 **3. Input routing / command mode (the crux).** Keys reach the WM two ways: the framework
@@ -176,6 +176,7 @@ module; lifecycle and event-plumbing modules keep plain names (see Conventions).
 - `anim.rs` - `GeometryAnimation`, `WindowAnimationConfig`, transition presets.
 
 **Features**
+- `exit_ops.rs` - detach, quit client, close/kill workspace/session with confirmation.
 - `focus_ops.rs` - focus changes and framework focus requests.
 - `copy_mode.rs` - vi-style copy/selection mode.
 - `search_ops.rs` - scrollback search scan/recompute/navigation, scope cycling.

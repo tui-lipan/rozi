@@ -44,11 +44,13 @@ pub(crate) fn apply_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 
     rename_pane_in_workspaces(&mut ctx.state.workspaces, target, &title);
     ctx.state.rename = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
 pub(crate) fn close_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.rename = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -82,11 +84,13 @@ pub(crate) fn apply_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
         workspace.name = (!name.is_empty()).then_some(name);
     }
     ctx.state.rename_workspace = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
 pub(crate) fn close_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.rename_workspace = None;
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 

@@ -74,12 +74,14 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
         apply_terminal_palette_to_state(&mut ctx.state);
     }
     ctx.state.show_theme_picker = false;
+    ctx.state.commands_dirty = true;
 }
 
 pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     let choices = crate::config::theme_choices();
     let Some(choice) = choices.get(index) else {
         ctx.state.show_theme_picker = false;
+        ctx.state.commands_dirty = true;
         return Update::full();
     };
     let name = choice.id();
@@ -119,6 +121,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     ctx.state.theme_picker_preview = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
+    ctx.state.commands_dirty = true;
     if let Err(err) = crate::config::persist_theme_name(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,

@@ -25,9 +25,13 @@ switch workspaces, and lay them out as described in [Keybindings](keybindings.md
 
 ## Quitting
 
-- **`Ctrl-q`** quits immediately, from any mode.
-- Closing the **last** pane also quits the app (each pane is a real shell; when its process
-  exits, the pane closes).
+- **`prefix d`** (default) **detaches**: in attached mode you return to a fresh local client while
+  the session server keeps running; in local mode the live layout is saved unconditionally and
+  the client exits.
+- **`quit`** has no default key; bind it in `[keys]` or use the command palette. It exits the
+  client without the unconditional local save that detach performs.
+- Closing the **last pane in a workspace** leaves an empty workspace panel; the app stays running.
+  Use detach or quit to leave explicitly.
 
 ## Developer commands
 
@@ -37,7 +41,8 @@ cargo clippy      # lint
 cargo fmt         # format (use rustfmt --edition 2024 if running rustfmt directly)
 ```
 
-`cargo run` needs an interactive terminal; quit it with `Ctrl-q`. For details on the module
+`cargo run` needs an interactive terminal; leave with **`prefix d`** (detach) or bind `quit` in
+`hyprmux.toml`. For details on the module
 layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 
 ## First-run configuration

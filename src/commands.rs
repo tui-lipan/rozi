@@ -436,7 +436,7 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
             .id()
             .expect("BUILTIN_COMMANDS entries always have a stable id");
         let shortcuts = resolve_shortcuts(config, id, command.default_keys);
-        let hint = shortcuts.canonical_lowercase();
+        let hint = builtin_keybinding_hint(config, id, command.default_keys);
         let label = resolved_label(command.action, command.label, state);
         let action = command.action;
         let enabled = if is_exit_command(action) {
@@ -449,7 +449,7 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
             CommandEntry::builder(id)
                 .label(label)
                 .category(command.category)
-                .keybinding_hint_opt((!hint.is_empty()).then(|| Arc::<str>::from(hint)))
+                .keybinding_hint_opt(hint)
                 .shortcuts(shortcuts)
                 .enabled(enabled)
                 .handler(Callback::new(move |_| link.send(Msg::RunAction(action))))
@@ -555,6 +555,14 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
     if id.starts_with("workspace.") {
         return false;
     }
+    // tui-lipan's runtime auto-registers framework commands under the `app.` id prefix
+    // (`app.quit`, `app.focus-next`, `app.focus-prev`, `app.dismiss-overlay`,
+    // `app.toggle-devtools`). None of them are meaningful in hyprmux's palette: quit/detach
+    // have dedicated commands, panes are terminal shells rather than app-focusable widgets,
+    // dismissing an overlay is just `Esc`, and DevTools is a dev-only tool. Keep them out.
+    if id.starts_with("app.") {
+        return false;
+    }
     BUILTIN_COMMANDS
         .iter()
         .find(|command| command.action.id() == Some(id))
@@ -571,6 +579,24 @@ fn resolve_shortcuts(config: &HyprmuxConfig, id: &str, defaults: &[&str]) -> Key
     } else {
         KeyBindings::from_bindings(default_shortcuts_for(config, defaults))
     }
+}
+
+fn builtin_keybinding_hint(
+    config: &HyprmuxConfig,
+    id: &str,
+    defaults: &[&str],
+) -> Option<Arc<str>> {
+    let hint = if config.key_overrides.contains_key(id) {
+        resolve_shortcuts(config, id, defaults).canonical_lowercase()
+    } else {
+        defaults
+            .iter()
+            .filter_map(|key| KeyBinding::from_str(key).ok())
+            .map(|binding| binding.canonical_lowercase())
+            .next()
+            .unwrap_or_default()
+    };
+    (!hint.is_empty()).then(|| Arc::<str>::from(hint))
 }
 
 /// For each key step, build the leader-prefix chord (`<prefix> <key>`) and the WM-modifier
@@ -793,5 +819,49 @@ mod tests {
         assert!(!is_palette_eligible("workspace.switch.1"));
         assert!(!is_palette_eligible("spawn"));
         assert!(is_palette_eligible("save-profile"));
+    }
+
+    #[test]
+    fn utility_commands_are_not_palette_eligible() {
+        assert!(!is_palette_eligible("cycle-focus-next"));
+        assert!(!is_palette_eligible("cycle-focus-prev"));
+        assert!(!is_palette_eligible("command-palette"));
+    }
+
+    #[test]
+    fn framework_app_commands_are_not_palette_eligible() {
+        assert!(!is_palette_eligible("app.quit"));
+        assert!(!is_palette_eligible("app.focus-next"));
+        assert!(!is_palette_eligible("app.focus-prev"));
+        assert!(!is_palette_eligible("app.dismiss-overlay"));
+        assert!(!is_palette_eligible("app.toggle-devtools"));
+    }
+
+    #[test]
+    fn default_command_hints_show_command_keys_only() {
+        let config = HyprmuxConfig::default();
+
+        assert_eq!(
+            builtin_keybinding_hint(&config, "close", &["w", "shift-w", "x", "shift-x"]),
+            Some(Arc::<str>::from("w"))
+        );
+        assert_eq!(
+            builtin_keybinding_hint(&config, "cycle-focus-next", &["tab"]),
+            Some(Arc::<str>::from("tab"))
+        );
+    }
+
+    #[test]
+    fn override_command_hints_stay_verbatim() {
+        let mut config = HyprmuxConfig::default();
+        config.key_overrides.insert(
+            "close".to_string(),
+            vec![KeyBinding::from_str("ctrl-b k").unwrap()],
+        );
+
+        assert_eq!(
+            builtin_keybinding_hint(&config, "close", &["w", "shift-w"]),
+            Some(Arc::<str>::from("ctrl+b k"))
+        );
     }
 }

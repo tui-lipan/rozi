@@ -383,8 +383,9 @@ pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<
         });
         return;
     };
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     let mut spawned = false;
+    let mut server_child: Option<std::process::Child> = None;
     loop {
         let (tx, rx) = mpsc::channel();
         match session::client::SessionClient::connect_attached(&path, name.clone(), tx) {
@@ -416,21 +417,57 @@ pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<
                     if path.exists() {
                         let _ = std::fs::remove_file(&path);
                     }
-                    if let Ok(exe) = std::env::current_exe() {
-                        let _ = std::process::Command::new(exe)
-                            .arg("--session")
-                            .arg(&name)
-                            .arg("--server")
-                            .stdin(std::process::Stdio::null())
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .spawn();
+                    // Surface the real reason autostart failed instead of letting it
+                    // resurface later as a generic connect NotFound after the deadline.
+                    let exe = match std::env::current_exe() {
+                        Ok(exe) => exe,
+                        Err(exe_err) => {
+                            link.send(Msg::SessionAttachFailed {
+                                epoch,
+                                message: format!(
+                                    "could not start session server for {name:?}: unable to locate hyprmux executable: {exe_err}"
+                                ),
+                            });
+                            return;
+                        }
+                    };
+                    match std::process::Command::new(&exe)
+                        .arg("--session")
+                        .arg(&name)
+                        .arg("--server")
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                    {
+                        Ok(child) => server_child = Some(child),
+                        Err(spawn_err) => {
+                            link.send(Msg::SessionAttachFailed {
+                                epoch,
+                                message: format!(
+                                    "could not start session server for {name:?} ({}): {spawn_err}",
+                                    exe.display()
+                                ),
+                            });
+                            return;
+                        }
                     }
                 }
-                if Instant::now() >= deadline {
+                // If the server we launched has already exited, it will never bind the
+                // socket; report its exit status rather than waiting for the deadline.
+                let early_exit = server_child
+                    .as_mut()
+                    .and_then(|child| child.try_wait().ok().flatten());
+                if Instant::now() >= deadline || early_exit.is_some() {
+                    let detail = match early_exit {
+                        Some(status) => {
+                            format!("session server exited before it was ready ({status})")
+                        }
+                        None => err.to_string(),
+                    };
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("could not attach to session {name:?}: {err}"),
+                        message: format!("could not attach to session {name:?}: {detail}"),
                     });
                     return;
                 }

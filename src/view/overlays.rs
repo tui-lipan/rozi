@@ -726,7 +726,7 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "borders",
             "titlebar",
             "titlebars",
-            "top bar",
+            "workbar",
             "focused border",
             "focused background",
         ]
@@ -738,55 +738,80 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
 }
 
 pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let mut entries = vec![
+    let pane = &ctx.state.config.pane;
+    // Dependent rows (Titlebar style, Workbar gap/position) always stay in the list; when their
+    // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
+    // `render_item` below) rather than disappearing. Grouped so each control sits next to the
+    // toggle it depends on.
+    let entries = vec![
         appearance_entry("Theme", current_theme_label(ctx), AppearanceAction::Theme),
         appearance_entry(
-            "Pane titlebars",
-            enabled_status(ctx.state.config.pane.show_titles),
+            "Titlebar",
+            enabled_status(pane.show_titles),
             AppearanceAction::ToggleTitles,
         ),
         appearance_entry(
-            "Top bar",
-            enabled_status(ctx.state.config.pane.show_top_bar),
-            AppearanceAction::ToggleTopBar,
+            "Titlebar style",
+            pane.title_style.label().to_string(),
+            AppearanceAction::CycleTitleStyle,
         ),
-    ];
-
-    if ctx.state.config.pane.show_top_bar {
-        entries.push(appearance_entry(
-            "Top bar gap",
-            enabled_status(ctx.state.config.pane.top_bar_gap),
-            AppearanceAction::ToggleTopBarGap,
-        ));
-    }
-
-    entries.extend(vec![
+        appearance_entry(
+            "Workbar",
+            enabled_status(pane.show_workbar),
+            AppearanceAction::ToggleWorkbar,
+        ),
+        appearance_entry(
+            "Workbar gap",
+            enabled_status(pane.workbar_gap),
+            AppearanceAction::ToggleWorkbarGap,
+        ),
+        appearance_entry(
+            "Workbar position",
+            if pane.workbar_at_bottom {
+                "Bottom"
+            } else {
+                "Top"
+            }
+            .to_string(),
+            AppearanceAction::ToggleWorkbarPosition,
+        ),
         appearance_entry(
             "Focused pane background",
-            enabled_status(ctx.state.config.pane.highlight_focused_background),
+            enabled_status(pane.highlight_focused_background),
             AppearanceAction::ToggleHighlightFocusedBackground,
         ),
         appearance_entry(
             "Focused pane border",
-            enabled_status(ctx.state.config.pane.highlight_focused_border),
+            enabled_status(pane.highlight_focused_border),
             AppearanceAction::ToggleHighlightFocusedBorder,
         ),
         appearance_entry(
             "Border merging",
-            enabled_status(ctx.state.config.pane.merge_borders),
+            enabled_status(pane.merge_borders),
             AppearanceAction::ToggleBorderMerge,
         ),
         appearance_entry(
             "Border style",
-            ctx.state.config.pane.border_style.label().to_string(),
+            pane.border_style.label().to_string(),
             AppearanceAction::CycleBorderStyle,
         ),
-    ]);
+    ];
 
+    let pane_flags = ctx.state.config.pane;
+    let disabled_style = fg_only(&ctx.state.theme.muted);
     let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, true)
         .entries(entries)
         .placeholder("Search appearance…")
         .description_placement(DescriptionPlacement::Right)
+        .render_item(Arc::new(
+            move |item: &SearchItem<AppearanceAction>, _highlight| {
+                item.value.disabled_reason(&pane_flags).map(|reason| {
+                    ListItem::from_spans(vec![Span::new(item.label.as_ref()).style(disabled_style)])
+                        .description(reason)
+                        .description_style(disabled_style)
+                })
+            },
+        ))
         .on_activate(ctx.link().callback(|event: SearchEvent<AppearanceAction>| {
             Msg::AppearanceActivate(event.item.value)
         }));

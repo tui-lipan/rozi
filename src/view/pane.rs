@@ -111,25 +111,65 @@ pub(crate) fn pane_element(
             title.push_str(" - ");
             title.push_str(subtitle);
         }
-        let mut title_row = HStack::new()
-            .style(title_bar_fill_style)
-            .padding((0, 1))
+        let title_text: Element = Text::new(format!("{icon}  {display_number} · {title}"))
+            .style(title_bar_text_style)
+            .overflow(Overflow::Ellipsis)
             .width(Length::Flex(1))
             .height(Length::Px(1))
-            .child(
-                Text::new(format!("{icon}  {display_number} · {title}"))
-                    .style(title_bar_text_style)
-                    .overflow(Overflow::Ellipsis)
+            .into();
+        let badge_text: Option<Element> = badge.map(|badge| {
+            Text::new(format!(" {badge}"))
+                .style(title_bar_text_style)
+                .height(Length::Px(1))
+                .into()
+        });
+
+        // `Padded` keeps the title flush with the frame below, with blank side padding. The cap
+        // styles instead draw the titlebar color as end caps over the backdrop, so the row reads
+        // as a rounded/pointed pill: the fill (and text) live in a Flex middle between the caps.
+        let title_row: Element = match ctx.state.config.pane.title_style.caps() {
+            None => {
+                let mut row = HStack::new()
+                    .style(title_bar_fill_style)
+                    .padding((0, 1))
                     .width(Length::Flex(1))
-                    .height(Length::Px(1)),
-            );
-        if let Some(badge) = badge {
-            title_row = title_row.child(
-                Text::new(format!(" {badge}"))
-                    .style(title_bar_text_style)
-                    .height(Length::Px(1)),
-            );
-        }
+                    .height(Length::Px(1))
+                    .child(title_text);
+                if let Some(badge_text) = badge_text {
+                    row = row.child(badge_text);
+                }
+                row.into()
+            }
+            Some((left, right)) => {
+                let cap_style = Style::new().fg(title_bar_bg).bg(theme.surface.backdrop);
+                // No horizontal padding here: the caps themselves stand in for the side padding.
+                let mut middle = HStack::new()
+                    .style(title_bar_fill_style)
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .child(title_text);
+                if let Some(badge_text) = badge_text {
+                    middle = middle.child(badge_text);
+                }
+                HStack::new()
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .child(
+                        Text::new(left)
+                            .style(cap_style)
+                            .width(Length::Px(1))
+                            .height(Length::Px(1)),
+                    )
+                    .child(middle)
+                    .child(
+                        Text::new(right)
+                            .style(cap_style)
+                            .width(Length::Px(1))
+                            .height(Length::Px(1)),
+                    )
+                    .into()
+            }
+        };
 
         let mut title_bar: Element = MouseRegion::new()
             .capture_click(true)

@@ -56,7 +56,7 @@ Toggle the focused pane between tiling and floating with `t`. A floating pane:
 ## Fullscreen
 
 Toggle the focused pane fullscreen with `f`. A fullscreen pane fills the workspace area
-(below the top bar) and shows a `fullscreen` badge. Toggle again to restore its previous
+(below the workbar) and shows a `fullscreen` badge. Toggle again to restore its previous
 tiled or floating geometry.
 
 ## Focus and movement
@@ -96,7 +96,7 @@ identity is known - for example, after being restored from a project profile. Se
 ## Workspaces
 
 There are **9 workspaces**. Switch with `1`–`9`; move the focused pane to a workspace with
-`Shift+1`–`Shift+9`. The top bar renders a tab per workspace (at least 5 shown, growing to
+`Shift+1`–`Shift+9`. The workbar renders a tab per workspace (at least 5 shown, growing to
 include the highest occupied one and the active one), each labeled with its number and live
 pane count. Tabs are clickable.
 

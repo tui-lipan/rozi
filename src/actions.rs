@@ -236,14 +236,23 @@ fn execute_action_inner(
             persist_pane_toggle(ctx, "show_titles", ctx.state.config.pane.show_titles);
             Update::full()
         }
-        Action::ToggleTopBar => {
-            ctx.state.config.pane.show_top_bar = !ctx.state.config.pane.show_top_bar;
-            persist_pane_toggle(ctx, "show_top_bar", ctx.state.config.pane.show_top_bar);
+        Action::ToggleWorkbar => {
+            ctx.state.config.pane.show_workbar = !ctx.state.config.pane.show_workbar;
+            persist_pane_toggle(ctx, "show_workbar", ctx.state.config.pane.show_workbar);
             Update::full()
         }
-        Action::ToggleTopBarGap => {
-            ctx.state.config.pane.top_bar_gap = !ctx.state.config.pane.top_bar_gap;
-            persist_pane_toggle(ctx, "top_bar_gap", ctx.state.config.pane.top_bar_gap);
+        Action::ToggleWorkbarGap => {
+            ctx.state.config.pane.workbar_gap = !ctx.state.config.pane.workbar_gap;
+            persist_pane_toggle(ctx, "workbar_gap", ctx.state.config.pane.workbar_gap);
+            Update::full()
+        }
+        Action::ToggleWorkbarPosition => {
+            ctx.state.config.pane.workbar_at_bottom = !ctx.state.config.pane.workbar_at_bottom;
+            persist_pane_toggle(
+                ctx,
+                "workbar_at_bottom",
+                ctx.state.config.pane.workbar_at_bottom,
+            );
             Update::full()
         }
         Action::ToggleFocusOnHover => {
@@ -281,6 +290,18 @@ fn execute_action_inner(
             let next = ctx.state.config.pane.border_style.next();
             ctx.state.config.pane.border_style = next;
             if let Err(err) = crate::config::persist_pane_string("border_style", next.id()) {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Preference not saved",
+                    err,
+                ));
+            }
+            Update::full()
+        }
+        Action::CycleTitleStyle => {
+            let next = ctx.state.config.pane.title_style.next();
+            ctx.state.config.pane.title_style = next;
+            if let Err(err) = crate::config::persist_pane_string("title_style", next.id()) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
                     "Preference not saved",

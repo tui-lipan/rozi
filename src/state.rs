@@ -17,7 +17,7 @@ pub const WORKSPACE_COUNT: usize = 9;
 /// Reserved id for the scratchpad pane. Workspace panes start at 1 (see `State::new`), so 0
 /// can never collide with an allocated `next_pane_id`.
 pub const SCRATCH_PANE_ID: PaneId = 0;
-pub const TOP_BAR_HEIGHT: u16 = 1;
+pub const WORKBAR_HEIGHT: u16 = 1;
 pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
 pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
@@ -179,6 +179,78 @@ impl PaneBorderStyle {
     }
 }
 
+/// The end caps drawn on either side of a pane titlebar. A single app-wide setting
+/// (`Action::CycleTitleStyle`). `Padded` keeps the current flush bar with blank side padding;
+/// the others turn the title into a tag whose ends are drawn in the titlebar color over the
+/// backdrop, so the bar reads as a rounded/pointed pill. The cap glyphs (except `Half`) are
+/// powerline separators and need a patched/Nerd font, same as the titlebar's mode icons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneTitleStyle {
+    Padded,
+    Half,
+    Round,
+    Arrow,
+}
+
+impl PaneTitleStyle {
+    /// Cycle order for `Action::CycleTitleStyle`.
+    pub fn all() -> &'static [PaneTitleStyle] {
+        &[Self::Padded, Self::Half, Self::Round, Self::Arrow]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Padded => "padded",
+            Self::Half => "half",
+            Self::Round => "round",
+            Self::Arrow => "arrow",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Padded => "Padded",
+            Self::Half => "Half block",
+            Self::Round => "Round",
+            Self::Arrow => "Arrow",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-")
+            .as_str()
+        {
+            "padded" | "pad" | "plain" | "none" => Some(Self::Padded),
+            "half" | "half-block" | "block" => Some(Self::Half),
+            "round" | "rounded" | "pill" => Some(Self::Round),
+            "arrow" | "pointed" | "slant" | "powerline" => Some(Self::Arrow),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|style| *style == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
+    }
+
+    /// The (left, right) cap glyphs, or `None` for `Padded` (blank side padding, no glyphs). The
+    /// caps paint in the titlebar color over the backdrop, so a left cap fills toward its right
+    /// and a right cap toward its left.
+    pub fn caps(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Padded => None,
+            Self::Half => Some(("\u{2590}", "\u{258c}")),
+            Self::Round => Some(("\u{e0b6}", "\u{e0b4}")),
+            Self::Arrow => Some(("\u{e0b2}", "\u{e0b0}")),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResizeCorner {
     UpperLeft,
@@ -226,12 +298,29 @@ pub enum SplitDragKind {
 pub enum AppearanceAction {
     Theme,
     ToggleTitles,
-    ToggleTopBar,
-    ToggleTopBarGap,
+    ToggleWorkbar,
+    ToggleWorkbarGap,
+    ToggleWorkbarPosition,
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleBorderMerge,
     CycleBorderStyle,
+    CycleTitleStyle,
+}
+
+impl AppearanceAction {
+    /// Whether this row configures a feature that is currently switched off, so the row is inert:
+    /// it still renders (greyed) but activating it does nothing. Keeps the appearance list stable
+    /// instead of hiding dependent rows as their parent toggles.
+    pub fn disabled_reason(self, pane: &crate::config::HyprmuxPaneConfig) -> Option<&'static str> {
+        match self {
+            Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
+            Self::ToggleWorkbarGap | Self::ToggleWorkbarPosition if !pane.show_workbar => {
+                Some("Needs workbar")
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -650,7 +739,7 @@ pub struct Workspace {
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
     pub last_move_swap: Option<MoveSwapHint>,
-    /// User-assigned label shown in the top bar in place of (or alongside) the workspace
+    /// User-assigned label shown in the workbar in place of (or alongside) the workspace
     /// number. `None` keeps the default numeric display.
     pub name: Option<String>,
 }
@@ -844,17 +933,37 @@ impl State {
         crate::profiles::restore_state_from_profile(config, theme, profile)
     }
 
+    /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether
+    /// the bar sits at the top or the bottom - either way it consumes the same one row.
     pub fn top_chrome_height(&self) -> u16 {
-        if self.config.pane.show_top_bar {
-            TOP_BAR_HEIGHT
+        if self.config.pane.show_workbar {
+            WORKBAR_HEIGHT
         } else {
             0
         }
     }
 
+    /// Row offset of the panes area from the top of the viewport: the workbar height when the bar
+    /// sits above the panes, and 0 when it sits below them (the panes start at the first row and
+    /// the bar is drawn on the last row). Used to translate between root and canvas-local space.
+    pub fn content_top_offset(&self) -> u16 {
+        if self.config.pane.show_workbar && !self.config.pane.workbar_at_bottom {
+            WORKBAR_HEIGHT
+        } else {
+            0
+        }
+    }
+
+    /// Signed inset (in cells) that keeps the panes clear of the workbar. Positive insets the top
+    /// edge of the tile area (bar above the panes); negative insets the bottom edge (bar below the
+    /// panes), so the gap always lands between the panes and the bar. Zero when there is no gap.
     pub fn workspace_top_gap(&self) -> f32 {
-        if self.config.pane.show_top_bar && self.config.pane.top_bar_gap {
-            OUTER_GAP
+        if self.config.pane.show_workbar && self.config.pane.workbar_gap {
+            if self.config.pane.workbar_at_bottom {
+                -OUTER_GAP
+            } else {
+                OUTER_GAP
+            }
         } else {
             0.0
         }

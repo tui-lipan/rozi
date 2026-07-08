@@ -17,9 +17,9 @@ use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
-use crate::state::TOP_BAR_HEIGHT;
+use crate::state::WORKBAR_HEIGHT;
 
-use bar::{empty_workspace_panel, top_bar};
+use bar::{empty_workspace_panel, workbar};
 use overlays::{
     appearance_overlay, help_overlay, palette_overlay, profile_picker_overlay, rename_overlay,
     rename_workspace_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
@@ -37,7 +37,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .is_some_and(|previous| previous != viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
     let bounds = ctx.state.canvas_bounds(viewport);
-    let top_chrome = ctx.state.top_chrome_height();
+    let top_offset = ctx.state.content_top_offset();
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let root_bounds = viewport_bounds(viewport);
@@ -115,7 +115,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let target_rect = if pane.fullscreen && !pane.closing {
             root_bounds
         } else {
-            canvas_rect_to_root(canvas_target_rect, top_chrome)
+            canvas_rect_to_root(canvas_target_rect, top_offset)
         };
         let config = app.transition_config_for(ctx, pane, viewport_changed);
         let animated_rect = ctx.transition(
@@ -137,7 +137,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let render_rect = if render_in_fullscreen_layer {
             animated_rect
         } else {
-            root_rect_to_canvas(animated_rect, top_chrome)
+            root_rect_to_canvas(animated_rect, top_offset)
         };
         // With merged borders, a tiled pane whose left column is a neighbor's right border must
         // keep its title row off that column, or the title background would cover the seam.
@@ -201,12 +201,18 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 
     let mut app_root =
         VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
-    if ctx.state.config.pane.show_top_bar {
-        app_root = app_root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
+    if ctx.state.config.pane.show_workbar {
+        let bar = workbar(ctx).height(Length::Px(WORKBAR_HEIGHT));
+        if ctx.state.config.pane.workbar_at_bottom {
+            app_root = app_root.child(canvas).child(bar);
+        } else {
+            app_root = app_root.child(bar).child(canvas);
+        }
+    } else {
+        app_root = app_root.child(canvas);
     }
-    app_root = app_root.child(canvas);
 
-    // The whole workspace layer (top bar, tiled/floating panes, fullscreen panes) dims as one
+    // The whole workspace layer (workbar, tiled/floating panes, fullscreen panes) dims as one
     // unit while a focused layer (the scratchpad or a modal dialog) is up; opacity blends its
     // text and borders toward the backdrop rather than hiding them. instant_transition: the
     // dim is already smoothed by the underlying progress transitions, so this just applies it
@@ -236,7 +242,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let mut scratch_canvas = Canvas::new().height(Length::Flex(1));
         for (rect, element) in scratch_scrim.into_iter().chain(scratch_pane) {
             scratch_canvas =
-                scratch_canvas.child_at(canvas_rect_to_root(rect, top_chrome).to_rect(), element);
+                scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
         let mut scratch_layer: Element = scratch_canvas.into();
         let scratch_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);

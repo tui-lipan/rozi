@@ -5,7 +5,7 @@ use crate::input::Action;
 use crate::state::Mode;
 use crate::{HyprmuxApp, Msg};
 
-pub(crate) fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
+pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> HStack {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let bar = &state.config.bar;

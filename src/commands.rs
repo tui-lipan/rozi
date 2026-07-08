@@ -332,21 +332,28 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::ToggleTitles,
-        label: "Pane titlebars",
+        label: "Titlebar",
         category: "App",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
-        action: Action::ToggleTopBar,
-        label: "Top bar",
+        action: Action::ToggleWorkbar,
+        label: "Workbar",
         category: "App",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
-        action: Action::ToggleTopBarGap,
-        label: "Top bar gap",
+        action: Action::ToggleWorkbarGap,
+        label: "Workbar gap",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::ToggleWorkbarPosition,
+        label: "Workbar position",
         category: "App",
         default_keys: &[],
         palette: false,
@@ -382,6 +389,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::CycleBorderStyle,
         label: "Border style",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CycleTitleStyle,
+        label: "Titlebar style",
         category: "App",
         default_keys: &[],
         palette: false,
@@ -682,12 +696,18 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             let enabled = state.workspaces[state.active_workspace].synchronized;
             enable_disable_label("pane synchronization", enabled)
         }
-        Action::ToggleTitles => {
-            enable_disable_label("pane titlebars", state.config.pane.show_titles)
+        Action::ToggleTitles => enable_disable_label("titlebar", state.config.pane.show_titles),
+        Action::ToggleWorkbar => enable_disable_label("workbar", state.config.pane.show_workbar),
+        Action::ToggleWorkbarGap => {
+            enable_disable_label("workbar gap", state.config.pane.workbar_gap)
         }
-        Action::ToggleTopBar => enable_disable_label("top bar", state.config.pane.show_top_bar),
-        Action::ToggleTopBarGap => {
-            enable_disable_label("top bar gap", state.config.pane.top_bar_gap)
+        Action::ToggleWorkbarPosition => {
+            let edge = if state.config.pane.workbar_at_bottom {
+                "top"
+            } else {
+                "bottom"
+            };
+            format!("Move workbar to {edge}")
         }
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
@@ -705,6 +725,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         }
         Action::CycleBorderStyle => {
             format!("Border style: {}", state.config.pane.border_style.label())
+        }
+        Action::CycleTitleStyle => {
+            format!("Titlebar style: {}", state.config.pane.title_style.label())
         }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => return None,
@@ -872,7 +895,7 @@ mod tests {
         assert!(is_palette_eligible("change-appearance"));
         assert!(!is_palette_eligible("choose-theme"));
         assert!(!is_palette_eligible("toggle-titles"));
-        assert!(!is_palette_eligible("toggle-top-bar"));
+        assert!(!is_palette_eligible("toggle-workbar"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));
         assert!(!is_palette_eligible("toggle-border-merge"));

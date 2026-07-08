@@ -18,7 +18,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
   (Hyprland dwindle), or switch to a master/stack layout per workspace.
 - **Floating & fullscreen panes** - toggle any pane to floating or fullscreen; move and
   resize floats with the mouse.
-- **9 workspaces** with a top-bar tab strip showing live pane counts.
+- **9 workspaces** with a workbar tab strip showing live pane counts.
 - **Animated geometry** - spawn, close, fullscreen, tile/float, and split-axis transitions,
   all individually configurable (size changes are snapped to avoid SIGWINCH spam).
 - **tmux-style prefix + held-modifier control** - `Ctrl-a` prefix that always works, plus an

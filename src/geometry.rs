@@ -32,12 +32,19 @@ pub fn empty_workspace_rect(bounds: FloatRect) -> FloatRect {
 }
 
 pub fn workspace_tile_bounds(bounds: FloatRect, gap: f32) -> FloatRect {
-    let top = gap.min(bounds.h / 2.0);
+    // A positive gap insets the top edge (workbar above the panes); a negative gap insets the
+    // bottom edge (workbar below the panes) so the empty gap row always lands next to the bar.
+    let inset = gap.abs().min(bounds.h / 2.0);
+    let y = if gap < 0.0 {
+        bounds.y
+    } else {
+        bounds.y + inset
+    };
     FloatRect {
         x: bounds.x,
-        y: bounds.y + top,
+        y,
         w: bounds.w.max(1.0),
-        h: (bounds.h - top).max(1.0),
+        h: (bounds.h - inset).max(1.0),
     }
 }
 
@@ -284,11 +291,11 @@ pub fn canvas_local_point_from_mouse(
     x: u16,
     y: u16,
     bounds: FloatRect,
-    top_chrome_height: u16,
+    top_offset: u16,
 ) -> (f32, f32) {
     (
         f32::from(x).clamp(bounds.x, bounds.x + bounds.w),
-        f32::from(y.saturating_sub(top_chrome_height)).clamp(bounds.y, bounds.y + bounds.h),
+        f32::from(y.saturating_sub(top_offset)).clamp(bounds.y, bounds.y + bounds.h),
     )
 }
 
@@ -583,6 +590,27 @@ mod tests {
                 y: 0.0,
                 w: 100.0,
                 h: 40.0,
+            }
+        );
+    }
+
+    #[test]
+    fn workspace_tile_bounds_insets_bottom_for_negative_gap() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 40.0,
+        };
+
+        // A negative gap (workbar at the bottom) keeps the top edge and shrinks from the bottom.
+        assert_eq!(
+            workspace_tile_bounds(bounds, -1.0),
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 39.0,
             }
         );
     }

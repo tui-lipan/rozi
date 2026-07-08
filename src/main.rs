@@ -631,7 +631,7 @@ impl HyprmuxApp {
         // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
         // palette and flips the hue mid-fade - e.g. an ANSI theme's `LightCyan` chrome
         // shows as true cyan while the focus animation runs but as the palette color at
-        // rest. Snapping keeps palette themes consistent (and matching the top bar).
+        // rest. Snapping keeps palette themes consistent (and matching the workbar).
         let config = if chrome_color_animates(target) {
             self.focus_chrome_transition_config()
         } else {

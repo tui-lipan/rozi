@@ -47,9 +47,11 @@ prefix = "ctrl-a"
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
-show_top_bar = true           # top bar with workspace tabs and mode chips (default: true)
-top_bar_gap = true            # 1-line gap between top bar and panes (default: true)
+show_workbar = true           # workbar with workspace tabs and mode chips (default: true)
+workbar_gap = true            # 1-line gap between workbar and panes (default: true)
+workbar_at_bottom = false     # draw the workbar below the panes (default: false)
 show_titles = true            # pane titlebars (default: true)
+title_style = "padded"        # titlebar end caps: padded|half|round|arrow (default: padded)
 
 [animations]
 enabled = true               # master switch (default: true)
@@ -134,9 +136,11 @@ Pane focus and chrome behavior.
 | --- | --- | --- |
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
-| `show_top_bar` | `true` | Show the top bar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
-| `top_bar_gap` | `true` | Show a 1-line gap between the top bar and the panes area. |
+| `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
+| `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
+| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the bar. The palette/appearance toggle writes this back to config. |
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
+| `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 
 ## `[animations]`
 
@@ -243,8 +247,8 @@ The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
 
 ## `[bar]`
 
-Customize the top bar. The default reproduces the original bar (the `hyprmux` badge then the
-workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_top_bar` is
+Customize the workbar. The default reproduces the original bar (the `hyprmux` badge then the
+workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_workbar` is
 enabled.
 
 | Key | Default | Notes |
@@ -312,8 +316,10 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
-`help`, `toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`,
-`toggle-highlight-focused-background`, `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
+`help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
+`toggle-focus-on-hover`,
+`toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
+`toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).
 
 `paste` (default `v`) reads the system clipboard and sends it to the focused pane's PTY, wrapped

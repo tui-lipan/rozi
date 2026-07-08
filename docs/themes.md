@@ -1,6 +1,6 @@
 # Themes
 
-`hyprmux` themes both its own chrome (top bar, borders, titlebars, overlays) and the ANSI
+`hyprmux` themes both its own chrome (workbar, borders, titlebars, overlays) and the ANSI
 color palette used to render terminal content. Themes come from `tui-lipan`'s `Theme` type:
 a built-in preset, the host-derived `system` theme, or a custom theme file.
 

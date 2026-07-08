@@ -11,7 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
-use crate::state::{PaneBorderStyle, ThemePreset};
+use crate::state::{PaneBorderStyle, PaneTitleStyle, ThemePreset};
 
 // === Config schema ===
 
@@ -136,10 +136,12 @@ pub struct HyprmuxPaneConfig {
     pub highlight_focused_border: bool,
     /// Whether moving the mouse over a pane focuses it.
     pub focus_on_hover: bool,
-    /// Whether the top bar (workspace tabs, mode chips, etc.) is shown.
-    pub show_top_bar: bool,
-    /// Whether there is a 1-line gap between the top bar and the panes area.
-    pub top_bar_gap: bool,
+    /// Whether the workbar (workspace tabs, mode chips, etc.) is shown.
+    pub show_workbar: bool,
+    /// Whether there is a 1-line gap between the workbar and the panes area.
+    pub workbar_gap: bool,
+    /// Whether the workbar is drawn on the last row (below the panes) instead of the first row.
+    pub workbar_at_bottom: bool,
     /// Whether tiled/floating panes render their titlebars.
     pub show_titles: bool,
     /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
@@ -147,6 +149,8 @@ pub struct HyprmuxPaneConfig {
     pub merge_borders: bool,
     /// App-wide border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
+    /// App-wide end-cap style for pane titlebars.
+    pub title_style: PaneTitleStyle,
 }
 
 impl Default for HyprmuxPaneConfig {
@@ -155,11 +159,13 @@ impl Default for HyprmuxPaneConfig {
             highlight_focused_background: false,
             highlight_focused_border: true,
             focus_on_hover: true,
-            show_top_bar: true,
-            top_bar_gap: true,
+            show_workbar: true,
+            workbar_gap: true,
+            workbar_at_bottom: false,
             show_titles: true,
             merge_borders: false,
             border_style: PaneBorderStyle::Rounded,
+            title_style: PaneTitleStyle::Padded,
         }
     }
 }
@@ -339,7 +345,7 @@ impl Default for HyprmuxConfig {
 /// Default refresh interval for a `command:` bar segment that doesn't specify one.
 pub const DEFAULT_BAR_COMMAND_INTERVAL_SECS: u64 = 60;
 
-/// One segment of the configurable top bar. `Workspaces` is the workspace tab strip;
+/// One segment of the configurable workbar. `Workspaces` is the workspace tab strip;
 /// `Session` is the live attach-connection badge (invisible until attached to a named session);
 /// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders;
 /// `Command` runs a shell command on a timer and shows the first line of its stdout.
@@ -542,11 +548,13 @@ struct PaneFileConfig {
     highlight_focused_background: Option<bool>,
     highlight_focused_border: Option<bool>,
     focus_on_hover: Option<bool>,
-    show_top_bar: Option<bool>,
-    top_bar_gap: Option<bool>,
+    show_workbar: Option<bool>,
+    workbar_gap: Option<bool>,
+    workbar_at_bottom: Option<bool>,
     show_titles: Option<bool>,
     merge_borders: Option<bool>,
     border_style: Option<String>,
+    title_style: Option<String>,
 }
 
 #[cfg(test)]
@@ -880,9 +888,11 @@ mod tests {
             highlight_focused_background = true
             highlight_focused_border = true
             focus_on_hover = false
-            show_top_bar = false
-            top_bar_gap = false
+            show_workbar = false
+            workbar_gap = false
+            workbar_at_bottom = true
             show_titles = false
+            title_style = "round"
             "#,
         )
         .expect("config parses");
@@ -890,9 +900,32 @@ mod tests {
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
-        assert_eq!(parsed.pane.show_top_bar, Some(false));
-        assert_eq!(parsed.pane.top_bar_gap, Some(false));
+        assert_eq!(parsed.pane.show_workbar, Some(false));
+        assert_eq!(parsed.pane.workbar_gap, Some(false));
+        assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
+        assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
+    }
+
+    #[test]
+    fn pane_title_style_parses_aliases_and_cycles() {
+        assert_eq!(
+            PaneTitleStyle::parse("padded"),
+            Some(PaneTitleStyle::Padded)
+        );
+        assert_eq!(
+            PaneTitleStyle::parse("Half Block"),
+            Some(PaneTitleStyle::Half)
+        );
+        assert_eq!(PaneTitleStyle::parse("pill"), Some(PaneTitleStyle::Round));
+        assert_eq!(
+            PaneTitleStyle::parse("powerline"),
+            Some(PaneTitleStyle::Arrow)
+        );
+        assert_eq!(PaneTitleStyle::parse("nonsense"), None);
+        assert_eq!(PaneTitleStyle::Padded.caps(), None);
+        assert!(PaneTitleStyle::Round.caps().is_some());
+        assert_eq!(PaneTitleStyle::Arrow.next(), PaneTitleStyle::Padded);
     }
 
     #[test]
@@ -907,8 +940,8 @@ mod tests {
 
     #[test]
     fn upsert_bool_in_section_appends_missing_section() {
-        let updated = upsert_bool_in_section("", "pane", "show_top_bar", true);
-        assert_eq!(updated, "[pane]\nshow_top_bar = true\n");
+        let updated = upsert_bool_in_section("", "pane", "show_workbar", true);
+        assert_eq!(updated, "[pane]\nshow_workbar = true\n");
     }
 
     #[test]
@@ -1176,11 +1209,14 @@ pub fn load_config() -> LoadedConfig {
     if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
         config.pane.focus_on_hover = focus_on_hover;
     }
-    if let Some(show_top_bar) = parsed.pane.show_top_bar {
-        config.pane.show_top_bar = show_top_bar;
+    if let Some(show_workbar) = parsed.pane.show_workbar {
+        config.pane.show_workbar = show_workbar;
     }
-    if let Some(top_bar_gap) = parsed.pane.top_bar_gap {
-        config.pane.top_bar_gap = top_bar_gap;
+    if let Some(workbar_gap) = parsed.pane.workbar_gap {
+        config.pane.workbar_gap = workbar_gap;
+    }
+    if let Some(workbar_at_bottom) = parsed.pane.workbar_at_bottom {
+        config.pane.workbar_at_bottom = workbar_at_bottom;
     }
     if let Some(show_titles) = parsed.pane.show_titles {
         config.pane.show_titles = show_titles;
@@ -1193,6 +1229,14 @@ pub fn load_config() -> LoadedConfig {
             Some(style) => config.pane.border_style = style,
             None => warnings.push(format!(
                 "Ignored unknown pane.border_style \"{border_style}\" (expected one of: rounded, plain, double, thick)"
+            )),
+        }
+    }
+    if let Some(title_style) = parsed.pane.title_style.as_deref() {
+        match PaneTitleStyle::parse(title_style) {
+            Some(style) => config.pane.title_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.title_style \"{title_style}\" (expected one of: padded, half, round, arrow)"
             )),
         }
     }

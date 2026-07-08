@@ -13,7 +13,7 @@ portable path because it does not depend on the terminal delivering modified key
 - A held modifier with the prefix is ignored; press the prefix *then* release, then the key.
 - `Ctrl-a` again (while in prefix mode) sends a **literal** `Ctrl-a` to the focused pane.
 - `Esc` cancels prefix mode. An unrecognized key is forwarded to the pane.
-- The top bar shows a yellow **PREFIX** indicator while you are in prefix mode.
+- The workbar shows a yellow **PREFIX** indicator while you are in prefix mode.
 
 ### 2. Held modifier (direct)
 
@@ -78,7 +78,7 @@ See [Layouts and panes](layouts-and-panes.md) for what each layout does. "Zoom" 
 
 ### Workspaces
 
-There are 9 workspaces. The top bar shows a tab per occupied workspace (at least 5), each
+There are 9 workspaces. The workbar shows a tab per occupied workspace (at least 5), each
 with a live pane count.
 
 | Command | Keys |
@@ -139,13 +139,13 @@ including the workspace digits and mouse gestures.
 ## Resize mode
 
 Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use `h/j/k/l` to
-adjust the focused pane's split ratios, and `Esc` to leave. The top bar shows a green
+adjust the focused pane's split ratios, and `Esc` to leave. The workbar shows a green
 **RESIZE hjkl Esc** indicator while active.
 
 ## Copy mode
 
 Press `[` (or run *Copy mode* from the palette) to enter **copy mode**: a keyboard-driven way
-to review scrollback and yank text without a mouse. The top bar shows a **COPY hjkl wbe 0$^ v y
+to review scrollback and yank text without a mouse. The workbar shows a **COPY hjkl wbe 0$^ v y
 Esc** indicator while active.
 
 | Key | Action |
@@ -186,7 +186,7 @@ shell's own mouse usage):
 | Click a pane / its titlebar | Focus that pane |
 | Scroll wheel over a pane | Scroll the terminal's scrollback |
 
-Workspace tabs in the top bar are also clickable to switch workspaces.
+Workspace tabs in the workbar are also clickable to switch workspaces.
 
 ## Overlays and modal keys
 

@@ -76,35 +76,47 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::AppearanceActivate(action) => {
-            match action {
-                crate::state::AppearanceAction::Theme => {
-                    execute_action(ctx, Action::OpenThemePicker);
-                }
-                crate::state::AppearanceAction::ToggleTitles => {
-                    execute_action(ctx, Action::ToggleTitles);
-                }
-                crate::state::AppearanceAction::ToggleTopBar => {
-                    execute_action(ctx, Action::ToggleTopBar);
-                }
-                crate::state::AppearanceAction::ToggleTopBarGap => {
-                    execute_action(ctx, Action::ToggleTopBarGap);
-                }
-                crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
-                    execute_action(ctx, Action::ToggleHighlightFocusedBackground);
-                }
-                crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
-                    execute_action(ctx, Action::ToggleHighlightFocusedBorder);
-                }
-                crate::state::AppearanceAction::ToggleBorderMerge => {
-                    execute_action(ctx, Action::ToggleBorderMerge);
-                }
-                crate::state::AppearanceAction::CycleBorderStyle => {
-                    execute_action(ctx, Action::CycleBorderStyle);
-                }
-            }
-            if !matches!(action, crate::state::AppearanceAction::Theme) {
-                ctx.state.show_appearance = true;
+            // A greyed row (its parent feature is off) is inert: keep the overlay open and focused
+            // but change nothing. Otherwise dispatch the row's underlying action.
+            if action.disabled_reason(&ctx.state.config.pane).is_some() {
                 ctx.request_focus(crate::view::appearance_palette_key());
+            } else {
+                match action {
+                    crate::state::AppearanceAction::Theme => {
+                        execute_action(ctx, Action::OpenThemePicker);
+                    }
+                    crate::state::AppearanceAction::ToggleTitles => {
+                        execute_action(ctx, Action::ToggleTitles);
+                    }
+                    crate::state::AppearanceAction::ToggleWorkbar => {
+                        execute_action(ctx, Action::ToggleWorkbar);
+                    }
+                    crate::state::AppearanceAction::ToggleWorkbarGap => {
+                        execute_action(ctx, Action::ToggleWorkbarGap);
+                    }
+                    crate::state::AppearanceAction::ToggleWorkbarPosition => {
+                        execute_action(ctx, Action::ToggleWorkbarPosition);
+                    }
+                    crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
+                        execute_action(ctx, Action::ToggleHighlightFocusedBackground);
+                    }
+                    crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
+                        execute_action(ctx, Action::ToggleHighlightFocusedBorder);
+                    }
+                    crate::state::AppearanceAction::ToggleBorderMerge => {
+                        execute_action(ctx, Action::ToggleBorderMerge);
+                    }
+                    crate::state::AppearanceAction::CycleBorderStyle => {
+                        execute_action(ctx, Action::CycleBorderStyle);
+                    }
+                    crate::state::AppearanceAction::CycleTitleStyle => {
+                        execute_action(ctx, Action::CycleTitleStyle);
+                    }
+                }
+                if !matches!(action, crate::state::AppearanceAction::Theme) {
+                    ctx.state.show_appearance = true;
+                    ctx.request_focus(crate::view::appearance_palette_key());
+                }
             }
             Update::full()
         }

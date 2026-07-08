@@ -305,7 +305,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     let bounds = state.canvas_bounds(viewport);
     let top_gap = state.workspace_top_gap();
     let tile_gap = state.tile_gap();
-    let drop_point = canvas_local_point_from_mouse(x, y, bounds, state.top_chrome_height());
+    let drop_point = canvas_local_point_from_mouse(x, y, bounds, state.content_top_offset());
     let target = {
         let workspace = &state.workspaces[state.active_workspace];
         let placements =

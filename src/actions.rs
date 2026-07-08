@@ -311,7 +311,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::CycleWorkbarBadgeStyle => {
-            let next = ctx.state.config.pane.workbar_badge_style.next();
+            let next = ctx.state.config.pane.workbar_badge_style.next_badge();
             ctx.state.config.pane.workbar_badge_style = next;
             if let Err(err) = crate::config::persist_pane_string("workbar_badge_style", next.id()) {
                 ctx.toast().push(crate::pty_events::error_toast(

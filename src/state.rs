@@ -238,6 +238,17 @@ impl CapStyle {
         all[(index + 1) % all.len()]
     }
 
+    /// Cycle order for `Action::CycleWorkbarBadgeStyle`—same as [`all`] except `Half` is excluded.
+    pub fn badge_styles() -> &'static [CapStyle] {
+        &[Self::Padded, Self::Round, Self::Arrow]
+    }
+
+    pub fn next_badge(self) -> Self {
+        let all = Self::badge_styles();
+        let index = all.iter().position(|style| *style == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
+    }
+
     /// The (left, right) cap glyphs, or `None` for `Padded` (blank side padding, no glyphs). The
     /// caps paint in the titlebar color over the backdrop, so a left cap fills toward its right
     /// and a right cap toward its left.

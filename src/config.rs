@@ -1239,9 +1239,12 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(workbar_badge_style) = parsed.pane.workbar_badge_style.as_deref() {
         match CapStyle::parse(workbar_badge_style) {
+            Some(CapStyle::Half) => warnings.push(format!(
+                "Ignored pane.workbar_badge_style \"{workbar_badge_style}\" (half block is not available for workbar badges)"
+            )),
             Some(style) => config.pane.workbar_badge_style = style,
             None => warnings.push(format!(
-                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, half, round, arrow)"
+                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow)"
             )),
         }
     }

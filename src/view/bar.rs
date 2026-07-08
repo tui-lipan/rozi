@@ -93,8 +93,9 @@ enum BadgeCap {
 
 /// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with an optional powerline
 /// end cap. The cap is drawn in the badge color over the panel background so the chip reads as a
-/// rounded/pointed pill; without a cap the chip is the plain flush block. The cap shares the
-/// badge's own sub-stack (gap 0) so the surrounding `gap(1)` row spacing stays outside the pill.
+/// rounded/pointed pill; without a cap the chip is the plain flush block. Every element sizes to
+/// content (`Length::Auto`) so a chip only ever occupies its own width - stacks default to
+/// `Flex(1)`, which would otherwise let a capped chip swallow the whole bar and break placement.
 fn workbar_badge(
     label: &str,
     text_fg: Color,
@@ -103,16 +104,29 @@ fn workbar_badge(
     cap: Option<&'static str>,
     side: BadgeCap,
 ) -> Element {
-    let body = Text::new(label.to_string())
-        .style(Style::new().fg(text_fg).bg(badge_bg).bold())
-        .height(Length::Px(1));
+    let body_style = Style::new().fg(text_fg).bg(badge_bg).bold();
     let Some(glyph) = cap else {
-        return body.into();
+        // Padded: a plain flush block that keeps the label's blank side padding.
+        return Text::new(label.to_string())
+            .style(body_style)
+            .width(Length::Auto)
+            .height(Length::Px(1))
+            .into();
     };
+    // Capped: the cap stands in for the padding on its side, so drop that padding space.
+    let label = match side {
+        BadgeCap::Left => label.strip_prefix(' ').unwrap_or(label),
+        BadgeCap::Right => label.strip_suffix(' ').unwrap_or(label),
+    };
+    let body = Text::new(label.to_string())
+        .style(body_style)
+        .width(Length::Auto)
+        .height(Length::Px(1));
     let cap_el = Text::new(glyph)
         .style(Style::new().fg(badge_bg).bg(panel_bg))
+        .width(Length::Px(1))
         .height(Length::Px(1));
-    let row = HStack::new().height(Length::Px(1));
+    let row = HStack::new().width(Length::Auto).height(Length::Px(1));
     match side {
         BadgeCap::Left => row.child(cap_el).child(body),
         BadgeCap::Right => row.child(body).child(cap_el),

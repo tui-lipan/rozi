@@ -85,7 +85,8 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         if !text.is_empty() {
             match ctx.clipboard().copy(&text) {
                 Ok(()) => {
-                    ctx.toast().push(crate::pty_events::info_toast("Copied"));
+                    ctx.toast()
+                        .push(crate::pty_events::info_toast(&ctx.state.theme, "Copied"));
                 }
                 Err(err) => {
                     ctx.toast().push(crate::pty_events::error_toast(

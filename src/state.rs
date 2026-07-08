@@ -499,6 +499,12 @@ pub enum PendingDestructive {
     KillSession,
 }
 
+pub struct PendingDestructiveConfirmation {
+    pub action: PendingDestructive,
+    pub armed_at: Instant,
+    pub toast_id: OverlayId,
+}
+
 impl SessionPickerState {
     pub fn new(entries: Vec<DiscoveredSession>) -> Self {
         Self {
@@ -730,9 +736,9 @@ pub struct State {
     pub session_name: Option<String>,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
-    /// A destructive action armed by its first press, with the arm time; the second press only
-    /// fires while the arm time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
-    pub pending_destructive: Option<(PendingDestructive, Instant)>,
+    /// A destructive action armed by its first press; the second press only fires while the arm
+    /// time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
+    pub pending_destructive: Option<PendingDestructiveConfirmation>,
     pub last_pushed_layout: Option<String>,
     /// Cached first-line stdout for each configured `BarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run

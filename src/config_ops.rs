@@ -143,8 +143,10 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
     }
     if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        ctx.toast()
-            .push(crate::pty_events::info_toast("Config reloaded"));
+        ctx.toast().push(crate::pty_events::info_toast(
+            &ctx.state.theme,
+            "Config reloaded",
+        ));
     }
 
     if start_theme_tick || start_bar_tick || !new_bar_commands.is_empty() {

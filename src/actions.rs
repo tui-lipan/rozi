@@ -97,6 +97,18 @@ fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
 }
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+    execute_action_inner(ctx, action, true)
+}
+
+pub(crate) fn execute_palette_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+    execute_action_inner(ctx, action, false)
+}
+
+fn execute_action_inner(
+    ctx: &mut Context<HyprmuxApp>,
+    action: Action,
+    confirmations_enabled: bool,
+) -> Update {
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
     // `Msg::RunAction` path and control-socket `RunAction` requests
@@ -104,7 +116,9 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
     ctx.state.commands_dirty = true;
     match action {
         Action::Spawn => spawn_pane(ctx),
-        Action::Close => crate::exit_ops::close_focused_pane(ctx),
+        Action::Close => {
+            crate::exit_ops::close_focused_pane_with_confirmation(ctx, confirmations_enabled)
+        }
         Action::Focus(direction) => {
             let viewport = ctx.viewport();
             if let Some(id) = focus_in_direction(&mut ctx.state, direction, viewport) {
@@ -184,8 +198,12 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
         Action::Quit => crate::exit_ops::quit_client(ctx),
-        Action::KillWorkspace => crate::exit_ops::kill_workspace(ctx),
-        Action::KillSession => crate::exit_ops::kill_session(ctx),
+        Action::KillWorkspace => {
+            crate::exit_ops::kill_workspace_with_confirmation(ctx, confirmations_enabled)
+        }
+        Action::KillSession => {
+            crate::exit_ops::kill_session_with_confirmation(ctx, confirmations_enabled)
+        }
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenAppearance => {
             ctx.state.show_appearance = true;
@@ -279,12 +297,10 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
                 workspace.synchronized = !workspace.synchronized;
                 workspace.synchronized
             };
-            ctx.toast()
-                .push(crate::pty_events::info_toast(if synchronized {
-                    "Sync on"
-                } else {
-                    "Sync off"
-                }));
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                if synchronized { "Sync on" } else { "Sync off" },
+            ));
             Update::full()
         }
     }

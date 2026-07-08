@@ -248,7 +248,8 @@ impl Component for HyprmuxApp {
         commands::sync(ctx);
 
         for message in std::mem::take(&mut self.startup_messages) {
-            ctx.toast().push(pty_events::info_toast(message));
+            ctx.toast()
+                .push(pty_events::info_toast(&ctx.state.theme, message));
         }
 
         if let Some(path) =

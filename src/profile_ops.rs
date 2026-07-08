@@ -48,8 +48,10 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     let profile = profile_from_state(&ctx.state);
     match save_profile(&path, &profile) {
         Ok(()) => {
-            ctx.toast()
-                .push(info_toast(format!("Saved profile `{name}`")));
+            ctx.toast().push(info_toast(
+                &ctx.state.theme,
+                format!("Saved profile `{name}`"),
+            ));
         }
         Err(message) => {
             ctx.toast()
@@ -134,8 +136,10 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
-            ctx.toast()
-                .push(info_toast(format!("Default profile `{}`", entry.name)));
+            ctx.toast().push(info_toast(
+                &ctx.state.theme,
+                format!("Default profile `{}`", entry.name),
+            ));
         }
         Err(message) => {
             ctx.toast().push(error_toast(
@@ -183,7 +187,8 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
                 match clear_default_profile(&name) {
                     Ok(Some(_)) => {
                         ctx.state.config.profile.default = None;
-                        ctx.toast().push(info_toast("Cleared startup default"));
+                        ctx.toast()
+                            .push(info_toast(&ctx.state.theme, "Cleared startup default"));
                     }
                     Ok(None) => {}
                     Err(message) => {
@@ -196,8 +201,10 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
                 }
             }
             refresh_profile_picker_entries(ctx);
-            ctx.toast()
-                .push(info_toast(format!("Deleted profile `{name}`")));
+            ctx.toast().push(info_toast(
+                &ctx.state.theme,
+                format!("Deleted profile `{name}`"),
+            ));
         }
         Err(message) => {
             ctx.toast()
@@ -250,8 +257,10 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
     theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast()
-        .push(info_toast(format!("Loaded profile `{}`", entry.name)));
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Loaded profile `{}`", entry.name),
+    ));
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     // The theme-tick, bar-tick, and bar-command loops started at app launch are

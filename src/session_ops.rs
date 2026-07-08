@@ -65,7 +65,8 @@ fn discovered_with_current(
 
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     if !ctx.state.session_attached {
-        ctx.toast().push(info_toast("Not attached to a session"));
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
         return Update::full();
     }
     if let Some(client) = ctx.state.session_client.clone() {
@@ -95,8 +96,10 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast()
-        .push(info_toast("Detached (session still running)"));
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        "Detached (session still running)",
+    ));
     Update::with_command(pane_lifecycle::initial_command(
         startup_spawns(&mut ctx.state),
         false,
@@ -117,12 +120,15 @@ pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String
         return Update::full();
     }
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(name.as_str()) {
-        ctx.toast()
-            .push(info_toast(format!("Already attached to `{name}`")));
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Already attached to `{name}`"),
+        ));
         return Update::full();
     }
     if ctx.state.pending_session_attach.is_some() {
-        ctx.toast().push(info_toast("Attach already in progress"));
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
     }
     if let Some(client) = ctx.state.session_client.clone() {
@@ -187,10 +193,10 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     if picker.pending_kill != Some(index) {
         picker.pending_kill = Some(index);
-        ctx.toast().push(info_toast(format!(
-            "Press Ctrl+K again to kill `{}`",
-            entry.name
-        )));
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Press Ctrl+K again to kill `{}`", entry.name),
+        ));
         return Update::full();
     }
     picker.pending_kill = None;
@@ -205,8 +211,10 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
     match shutdown_session(&entry.name) {
         Ok(()) => {
-            ctx.toast()
-                .push(info_toast(format!("Killed session `{}`", entry.name)));
+            ctx.toast().push(info_toast(
+                &ctx.state.theme,
+                format!("Killed session `{}`", entry.name),
+            ));
             refresh_session_picker(ctx)
         }
         Err(err) => {

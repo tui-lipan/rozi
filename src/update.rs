@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::actions::execute_action;
+use crate::actions::{execute_action, execute_palette_action};
 use crate::anim::GeometryAnimation;
 use crate::focus_ops::{
     focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
@@ -33,10 +33,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::RunAction(action) => {
             let cycle_layout_in_palette =
                 matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
+            let from_palette = ctx.state.show_palette;
             if !cycle_layout_in_palette {
                 ctx.state.show_palette = false;
             }
-            let update = execute_action(ctx, action);
+            let update = if from_palette {
+                execute_palette_action(ctx, action)
+            } else {
+                execute_action(ctx, action)
+            };
             match action {
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
@@ -501,6 +506,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             apply_attached_panes(ctx, panes, restore_layout);
             if !had_panes && pending.migrate_local_panes {
                 ctx.toast().push(crate::pty_events::info_toast(
+                    &ctx.state.theme,
                     "Attached; local panes moved to session",
                 ));
                 spawn_existing_panes_on_session(ctx);
@@ -792,6 +798,7 @@ fn replace_with_fresh_server_state(ctx: &mut Context<HyprmuxApp>, epoch: u64) {
     ctx.state = fresh;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast().push(crate::pty_events::info_toast(
+        &ctx.state.theme,
         "Attached; opened a fresh pane",
     ));
 }

@@ -8,20 +8,24 @@ use crate::pane::PaneEventOutcome;
 use crate::pane_lifecycle::{begin_close_pane, find_pane_mut};
 use crate::state::PaneId;
 
-pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
+pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
+        .frame_style(toast_frame_style(theme.status.info))
+        .title_style(toast_text_style(theme).bold())
+        .message_style(toast_text_style(theme))
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
         .padding((0, 0, 0, 0))
 }
 
-/// Toast for an armed destructive action: error-colored text, visible for exactly the confirm
+/// Toast for an armed destructive action: error-colored chrome, visible for exactly the confirm
 /// window so its dismissal coincides with the pending action expiring.
 pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(crate::exit_ops::CONFIRM_WINDOW_SECS)
-        .message_style(Style::new().fg(theme.status.error))
+        .frame_style(toast_frame_style(theme.status.error))
+        .message_style(toast_text_style(theme))
         .padding((0, 0, 0, 0))
 }
 
@@ -34,11 +38,20 @@ pub(crate) fn error_toast(
         .title(Some(title.into()))
         .duration(6.0)
         .border(true)
-        .frame_style(Style::new().fg(theme.status.error))
-        .title_style(Style::new().fg(theme.status.error).bold())
+        .frame_style(toast_frame_style(theme.status.error))
+        .title_style(toast_text_style(theme).bold())
+        .message_style(toast_text_style(theme))
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
         .padding((0, 0, 0, 0))
+}
+
+fn toast_frame_style(accent: Color) -> Style {
+    Style::new().fg(accent)
+}
+
+fn toast_text_style(theme: &Theme) -> Style {
+    crate::theme_ops::style_fg(theme.primary).map_or_else(Style::new, |text| Style::new().fg(text))
 }
 
 pub(crate) fn forward_key_to_pane(
@@ -182,8 +195,10 @@ pub(crate) fn handle_pty_event(
             maybe_notify_pane_exit(&ctx.state.config, id, code);
             // A clean exit closes the pane on its own; only a failure code is worth surfacing.
             if code != 0 {
-                ctx.toast()
-                    .push(info_toast(format!("Pane {id} exited ({code})")));
+                ctx.toast().push(info_toast(
+                    &ctx.state.theme,
+                    format!("Pane {id} exited ({code})"),
+                ));
             }
             begin_close_pane(ctx, id, ctx.state.config.animations)
         }

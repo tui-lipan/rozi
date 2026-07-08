@@ -13,7 +13,7 @@ pub(crate) fn top_bar(ctx: &Context<HyprmuxApp>) -> HStack {
     let mut row = HStack::new()
         .gap(1)
         .height(Length::Px(1))
-        .style(Style::new().bg(theme.surface.backdrop));
+        .style(Style::new().bg(theme.surface.panel));
 
     for segment in &bar.left {
         if let Some(element) = bar_segment_element(ctx, segment) {
@@ -231,7 +231,7 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         .tab_hover_style(
             Style::new()
                 .fg(theme.surface.menu)
-                .bg(theme.surface.element),
+                .bg(theme.surface.panel.elevate(0.08)),
         )
         .on_change(
             ctx.link()

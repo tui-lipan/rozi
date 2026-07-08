@@ -69,8 +69,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         if dialog_open { 1.0 } else { 0.0 },
         app.scratch_transition_config(),
     );
-    // Panes dim for whichever focused layer is most deployed; the dims never compound.
-    let pane_dim = crate::scratchpad::backdrop_dim(scratch_progress.max(dialog_dim_progress));
+    // The workspace layer dims for whichever focused layer is most deployed; the dims never
+    // compound.
+    let workspace_dim = crate::scratchpad::backdrop_dim(scratch_progress.max(dialog_dim_progress));
     let mut canvas = Canvas::new()
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
@@ -161,7 +162,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 && settled,
             left_seam,
         };
-        let mut element = pane_element(
+        let element = pane_element(
             app,
             ctx,
             pane,
@@ -170,15 +171,6 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             &display_number,
             merge,
         );
-        // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
-        // while a focused layer is up. instant_transition: `pane_dim` is already smoothed by the
-        // underlying progress transitions, so this just applies it without re-easing.
-        if pane_dim < 1.0 {
-            element = Animated::new(element)
-                .opacity(pane_dim)
-                .transition(crate::anim::instant_transition())
-                .into();
-        }
         if render_in_fullscreen_layer {
             has_fullscreen_layer = true;
             fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);
@@ -207,27 +199,54 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 
-    // A transparent catcher swallows clicks meant for the dimmed panes and dismisses the
-    // scratchpad when clicked; the dropdown then slides up from the bottom above everything.
-    if let Some((rect, element)) = crate::scratchpad::scratch_backdrop(ctx, scratch_progress) {
-        canvas = canvas.child_at(rect.to_rect(), element);
-    }
-    if let Some((rect, element)) = crate::scratchpad::scratch_placement(app, ctx, scratch_progress)
-    {
-        canvas = canvas.child_at(rect.to_rect(), element);
-    }
-
     let mut app_root =
         VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
     if ctx.state.config.pane.show_top_bar {
         app_root = app_root.child(top_bar(ctx).height(Length::Px(TOP_BAR_HEIGHT)));
     }
     app_root = app_root.child(canvas);
+
+    // The whole workspace layer (top bar, tiled/floating panes, fullscreen panes) dims as one
+    // unit while a focused layer (the scratchpad or a modal dialog) is up; opacity blends its
+    // text and borders toward the backdrop rather than hiding them. instant_transition: the
+    // dim is already smoothed by the underlying progress transitions, so this just applies it
+    // without re-easing.
+    let mut workspace_stack = ZStack::new().child(app_root);
+    if has_fullscreen_layer {
+        workspace_stack = workspace_stack.child(fullscreen_layer);
+    }
+    let mut workspace_layer: Element = workspace_stack.into();
+    if workspace_dim < 1.0 {
+        workspace_layer = Animated::new(workspace_layer)
+            .opacity(workspace_dim)
+            .transition(crate::anim::instant_transition())
+            .into();
+    }
     let mut root = ZStack::new()
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
-        .child(app_root);
-    if has_fullscreen_layer {
-        root = root.child(fullscreen_layer);
+        .child(workspace_layer);
+
+    // The scratchpad renders above the dimmed workspace: a transparent catcher swallows clicks
+    // meant for the dimmed panes and dismisses the scratchpad when clicked; the dropdown slides
+    // up from the bottom. Modal dialogs stack above the scratchpad, so it dims by the dialog
+    // progress alone (its own progress dims only the workspace beneath it).
+    let scratch_scrim = crate::scratchpad::scratch_backdrop(ctx, scratch_progress);
+    let scratch_pane = crate::scratchpad::scratch_placement(app, ctx, scratch_progress);
+    if scratch_scrim.is_some() || scratch_pane.is_some() {
+        let mut scratch_canvas = Canvas::new().height(Length::Flex(1));
+        for (rect, element) in scratch_scrim.into_iter().chain(scratch_pane) {
+            scratch_canvas =
+                scratch_canvas.child_at(canvas_rect_to_root(rect, top_chrome).to_rect(), element);
+        }
+        let mut scratch_layer: Element = scratch_canvas.into();
+        let scratch_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);
+        if scratch_dim < 1.0 {
+            scratch_layer = Animated::new(scratch_layer)
+                .opacity(scratch_dim)
+                .transition(crate::anim::instant_transition())
+                .into();
+        }
+        root = root.child(scratch_layer);
     }
 
     // Overlays portal to the root regardless of where they are attached.

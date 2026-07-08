@@ -161,8 +161,8 @@ pub(crate) fn scratch_backdrop(
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     // A transparent full-canvas catcher: it swallows clicks meant for the dimmed panes and
     // dismisses the scratchpad when clicked. It paints nothing - an opaque scrim would occlude
-    // the panes' text and borders, so the "focused layer" cue is the panes dimming instead
-    // (see `scratch_dim`, applied to each pane in `view::render`).
+    // the panes' text and borders, so the "focused layer" cue is the workspace layer dimming
+    // instead (see `backdrop_dim`, applied in `view::render`).
     let region: Element = MouseRegion::new()
         .capture_click(true)
         .on_mouse_down(
@@ -174,18 +174,18 @@ pub(crate) fn scratch_backdrop(
     Some((bounds, region.key("hyprmux-scratch-scrim")))
 }
 
-/// Opacity multiplier for the workspace panes while a focused layer (the scratchpad, or a
-/// modal dialog) is up. Dimming the panes toward the backdrop - rather than overlaying an
-/// opaque layer - signals the focused layer while keeping the panes' text legible, and tracks
-/// the animation `progress` so the dim eases in and out with it. `progress` is `0.0` (no dim)
-/// to `1.0` (fully deployed/open).
+/// Opacity multiplier for a layer sitting under a focused layer (the scratchpad, or a modal
+/// dialog). Dimming toward the backdrop - rather than overlaying an opaque layer - signals
+/// the focused layer while keeping the dimmed content legible, and tracks the animation
+/// `progress` so the dim eases in and out with it. `progress` is `0.0` (no dim) to `1.0`
+/// (fully deployed/open).
 pub(crate) fn backdrop_dim(progress: f32) -> f32 {
     1.0 - 0.5 * progress.clamp(0.0, 1.0)
 }
 
-/// The placement and element for the scratchpad, to be added on top of the workspace canvas.
-/// `progress` drives the slide; the pane stays mounted while it animates back down on hide,
-/// and is dropped once fully retracted.
+/// The placement (in canvas coordinates) and element for the scratchpad, rendered above the
+/// workspace layer. `progress` drives the slide; the pane stays mounted while it animates
+/// back down on hide, and is dropped once fully retracted.
 pub(crate) fn scratch_placement(
     app: &HyprmuxApp,
     ctx: &Context<HyprmuxApp>,

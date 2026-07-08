@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{LayoutKind, Pane, PaneId, Workspace};
+use crate::state::{LayoutKind, Pane, PaneId, TileGap, Workspace};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
@@ -353,30 +353,60 @@ pub(crate) fn tiled_resize_strips(
         .collect();
 
     let gap = ctx.state.tile_gap();
-    // Grab at least one cell so a merged seam (a single shared column/row) stays draggable.
+    let (vertical_strips, horizontal_strips) = resize_strip_hitboxes(&tiled, gap, master);
+
+    let mut strips = Vec::new();
+    for strip in &vertical_strips {
+        strips.push((strip.rect, resize_strip_element(ctx, strip.pane_id, true)));
+    }
+    for strip in &horizontal_strips {
+        strips.push((strip.rect, resize_strip_element(ctx, strip.pane_id, false)));
+    }
+    for vertical in &vertical_strips {
+        for horizontal in &horizontal_strips {
+            if let Some(rect) = intersect_rect(
+                vertical.junction_probe_rect(true),
+                horizontal.junction_probe_rect(false),
+            ) {
+                strips.push((
+                    rect,
+                    resize_junction_element(ctx, vertical.pane_id, horizontal.pane_id),
+                ));
+            }
+        }
+    }
+    strips
+}
+
+fn resize_strip_hitboxes(
+    tiled: &[(PaneId, FloatRect)],
+    gap: TileGap,
+    master: bool,
+) -> (Vec<ResizeStripHitbox>, Vec<ResizeStripHitbox>) {
+    // Include both neighboring border cells plus the gap between them. Merged borders overlap by
+    // one cell, so this naturally collapses back to a one-cell shared seam.
     let h_gap = gap.horizontal;
     let v_gap = gap.vertical;
-    let h_thickness = h_gap.max(1.0);
-    let v_thickness = v_gap.max(1.0);
     let eps = 1.5;
-    let mut strips = Vec::new();
-    for (a_id, a) in &tiled {
-        for (_b_id, b) in &tiled {
+    let mut vertical_strips = Vec::new();
+    let mut horizontal_strips = Vec::new();
+    for (a_id, a) in tiled {
+        for (_b_id, b) in tiled {
             // Vertical boundary → horizontal (left|right) split. `a` is the left pane.
             let a_right = a.x + a.w;
             if (b.x - (a_right + h_gap)).abs() < eps {
                 let y0 = a.y.max(b.y);
                 let y1 = (a.y + a.h).min(b.y + b.h);
                 if y1 - y0 > eps {
-                    strips.push((
-                        FloatRect {
-                            x: a_right + h_gap / 2.0 - h_thickness / 2.0,
+                    vertical_strips.push(ResizeStripHitbox {
+                        rect: FloatRect {
+                            x: a_right - 1.0,
                             y: y0,
-                            w: h_thickness,
+                            w: (b.x - a_right + 2.0).max(1.0),
                             h: y1 - y0,
                         },
-                        resize_strip_element(ctx, *a_id, true),
-                    ));
+                        pane_id: *a_id,
+                    });
                 }
             }
             // Horizontal boundary → vertical (top|bottom) split. Not adjustable in master.
@@ -386,21 +416,60 @@ pub(crate) fn tiled_resize_strips(
                     let x0 = a.x.max(b.x);
                     let x1 = (a.x + a.w).min(b.x + b.w);
                     if x1 - x0 > eps {
-                        strips.push((
-                            FloatRect {
+                        horizontal_strips.push(ResizeStripHitbox {
+                            rect: FloatRect {
                                 x: x0,
-                                y: a_bottom + v_gap / 2.0 - v_thickness / 2.0,
+                                y: a_bottom - 1.0,
                                 w: x1 - x0,
-                                h: v_thickness,
+                                h: (b.y - a_bottom + 2.0).max(1.0),
                             },
-                            resize_strip_element(ctx, *a_id, false),
-                        ));
+                            pane_id: *a_id,
+                        });
                     }
                 }
             }
         }
     }
-    strips
+    (vertical_strips, horizontal_strips)
+}
+
+#[derive(Clone, Copy)]
+struct ResizeStripHitbox {
+    rect: FloatRect,
+    pane_id: PaneId,
+}
+
+impl ResizeStripHitbox {
+    fn junction_probe_rect(self, vertical: bool) -> FloatRect {
+        if vertical {
+            FloatRect {
+                x: self.rect.x,
+                y: self.rect.y - 1.0,
+                w: self.rect.w,
+                h: self.rect.h + 2.0,
+            }
+        } else {
+            FloatRect {
+                x: self.rect.x - 1.0,
+                y: self.rect.y,
+                w: self.rect.w + 2.0,
+                h: self.rect.h,
+            }
+        }
+    }
+}
+
+fn intersect_rect(a: FloatRect, b: FloatRect) -> Option<FloatRect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.w).min(b.x + b.w);
+    let y1 = (a.y + a.h).min(b.y + b.h);
+    (x1 > x0 && y1 > y0).then_some(FloatRect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    })
 }
 
 fn resize_strip_element(
@@ -414,6 +483,68 @@ fn resize_strip_element(
         }))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
+}
+
+fn resize_junction_element(ctx: &Context<HyprmuxApp>, left_id: PaneId, top_id: PaneId) -> Element {
+    MouseRegion::new()
+        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::ResizeSplitJunction(left_id, top_id, event.delta_x, event.delta_y)
+        }))
+        .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
+        .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {
+        FloatRect { x, y, w, h }
+    }
+
+    #[test]
+    fn resize_strips_cover_both_borders_and_gap() {
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(11.0, 0.0, 10.0, 10.0)),
+        ];
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+
+        assert!(horizontal.is_empty());
+        assert_eq!(vertical.len(), 1);
+        assert_eq!(vertical[0].rect, rect(9.0, 0.0, 3.0, 10.0));
+    }
+
+    #[test]
+    fn stacked_resize_strips_cover_both_touching_borders() {
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(0.0, 10.0, 10.0, 10.0)),
+        ];
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+
+        assert!(vertical.is_empty());
+        assert_eq!(horizontal.len(), 1);
+        assert_eq!(horizontal[0].rect, rect(0.0, 9.0, 10.0, 2.0));
+    }
+
+    #[test]
+    fn resize_strip_junction_is_the_overlap_of_perpendicular_strips() {
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(11.0, 0.0, 10.0, 10.0)),
+            (3, rect(0.0, 10.0, 10.0, 10.0)),
+            (4, rect(11.0, 10.0, 10.0, 10.0)),
+        ];
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+        let junction = intersect_rect(
+            vertical[0].junction_probe_rect(true),
+            horizontal[0].junction_probe_rect(false),
+        )
+        .unwrap();
+
+        assert_eq!(junction, rect(9.0, 9.0, 2.0, 2.0));
+    }
 }
 
 /// Controlled selection for the copy-mode target pane. With no anchor it highlights just the

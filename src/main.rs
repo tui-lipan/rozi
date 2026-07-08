@@ -147,6 +147,8 @@ pub enum Msg {
     EndResize(PaneId),
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
     ResizeSplit(PaneId, bool, i16, i16),
+    /// Drag a tiled split junction: (left pane, top pane, dx, dy).
+    ResizeSplitJunction(PaneId, PaneId, i16, i16),
     FinishOpen(u64, PaneId, u64),
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),

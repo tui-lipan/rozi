@@ -268,6 +268,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ResizeSplit(id, horizontal_split, dx, dy) => {
             crate::resize_move_ops::resize_split_by_drag(ctx, id, horizontal_split, dx, dy)
         }
+        Msg::ResizeSplitJunction(left_id, top_id, dx, dy) => {
+            crate::resize_move_ops::resize_split_junction_by_drag(ctx, left_id, top_id, dx, dy)
+        }
         Msg::FinishOpen(epoch, id, generation) => {
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();

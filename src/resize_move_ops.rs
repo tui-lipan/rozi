@@ -756,6 +756,22 @@ pub(crate) fn resize_split_by_drag(
     Update::full()
 }
 
+pub(crate) fn resize_split_junction_by_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    left_id: PaneId,
+    top_id: PaneId,
+    dx: i16,
+    dy: i16,
+) -> Update {
+    let horizontal = resize_split_by_drag(ctx, left_id, true, dx, 0);
+    let vertical = resize_split_by_drag(ctx, top_id, false, 0, dy);
+    if !horizontal.dirty && !vertical.dirty {
+        Update::none()
+    } else {
+        Update::full()
+    }
+}
+
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let Some(focused) = ctx.state.focused_pane else {
         return;

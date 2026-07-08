@@ -1,10 +1,90 @@
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
+use notify::Watcher;
 use tui_lipan::prelude::*;
 
 use crate::pane_lifecycle::spawn_pane_in_workspace;
 use crate::state::{PaneIdentity, ThemePreset};
 use crate::{HyprmuxApp, Msg};
+
+/// Watches the config file's directory and requests a live reload when `hyprmux.toml` changes
+/// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
+/// that save via write-to-temp + rename; hyprmux's own persistence writes are filtered out in
+/// the `Msg::ConfigFileChanged` handler by comparing against the last text this process read
+/// or wrote. Fire-and-forget for the life of the app, like the bar-command pollers.
+pub(crate) fn spawn_config_watcher(link: &CommandLink<Msg>) {
+    let link = link.clone();
+    std::thread::spawn(move || {
+        let path = crate::config::config_path();
+        let Some(dir) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+        else {
+            return;
+        };
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let Ok(mut watcher) = notify::recommended_watcher(event_tx) else {
+            return;
+        };
+        if watcher
+            .watch(&dir, notify::RecursiveMode::NonRecursive)
+            .is_err()
+        {
+            return;
+        }
+
+        loop {
+            let event = match event_rx.recv() {
+                Ok(Ok(event)) => event,
+                Ok(Err(_)) => continue,
+                Err(_) => return,
+            };
+            if !event_touches_config(&event, &path) {
+                continue;
+            }
+            // Editors save in bursts (create + data + rename events); coalesce them into one
+            // reload by draining until the events go quiet.
+            loop {
+                match event_rx.recv_timeout(Duration::from_millis(150)) {
+                    Ok(_) => {}
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            link.send(Msg::ConfigFileChanged);
+        }
+    });
+}
+
+fn event_touches_config(event: &notify::Event, target: &std::path::Path) -> bool {
+    use notify::EventKind;
+    if !matches!(
+        event.kind,
+        EventKind::Any | EventKind::Create(_) | EventKind::Modify(_)
+    ) {
+        return false;
+    }
+    let Some(target_name) = target.file_name() else {
+        return false;
+    };
+    event
+        .paths
+        .iter()
+        .any(|path| path.file_name().is_some_and(|name| name == target_name))
+}
+
+/// Handles a config-watcher wakeup: reloads only when the file content actually differs from
+/// what hyprmux last read or wrote, so self-persistence and no-op saves stay silent.
+pub(crate) fn config_file_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !crate::config::config_text_changed_on_disk() {
+        return Update::none();
+    }
+    // A reload can change `[keys]` bindings and user commands; resync the palette.
+    ctx.state.commands_dirty = true;
+    reload_config(ctx)
+}
 
 /// Re-reads `hyprmux.toml` and applies it live: config fields, keymap/user commands, theme
 /// (including switching the theme file watcher), and pane chrome - the same result a restart

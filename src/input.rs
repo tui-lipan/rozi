@@ -46,7 +46,6 @@ pub enum Action {
     ToggleBorderMerge,
     CycleBorderStyle,
     TogglePaneSynchronization,
-    ReloadConfig,
     OpenConfigFile,
     /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
     /// `crate::config::build_key_overrides`), so - like workspace digits - it has no static id
@@ -111,7 +110,6 @@ impl Action {
             Action::ToggleBorderMerge => "toggle-border-merge",
             Action::CycleBorderStyle => "cycle-border-style",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
-            Action::ReloadConfig => "reload-config",
             Action::OpenConfigFile => "open-config",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
@@ -177,7 +175,6 @@ impl Action {
             "toggle-border-merge" => Action::ToggleBorderMerge,
             "cycle-border-style" => Action::CycleBorderStyle,
             "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
-            "reload-config" => Action::ReloadConfig,
             "open-config" => Action::OpenConfigFile,
             _ => return None,
         })

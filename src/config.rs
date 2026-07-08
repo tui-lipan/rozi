@@ -3,6 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -1092,6 +1093,21 @@ struct AnimationFileConfig {
     open_delay_ms: Option<u64>,
 }
 
+/// The config text most recently read or written by this process. Lets the live-reload
+/// watcher distinguish external edits from hyprmux's own persistence writes (theme selection,
+/// appearance toggles, default profile) and skip event bursts that left the content unchanged.
+static LAST_SEEN_CONFIG: Mutex<Option<String>> = Mutex::new(None);
+
+fn note_config_text(text: Option<String>) {
+    *LAST_SEEN_CONFIG.lock().unwrap() = text;
+}
+
+/// True when the on-disk config no longer matches the text hyprmux last read or wrote.
+pub fn config_text_changed_on_disk() -> bool {
+    let current = std::fs::read_to_string(config_path()).ok();
+    *LAST_SEEN_CONFIG.lock().unwrap() != current
+}
+
 pub fn load_config() -> LoadedConfig {
     let path = config_path();
     let mut warnings = Vec::new();
@@ -1100,13 +1116,16 @@ pub fn load_config() -> LoadedConfig {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            note_config_text(None);
             return LoadedConfig { config, warnings };
         }
         Err(err) => {
+            note_config_text(None);
             warnings.push(format!("Config read failed for {}: {err}", path.display()));
             return LoadedConfig { config, warnings };
         }
     };
+    note_config_text(Some(text.clone()));
 
     let parsed = match toml::from_str::<FileConfig>(&text) {
         Ok(parsed) => parsed,
@@ -1329,15 +1348,9 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
     }
 }
 
-pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
-    let path = config_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
-    };
-
-    let updated = upsert_theme_name(&text, name);
+/// Writes an updated config text, creating the config directory when needed, and records the
+/// text as last-seen so the live-reload watcher does not treat our own write as an edit.
+fn write_config_text(path: &Path, updated: String) -> std::result::Result<(), String> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1349,8 +1362,22 @@ pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
             )
         })?;
     }
-    fs::write(&path, updated)
+    fs::write(path, &updated)
         .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    note_config_text(Some(updated));
+    Ok(())
+}
+
+pub fn persist_theme_name(name: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_theme_name(&text, name);
+    write_config_text(&path, updated)?;
     Ok(path)
 }
 
@@ -1410,19 +1437,7 @@ pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf,
     };
 
     let updated = upsert_bool_in_section(&text, "pane", key, value);
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "Could not create config directory {}: {err}",
-                parent.display()
-            )
-        })?;
-    }
-    fs::write(&path, updated)
-        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    write_config_text(&path, updated)?;
     Ok(path)
 }
 
@@ -1435,19 +1450,7 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
     };
 
     let updated = upsert_value_in_section(&text, "pane", key, &format!("\"{value}\""));
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "Could not create config directory {}: {err}",
-                parent.display()
-            )
-        })?;
-    }
-    fs::write(&path, updated)
-        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    write_config_text(&path, updated)?;
     Ok(path)
 }
 
@@ -1543,19 +1546,7 @@ pub fn persist_default_profile(name: &str) -> std::result::Result<PathBuf, Strin
     };
 
     let updated = upsert_default_profile(&text, name);
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "Could not create config directory {}: {err}",
-                parent.display()
-            )
-        })?;
-    }
-    fs::write(&path, updated)
-        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    write_config_text(&path, updated)?;
     Ok(path)
 }
 
@@ -1591,19 +1582,7 @@ pub fn clear_default_profile(name: &str) -> std::result::Result<Option<PathBuf>,
         return Ok(None);
     }
 
-    if let Some(parent) = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent).map_err(|err| {
-            format!(
-                "Could not create config directory {}: {err}",
-                parent.display()
-            )
-        })?;
-    }
-    fs::write(&path, updated)
-        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    write_config_text(&path, updated)?;
     Ok(Some(path))
 }
 

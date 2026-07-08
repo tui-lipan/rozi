@@ -111,6 +111,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PreviewTheme(index) => preview_theme(ctx, index),
         Msg::SelectTheme(index) => select_theme(ctx, index),
         Msg::ThemeTick => theme_tick(ctx),
+        Msg::ConfigFileChanged => crate::config_ops::config_file_changed(ctx),
         Msg::BarTick => {
             // Repaint for the clock, then reschedule only while a clock segment is configured.
             if ctx.state.config.bar.has_clock() {

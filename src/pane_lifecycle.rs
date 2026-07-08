@@ -278,15 +278,8 @@ pub(crate) fn initial_command(
     bar_commands: Vec<(String, u64)>,
     control_listener: Option<std::os::unix::net::UnixListener>,
 ) -> Option<Command> {
-    if spawns.is_empty()
-        && !theme_tick
-        && !bar_tick
-        && bar_commands.is_empty()
-        && control_listener.is_none()
-    {
-        return None;
-    }
     Some(Command::spawn(move |link: CommandLink<Msg>| {
+        crate::config_ops::spawn_config_watcher(&link);
         if let Some(listener) = control_listener {
             let listener_link = link.clone();
             std::thread::spawn(move || crate::control::run_listener(listener, listener_link));

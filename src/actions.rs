@@ -97,10 +97,10 @@ fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
 }
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
-    // Any action can flip a dynamic label (a toggle, layout cycling), the `commands_active`
-    // gate (mode/overlay changes), or - for `ReloadConfig` - the shortcuts themselves. Marking
-    // dirty unconditionally here covers both the `Msg::RunAction` path and control-socket
-    // `RunAction` requests (`control_ops::run_action`), which call this directly.
+    // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
+    // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
+    // `Msg::RunAction` path and control-socket `RunAction` requests
+    // (`control_ops::run_action`), which call this directly.
     ctx.state.commands_dirty = true;
     match action {
         Action::Spawn => spawn_pane(ctx),
@@ -272,7 +272,6 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
-        Action::ReloadConfig => crate::config_ops::reload_config(ctx),
         Action::OpenConfigFile => crate::config_ops::open_config_file(ctx),
         Action::TogglePaneSynchronization => {
             let synchronized = {

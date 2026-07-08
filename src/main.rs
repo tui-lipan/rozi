@@ -107,6 +107,8 @@ pub enum Msg {
     SelectTheme(usize),
     ThemeTick,
     BarTick,
+    /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
+    ConfigFileChanged,
     /// A `BarSegment::Command` poller produced fresh output: (command string, first output line).
     BarCommandOutput(String, String),
     ThemeError(String),
@@ -282,6 +284,7 @@ impl Component for HyprmuxApp {
                 migrate_local_panes: true,
             });
             return Some(Command::spawn(move |link: CommandLink<Msg>| {
+                config_ops::spawn_config_watcher(&link);
                 if let Some(listener) = control_listener {
                     let listener_link = link.clone();
                     std::thread::spawn(move || {

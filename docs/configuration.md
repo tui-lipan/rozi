@@ -15,20 +15,18 @@ defaults and reports the problem as a startup toast.
 On startup a toast reports `Loaded config from <path>` on success, or a warning if the file
 could not be read or parsed.
 
-### Reloading and editing
+### Live reload and editing
 
-Two command-palette entries avoid a restart after hand-editing the file:
+hyprmux watches the config file and applies every save live - config fields, `[keys]`
+bindings/user commands, theme (including switching which file the theme watcher follows), and
+bar segments - without touching running panes, workspaces, or the active session. A parse
+failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
+save again. Changes hyprmux persists itself (theme selection, appearance toggles, the default
+profile) are already applied and don't trigger a reload.
 
-- **Open config file** (`open-config`) opens it in `$EDITOR` (falling back to `$VISUAL`, then
-  `vi`) in a new pane.
-- **Reload config** (`reload-config`) re-reads the file and applies it live - config fields,
-  `[keys]` bindings/user commands, theme (including switching which file the theme watcher
-  follows), and bar segments - without touching running panes, workspaces, or the active
-  session. A parse failure reloads to defaults and reports it as a toast, same as at startup;
-  fix the file and reload again.
-
-Both are ordinary actions, so they also work as `hyprmux run-action reload-config` /
-`hyprmux run-action open-config` over the control socket (see `docs/control.md`).
+The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
+(falling back to `$VISUAL`, then `vi`) in a new pane. It is an ordinary action, so it also
+works as `hyprmux run-action open-config` over the control socket (see `docs/control.md`).
 
 ## Full example
 
@@ -310,8 +308,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `save-profile`, `open-profile`, `sessions`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-top-bar`, `toggle-focus-on-hover`,
-`toggle-highlight-focused-background`, `toggle-pane-synchronization`, `reload-config`,
-`open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
+`toggle-highlight-focused-background`, `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).
 
 `paste` (default `v`) reads the system clipboard and sends it to the focused pane's PTY, wrapped

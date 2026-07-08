@@ -394,13 +394,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::ReloadConfig,
-        label: "Reload config",
-        category: "App",
-        default_keys: &[],
-        palette: true,
-    },
-    BuiltinCommand {
         action: Action::OpenConfigFile,
         label: "Open config file",
         category: "App",

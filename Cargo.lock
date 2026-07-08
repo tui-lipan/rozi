@@ -793,6 +793,7 @@ name = "hyprmux"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "notify",
  "serde",
  "serde_json",
  "toml",

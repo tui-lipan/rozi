@@ -41,6 +41,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
                 Action::RenameWorkspace => request_rename_workspace_focus(ctx),
+                Action::OpenAppearance => {}
                 Action::OpenThemePicker => {}
                 Action::SaveProfile | Action::OpenProfilePicker | Action::OpenSessionPicker => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
@@ -61,6 +62,42 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ctx.state.show_help = false;
             ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Msg::CloseAppearance => {
+            ctx.state.show_appearance = false;
+            ctx.state.commands_dirty = true;
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Msg::AppearanceActivate(action) => {
+            match action {
+                crate::state::AppearanceAction::Theme => {
+                    execute_action(ctx, Action::OpenThemePicker);
+                }
+                crate::state::AppearanceAction::ToggleTitles => {
+                    execute_action(ctx, Action::ToggleTitles);
+                }
+                crate::state::AppearanceAction::ToggleTopBar => {
+                    execute_action(ctx, Action::ToggleTopBar);
+                }
+                crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
+                    execute_action(ctx, Action::ToggleHighlightFocusedBackground);
+                }
+                crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
+                    execute_action(ctx, Action::ToggleHighlightFocusedBorder);
+                }
+                crate::state::AppearanceAction::ToggleBorderMerge => {
+                    execute_action(ctx, Action::ToggleBorderMerge);
+                }
+                crate::state::AppearanceAction::CycleBorderStyle => {
+                    execute_action(ctx, Action::CycleBorderStyle);
+                }
+            }
+            if !matches!(action, crate::state::AppearanceAction::Theme) {
+                ctx.state.show_appearance = true;
+                ctx.request_focus(crate::view::appearance_palette_key());
+            }
             Update::full()
         }
         Msg::CloseThemePicker => {

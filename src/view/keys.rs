@@ -44,6 +44,10 @@ pub fn palette_key() -> &'static str {
     "hyprmux-command-palette"
 }
 
+pub fn appearance_palette_key() -> &'static str {
+    "hyprmux-appearance-palette"
+}
+
 pub fn help_scroll_key() -> &'static str {
     "hyprmux-help-scroll"
 }

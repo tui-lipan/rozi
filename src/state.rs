@@ -223,6 +223,17 @@ pub enum SplitDragKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppearanceAction {
+    Theme,
+    ToggleTitles,
+    ToggleTopBar,
+    ToggleHighlightFocusedBackground,
+    ToggleHighlightFocusedBorder,
+    ToggleBorderMerge,
+    CycleBorderStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MoveSwapHint {
     pub pane: PaneId,
     pub return_direction: Direction,
@@ -694,6 +705,7 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     pub show_palette: bool,
     pub show_help: bool,
+    pub show_appearance: bool,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
     pub theme: Theme,
@@ -773,6 +785,7 @@ impl State {
             last_viewport: Cell::new(None),
             show_palette: false,
             show_help: false,
+            show_appearance: false,
             show_theme_picker: false,
             theme_picker_preview: None,
             theme,

@@ -98,6 +98,8 @@ pub enum Msg {
     RunAction(Action),
     ClosePalette,
     CloseHelp,
+    CloseAppearance,
+    AppearanceActivate(crate::state::AppearanceAction),
     CloseThemePicker,
     /// Index into [`config::theme_choices`]: preview the highlighted theme.
     PreviewTheme(usize),

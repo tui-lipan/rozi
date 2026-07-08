@@ -5,13 +5,15 @@ use tui_lipan::prelude::*;
 use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::state::{
-    ProfilePickerState, ScrollbackMatch, ScrollbackSearchState, SessionPickerState,
+    AppearanceAction, ProfilePickerState, ScrollbackMatch, ScrollbackSearchState,
+    SessionPickerState,
 };
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    help_scroll_key, palette_key, profile_picker_key, rename_input_key, rename_workspace_input_key,
-    save_profile_key, search_input_key, session_picker_key, theme_picker_key,
+    appearance_palette_key, help_scroll_key, palette_key, profile_picker_key, rename_input_key,
+    rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
+    theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, fg_only, modal_scrollbar_config,
@@ -685,7 +687,10 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             continue;
         }
         let category = entry.category.as_deref().unwrap_or("Other").to_string();
-        let mut item = SearchEntry::item(entry.label.to_string(), entry.handler.clone());
+        let mut item = SearchEntry::Item(
+            SearchItem::new(entry.label.to_string(), entry.handler.clone())
+                .aliases(command_palette_aliases(entry.id.as_str())),
+        );
         let hint = entry.keybinding_hint.as_deref().unwrap_or("");
         if !hint.is_empty() {
             item = item.description(ItemDescription::new().right(hint.to_string()));
@@ -707,6 +712,99 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::ClosePalette))
         .child(action_palette_frame(palette))
         .key(palette_key())
+}
+
+fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
+    match id {
+        "change-appearance" => [
+            "theme",
+            "themes",
+            "appearance",
+            "style",
+            "chrome",
+            "border",
+            "borders",
+            "titlebar",
+            "titlebars",
+            "top bar",
+            "focused border",
+            "focused background",
+        ]
+        .into_iter()
+        .map(Arc::from)
+        .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let entries = vec![
+        appearance_entry("Theme", current_theme_label(ctx), AppearanceAction::Theme),
+        appearance_entry(
+            "Pane titlebars",
+            enabled_status(ctx.state.config.pane.show_titles),
+            AppearanceAction::ToggleTitles,
+        ),
+        appearance_entry(
+            "Top bar",
+            enabled_status(ctx.state.config.pane.show_top_bar),
+            AppearanceAction::ToggleTopBar,
+        ),
+        appearance_entry(
+            "Focused pane background",
+            enabled_status(ctx.state.config.pane.highlight_focused_background),
+            AppearanceAction::ToggleHighlightFocusedBackground,
+        ),
+        appearance_entry(
+            "Focused pane border",
+            enabled_status(ctx.state.config.pane.highlight_focused_border),
+            AppearanceAction::ToggleHighlightFocusedBorder,
+        ),
+        appearance_entry(
+            "Border merging",
+            enabled_status(ctx.state.config.pane.merge_borders),
+            AppearanceAction::ToggleBorderMerge,
+        ),
+        appearance_entry(
+            "Border style",
+            ctx.state.config.pane.border_style.label().to_string(),
+            AppearanceAction::CycleBorderStyle,
+        ),
+    ];
+
+    let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, true)
+        .entries(entries)
+        .placeholder("Search appearance…")
+        .description_placement(DescriptionPlacement::Right)
+        .on_activate(ctx.link().callback(|event: SearchEvent<AppearanceAction>| {
+            Msg::AppearanceActivate(event.item.value)
+        }));
+
+    action_palette_modal(ctx, "Change appearance")
+        .on_close(ctx.link().callback(|_| Msg::CloseAppearance))
+        .child(action_palette_frame(palette))
+        .key(appearance_palette_key())
+}
+
+fn appearance_entry(
+    label: impl Into<Arc<str>>,
+    status: String,
+    action: AppearanceAction,
+) -> SearchEntry<AppearanceAction> {
+    SearchEntry::item(label, action).description(ItemDescription::new().right(status))
+}
+
+fn enabled_status(enabled: bool) -> String {
+    if enabled { "Enabled" } else { "Disabled" }.to_string()
+}
+
+fn current_theme_label(ctx: &Context<HyprmuxApp>) -> String {
+    let current = &ctx.state.config.theme.name;
+    crate::config::theme_choices()
+        .into_iter()
+        .find(|choice| &choice.id() == current)
+        .map(|choice| choice.label())
+        .unwrap_or_else(|| current.clone())
 }
 
 fn action_search_palette(
@@ -759,7 +857,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .callback(|event: SearchEvent<usize>| Msg::SelectTheme(event.item.value)),
         );
 
-    action_palette_modal(ctx, "Choose theme")
+    action_palette_modal(ctx, "Change theme")
         .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
         .child(action_palette_frame(palette))
         .key(theme_picker_key())

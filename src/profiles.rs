@@ -204,6 +204,7 @@ pub fn restore_state_from_profile(
         last_viewport: std::cell::Cell::new(None),
         show_palette: false,
         show_help: false,
+        show_appearance: false,
         show_theme_picker: false,
         theme_picker_preview: None,
         theme,

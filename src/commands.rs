@@ -274,14 +274,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::OpenProfilePicker,
-        label: "Show profiles",
+        label: "Profiles…",
         category: "Profile",
         default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
         action: Action::OpenSessionPicker,
-        label: "Show sessions",
+        label: "Sessions…",
         category: "Session",
         default_keys: &[],
         palette: true,
@@ -318,8 +318,15 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::OpenThemePicker,
-        label: "Choose theme",
+        label: "Change theme",
         category: "Theme",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::OpenAppearance,
+        label: "Change appearance…",
+        category: "App",
         default_keys: &[],
         palette: true,
     },
@@ -328,14 +335,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Pane titlebars",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleTopBar,
         label: "Top bar",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleFocusOnHover,
@@ -349,28 +356,28 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Focused pane background",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleHighlightFocusedBorder,
         label: "Focused pane border",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleBorderMerge,
         label: "Merge pane borders",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::CycleBorderStyle,
         label: "Border style",
         category: "App",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::TogglePalette,
@@ -412,6 +419,7 @@ pub(crate) fn commands_active(state: &State) -> bool {
     state.mode == Mode::Normal
         && !state.show_help
         && !state.show_palette
+        && !state.show_appearance
         && !state.show_theme_picker
         && state.search.is_none()
         && state.rename.is_none()
@@ -696,7 +704,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             format!("Border style: {}", state.config.pane.border_style.label())
         }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
-        Action::ToggleHelp => enable_disable_label("keybindings", state.show_help),
+        Action::ToggleHelp => return None,
         Action::TogglePalette => enable_disable_label("command palette", state.show_palette),
         _ => return None,
     })
@@ -843,6 +851,10 @@ mod tests {
 
         state.show_palette = true;
         assert!(!commands_active(&state));
+        state.show_palette = false;
+
+        state.show_appearance = true;
+        assert!(!commands_active(&state));
     }
 
     #[test]
@@ -850,6 +862,18 @@ mod tests {
         assert!(!is_palette_eligible("workspace.switch.1"));
         assert!(!is_palette_eligible("spawn"));
         assert!(is_palette_eligible("save-profile"));
+    }
+
+    #[test]
+    fn appearance_settings_are_grouped_behind_change_appearance() {
+        assert!(is_palette_eligible("change-appearance"));
+        assert!(!is_palette_eligible("choose-theme"));
+        assert!(!is_palette_eligible("toggle-titles"));
+        assert!(!is_palette_eligible("toggle-top-bar"));
+        assert!(!is_palette_eligible("toggle-highlight-focused-background"));
+        assert!(!is_palette_eligible("toggle-highlight-focused-border"));
+        assert!(!is_palette_eligible("toggle-border-merge"));
+        assert!(!is_palette_eligible("cycle-border-style"));
     }
 
     #[test]

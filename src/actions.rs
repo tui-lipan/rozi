@@ -187,10 +187,20 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
         Action::KillWorkspace => crate::exit_ops::kill_workspace(ctx),
         Action::KillSession => crate::exit_ops::kill_session(ctx),
         Action::OpenThemePicker => open_theme_picker(ctx),
+        Action::OpenAppearance => {
+            ctx.state.show_appearance = true;
+            ctx.state.show_palette = false;
+            ctx.state.show_help = false;
+            ctx.state.show_theme_picker = false;
+            ctx.state.commands_dirty = true;
+            ctx.request_focus(crate::view::appearance_palette_key());
+            Update::full()
+        }
         Action::TogglePalette => {
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {
                 ctx.state.show_help = false;
+                ctx.state.show_appearance = false;
                 request_palette_focus(ctx);
             }
             Update::full()
@@ -199,6 +209,7 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             ctx.state.show_help = !ctx.state.show_help;
             if ctx.state.show_help {
                 ctx.state.show_palette = false;
+                ctx.state.show_appearance = false;
             }
             Update::full()
         }

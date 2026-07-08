@@ -43,6 +43,7 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_theme_picker = true;
     ctx.state.show_help = false;
     ctx.state.show_palette = false;
+    ctx.state.show_appearance = false;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
     request_theme_picker_focus(ctx);

@@ -13,7 +13,7 @@ pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
         .duration(3.0)
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
-        .padding((0, 1, 0, 0))
+        .padding((0, 0, 0, 0))
 }
 
 pub(crate) fn error_toast(
@@ -29,7 +29,7 @@ pub(crate) fn error_toast(
         .title_style(Style::new().fg(theme.status.error).bold())
         .copyable(true)
         .copy_affordance(ToastCopyAffordance::None)
-        .padding((0, 1, 0, 0))
+        .padding((0, 0, 0, 0))
 }
 
 pub(crate) fn forward_key_to_pane(

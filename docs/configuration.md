@@ -78,6 +78,11 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 enabled = false              # desktop notifications are opt-in (default: false)
 pane_exit = true             # notify on natural pane process exits when enabled
 
+[confirm]
+close_pane = false           # confirm closing a pane with a live process (default: false)
+kill_workspace = true        # confirm killing all panes on a workspace (default: true)
+kill_session = true          # confirm shutting down the attached session (default: true)
+
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
@@ -195,6 +200,18 @@ Failures are ignored and never block the UI.
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
 | `pane_exit` | `true` | Notify when a pane's process exits naturally. |
+
+## `[confirm]`
+
+Which destructive actions require a confirming second press. An armed confirmation shows a
+red toast and expires with it (3 seconds); after that, the next press arms again instead of
+firing.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `close_pane` | `false` | Confirm closing a pane whose process is still running. |
+| `kill_workspace` | `true` | Confirm closing every pane on the active workspace. |
+| `kill_session` | `true` | Confirm shutting down the attached named session. |
 
 ## `[session]`
 

@@ -16,6 +16,15 @@ pub(crate) fn info_toast(message: impl Into<String>) -> Toast {
         .padding((0, 0, 0, 0))
 }
 
+/// Toast for an armed destructive action: error-colored text, visible for exactly the confirm
+/// window so its dismissal coincides with the pending action expiring.
+pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
+    Toast::new(message.into())
+        .duration(crate::exit_ops::CONFIRM_WINDOW_SECS)
+        .message_style(Style::new().fg(theme.status.error))
+        .padding((0, 0, 0, 0))
+}
+
 pub(crate) fn error_toast(
     theme: &Theme,
     title: impl Into<String>,

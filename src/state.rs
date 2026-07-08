@@ -729,7 +729,9 @@ pub struct State {
     pub session_name: Option<String>,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
-    pub pending_destructive: Option<PendingDestructive>,
+    /// A destructive action armed by its first press, with the arm time; the second press only
+    /// fires while the arm time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
+    pub pending_destructive: Option<(PendingDestructive, Instant)>,
     pub last_pushed_layout: Option<String>,
     /// Cached first-line stdout for each configured `BarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run

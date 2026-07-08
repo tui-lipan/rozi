@@ -38,7 +38,7 @@ disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); b
 | Command | Keys |
 | --- | --- |
 | New shell pane | `Enter` or `c` |
-| Close focused pane | `w` or `x` (confirm again if the shell is still running) |
+| Close focused pane | `w` or `x` (press twice if `[confirm] close_pane` is enabled) |
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
@@ -108,8 +108,8 @@ Names are saved with profiles and session autosave.
 | --- | --- | --- |
 | Detach | `d` | Attached: leave the session and return to a fresh local client (server keeps running). Local: save the live layout unconditionally, then exit the client. |
 | Quit client | *(palette only)* | Exit this UI. Attached: server keeps running. Local: saves only when `[session] autosave` is enabled. |
-| Kill workspace | `q` | Close every pane on the active workspace (press twice to confirm). |
-| Kill session | *(palette only)* | Shut down the attached named session and exit (press twice to confirm). |
+| Kill workspace | `q` | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). |
+| Kill session | *(palette only)* | Shut down the attached named session and exit (press twice to confirm; see `[confirm]`). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.

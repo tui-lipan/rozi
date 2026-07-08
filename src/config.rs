@@ -186,6 +186,27 @@ impl Default for HyprmuxNotificationsConfig {
     }
 }
 
+/// Which destructive actions require a confirming second press within the confirm window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HyprmuxConfirmConfig {
+    /// Confirm before closing a pane whose process is still running.
+    pub close_pane: bool,
+    /// Confirm before killing every pane on the active workspace.
+    pub kill_workspace: bool,
+    /// Confirm before shutting down the attached session server.
+    pub kill_session: bool,
+}
+
+impl Default for HyprmuxConfirmConfig {
+    fn default() -> Self {
+        Self {
+            close_pane: false,
+            kill_workspace: true,
+            kill_session: true,
+        }
+    }
+}
+
 /// Default fraction of the viewport height the dropdown scratchpad occupies.
 pub const SCRATCHPAD_DEFAULT_HEIGHT: f32 = 0.4;
 pub const SCRATCHPAD_MIN_HEIGHT: f32 = 0.1;
@@ -223,6 +244,7 @@ pub struct HyprmuxConfig {
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
     pub notifications: HyprmuxNotificationsConfig,
+    pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
@@ -301,6 +323,7 @@ impl Default for HyprmuxConfig {
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
             notifications: HyprmuxNotificationsConfig::default(),
+            confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),
             key_overrides: HashMap::new(),
@@ -439,6 +462,7 @@ struct FileConfig {
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
     notifications: NotificationsFileConfig,
+    confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
     bar: BarFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
@@ -469,6 +493,14 @@ impl KeyBindingSpec {
 struct UserCommandTableSpec {
     run: Option<String>,
     send: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ConfirmFileConfig {
+    close_pane: Option<bool>,
+    kill_workspace: Option<bool>,
+    kill_session: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -515,6 +547,27 @@ struct PaneFileConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirm_section_overrides_defaults() {
+        let defaults = HyprmuxConfirmConfig::default();
+        assert!(!defaults.close_pane);
+        assert!(defaults.kill_workspace);
+        assert!(defaults.kill_session);
+
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [confirm]
+            close_pane = true
+            kill_workspace = false
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.confirm.close_pane, Some(true));
+        assert_eq!(parsed.confirm.kill_workspace, Some(false));
+        assert_eq!(parsed.confirm.kill_session, None);
+    }
 
     #[test]
     fn key_overrides_parse_native_bindings_and_warn_on_unknown_action() {
@@ -1123,6 +1176,15 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(pane_exit) = parsed.notifications.pane_exit {
         config.notifications.pane_exit = pane_exit;
+    }
+    if let Some(close_pane) = parsed.confirm.close_pane {
+        config.confirm.close_pane = close_pane;
+    }
+    if let Some(kill_workspace) = parsed.confirm.kill_workspace {
+        config.confirm.kill_workspace = kill_workspace;
+    }
+    if let Some(kill_session) = parsed.confirm.kill_session {
+        config.confirm.kill_session = kill_session;
     }
 
     config.scratchpad.command = non_empty(parsed.scratchpad.command);

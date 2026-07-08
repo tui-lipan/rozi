@@ -131,6 +131,8 @@ pub struct HyprmuxPaneConfig {
     /// Whether the focused pane uses the theme's panel background instead of the normal
     /// workspace backdrop. Disabled by default so hover focus does not repaint terminal bg.
     pub highlight_focused_background: bool,
+    /// Whether the focused pane uses the theme's active border color instead of the normal border.
+    pub highlight_focused_border: bool,
     /// Whether moving the mouse over a pane focuses it.
     pub focus_on_hover: bool,
     /// Whether the top bar (workspace tabs, mode chips, etc.) is shown.
@@ -148,6 +150,7 @@ impl Default for HyprmuxPaneConfig {
     fn default() -> Self {
         Self {
             highlight_focused_background: false,
+            highlight_focused_border: true,
             focus_on_hover: true,
             show_top_bar: true,
             show_titles: true,
@@ -501,6 +504,7 @@ struct SessionFileConfig {
 #[serde(default)]
 struct PaneFileConfig {
     highlight_focused_background: Option<bool>,
+    highlight_focused_border: Option<bool>,
     focus_on_hover: Option<bool>,
     show_top_bar: Option<bool>,
     show_titles: Option<bool>,
@@ -816,6 +820,7 @@ mod tests {
             r#"
             [pane]
             highlight_focused_background = true
+            highlight_focused_border = true
             focus_on_hover = false
             show_top_bar = false
             show_titles = false
@@ -824,6 +829,7 @@ mod tests {
         .expect("config parses");
 
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
+        assert_eq!(parsed.pane.highlight_focused_border, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
         assert_eq!(parsed.pane.show_top_bar, Some(false));
         assert_eq!(parsed.pane.show_titles, Some(false));
@@ -1085,6 +1091,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
         config.pane.highlight_focused_background = highlight_focused_background;
+    }
+    if let Some(highlight_focused_border) = parsed.pane.highlight_focused_border {
+        config.pane.highlight_focused_border = highlight_focused_border;
     }
     if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
         config.pane.focus_on_hover = focus_on_hover;

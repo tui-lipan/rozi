@@ -228,6 +228,16 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             apply_terminal_palette_to_state(&mut ctx.state);
             Update::full()
         }
+        Action::ToggleHighlightFocusedBorder => {
+            ctx.state.config.pane.highlight_focused_border =
+                !ctx.state.config.pane.highlight_focused_border;
+            persist_pane_toggle(
+                ctx,
+                "highlight_focused_border",
+                ctx.state.config.pane.highlight_focused_border,
+            );
+            Update::full()
+        }
         Action::ToggleBorderMerge => {
             ctx.state.config.pane.merge_borders = !ctx.state.config.pane.merge_borders;
             persist_pane_toggle(ctx, "merge_borders", ctx.state.config.pane.merge_borders);

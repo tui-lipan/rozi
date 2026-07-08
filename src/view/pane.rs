@@ -58,11 +58,11 @@ pub(crate) fn pane_element(
         ctx,
         pane.id,
         "frame-fg",
-        if focused {
-            crate::theme_ops::pane_frame_foreground(theme, true)
-        } else {
-            crate::theme_ops::pane_frame_foreground(theme, false)
-        },
+        crate::theme_ops::pane_frame_foreground(
+            theme,
+            focused,
+            ctx.state.config.pane.highlight_focused_border,
+        ),
     );
     let frame_bg = app.chrome_color(
         ctx,

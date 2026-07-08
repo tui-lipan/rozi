@@ -188,8 +188,12 @@ pub(crate) fn pane_frame_background(
     }
 }
 
-pub(crate) fn pane_frame_foreground(theme: &Theme, focused: bool) -> Color {
-    if focused {
+pub(crate) fn pane_frame_foreground(
+    theme: &Theme,
+    focused: bool,
+    highlight_focused_border: bool,
+) -> Color {
+    if focused && highlight_focused_border {
         return theme.border_active;
     }
 
@@ -411,10 +415,24 @@ mod tests {
     #[test]
     fn ansi_inactive_chrome_is_visible_on_black_surfaces() {
         let theme = ThemePreset::Ansi.theme();
-        assert_ne!(pane_frame_foreground(&theme, false), Color::Black);
+        assert_ne!(pane_frame_foreground(&theme, false, false), Color::Black);
         assert_ne!(
             pane_title_foreground(&theme, false, theme.surface.element),
             Color::Black
+        );
+    }
+
+    #[test]
+    fn focused_border_highlight_is_opt_in() {
+        let theme = ThemePreset::OneDark.theme();
+
+        assert_eq!(
+            pane_frame_foreground(&theme, true, false),
+            pane_frame_foreground(&theme, false, false)
+        );
+        assert_eq!(
+            pane_frame_foreground(&theme, true, true),
+            theme.border_active
         );
     }
 
@@ -425,7 +443,7 @@ mod tests {
         theme.muted = Style::new().fg(Color::Black);
         theme.primary = Style::new().fg(Color::Gray).bg(Color::Black);
 
-        assert_eq!(pane_frame_foreground(&theme, false), Color::Gray);
+        assert_eq!(pane_frame_foreground(&theme, false, false), Color::Gray);
         assert_eq!(
             pane_title_foreground(&theme, false, Color::Black),
             Color::Gray

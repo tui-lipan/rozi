@@ -351,6 +351,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     };
 
     let body = VStack::new()
+        .height(Length::Auto)
         .child(profile_picker_palette(ctx, picker))
         .child(profile_picker_hints(ctx));
 
@@ -366,12 +367,14 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         HStack::new()
             .gap(1)
             .width(Length::Auto)
+            .height(Length::Auto)
             .child(Text::new(label).style(fg_only(&theme.primary).bold()))
             .child(Text::new(key).style(fg_only(&theme.muted)))
             .into()
     };
 
     HStack::new()
+        .height(Length::Auto)
         .padding((1, 1, 0, 1))
         .justify(Justify::SpaceBetween)
         .gap(2)
@@ -490,6 +493,7 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         return Text::new("").into();
     };
     let body = VStack::new()
+        .height(Length::Auto)
         .child(session_picker_palette(ctx, picker))
         .child(session_picker_hints(ctx));
 
@@ -508,6 +512,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         HStack::new()
             .gap(1)
             .width(Length::Auto)
+            .height(Length::Auto)
             .child(Text::new(label).style(fg_only(&theme.primary).bold()))
             .child(Text::new(key).style(fg_only(&theme.muted)))
             .into()
@@ -534,6 +539,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         && !picker.entries.iter().any(|entry| entry.name == query);
 
     let mut row = HStack::new()
+        .height(Length::Auto)
         .padding((1, 1, 0, 1))
         .justify(Justify::Start)
         .gap(3);

@@ -6,8 +6,8 @@ use crate::state::{
 };
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
-    append_tiled_window, build_dwindle_tree, insert_leaf_around_target, leaf_depth,
-    prune_tree_to_ids, ratio_at, tree_contains,
+    append_tiled_window, build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids,
+    ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(
@@ -237,9 +237,8 @@ pub enum SpawnPlacement {
 
 /// Insert `id` by splitting the focused pane - Hyprland's dwindle behavior: a new pane
 /// always splits the currently focused one, never the tile under the cursor. The split
-/// axis alternates by the focused leaf's depth, matching dwindle's regular V/H/V/H growth.
-/// Falls back to a plain append when there is no valid split target (the first pane, or a
-/// floating focus).
+/// axis follows the focused tile's aspect ratio. Falls back to a plain append when there is no
+/// valid split target (the first pane, or a floating focus).
 pub fn place_spawned_pane(
     workspace: &mut Workspace,
     id: PaneId,
@@ -262,8 +261,7 @@ pub fn place_spawned_pane(
         let placements =
             workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         if let Some(rect) = placement_for(&placements, target) {
-            let axis = spawn_split_for_target(workspace, id, target)
-                .unwrap_or_else(|| spawn_split_for_rect(rect).0);
+            let axis = spawn_split_for_rect(rect).0;
             let moving_first = false;
             if insert_tiled_pane_around_target(workspace, id, target, axis, moving_first) {
                 return SpawnPlacement::Split(target);
@@ -273,15 +271,6 @@ pub fn place_spawned_pane(
 
     append_tiled_window(workspace, id);
     SpawnPlacement::Appended
-}
-
-fn spawn_split_for_target(
-    workspace: &Workspace,
-    moving: PaneId,
-    target: PaneId,
-) -> Option<SplitAxis> {
-    let tree = effective_tile_tree(workspace, Some(moving))?;
-    leaf_depth(&tree, target).map(|depth| workspace.start_axis.at_depth(depth))
 }
 
 #[cfg(test)]
@@ -313,53 +302,34 @@ mod tests {
     }
 
     #[test]
-    fn spawned_panes_alternate_split_axis_by_focused_depth() {
+    fn first_spawn_split_ignores_workspace_parity() {
         let bounds = FloatRect {
             x: 0.0,
             y: 0.0,
             w: 120.0,
             h: 40.0,
         };
-        let mut workspace = Workspace::new(0);
 
-        for id in 1..=5 {
-            let previous_focused = workspace.focused_pane;
-            workspace.panes.push(Pane::new(id, 100, bounds));
-            place_spawned_pane(
-                &mut workspace,
-                id,
-                previous_focused,
-                bounds,
-                0.0,
-                crate::state::TileGap::DEFAULT,
-            );
-            workspace.focused_pane = Some(id);
-        }
+        for index in [0, 1] {
+            let mut workspace = Workspace::new(index);
+            for id in 1..=2 {
+                let previous_focused = workspace.focused_pane;
+                workspace.panes.push(Pane::new(id, 100, bounds));
+                place_spawned_pane(
+                    &mut workspace,
+                    id,
+                    previous_focused,
+                    bounds,
+                    0.0,
+                    crate::state::TileGap::DEFAULT,
+                );
+                workspace.focused_pane = Some(id);
+            }
 
-        let mut axes = Vec::new();
-        collect_axes(workspace.tile_tree.as_ref().unwrap(), &mut axes);
-        assert_eq!(
-            axes,
-            vec![
-                SplitAxis::Horizontal,
-                SplitAxis::Vertical,
-                SplitAxis::Horizontal,
-                SplitAxis::Vertical,
-            ]
-        );
-    }
-
-    fn collect_axes(tree: &DwindleTree, out: &mut Vec<SplitAxis>) {
-        if let DwindleTree::Split {
-            axis,
-            first,
-            second,
-            ..
-        } = tree
-        {
-            out.push(*axis);
-            collect_axes(first, out);
-            collect_axes(second, out);
+            let DwindleTree::Split { axis, .. } = workspace.tile_tree.as_ref().unwrap() else {
+                panic!("expected split tree");
+            };
+            assert_eq!(*axis, SplitAxis::Horizontal);
         }
     }
 

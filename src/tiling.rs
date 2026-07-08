@@ -127,16 +127,6 @@ pub fn tree_contains(tree: &DwindleTree, id: PaneId) -> bool {
     }
 }
 
-pub fn leaf_depth(tree: &DwindleTree, id: PaneId) -> Option<usize> {
-    match tree {
-        DwindleTree::Leaf(leaf) if *leaf == id => Some(0),
-        DwindleTree::Leaf(_) => None,
-        DwindleTree::Split { first, second, .. } => leaf_depth(first, id)
-            .or_else(|| leaf_depth(second, id))
-            .map(|depth| depth + 1),
-    }
-}
-
 pub fn append_tiled_leaf(
     tree: Option<DwindleTree>,
     id: PaneId,

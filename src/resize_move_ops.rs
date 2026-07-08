@@ -16,7 +16,7 @@ use crate::layout::{
 };
 use crate::state::{
     self, Direction, LayoutKind, MoveSession, MoveSwapHint, PaneId, RATIO_STEP, ResizeCorner,
-    ResizeSession, State, TILE_GAP, TileGap, Workspace,
+    ResizeSession, SplitDragKind, SplitDragSession, State, TILE_GAP, TileGap, Workspace,
 };
 use crate::tiling::{
     SplitEdge, adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle,
@@ -694,6 +694,76 @@ fn opposite_direction(direction: Direction) -> Direction {
     }
 }
 
+pub(crate) fn begin_resize_split_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    pane_id: PaneId,
+    horizontal_split: bool,
+    x: u16,
+    y: u16,
+) -> Update {
+    begin_split_drag(
+        ctx,
+        SplitDragKind::Single {
+            pane_id,
+            horizontal_split,
+        },
+        x,
+        y,
+    )
+}
+
+pub(crate) fn begin_resize_split_junction_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    left_id: PaneId,
+    top_id: PaneId,
+    x: u16,
+    y: u16,
+) -> Update {
+    begin_split_drag(ctx, SplitDragKind::Junction { left_id, top_id }, x, y)
+}
+
+fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
+    let workspace_index = ctx.state.active_workspace;
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    ensure_tile_tree(workspace);
+    ctx.state.split_drag = Some(SplitDragSession {
+        kind,
+        workspace: workspace_index,
+        start_x: x,
+        start_y: y,
+        start_tile_tree: workspace.tile_tree.clone(),
+        start_split_ratios: workspace.split_ratios.clone(),
+    });
+    Update::none()
+}
+
+fn ensure_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, from_x: u16, from_y: u16) {
+    let workspace = ctx.state.active_workspace;
+    let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
+        session.kind == kind
+            && session.workspace == workspace
+            && session.start_x == from_x
+            && session.start_y == from_y
+    });
+    if !matches {
+        begin_split_drag(ctx, kind, from_x, from_y);
+    }
+}
+
+fn restore_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind) -> bool {
+    let Some(session) =
+        ctx.state.split_drag.as_ref().filter(|session| {
+            session.kind == kind && session.workspace == ctx.state.active_workspace
+        })
+    else {
+        return false;
+    };
+    let workspace = &mut ctx.state.workspaces[session.workspace];
+    workspace.tile_tree = session.start_tile_tree.clone();
+    workspace.split_ratios = session.start_split_ratios.clone();
+    true
+}
+
 /// Adjust the split on a tiled boundary by a mouse drag. `pane_id` is the pane on the
 /// left/top side of the dragged gap; `horizontal_split` is true for a vertical gap (a
 /// left|right split). Used by the draggable gap strips in the view. Dwindle and master only.
@@ -701,15 +771,36 @@ pub(crate) fn resize_split_by_drag(
     ctx: &mut Context<HyprmuxApp>,
     pane_id: PaneId,
     horizontal_split: bool,
-    dx: i16,
-    dy: i16,
+    from_x: u16,
+    from_y: u16,
+    x: u16,
+    y: u16,
 ) -> Update {
-    if active_pane_is_fullscreen(&ctx.state, pane_id) {
+    let kind = SplitDragKind::Single {
+        pane_id,
+        horizontal_split,
+    };
+    ensure_split_drag(ctx, kind, from_x, from_y);
+    if !restore_split_drag(ctx, kind) {
         return Update::none();
     }
-    let pixels = f32::from(if horizontal_split { dx } else { dy });
-    if pixels == 0.0 {
-        return Update::none();
+    let pixels = if horizontal_split {
+        x as i32 - from_x as i32
+    } else {
+        y as i32 - from_y as i32
+    } as f32;
+    apply_resize_split_pixels(ctx, pane_id, horizontal_split, pixels);
+    Update::full()
+}
+
+fn apply_resize_split_pixels(
+    ctx: &mut Context<HyprmuxApp>,
+    pane_id: PaneId,
+    horizontal_split: bool,
+    pixels: f32,
+) -> bool {
+    if active_pane_is_fullscreen(&ctx.state, pane_id) {
+        return false;
     }
     let axis = if horizontal_split {
         state::SplitAxis::Horizontal
@@ -725,51 +816,59 @@ pub(crate) fn resize_split_by_drag(
         .active_tiled_ids_by_pane_order()
         .contains(&pane_id)
     {
-        return Update::none();
+        return false;
     }
 
     if workspace.layout_kind == LayoutKind::Master {
         if axis != state::SplitAxis::Horizontal {
-            return Update::none();
+            return false;
         }
         let available = master_available_width(tile_bounds);
-        resize_master_split_by_pixels(workspace, pane_id, pixels, available);
-        ctx.state.animation = GeometryAnimation::None;
-        return Update::full();
+        if resize_master_split_by_pixels(workspace, pane_id, pixels, available) {
+            ctx.state.animation = GeometryAnimation::None;
+            return true;
+        }
+        return false;
     }
     if !layout_has_resizable_splits(workspace.layout_kind) {
-        return Update::none();
+        return false;
     }
 
     ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_ref() else {
-        return Update::none();
+        return false;
     };
     let Some(available) =
         nearest_split_available(tree, tile_bounds, TileGap::DEFAULT, pane_id, axis)
     else {
-        return Update::none();
+        return false;
     };
     if resize_tiled_split(workspace, pane_id, axis, available, pixels) {
         ctx.state.animation = GeometryAnimation::None;
+        return true;
     }
-    Update::full()
+    false
 }
 
 pub(crate) fn resize_split_junction_by_drag(
     ctx: &mut Context<HyprmuxApp>,
     left_id: PaneId,
     top_id: PaneId,
-    dx: i16,
-    dy: i16,
+    from_x: u16,
+    from_y: u16,
+    x: u16,
+    y: u16,
 ) -> Update {
-    let horizontal = resize_split_by_drag(ctx, left_id, true, dx, 0);
-    let vertical = resize_split_by_drag(ctx, top_id, false, 0, dy);
-    if !horizontal.dirty && !vertical.dirty {
-        Update::none()
-    } else {
-        Update::full()
+    let kind = SplitDragKind::Junction { left_id, top_id };
+    ensure_split_drag(ctx, kind, from_x, from_y);
+    if !restore_split_drag(ctx, kind) {
+        return Update::none();
     }
+    let dx = (x as i32 - from_x as i32) as f32;
+    let dy = (y as i32 - from_y as i32) as f32;
+    apply_resize_split_pixels(ctx, left_id, true, dx);
+    apply_resize_split_pixels(ctx, top_id, false, dy);
+    Update::full()
 }
 
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
@@ -872,6 +971,32 @@ mod tests {
             keyboard_resize_pixels(Direction::Up, false, available),
             step
         );
+    }
+
+    #[test]
+    fn absolute_split_drag_preserves_clamp_overshoot_until_cursor_returns_to_handle() {
+        let start_tree = DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DwindleTree::Leaf(1)),
+            second: Box::new(DwindleTree::Leaf(2)),
+        };
+        let workspace_for_delta = |pixels: f32| {
+            let mut workspace = Workspace::new(0);
+            workspace
+                .panes
+                .push(Pane::new(1, 100, FloatRect::default()));
+            workspace
+                .panes
+                .push(Pane::new(2, 100, FloatRect::default()));
+            workspace.tile_tree = Some(start_tree.clone());
+            resize_tiled_split(&mut workspace, 1, SplitAxis::Horizontal, 100.0, pixels);
+            workspace
+        };
+
+        assert_eq!(root_ratio(&workspace_for_delta(60.0)), 0.8);
+        assert_eq!(root_ratio(&workspace_for_delta(50.0)), 0.8);
+        assert_eq!(root_ratio(&workspace_for_delta(20.0)), 0.7);
     }
 
     #[test]
@@ -984,5 +1109,12 @@ mod tests {
                 second: Box::new(DwindleTree::Leaf(3)),
             }),
         })
+    }
+
+    fn root_ratio(workspace: &Workspace) -> f32 {
+        match workspace.tile_tree.as_ref().unwrap() {
+            DwindleTree::Split { ratio, .. } => *ratio,
+            DwindleTree::Leaf(_) => panic!("expected split"),
+        }
     }
 }

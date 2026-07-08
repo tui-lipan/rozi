@@ -265,11 +265,31 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::ResizeSplit(id, horizontal_split, dx, dy) => {
-            crate::resize_move_ops::resize_split_by_drag(ctx, id, horizontal_split, dx, dy)
+        Msg::BeginResizeSplit(id, horizontal_split, x, y) => {
+            crate::resize_move_ops::begin_resize_split_drag(ctx, id, horizontal_split, x, y)
         }
-        Msg::ResizeSplitJunction(left_id, top_id, dx, dy) => {
-            crate::resize_move_ops::resize_split_junction_by_drag(ctx, left_id, top_id, dx, dy)
+        Msg::ResizeSplit(id, horizontal_split, from_x, from_y, x, y) => {
+            crate::resize_move_ops::resize_split_by_drag(
+                ctx,
+                id,
+                horizontal_split,
+                from_x,
+                from_y,
+                x,
+                y,
+            )
+        }
+        Msg::BeginResizeSplitJunction(left_id, top_id, x, y) => {
+            crate::resize_move_ops::begin_resize_split_junction_drag(ctx, left_id, top_id, x, y)
+        }
+        Msg::ResizeSplitJunction(left_id, top_id, from_x, from_y, x, y) => {
+            crate::resize_move_ops::resize_split_junction_by_drag(
+                ctx, left_id, top_id, from_x, from_y, x, y,
+            )
+        }
+        Msg::EndResizeSplit => {
+            ctx.state.split_drag = None;
+            Update::full()
         }
         Msg::FinishOpen(epoch, id, generation) => {
             if epoch != ctx.state.runtime_epoch {

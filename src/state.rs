@@ -200,6 +200,28 @@ pub struct MoveSession {
     pub drag_rect: FloatRect,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SplitDragSession {
+    pub kind: SplitDragKind,
+    pub workspace: usize,
+    pub start_x: u16,
+    pub start_y: u16,
+    pub start_tile_tree: Option<DwindleTree>,
+    pub start_split_ratios: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitDragKind {
+    Single {
+        pane_id: PaneId,
+        horizontal_split: bool,
+    },
+    Junction {
+        left_id: PaneId,
+        top_id: PaneId,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MoveSwapHint {
     pub pane: PaneId,
@@ -667,6 +689,7 @@ pub struct State {
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
+    pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
     pub last_viewport: Cell<Option<Rect>>,
     pub show_palette: bool,
@@ -745,6 +768,7 @@ impl State {
             mode: Mode::Normal,
             moving_pane: None,
             resizing_pane: None,
+            split_drag: None,
             animation: GeometryAnimation::None,
             last_viewport: Cell::new(None),
             show_palette: false,

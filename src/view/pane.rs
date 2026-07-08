@@ -478,18 +478,40 @@ fn resize_strip_element(
     horizontal_split: bool,
 ) -> Element {
     MouseRegion::new()
-        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
-            Msg::ResizeSplit(pane_id, horizontal_split, event.delta_x, event.delta_y)
+        .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::BeginResizeSplit(pane_id, horizontal_split, event.from_x, event.from_y)
         }))
+        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::ResizeSplit(
+                pane_id,
+                horizontal_split,
+                event.from_x,
+                event.from_y,
+                event.x,
+                event.y,
+            )
+        }))
+        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
 }
 
 fn resize_junction_element(ctx: &Context<HyprmuxApp>, left_id: PaneId, top_id: PaneId) -> Element {
     MouseRegion::new()
-        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
-            Msg::ResizeSplitJunction(left_id, top_id, event.delta_x, event.delta_y)
+        .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::BeginResizeSplitJunction(left_id, top_id, event.from_x, event.from_y)
         }))
+        .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
+            Msg::ResizeSplitJunction(
+                left_id,
+                top_id,
+                event.from_x,
+                event.from_y,
+                event.x,
+                event.y,
+            )
+        }))
+        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
 }

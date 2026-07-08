@@ -145,10 +145,13 @@ pub enum Msg {
     BeginResize(PaneId, ResizeCorner, bool),
     ResizePane(PaneId, ResizeCorner, i16, i16, bool),
     EndResize(PaneId),
-    /// Drag a tiled split boundary: (left/top pane, horizontal_split, dx, dy).
-    ResizeSplit(PaneId, bool, i16, i16),
-    /// Drag a tiled split junction: (left pane, top pane, dx, dy).
-    ResizeSplitJunction(PaneId, PaneId, i16, i16),
+    BeginResizeSplit(PaneId, bool, u16, u16),
+    /// Drag a tiled split boundary: (left/top pane, horizontal_split, from_x, from_y, x, y).
+    ResizeSplit(PaneId, bool, u16, u16, u16, u16),
+    BeginResizeSplitJunction(PaneId, PaneId, u16, u16),
+    /// Drag a tiled split junction: (left pane, top pane, from_x, from_y, x, y).
+    ResizeSplitJunction(PaneId, PaneId, u16, u16, u16, u16),
+    EndResizeSplit,
     FinishOpen(u64, PaneId, u64),
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),

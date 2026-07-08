@@ -199,6 +199,7 @@ pub fn restore_state_from_profile(
         mode: Mode::Normal,
         moving_pane: None,
         resizing_pane: None,
+        split_drag: None,
         animation: crate::anim::GeometryAnimation::None,
         last_viewport: std::cell::Cell::new(None),
         show_palette: false,

@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
@@ -169,9 +170,15 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// hand-editing the config doesn't require remembering or typing its path.
 pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
     let path = crate::config::config_path();
-    let editor = std::env::var("EDITOR")
-        .or_else(|_| std::env::var("VISUAL"))
-        .unwrap_or_else(|_| "vi".to_string());
+    let editor = config_editor();
+    if let Some(command) = missing_editor_command(&editor) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Open config file",
+            format!("Editor `{command}` not found. Set EDITOR."),
+        ));
+        return Update::none();
+    }
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
 
     let workspace_index = ctx.state.active_workspace;
@@ -189,6 +196,74 @@ fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn config_editor() -> String {
+    std::env::var("EDITOR")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("VISUAL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "vi".to_string())
+}
+
+fn missing_editor_command(editor: &str) -> Option<String> {
+    let command = first_shell_word(editor.trim()).unwrap_or(editor.trim());
+    if command.is_empty() || command_exists(command) {
+        None
+    } else {
+        Some(command.to_string())
+    }
+}
+
+fn command_exists(command: &str) -> bool {
+    if command.contains('/') {
+        return is_executable_file(Path::new(command));
+    }
+
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(command)))
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn first_shell_word(value: &str) -> Option<&str> {
+    let mut chars = value.char_indices();
+    let (_, first) = chars.next()?;
+    let quote = match first {
+        '\'' | '"' => Some(first),
+        _ => None,
+    };
+    let start = if quote.is_some() { first.len_utf8() } else { 0 };
+
+    for (index, ch) in chars {
+        if quote.is_some_and(|quote| ch == quote) {
+            return Some(&value[start..index]);
+        }
+        if quote.is_none() && ch.is_whitespace() {
+            return Some(&value[..index]);
+        }
+    }
+
+    Some(&value[start..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +279,18 @@ mod tests {
     #[test]
     fn quote_shell_arg_escapes_embedded_single_quotes() {
         assert_eq!(quote_shell_arg("it's/a/path"), "'it'\\''s/a/path'");
+    }
+
+    #[test]
+    fn first_shell_word_reads_bare_command() {
+        assert_eq!(first_shell_word("nvim --clean"), Some("nvim"));
+    }
+
+    #[test]
+    fn first_shell_word_reads_quoted_command() {
+        assert_eq!(
+            first_shell_word("'/opt/my editor/bin/edit' --wait"),
+            Some("/opt/my editor/bin/edit")
+        );
     }
 }

@@ -137,6 +137,8 @@ pub struct HyprmuxPaneConfig {
     pub focus_on_hover: bool,
     /// Whether the top bar (workspace tabs, mode chips, etc.) is shown.
     pub show_top_bar: bool,
+    /// Whether there is a 1-line gap between the top bar and the panes area.
+    pub top_bar_gap: bool,
     /// Whether tiled/floating panes render their titlebars.
     pub show_titles: bool,
     /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
@@ -153,6 +155,7 @@ impl Default for HyprmuxPaneConfig {
             highlight_focused_border: true,
             focus_on_hover: true,
             show_top_bar: true,
+            top_bar_gap: true,
             show_titles: true,
             merge_borders: false,
             border_style: PaneBorderStyle::Rounded,
@@ -539,6 +542,7 @@ struct PaneFileConfig {
     highlight_focused_border: Option<bool>,
     focus_on_hover: Option<bool>,
     show_top_bar: Option<bool>,
+    top_bar_gap: Option<bool>,
     show_titles: Option<bool>,
     merge_borders: Option<bool>,
     border_style: Option<String>,
@@ -876,6 +880,7 @@ mod tests {
             highlight_focused_border = true
             focus_on_hover = false
             show_top_bar = false
+            top_bar_gap = false
             show_titles = false
             "#,
         )
@@ -885,6 +890,7 @@ mod tests {
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
         assert_eq!(parsed.pane.show_top_bar, Some(false));
+        assert_eq!(parsed.pane.top_bar_gap, Some(false));
         assert_eq!(parsed.pane.show_titles, Some(false));
     }
 
@@ -1153,6 +1159,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(show_top_bar) = parsed.pane.show_top_bar {
         config.pane.show_top_bar = show_top_bar;
+    }
+    if let Some(top_bar_gap) = parsed.pane.top_bar_gap {
+        config.pane.top_bar_gap = top_bar_gap;
     }
     if let Some(show_titles) = parsed.pane.show_titles {
         config.pane.show_titles = show_titles;

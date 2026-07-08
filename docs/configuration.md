@@ -50,6 +50,7 @@ prefix = "ctrl-a"
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
 show_top_bar = true           # top bar with workspace tabs and mode chips (default: true)
+top_bar_gap = true            # 1-line gap between top bar and panes (default: true)
 show_titles = true            # pane titlebars (default: true)
 
 [animations]
@@ -136,6 +137,7 @@ Pane focus and chrome behavior.
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
 | `show_top_bar` | `true` | Show the top bar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
+| `top_bar_gap` | `true` | Show a 1-line gap between the top bar and the panes area. |
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
 
 ## `[animations]`

@@ -81,6 +81,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 crate::state::AppearanceAction::ToggleTopBar => {
                     execute_action(ctx, Action::ToggleTopBar);
                 }
+                crate::state::AppearanceAction::ToggleTopBarGap => {
+                    execute_action(ctx, Action::ToggleTopBarGap);
+                }
                 crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
                     execute_action(ctx, Action::ToggleHighlightFocusedBackground);
                 }

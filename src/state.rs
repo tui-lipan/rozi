@@ -227,6 +227,7 @@ pub enum AppearanceAction {
     Theme,
     ToggleTitles,
     ToggleTopBar,
+    ToggleTopBarGap,
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleBorderMerge,
@@ -835,7 +836,7 @@ impl State {
     }
 
     pub fn workspace_top_gap(&self) -> f32 {
-        if self.config.pane.show_top_bar {
+        if self.config.pane.show_top_bar && self.config.pane.top_bar_gap {
             OUTER_GAP
         } else {
             0.0

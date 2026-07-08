@@ -738,7 +738,7 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
 }
 
 pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let entries = vec![
+    let mut entries = vec![
         appearance_entry("Theme", current_theme_label(ctx), AppearanceAction::Theme),
         appearance_entry(
             "Pane titlebars",
@@ -750,6 +750,17 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             enabled_status(ctx.state.config.pane.show_top_bar),
             AppearanceAction::ToggleTopBar,
         ),
+    ];
+
+    if ctx.state.config.pane.show_top_bar {
+        entries.push(appearance_entry(
+            "Top bar gap",
+            enabled_status(ctx.state.config.pane.top_bar_gap),
+            AppearanceAction::ToggleTopBarGap,
+        ));
+    }
+
+    entries.extend(vec![
         appearance_entry(
             "Focused pane background",
             enabled_status(ctx.state.config.pane.highlight_focused_background),
@@ -770,7 +781,7 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ctx.state.config.pane.border_style.label().to_string(),
             AppearanceAction::CycleBorderStyle,
         ),
-    ];
+    ]);
 
     let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, true)
         .entries(entries)

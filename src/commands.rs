@@ -345,6 +345,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleTopBarGap,
+        label: "Top bar gap",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleFocusOnHover,
         label: "Focus on hover",
         category: "App",
@@ -686,6 +693,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("pane titlebars", state.config.pane.show_titles)
         }
         Action::ToggleTopBar => enable_disable_label("top bar", state.config.pane.show_top_bar),
+        Action::ToggleTopBarGap => enable_disable_label("top bar gap", state.config.pane.top_bar_gap),
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
         }

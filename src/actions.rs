@@ -223,6 +223,11 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             persist_pane_toggle(ctx, "show_top_bar", ctx.state.config.pane.show_top_bar);
             Update::full()
         }
+        Action::ToggleTopBarGap => {
+            ctx.state.config.pane.top_bar_gap = !ctx.state.config.pane.top_bar_gap;
+            persist_pane_toggle(ctx, "top_bar_gap", ctx.state.config.pane.top_bar_gap);
+            Update::full()
+        }
         Action::ToggleFocusOnHover => {
             ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
             persist_pane_toggle(ctx, "focus_on_hover", ctx.state.config.pane.focus_on_hover);

@@ -25,7 +25,7 @@ A new pane opens in the **focused pane's current working directory** when it can
 discovered, falling back to the configured `cwd`. On Linux the directory is read on demand from
 `/proc/<pid>/cwd` of the pane's shell - no shell configuration is required. On other platforms
 (or if the pid is unavailable) it falls back to the configured `cwd`. The same live cwd is what
-*Save project profile* records (see [Project profiles](project-profiles.md)).
+*Save profile* records (see [Project profiles](project-profiles.md)).
 
 ## Mouse support
 
@@ -95,10 +95,14 @@ already-visible matches don't jump), then restores the original scroll position.
 case-insensitive. This works regardless of the program running in the pane, because it reads
 rendered terminal lines rather than relying on an in-terminal highlight search.
 
-## What `hyprmux` does *not* do
+## Runtime persistence boundaries
 
-- **No detach/reattach, no daemon.** PTYs live inside the single UI process. There is no
-  server to reconnect to; closing `hyprmux` ends its shells.
+- **Local launches are still single-process.** In default local mode, PTYs live inside the UI
+  process; quitting that process ends its shells unless you only restore layout later from a
+  profile/autosave file.
+- **Named attached sessions are the live-state path.** `hyprmux --attach <name>` connects to a
+  background session server whose PTYs survive client detach/quit and can be reattached later.
+  See [Sessions](sessions.md).
 - **Profiles restore layout and launch intent, not live state.** Restoring a
   [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect
   previous processes, scrollback, or environment.

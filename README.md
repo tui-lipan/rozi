@@ -29,6 +29,8 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 - **Named workspaces** - rename a workspace to show `<number>:<name>` in the tabs, usable in the
   `{workspace}` bar placeholder, saved with profiles and session autosave.
 - **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
+- **Named sessions** - attach to persistent server-backed sessions with `hyprmux --attach dev`,
+  detach/reattach later, and shut them down explicitly when done.
 - **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.
 - **Copy mode** - vi-style scrollback review with `hjkl`, word/WORD (`w`/`b`/`e`) and line
   (`0`/`^`/`$`) motions, and clipboard yank - the motions reuse `tui-lipan`'s vim-mode `TextArea`

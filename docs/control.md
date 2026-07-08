@@ -38,6 +38,18 @@ shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close
 returns the plain text of a pane's current visible snapshot grid, defaulting to the request's
 `source_pane` or the focused pane when `--target`/`target` is omitted. `switch-workspace` and
 `move-to-workspace` take a 1-9 workspace number, matching the on-screen tabs.
+Destructive `run-action` calls honor `[confirm]` settings; a first call can arm a confirmation
+toast and a second matching call within the toast window confirms it.
+
+Session lifecycle commands are separate from the per-run control socket:
+
+```bash
+hyprmux --attach dev        # attach to/start a persistent named session
+hyprmux list-sessions       # list connectable named sessions
+hyprmux kill-session dev    # request clean shutdown of a named session
+```
+
+See [Sessions](sessions.md) for attach/detach semantics.
 
 ## Wire protocol
 

@@ -14,6 +14,10 @@ This is separate from **session autosave** (`[session] autosave`), which silentl
 your last layout on quit. Named profiles are explicit, shareable layouts you choose to save
 and load.
 
+It is also separate from **attached named sessions** (`hyprmux --attach <name>`), which keep live
+PTYs in a background server for detach/reattach. Profiles always start fresh PTYs from saved
+launch intent.
+
 ## Profile fields
 
 Each pane entry supports:

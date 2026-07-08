@@ -109,7 +109,11 @@ Names are saved with profiles and session autosave.
 | Detach | `d` | Attached: leave the session and return to a fresh local client (server keeps running). Local: save the live layout unconditionally, then exit the client. |
 | Quit client | *(palette only)* | Exit this UI. Attached: server keeps running. Local: saves only when `[session] autosave` is enabled. |
 | Kill workspace | `q` | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). |
-| Kill session | *(palette only)* | Shut down the attached named session and exit (press twice to confirm; see `[confirm]`). |
+| Kill session | *(palette only)* | Shut down the attached named session and exit. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
+
+Configured `[confirm]` prompts apply to key/chord and control-socket action triggers. Commands
+chosen from the command palette are treated as explicit selections and run without an extra
+second confirmation.
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
@@ -122,9 +126,9 @@ have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux ru
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - save profile, choose theme, toggle titlebars, promote to master, plus discoverable
-extras (search, copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). Frequent single-key
-actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the help overlay only,
-since the key is faster than a search box. Theme selection and "Save project profile" /
+extras (search, copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help).
+Frequent single-key actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the
+help overlay only, since the key is faster than a search box. Theme selection and "Save profile" /
 "Toggle pane titlebars" / "Toggle focus on hover" are palette-only - they have no default key.
 So are "Open config file" and "Reload config" - see
 [Reloading and editing](configuration.md#reloading-and-editing).

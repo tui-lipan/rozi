@@ -1,6 +1,7 @@
 # Project profiles and pane identity
 
-Project profiles let `hyprmux` restore a workspace layout for a project. A profile is a TOML file that records workspaces, pane names, layout metadata, and optional launch identity for each pane.
+Project profiles let `hyprmux` restore a workspace layout for a project. A profile is a TOML file
+that records workspaces, pane names, layout metadata, and optional launch identity for each pane.
 
 Profiles do **not** save or restore live PTY state. Restoring a profile starts fresh shells or commands in new PTYs; it does not resurrect the shell processes, scrollback, environment, or running programs from an earlier `hyprmux` process.
 
@@ -22,16 +23,30 @@ The titlebar shows the custom title if set, otherwise the program's terminal tit
 the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
 for the full precedence, and [Keybindings](keybindings.md) for the rename flow.
 
-## Enable a profile
+## Save and load profiles
 
-Set a profile path in your `hyprmux.toml`:
+Named profiles live in `~/.config/hyprmux/profiles/<name>.toml`. Save the current layout with
+the **Save profile** command in the command palette; it prompts for the profile name and writes
+that file.
+
+Load a named profile from the command line:
+
+```bash
+hyprmux dev
+hyprmux --profile dev
+hyprmux -p dev
+```
+
+Or open **Profiles** from the command palette to load, delete, or mark a profile as the startup
+default. The default profile is stored in config as:
 
 ```toml
 [profile]
-path = "~/code/my-app/hyprmux-profile.toml"
+default = "dev"
 ```
 
-On startup, `hyprmux` loads that file when it exists and shows a startup message for success or failure. The command palette action `Save project profile` writes the current profile back to this path.
+Startup priority is CLI profile, then `[profile] default`, then local session autosave when
+enabled. See [Named profiles](profiles.md) for the picker controls.
 
 ## Profile shape
 
@@ -91,11 +106,14 @@ command = "cargo run; exec ${SHELL:-/bin/sh}"
 
 ## Session auto-save
 
-Beyond explicit project profiles, `hyprmux` can **auto-save the live layout on quit** and
-restore it on the next launch - a daemon-free way to resume where you left off. Enable it with
-`[session] autosave = true` (see [Configuration](configuration.md#session)). It reuses the
-profile format and the same honesty caveats: it restores layout and launch intent, not live PTY
-state. An explicit `[profile].path` takes precedence over the autosaved session.
+Beyond explicit named profiles, local `hyprmux` launches can **auto-save the live layout on
+quit** and restore it on the next launch. Enable it with `[session] autosave = true` (see
+[Configuration](configuration.md#session)). It reuses the profile format and the same honesty
+caveats: it restores layout and launch intent, not live PTY state. A CLI profile or
+`[profile] default` takes precedence over the autosaved session.
+
+For live PTY persistence across detach/reattach, use a named attached session instead:
+`hyprmux --attach <name>` (see [Sessions](sessions.md)).
 
 ## Saving limitations
 

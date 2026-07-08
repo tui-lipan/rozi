@@ -19,6 +19,8 @@ named session server for persistent PTYs.
 | [Themes](themes.md) | The 10 built-in presets, the `system` theme, custom theme files, live hot-reload, and terminal ANSI colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
+| [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |
+| [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
 
 ## At a glance
@@ -28,6 +30,8 @@ named session server for persistent PTYs.
 - **Layouts** - dwindle tiling by default, master/stack per workspace, plus floating and
   fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
 - **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
+- **Named sessions** - `hyprmux --attach <name>` creates/connects to a persistent PTY server;
+  local launches remain single-process.
 - **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
   [Configuration](configuration.md).
 - **Architecture / internals** - see [AGENTS.md](../AGENTS.md) at the repo root.

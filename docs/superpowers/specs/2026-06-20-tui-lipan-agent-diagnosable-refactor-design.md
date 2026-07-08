@@ -72,7 +72,8 @@ These modules should expose small `pub(crate)` functions that operate on `State`
 ### `actions.rs`
 
 - Owns `execute_action`-style behavior.
-- Keeps command palette action handling, prefix action handling, and direct modifier actions on the same path.
+- Keeps command palette, prefix, and direct modifier actions on a shared dispatcher while allowing
+  explicit palette-specific policy, such as bypassing repeated destructive-action confirmations.
 - Depends on `input.rs` only for action definitions and binding metadata.
 
 ### `key_routing.rs`

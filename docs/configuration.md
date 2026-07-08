@@ -203,9 +203,11 @@ Failures are ignored and never block the UI.
 
 ## `[confirm]`
 
-Which destructive actions require a confirming second press. An armed confirmation shows a
-red toast and expires with it (3 seconds); after that, the next press arms again instead of
-firing.
+Which destructive actions require a confirming second press when triggered by keys, held
+modifier chords, or control-socket `run-action`. An armed confirmation shows a red-bordered
+toast and expires with it (3 seconds); after that, the next press arms again instead of firing.
+Picking the same destructive command from the command palette is already an explicit selection,
+so it executes directly without a second confirmation.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -215,9 +217,12 @@ firing.
 
 ## `[session]`
 
-Optional session auto-save: persist the live layout when `hyprmux` exits and restore it on the
-next launch, without any daemon. Like profiles, this restores *layout and launch intent*, not
-live PTY state.
+Optional **local** session auto-save: persist the live layout when a local `hyprmux` client exits
+and restore it on the next local launch. Like profiles, this restores *layout and launch intent*,
+not live PTY state.
+
+This is separate from named attached sessions (`hyprmux --attach <name>`), which run PTYs in a
+background session server and can be detached/reattached with live terminal state intact.
 
 | Key | Default | Notes |
 | --- | --- | --- |

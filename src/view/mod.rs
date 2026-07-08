@@ -17,7 +17,10 @@ use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
-use crate::state::WORKBAR_HEIGHT;
+use crate::state::{PaneId, WORKBAR_HEIGHT};
+use crate::tiling::PanePlacement;
+
+use pane::pane_title_bg;
 
 use bar::{empty_workspace_panel, workbar};
 use overlays::{
@@ -154,6 +157,19 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // geometry animates it sweeps across settled panes, and Exact-merging every transient
         // overlap would smear junction glyphs along the way.
         let settled = rect_settled(animated_rect, target_rect);
+        // Capped titles paint their seam cap in the neighbor's title color so a shared cell reads
+        // as a split junction; only same-row neighbors (their titlebar on this pane's top row)
+        // qualify, so a taller pane above the seam leaves the cap on the plain backdrop.
+        let (seam_left_bg, seam_right_bg) = if merge_layering
+            && !pane.floating
+            && !pane.fullscreen
+            && ctx.state.config.pane.show_titles
+            && ctx.state.config.pane.title_style.caps().is_some()
+        {
+            seam_neighbor_title_bgs(app, ctx, &placements, pane.id, base_rect, focused_pane)
+        } else {
+            (None, None)
+        };
         let merge = PaneMerge {
             enabled: merge_layering
                 && !pane.floating
@@ -161,6 +177,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 && moving.is_none()
                 && settled,
             left_seam,
+            seam_left_bg,
+            seam_right_bg,
         };
         let element = pane_element(
             app,
@@ -402,6 +420,41 @@ pub(crate) fn action_palette_frame(child: impl Into<Element>) -> Element {
         .padding(0)
         .child(child)
         .into()
+}
+
+/// Title backgrounds of the tiled neighbors sharing this pane's left and right seam columns, but
+/// only when the neighbor's titlebar sits on this pane's top row (so its cap meets ours in the
+/// shared cell). A taller pane above the seam shows a border there instead and yields `None`, so
+/// the cap falls back to the backdrop. Returns `(left, right)`.
+fn seam_neighbor_title_bgs(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    placements: &[PanePlacement],
+    pane_id: PaneId,
+    base_rect: FloatRect,
+    focused_pane: Option<PaneId>,
+) -> (Option<Color>, Option<Color>) {
+    let same_top_row = |other: &PanePlacement| (other.rect.y - base_rect.y).abs() < 0.5;
+    let color_of = |id: PaneId| pane_title_bg(app, ctx, id, focused_pane == Some(id));
+    // A neighbor across the left seam has its right border column on our left column; across the
+    // right seam, its left column is on our right border column.
+    let left = placements
+        .iter()
+        .find(|other| {
+            other.id != pane_id
+                && same_top_row(other)
+                && (other.rect.x + other.rect.w - 1.0 - base_rect.x).abs() < 0.5
+        })
+        .map(|other| color_of(other.id));
+    let right = placements
+        .iter()
+        .find(|other| {
+            other.id != pane_id
+                && same_top_row(other)
+                && (other.rect.x - (base_rect.x + base_rect.w - 1.0)).abs() < 0.5
+        })
+        .map(|other| color_of(other.id));
+    (left, right)
 }
 
 /// Whether a pane's animated rect has reached its target. Transitions end by clamping to the

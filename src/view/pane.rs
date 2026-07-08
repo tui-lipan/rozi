@@ -12,8 +12,35 @@ use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
 pub(crate) struct PaneMerge {
     /// The pane is in the settled merged layer: its border may Exact-merge with neighbors.
     pub enabled: bool,
-    /// The pane's left column is a neighbor's right border; the title row keeps off it.
+    /// The pane's left column is a neighbor's right border. A `Padded` title keeps its row off
+    /// that column; a capped title instead draws its left cap there so the chip stays aligned
+    /// with the border below (see `seam_left_bg`).
     pub left_seam: bool,
+    /// Title background of the same-row neighbor sharing the left seam cell, if any. A capped
+    /// left cap paints its off (left) half in this color so the shared cell reads as a split
+    /// junction between the two titlebars. `None` when the neighbor shows a border there (a
+    /// taller pane above the seam) - the cap falls back to the backdrop and sits on the border.
+    pub seam_left_bg: Option<Color>,
+    /// Title background of the same-row neighbor sharing the right seam cell, if any. Mirrors
+    /// `seam_left_bg` for the right cap so either side of a seam renders the same split.
+    pub seam_right_bg: Option<Color>,
+}
+
+/// A pane's titlebar background: the active border color when focused, otherwise the neutral
+/// surface element color, honoring any per-pane `title-bg` chrome override.
+pub(crate) fn pane_title_bg(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    pane_id: PaneId,
+    focused: bool,
+) -> Color {
+    let theme = &ctx.state.theme;
+    let target = if focused {
+        theme.border_active
+    } else {
+        theme.surface.element
+    };
+    app.chrome_color(ctx, pane_id, "title-bg", target)
 }
 
 pub(crate) fn pane_element(
@@ -87,7 +114,7 @@ pub(crate) fn pane_element(
         } else {
             theme.surface.element
         };
-        let title_bar_bg = app.chrome_color(ctx, pane.id, "title-bg", title_bar_bg_target);
+        let title_bar_bg = pane_title_bg(app, ctx, pane.id, focused);
         let title_bar_fg = app.chrome_color(
             ctx,
             pane.id,
@@ -141,7 +168,18 @@ pub(crate) fn pane_element(
                 row.into()
             }
             Some((left, right)) => {
-                let cap_style = Style::new().fg(title_bar_bg).bg(theme.surface.backdrop);
+                // A cap paints its filled half in the titlebar color and its off half in `bg`. On
+                // a merged seam the off half takes the neighbor's title color, so the shared cell
+                // reads as a split junction (the caller hands whichever pane draws last the same
+                // left/right colors, so the seam looks the same regardless of draw order). Off a
+                // seam the off half is the backdrop, giving the usual pill edge.
+                let backdrop = theme.surface.backdrop;
+                let left_cap_bg = if merge.left_seam {
+                    merge.seam_left_bg.unwrap_or(backdrop)
+                } else {
+                    backdrop
+                };
+                let right_cap_bg = merge.seam_right_bg.unwrap_or(backdrop);
                 // No horizontal padding here: the caps themselves stand in for the side padding.
                 let mut middle = HStack::new()
                     .style(title_bar_fill_style)
@@ -156,14 +194,14 @@ pub(crate) fn pane_element(
                     .height(Length::Px(1))
                     .child(
                         Text::new(left)
-                            .style(cap_style)
+                            .style(Style::new().fg(title_bar_bg).bg(left_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
                     .child(middle)
                     .child(
                         Text::new(right)
-                            .style(cap_style)
+                            .style(Style::new().fg(title_bar_bg).bg(right_cap_bg))
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
@@ -176,9 +214,11 @@ pub(crate) fn pane_element(
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
-        if merge.left_seam {
-            // Keep the title row off the shared border column. The spacer is an empty Text so
-            // the seam cell is left untouched for the neighbor's border glyph.
+        if merge.left_seam && ctx.state.config.pane.title_style.caps().is_none() {
+            // A `Padded` title has no cap to sit on the seam, so keep its row off the shared
+            // border column: the spacer is an empty Text that leaves the seam cell untouched for
+            // the neighbor's border glyph. (Capped titles instead draw their left cap there, so
+            // the chip lands flush on the seam - no spacer.)
             title_bar = HStack::new()
                 .height(Length::Px(1))
                 .child(Text::new("").width(Length::Px(1)).height(Length::Px(1)))

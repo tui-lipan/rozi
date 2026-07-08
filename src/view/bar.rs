@@ -211,17 +211,20 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
     let theme = &ctx.state.theme;
     let name = attached_session_name(ctx)?;
-    Some(
-        Text::new(format!(" 󰛤 {name} "))
-            .style(
-                Style::new()
-                    .fg(theme.surface.backdrop)
-                    .bg(theme.border_active)
-                    .bold(),
-            )
-            .height(Length::Px(1))
-            .into(),
-    )
+    // A right-region chip, so it takes a left cap like the mode chips.
+    Some(workbar_badge(
+        &format!(" 󰛤 {name} "),
+        theme.surface.backdrop,
+        theme.border_active,
+        theme.surface.panel,
+        ctx.state
+            .config
+            .pane
+            .workbar_badge_style
+            .caps()
+            .map(|c| c.0),
+        BadgeCap::Left,
+    ))
 }
 
 /// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.

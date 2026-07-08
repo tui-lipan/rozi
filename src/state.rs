@@ -179,22 +179,22 @@ impl PaneBorderStyle {
     }
 }
 
-/// The end caps drawn on either side of a pane titlebar. A single app-wide setting
-/// (`Action::CycleTitleStyle`). `Padded` keeps the current flush bar with blank side padding;
-/// the others turn the title into a tag whose ends are drawn in the titlebar color over the
-/// backdrop, so the bar reads as a rounded/pointed pill. The cap glyphs (except `Half`) are
-/// powerline separators and need a patched/Nerd font, same as the titlebar's mode icons.
+/// End-cap glyphs for a colored chip drawn over a background (pane titlebars via
+/// `Action::CycleTitleStyle`, workbar badges via `Action::CycleWorkbarBadgeStyle`). `Padded`
+/// keeps a flush bar with blank side padding; the others draw the chip's ends in the chip color
+/// over whatever is behind it, so it reads as a rounded/pointed pill. The cap glyphs (except
+/// `Half`) are powerline separators and need a patched/Nerd font, like the titlebar's mode icons.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PaneTitleStyle {
+pub enum CapStyle {
     Padded,
     Half,
     Round,
     Arrow,
 }
 
-impl PaneTitleStyle {
+impl CapStyle {
     /// Cycle order for `Action::CycleTitleStyle`.
-    pub fn all() -> &'static [PaneTitleStyle] {
+    pub fn all() -> &'static [CapStyle] {
         &[Self::Padded, Self::Half, Self::Round, Self::Arrow]
     }
 
@@ -306,6 +306,7 @@ pub enum AppearanceAction {
     ToggleBorderMerge,
     CycleBorderStyle,
     CycleTitleStyle,
+    CycleWorkbarBadgeStyle,
 }
 
 impl AppearanceAction {
@@ -315,7 +316,9 @@ impl AppearanceAction {
     pub fn disabled_reason(self, pane: &crate::config::HyprmuxPaneConfig) -> Option<&'static str> {
         match self {
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
-            Self::ToggleWorkbarGap | Self::ToggleWorkbarPosition if !pane.show_workbar => {
+            Self::ToggleWorkbarGap | Self::ToggleWorkbarPosition | Self::CycleWorkbarBadgeStyle
+                if !pane.show_workbar =>
+            {
                 Some("Needs workbar")
             }
             _ => None,

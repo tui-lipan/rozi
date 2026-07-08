@@ -401,6 +401,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::CycleWorkbarBadgeStyle,
+        label: "Workbar badges",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::TogglePalette,
         label: "Command palette",
         category: "App",
@@ -728,6 +735,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         }
         Action::CycleTitleStyle => {
             format!("Titlebar style: {}", state.config.pane.title_style.label())
+        }
+        Action::CycleWorkbarBadgeStyle => {
+            format!(
+                "Workbar badges: {}",
+                state.config.pane.workbar_badge_style.label()
+            )
         }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => return None,

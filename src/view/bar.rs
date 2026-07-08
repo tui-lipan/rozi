@@ -38,60 +38,104 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> HStack {
         }
     }
 
+    // Mode chips sit at the trailing edge, so they take a left cap (the title chip at the leading
+    // edge takes a right cap instead - see `bar_segment_element`).
+    let left_cap = ctx
+        .state
+        .config
+        .pane
+        .workbar_badge_style
+        .caps()
+        .map(|c| c.0);
+    let panel_bg = theme.surface.panel;
+    let text_fg = theme.surface.backdrop;
     if ctx.command_chord_pending() {
-        row = row.child(
-            Text::new(" PREFIX ")
-                .style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.status.warning)
-                        .bold(),
-                )
-                .height(Length::Px(1)),
-        );
+        row = row.child(workbar_badge(
+            " PREFIX ",
+            text_fg,
+            theme.status.warning,
+            panel_bg,
+            left_cap,
+            BadgeCap::Left,
+        ));
     }
 
     if state.mode == Mode::Resize {
-        row = row.child(
-            Text::new(" RESIZE ")
-                .style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.status.success)
-                        .bold(),
-                )
-                .height(Length::Px(1)),
-        );
+        row = row.child(workbar_badge(
+            " RESIZE ",
+            text_fg,
+            theme.status.success,
+            panel_bg,
+            left_cap,
+            BadgeCap::Left,
+        ));
     } else if state.mode == Mode::Copy {
-        row = row.child(
-            Text::new(" COPY ")
-                .style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.status.info)
-                        .bold(),
-                )
-                .height(Length::Px(1)),
-        );
+        row = row.child(workbar_badge(
+            " COPY ",
+            text_fg,
+            theme.status.info,
+            panel_bg,
+            left_cap,
+            BadgeCap::Left,
+        ));
     }
 
     row
 }
 
+/// Which end a workbar badge's cap sits on. The title chip caps on the right (it starts flush at
+/// the leading edge); mode chips cap on the left (they end flush at the trailing edge).
+#[derive(Clone, Copy)]
+enum BadgeCap {
+    Left,
+    Right,
+}
+
+/// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with an optional powerline
+/// end cap. The cap is drawn in the badge color over the panel background so the chip reads as a
+/// rounded/pointed pill; without a cap the chip is the plain flush block. The cap shares the
+/// badge's own sub-stack (gap 0) so the surrounding `gap(1)` row spacing stays outside the pill.
+fn workbar_badge(
+    label: &str,
+    text_fg: Color,
+    badge_bg: Color,
+    panel_bg: Color,
+    cap: Option<&'static str>,
+    side: BadgeCap,
+) -> Element {
+    let body = Text::new(label.to_string())
+        .style(Style::new().fg(text_fg).bg(badge_bg).bold())
+        .height(Length::Px(1));
+    let Some(glyph) = cap else {
+        return body.into();
+    };
+    let cap_el = Text::new(glyph)
+        .style(Style::new().fg(badge_bg).bg(panel_bg))
+        .height(Length::Px(1));
+    let row = HStack::new().height(Length::Px(1));
+    match side {
+        BadgeCap::Left => row.child(cap_el).child(body),
+        BadgeCap::Right => row.child(body).child(cap_el),
+    }
+    .into()
+}
+
 fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Option<Element> {
     let theme = &ctx.state.theme;
     match segment {
-        BarSegment::Title => Some(
-            Text::new(" hyprmux ")
-                .style(
-                    Style::new()
-                        .fg(theme.surface.backdrop)
-                        .bg(theme.border_active)
-                        .bold(),
-                )
-                .height(Length::Px(1))
-                .into(),
-        ),
+        BarSegment::Title => Some(workbar_badge(
+            " hyprmux ",
+            theme.surface.backdrop,
+            theme.border_active,
+            theme.surface.panel,
+            ctx.state
+                .config
+                .pane
+                .workbar_badge_style
+                .caps()
+                .map(|c| c.1),
+            BadgeCap::Right,
+        )),
         BarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
         BarSegment::Session => session_indicator(ctx),
         BarSegment::Clock => {

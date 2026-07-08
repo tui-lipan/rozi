@@ -776,6 +776,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             AppearanceAction::ToggleWorkbarPosition,
         ),
         appearance_entry(
+            "Workbar badges",
+            pane.workbar_badge_style.label().to_string(),
+            AppearanceAction::CycleWorkbarBadgeStyle,
+        ),
+        appearance_entry(
             "Focused pane background",
             enabled_status(pane.highlight_focused_background),
             AppearanceAction::ToggleHighlightFocusedBackground,

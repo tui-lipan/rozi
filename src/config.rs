@@ -11,7 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
-use crate::state::{PaneBorderStyle, PaneTitleStyle, ThemePreset};
+use crate::state::{CapStyle, PaneBorderStyle, ThemePreset};
 
 // === Config schema ===
 
@@ -150,7 +150,9 @@ pub struct HyprmuxPaneConfig {
     /// App-wide border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
     /// App-wide end-cap style for pane titlebars.
-    pub title_style: PaneTitleStyle,
+    pub title_style: CapStyle,
+    /// End-cap style for the workbar's colored badges (the title chip and mode chips).
+    pub workbar_badge_style: CapStyle,
 }
 
 impl Default for HyprmuxPaneConfig {
@@ -165,7 +167,8 @@ impl Default for HyprmuxPaneConfig {
             show_titles: true,
             merge_borders: false,
             border_style: PaneBorderStyle::Rounded,
-            title_style: PaneTitleStyle::Padded,
+            title_style: CapStyle::Padded,
+            workbar_badge_style: CapStyle::Padded,
         }
     }
 }
@@ -555,6 +558,7 @@ struct PaneFileConfig {
     merge_borders: Option<bool>,
     border_style: Option<String>,
     title_style: Option<String>,
+    workbar_badge_style: Option<String>,
 }
 
 #[cfg(test)]
@@ -893,6 +897,7 @@ mod tests {
             workbar_at_bottom = true
             show_titles = false
             title_style = "round"
+            workbar_badge_style = "arrow"
             "#,
         )
         .expect("config parses");
@@ -905,27 +910,19 @@ mod tests {
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
+        assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
     }
 
     #[test]
     fn pane_title_style_parses_aliases_and_cycles() {
-        assert_eq!(
-            PaneTitleStyle::parse("padded"),
-            Some(PaneTitleStyle::Padded)
-        );
-        assert_eq!(
-            PaneTitleStyle::parse("Half Block"),
-            Some(PaneTitleStyle::Half)
-        );
-        assert_eq!(PaneTitleStyle::parse("pill"), Some(PaneTitleStyle::Round));
-        assert_eq!(
-            PaneTitleStyle::parse("powerline"),
-            Some(PaneTitleStyle::Arrow)
-        );
-        assert_eq!(PaneTitleStyle::parse("nonsense"), None);
-        assert_eq!(PaneTitleStyle::Padded.caps(), None);
-        assert!(PaneTitleStyle::Round.caps().is_some());
-        assert_eq!(PaneTitleStyle::Arrow.next(), PaneTitleStyle::Padded);
+        assert_eq!(CapStyle::parse("padded"), Some(CapStyle::Padded));
+        assert_eq!(CapStyle::parse("Half Block"), Some(CapStyle::Half));
+        assert_eq!(CapStyle::parse("pill"), Some(CapStyle::Round));
+        assert_eq!(CapStyle::parse("powerline"), Some(CapStyle::Arrow));
+        assert_eq!(CapStyle::parse("nonsense"), None);
+        assert_eq!(CapStyle::Padded.caps(), None);
+        assert!(CapStyle::Round.caps().is_some());
+        assert_eq!(CapStyle::Arrow.next(), CapStyle::Padded);
     }
 
     #[test]
@@ -1233,10 +1230,18 @@ pub fn load_config() -> LoadedConfig {
         }
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {
-        match PaneTitleStyle::parse(title_style) {
+        match CapStyle::parse(title_style) {
             Some(style) => config.pane.title_style = style,
             None => warnings.push(format!(
                 "Ignored unknown pane.title_style \"{title_style}\" (expected one of: padded, half, round, arrow)"
+            )),
+        }
+    }
+    if let Some(workbar_badge_style) = parsed.pane.workbar_badge_style.as_deref() {
+        match CapStyle::parse(workbar_badge_style) {
+            Some(style) => config.pane.workbar_badge_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, half, round, arrow)"
             )),
         }
     }

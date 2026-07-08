@@ -187,14 +187,16 @@ pub(crate) fn pane_element(
     let terminal = terminal.key(pane_terminal_key(id));
 
     // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
-    // later frame draws in Replace mode, so only panes in the settled merged layer may use Exact
+    // later frame draws in Replace mode, so only panes in the settled merged layer may merge
     // (the caller decides - floating, fullscreen, scratch, mid-drag, and mid-animation panes must
-    // occlude whatever is beneath them, not grow junctions into it).
+    // occlude whatever is beneath them, not grow junctions into it). Fuzzy rather than Exact:
+    // rounded corners have no arc junction glyphs, so Exact refuses to fuse them, while Fuzzy
+    // merges exactly when possible and falls back to plain junctions for arcs.
     let body: Element = Frame::new()
         .border(true)
         .border_style(border_style)
         .border_merge_mode(if merge.enabled {
-            BorderMergeMode::Exact
+            BorderMergeMode::Fuzzy
         } else {
             BorderMergeMode::Replace
         })

@@ -10,6 +10,7 @@ struct MergeApp {
     titles: bool,
     focused: usize,
     floating: bool,
+    border_style: BorderStyle,
 }
 
 #[derive(Clone)]
@@ -59,7 +60,8 @@ impl Component for MergeApp {
             }
             let body: Element = Frame::new()
                 .border(true)
-                .border_style(BorderStyle::Plain)
+                .border_style(self.border_style)
+                .border_merge_mode(BorderMergeMode::Fuzzy)
                 .style(style)
                 .focus_style(Style::default())
                 .child(
@@ -166,14 +168,20 @@ impl Component for MergeApp {
 }
 
 fn render(titles: bool, focused: usize) -> Vec<String> {
-    render_with_floating(titles, focused, false)
+    render_with(titles, focused, false, BorderStyle::Plain)
 }
 
-fn render_with_floating(titles: bool, focused: usize, floating: bool) -> Vec<String> {
+fn render_with(
+    titles: bool,
+    focused: usize,
+    floating: bool,
+    border_style: BorderStyle,
+) -> Vec<String> {
     let mut backend = TestBackend::new(MergeApp {
         titles,
         focused,
         floating,
+        border_style,
     });
     backend.set_viewport(Rect {
         x: 0,
@@ -236,8 +244,34 @@ fn titled_focused_right_pane_keeps_neighbor_border() {
 }
 
 #[test]
+fn rounded_junctions_merge_as_plain() {
+    let lines = render_with(false, 1, false, BorderStyle::Rounded);
+    for line in &lines {
+        eprintln!("{line}");
+    }
+    // Arc corners have no junction glyphs; Fuzzy merges them into plain tees while the
+    // unshared outer corners keep their rounding.
+    assert_eq!(char_at(&lines, 19, 0), '┬', "top seam junction");
+    assert_eq!(char_at(&lines, 19, 6), '├', "middle-left junction");
+    assert_eq!(char_at(&lines, 38, 6), '┤', "middle-right junction");
+    assert_eq!(char_at(&lines, 19, 12), '┴', "bottom seam junction");
+    assert_eq!(char_at(&lines, 0, 0), '╭', "outer top-left stays rounded");
+    assert_eq!(char_at(&lines, 38, 0), '╮', "outer top-right stays rounded");
+    assert_eq!(
+        char_at(&lines, 0, 12),
+        '╰',
+        "outer bottom-left stays rounded"
+    );
+    assert_eq!(
+        char_at(&lines, 38, 12),
+        '╯',
+        "outer bottom-right stays rounded"
+    );
+}
+
+#[test]
 fn floating_pane_occludes_instead_of_merging() {
-    let lines = render_with_floating(false, 1, true);
+    let lines = render_with(false, 1, true, BorderStyle::Plain);
     for line in &lines {
         eprintln!("{line}");
     }

@@ -166,6 +166,7 @@ pub enum Msg {
     PaneMouse(PaneId, Vec<u8>),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
+    CopyFlashExpired(PaneId, u64),
     ControlRequest(control::ControlEnvelope),
     SessionConnected {
         epoch: u64,

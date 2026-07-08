@@ -386,6 +386,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             handle_pty_event(ctx, id, generation, event)
         }
         Msg::PaneInput(id, input) => handle_pane_input(ctx, id, input),
+        Msg::CopyFlashExpired(id, flash_id) => crate::copy_mode::expire_flash(ctx, id, flash_id),
         Msg::PaneKey(id, key) => {
             if logical_focus_pending_activation(&ctx.state).is_none_or(|pending| pending == id) {
                 focus_pane(&mut ctx.state, id);

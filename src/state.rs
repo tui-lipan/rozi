@@ -269,6 +269,13 @@ impl CopyModeState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CopyFlashState {
+    pub id: u64,
+    pub target: PaneId,
+    pub selection: ((usize, usize), (usize, usize)),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemePreset {
     Lipan,
     OneDark,
@@ -727,6 +734,8 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub copy_mode: Option<CopyModeState>,
+    pub copy_flash: Option<CopyFlashState>,
+    pub next_copy_flash_id: u64,
     pub scratch: Option<Pane>,
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
@@ -809,6 +818,8 @@ impl State {
             show_session_picker: false,
             session_picker: None,
             copy_mode: None,
+            copy_flash: None,
+            next_copy_flash_id: 1,
             scratch: None,
             scratch_visible: false,
             scratch_return_focus: None,

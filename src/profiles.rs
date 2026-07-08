@@ -219,6 +219,8 @@ pub fn restore_state_from_profile(
         show_session_picker: false,
         session_picker: None,
         copy_mode: None,
+        copy_flash: None,
+        next_copy_flash_id: 1,
         scratch: None,
         scratch_visible: false,
         scratch_return_focus: None,

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use tui_lipan::prelude::*;
 use tui_lipan::text_motion::{
     big_word_backward_start, big_word_end, big_word_forward_start, first_nonblank_in_line,
@@ -7,7 +9,7 @@ use tui_lipan::text_motion::{
 use crate::HyprmuxApp;
 use crate::focus_ops::request_current_pane_focus;
 use crate::pane_lifecycle::find_pane_mut;
-use crate::state::{CopyModeState, Mode};
+use crate::state::{CopyFlashState, CopyModeState, Mode, PaneId};
 
 /// Apply a `tui_lipan::text_motion` byte-offset motion to a char-index column, since
 /// copy-mode columns (like the rest of the pane's grid coordinates) are plain char counts.
@@ -77,6 +79,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         return Update::full();
     };
 
+    let mut copied_selection = None;
     if copy
         && let Some((anchor, cursor)) = state.selection()
         && let Some(pane) = find_pane_mut(&mut ctx.state, state.target)
@@ -85,6 +88,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         if !text.is_empty() {
             match ctx.clipboard().copy(&text) {
                 Ok(()) => {
+                    copied_selection = Some((anchor, cursor));
                     ctx.toast()
                         .push(crate::pty_events::info_toast(&ctx.state.theme, "Copied"));
                 }
@@ -99,14 +103,55 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         }
     }
 
-    if let Some(pane) = find_pane_mut(&mut ctx.state, state.target) {
+    let flash_id = copied_selection.map(|selection| {
+        let id = ctx.state.next_copy_flash_id;
+        ctx.state.next_copy_flash_id = ctx.state.next_copy_flash_id.saturating_add(1);
+        ctx.state.copy_flash = Some(CopyFlashState {
+            id,
+            target: state.target,
+            selection,
+        });
+        id
+    });
+
+    if flash_id.is_none()
+        && let Some(pane) = find_pane_mut(&mut ctx.state, state.target)
+    {
         pane.terminal.set_scrollback(0);
     }
     ctx.state.copy_mode = None;
     ctx.state.mode = Mode::Normal;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
+    flash_id.map_or_else(Update::full, |flash_id| {
+        Update::with_command(copy_flash_timer(state.target, flash_id))
+    })
+}
+
+pub(crate) fn expire_flash(ctx: &mut Context<HyprmuxApp>, target: PaneId, id: u64) -> Update {
+    if !ctx
+        .state
+        .copy_flash
+        .is_some_and(|flash| flash.target == target && flash.id == id)
+    {
+        return Update::none();
+    }
+    ctx.state.copy_flash = None;
+    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
+        pane.terminal.set_scrollback(0);
+    }
     Update::full()
+}
+
+fn copy_flash_timer(target: PaneId, id: u64) -> Command {
+    Command::spawn(move |link: CommandLink<crate::Msg>| {
+        std::thread::sleep(copy_flash_duration());
+        link.send(crate::Msg::CopyFlashExpired(target, id));
+    })
+}
+
+fn copy_flash_duration() -> Duration {
+    Duration::from_millis(ClipboardConfig::default().copy_feedback_duration_ms as u64)
 }
 
 /// Route a key while in copy mode. Returns `(handled, update)`; every key is consumed so

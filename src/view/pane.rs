@@ -113,10 +113,11 @@ pub(crate) fn pane_element(
         }
         let mut title_row = HStack::new()
             .style(title_bar_fill_style)
+            .padding((0, 1))
             .width(Length::Flex(1))
             .height(Length::Px(1))
             .child(
-                Text::new(format!(" {icon}  {display_number} · {title} "))
+                Text::new(format!("{icon}  {display_number} · {title}"))
                     .style(title_bar_text_style)
                     .overflow(Overflow::Ellipsis)
                     .width(Length::Flex(1))
@@ -124,7 +125,7 @@ pub(crate) fn pane_element(
             );
         if let Some(badge) = badge {
             title_row = title_row.child(
-                Text::new(format!(" {badge} "))
+                Text::new(format!(" {badge}"))
                     .style(title_bar_text_style)
                     .height(Length::Px(1)),
             );

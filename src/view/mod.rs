@@ -331,7 +331,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .list_unselected_symbol("")
         .list_selection_style(selection_style)
         .list_unfocused_selection_style(selection_style)
-        .list_item_hover_style(Style::new().bg(theme.surface.element))
+        .list_item_hover_style(Style::new().bg(theme.surface.element.elevate(0.08)))
         .list_item_horizontal_padding((0, 1))
         .list_header_horizontal_padding((0, 1))
         .item_style(fg_only(&theme.primary))

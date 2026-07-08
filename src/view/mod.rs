@@ -181,7 +181,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         if render_in_fullscreen_layer {
             has_fullscreen_layer = true;
             fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);
-        } else if merge_layering && pane.floating {
+        } else if pane.floating {
             floating_panes.push((render_rect, element));
         } else if merge_layering && moving.is_some() {
             dragged_tiles.push((render_rect, element));
@@ -192,17 +192,17 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         }
     }
 
+    // Draggable strips sit above tiled panes but below floating/fullscreen panes, so a floating
+    // pane occludes split handles underneath it instead of passing drag events through.
+    for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
+
     for (rect, element) in animating_tiles
         .into_iter()
         .chain(dragged_tiles)
         .chain(floating_panes)
     {
-        canvas = canvas.child_at(rect.to_rect(), element);
-    }
-
-    // Draggable strips sit in the gaps between tiled panes so the split ratio can be adjusted
-    // with the mouse (in addition to resize mode and modifier+right-drag).
-    for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
 

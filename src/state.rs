@@ -48,6 +48,32 @@ impl SplitAxis {
     }
 }
 
+/// Per-axis gap between tiled panes. Split apart because the two axes differ: left|right splits
+/// carry a visible column gap, while top|bottom splits sit flush (their titlebars separate
+/// stacked panes). Border merging drives both negative (a one-cell overlap so shared borders
+/// fuse), except the vertical overlap is suppressed when titlebars are shown - otherwise a lower
+/// pane's title row would land on the border of the pane above it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TileGap {
+    pub horizontal: f32,
+    pub vertical: f32,
+}
+
+impl TileGap {
+    /// The default un-merged gaps: a column between left|right splits, none between stacked panes.
+    pub const DEFAULT: TileGap = TileGap {
+        horizontal: TILE_GAP,
+        vertical: 0.0,
+    };
+
+    pub fn for_axis(self, axis: SplitAxis) -> f32 {
+        match axis {
+            SplitAxis::Horizontal => self.horizontal,
+            SplitAxis::Vertical => self.vertical,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
     Left,
@@ -84,6 +110,72 @@ impl LayoutKind {
         let all = Self::all();
         let index = all.iter().position(|kind| *kind == self).unwrap_or(0);
         all[(index + 1) % all.len()]
+    }
+}
+
+/// The border glyphs tiled panes draw. A single app-wide setting (`Action::CycleBorderStyle`),
+/// not per-pane. Floating panes keep their own `Double` border so they stay visually distinct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneBorderStyle {
+    Rounded,
+    Plain,
+    Double,
+    Thick,
+}
+
+impl PaneBorderStyle {
+    /// Cycle order for `Action::CycleBorderStyle`.
+    pub fn all() -> &'static [PaneBorderStyle] {
+        &[Self::Rounded, Self::Plain, Self::Double, Self::Thick]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Rounded => "rounded",
+            Self::Plain => "plain",
+            Self::Double => "double",
+            Self::Thick => "thick",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rounded => "Rounded",
+            Self::Plain => "Plain",
+            Self::Double => "Double",
+            Self::Thick => "Thick",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-")
+            .as_str()
+        {
+            "rounded" | "round" => Some(Self::Rounded),
+            "plain" | "single" | "square" => Some(Self::Plain),
+            "double" => Some(Self::Double),
+            "thick" | "heavy" | "bold" => Some(Self::Thick),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|style| *style == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
+    }
+
+    pub fn to_border_style(self) -> BorderStyle {
+        match self {
+            Self::Rounded => BorderStyle::Rounded,
+            Self::Plain => BorderStyle::Plain,
+            Self::Double => BorderStyle::Double,
+            Self::Thick => BorderStyle::Thick,
+        }
     }
 }
 
@@ -708,6 +800,26 @@ impl State {
             OUTER_GAP
         } else {
             0.0
+        }
+    }
+
+    /// Per-axis gap between adjacent tiled panes. When border merging is on the gap goes negative
+    /// so neighboring panes overlap by exactly one cell: their borders land on the same column/row
+    /// and the terminal backend fuses the shared glyphs (`┬`/`├`/`┼`/…) with no extra divider. The
+    /// vertical overlap is suppressed while titlebars are shown, since a lower pane's title row
+    /// would otherwise cover the border of the pane above it.
+    pub fn tile_gap(&self) -> TileGap {
+        if self.config.pane.merge_borders {
+            TileGap {
+                horizontal: -1.0,
+                vertical: if self.config.pane.show_titles {
+                    0.0
+                } else {
+                    -1.0
+                },
+            }
+        } else {
+            TileGap::DEFAULT
         }
     }
 

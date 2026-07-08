@@ -8,7 +8,7 @@ pub use keys::{
     rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
     theme_picker_key,
 };
-pub(crate) use pane::pane_element;
+pub(crate) use pane::{PaneMerge, pane_element};
 
 use tui_lipan::prelude::*;
 
@@ -39,13 +39,15 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let bounds = ctx.state.canvas_bounds(viewport);
     let top_chrome = ctx.state.top_chrome_height();
     let top_gap = ctx.state.workspace_top_gap();
+    let tile_gap = ctx.state.tile_gap();
     let root_bounds = viewport_bounds(viewport);
     let moving_tiled = ctx
         .state
         .moving_pane
         .filter(|session| !session.was_floating)
         .map(|session| session.id);
-    let placements = workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap);
+    let placements =
+        workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap, tile_gap);
     let focused_pane = workspace.focused_pane.or(ctx.state.focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
@@ -73,6 +75,15 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .height(Length::Flex(1));
     let mut fullscreen_layer = Canvas::new().height(Length::Flex(1));
     let mut has_fullscreen_layer = false;
+    // With merged borders, tiles whose rects are still animating (and the dragged tile) are
+    // lifted above the settled merged layer: they draw in Replace mode, so on top they cleanly
+    // occlude the seams they sweep across instead of settled panes Exact-merging with their
+    // transient border positions. Each vec keeps `ordered_panes` relative order (closing tiles
+    // stay under the panes expanding into their space; the focused pane stays last).
+    let merge_layering = ctx.state.config.pane.merge_borders;
+    let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
+    let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
+    let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
 
     if workspace.panes.iter().all(|pane| pane.closing) {
         canvas = canvas.child_at(
@@ -126,7 +137,38 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else {
             root_rect_to_canvas(animated_rect, top_chrome)
         };
-        let mut element = pane_element(app, ctx, pane, render_rect, focused_pane, &display_number);
+        // With merged borders, a tiled pane whose left column is a neighbor's right border must
+        // keep its title row off that column, or the title background would cover the seam.
+        let left_seam = tile_gap.horizontal < 0.0
+            && !pane.floating
+            && !pane.fullscreen
+            && placements.iter().any(|other| {
+                other.id != pane.id
+                    && (other.rect.x + other.rect.w - 1.0 - base_rect.x).abs() < 0.5
+                    && other.rect.y <= base_rect.y + 0.5
+                    && base_rect.y < other.rect.y + other.rect.h - 0.5
+            });
+        // A tile only joins the merged border layer once its rect has settled: while its
+        // geometry animates it sweeps across settled panes, and Exact-merging every transient
+        // overlap would smear junction glyphs along the way.
+        let settled = rect_settled(animated_rect, target_rect);
+        let merge = PaneMerge {
+            enabled: merge_layering
+                && !pane.floating
+                && !pane.fullscreen
+                && moving.is_none()
+                && settled,
+            left_seam,
+        };
+        let mut element = pane_element(
+            app,
+            ctx,
+            pane,
+            render_rect,
+            focused_pane,
+            &display_number,
+            merge,
+        );
         // Dim the workspace panes (opacity blends their text/borders rather than hiding them)
         // while a focused layer is up. instant_transition: `pane_dim` is already smoothed by the
         // underlying progress transitions, so this just applies it without re-easing.
@@ -139,9 +181,23 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         if render_in_fullscreen_layer {
             has_fullscreen_layer = true;
             fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);
+        } else if merge_layering && pane.floating {
+            floating_panes.push((render_rect, element));
+        } else if merge_layering && moving.is_some() {
+            dragged_tiles.push((render_rect, element));
+        } else if merge_layering && !settled {
+            animating_tiles.push((render_rect, element));
         } else {
             canvas = canvas.child_at(render_rect.to_rect(), element);
         }
+    }
+
+    for (rect, element) in animating_tiles
+        .into_iter()
+        .chain(dragged_tiles)
+        .chain(floating_panes)
+    {
+        canvas = canvas.child_at(rect.to_rect(), element);
     }
 
     // Draggable strips sit in the gaps between tiled panes so the split ratio can be adjusted
@@ -317,6 +373,16 @@ pub(crate) fn action_palette_frame(child: impl Into<Element>) -> Element {
         .padding(0)
         .child(child)
         .into()
+}
+
+/// Whether a pane's animated rect has reached its target. Transitions end by clamping to the
+/// target value, so a tight epsilon only has to absorb float noise, not easing asymptotes.
+fn rect_settled(animated: FloatRect, target: FloatRect) -> bool {
+    let eps = 0.01;
+    (animated.x - target.x).abs() < eps
+        && (animated.y - target.y).abs() < eps
+        && (animated.w - target.w).abs() < eps
+        && (animated.h - target.h).abs() < eps
 }
 
 fn canvas_rect_to_root(rect: FloatRect, top_chrome: u16) -> FloatRect {

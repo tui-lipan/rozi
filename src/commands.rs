@@ -352,6 +352,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ToggleBorderMerge,
+        label: "Merge pane borders",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::CycleBorderStyle,
+        label: "Border style",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::TogglePalette,
         label: "Command palette",
         category: "App",
@@ -664,6 +678,12 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             "focused pane background",
             state.config.pane.highlight_focused_background,
         ),
+        Action::ToggleBorderMerge => {
+            enable_disable_label("border merging", state.config.pane.merge_borders)
+        }
+        Action::CycleBorderStyle => {
+            format!("Border style: {}", state.config.pane.border_style.label())
+        }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => enable_disable_label("keybindings", state.show_help),
         Action::TogglePalette => enable_disable_label("command palette", state.show_palette),

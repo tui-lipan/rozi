@@ -1,6 +1,8 @@
 use tui_lipan::prelude::FloatRect;
 
-use crate::state::{DEFAULT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, PaneId, SplitAxis, Workspace};
+use crate::state::{
+    DEFAULT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, PaneId, SplitAxis, TileGap, Workspace,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DwindleTree {
@@ -384,7 +386,7 @@ pub fn flip_tree_split_for_focused(
 pub fn allocate_dwindle(
     tree: &DwindleTree,
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     placements: &mut Vec<PanePlacement>,
 ) {
     match tree {
@@ -405,7 +407,7 @@ pub fn allocate_dwindle(
 pub fn allocate_master(
     ids: &[PaneId],
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     ratio: f32,
     placements: &mut Vec<PanePlacement>,
 ) {
@@ -427,13 +429,13 @@ pub fn allocate_master(
 fn allocate_master_stack(
     ids: &[PaneId],
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     placements: &mut Vec<PanePlacement>,
 ) {
     if ids.is_empty() {
         return;
     }
-    let gap = visual_gap_for_axis(gap, SplitAxis::Vertical);
+    let gap = gap.for_axis(SplitAxis::Vertical);
     let usable_gap = if rect.h > gap { gap } else { 0.0 };
     let available = (rect.h - usable_gap * ids.len().saturating_sub(1) as f32).max(0.0);
     let base_h = (available / ids.len() as f32).floor();
@@ -473,7 +475,7 @@ pub fn allocate_monocle(ids: &[PaneId], rect: FloatRect, placements: &mut Vec<Pa
 pub fn allocate_grid(
     ids: &[PaneId],
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     placements: &mut Vec<PanePlacement>,
 ) {
     let n = ids.len();
@@ -517,7 +519,7 @@ pub fn allocate_grid(
 /// Split `rect` into `count` flush, gapped segments along `axis`, keeping boundaries on
 /// whole cells the way [`split_float_rect`] does. The last segment absorbs the rounding
 /// remainder so the segments exactly tile `rect`.
-fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: f32) -> Vec<FloatRect> {
+fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: TileGap) -> Vec<FloatRect> {
     if count == 0 {
         return Vec::new();
     }
@@ -525,7 +527,7 @@ fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: f32) -> Vec
         return vec![rect];
     }
 
-    let gap = visual_gap_for_axis(gap, axis);
+    let gap = gap.for_axis(axis);
     let extent = match axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -568,12 +570,12 @@ pub fn split_float_rect(
     rect: FloatRect,
     axis: SplitAxis,
     ratio: f32,
-    gap: f32,
+    gap: TileGap,
 ) -> (FloatRect, FloatRect) {
     let ratio = clamp_split_ratio(ratio);
     match axis {
         SplitAxis::Horizontal => {
-            let gap = visual_gap_for_axis(gap, axis);
+            let gap = gap.for_axis(axis);
             let gap = if rect.w > gap { gap } else { 0.0 };
             let available = (rect.w - gap).max(0.0);
             let first_w = (available * ratio).round();
@@ -594,7 +596,7 @@ pub fn split_float_rect(
             )
         }
         SplitAxis::Vertical => {
-            let gap = visual_gap_for_axis(gap, axis);
+            let gap = gap.for_axis(axis);
             let gap = if rect.h > gap { gap } else { 0.0 };
             let available = (rect.h - gap).max(0.0);
             let first_h = (available * ratio).round();
@@ -614,13 +616,6 @@ pub fn split_float_rect(
                 },
             )
         }
-    }
-}
-
-fn visual_gap_for_axis(gap: f32, axis: SplitAxis) -> f32 {
-    match axis {
-        SplitAxis::Horizontal => gap,
-        SplitAxis::Vertical => 0.0,
     }
 }
 
@@ -647,7 +642,7 @@ pub fn adjust_ratio_value(value: f32, delta: f32) -> f32 {
 pub fn nearest_split_available(
     tree: &DwindleTree,
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
 ) -> Option<f32> {
@@ -677,7 +672,7 @@ pub fn nearest_split_available(
     if *axis != target_axis {
         return None;
     }
-    let gap = visual_gap_for_axis(gap, target_axis);
+    let gap = gap.for_axis(target_axis);
     let extent = match target_axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -689,7 +684,7 @@ pub fn nearest_split_available(
 pub fn split_available_for_edge(
     tree: &DwindleTree,
     rect: FloatRect,
-    gap: f32,
+    gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
     edge: SplitEdge,
@@ -722,7 +717,7 @@ pub fn split_available_for_edge(
     if *axis != target_axis || !split_edge_matches_focused_side(edge, focused_is_first) {
         return None;
     }
-    let gap = visual_gap_for_axis(gap, target_axis);
+    let gap = gap.for_axis(target_axis);
     let extent = match target_axis {
         SplitAxis::Horizontal => rect.w,
         SplitAxis::Vertical => rect.h,
@@ -899,7 +894,7 @@ mod tests {
             w: 101.0,
             h: 20.0,
         };
-        let (first, second) = split_float_rect(rect, SplitAxis::Horizontal, 0.5, 1.0);
+        let (first, second) = split_float_rect(rect, SplitAxis::Horizontal, 0.5, TileGap::DEFAULT);
         assert_close(first.x + first.w + 1.0, second.x);
         assert_close(second.x + second.w, 101.0);
     }
@@ -912,7 +907,7 @@ mod tests {
             w: 80.0,
             h: 41.0,
         };
-        let (first, second) = split_float_rect(rect, SplitAxis::Vertical, 0.5, 1.0);
+        let (first, second) = split_float_rect(rect, SplitAxis::Vertical, 0.5, TileGap::DEFAULT);
         assert_close(first.y + first.h, second.y);
         assert_close(second.y + second.h, 41.0);
     }
@@ -930,7 +925,7 @@ mod tests {
                 w: 100.0,
                 h: 40.0,
             },
-            1.0,
+            TileGap::DEFAULT,
             &mut placements,
         );
         assert_eq!(placements.iter().map(|p| p.id).collect::<Vec<_>>(), ids);
@@ -955,7 +950,7 @@ mod tests {
                 w: 101.0,
                 h: 41.0,
             },
-            1.0,
+            TileGap::DEFAULT,
             0.5,
             &mut placements,
         );
@@ -1020,7 +1015,7 @@ mod tests {
             h: 40.0,
         };
         let mut placements = Vec::new();
-        allocate_grid(&[1, 2, 3, 4], rect, 1.0, &mut placements);
+        allocate_grid(&[1, 2, 3, 4], rect, TileGap::DEFAULT, &mut placements);
 
         assert_eq!(placements.len(), 4);
         assert_eq!(
@@ -1048,7 +1043,7 @@ mod tests {
             h: 40.0,
         };
         let mut placements = Vec::new();
-        allocate_grid(&[1, 2, 3], rect, 1.0, &mut placements);
+        allocate_grid(&[1, 2, 3], rect, TileGap::DEFAULT, &mut placements);
 
         assert_eq!(placements.len(), 3);
         // Third pane is alone on the last row and spans the full width.
@@ -1113,7 +1108,7 @@ mod tests {
         let available = split_available_for_edge(
             workspace.tile_tree.as_ref().unwrap(),
             rect,
-            1.0,
+            TileGap::DEFAULT,
             3,
             SplitAxis::Horizontal,
             SplitEdge::Leading,
@@ -1149,7 +1144,7 @@ mod tests {
         let available = split_available_for_edge(
             workspace.tile_tree.as_ref().unwrap(),
             rect,
-            1.0,
+            TileGap::DEFAULT,
             3,
             SplitAxis::Horizontal,
             SplitEdge::Trailing,

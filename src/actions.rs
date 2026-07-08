@@ -228,6 +228,23 @@ pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> U
             apply_terminal_palette_to_state(&mut ctx.state);
             Update::full()
         }
+        Action::ToggleBorderMerge => {
+            ctx.state.config.pane.merge_borders = !ctx.state.config.pane.merge_borders;
+            persist_pane_toggle(ctx, "merge_borders", ctx.state.config.pane.merge_borders);
+            Update::full()
+        }
+        Action::CycleBorderStyle => {
+            let next = ctx.state.config.pane.border_style.next();
+            ctx.state.config.pane.border_style = next;
+            if let Err(err) = crate::config::persist_pane_string("border_style", next.id()) {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Preference not saved",
+                    err,
+                ));
+            }
+            Update::full()
+        }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
         Action::ReloadConfig => crate::config_ops::reload_config(ctx),
         Action::OpenConfigFile => crate::config_ops::open_config_file(ctx),

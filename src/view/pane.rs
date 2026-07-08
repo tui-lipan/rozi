@@ -1,11 +1,20 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{LayoutKind, Pane, PaneId, TILE_GAP, Workspace};
+use crate::state::{LayoutKind, Pane, PaneId, Workspace};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
 use super::integrated_scrollbar_config;
 use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
+
+/// Caller-decided border-merge posture for one pane (see `view::render`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PaneMerge {
+    /// The pane is in the settled merged layer: its border may Exact-merge with neighbors.
+    pub enabled: bool,
+    /// The pane's left column is a neighbor's right border; the title row keeps off it.
+    pub left_seam: bool,
+}
 
 pub(crate) fn pane_element(
     app: &HyprmuxApp,
@@ -14,6 +23,7 @@ pub(crate) fn pane_element(
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
     display_number: &str,
+    merge: PaneMerge,
 ) -> Element {
     let theme = &ctx.state.theme;
     let id = pane.id;
@@ -34,10 +44,14 @@ pub(crate) fn pane_element(
     } else {
         None
     };
+    // Floating panes keep a Double border so they read as a distinct layer; tiled panes follow
+    // the app-wide `pane.border_style` (cycled by `Action::CycleBorderStyle`). Border merging
+    // is achieved by overlapping tiled pane rects a cell (see `State::tile_gap`) so neighbors
+    // share a border column that the terminal backend fuses - no per-frame join flag needed.
     let border_style = if pane.floating {
         BorderStyle::Double
     } else {
-        BorderStyle::Rounded
+        ctx.state.config.pane.border_style.to_border_style()
     };
 
     let frame_fg = app.chrome_color(
@@ -62,7 +76,11 @@ pub(crate) fn pane_element(
     );
     let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
 
-    let mut window_stack = VStack::new().align(Align::Stretch).style(frame_style);
+    // The wrapper stack must stay unstyled: a styled stack fills its whole rect with its
+    // background, and merged panes overlap neighbors by a cell, so that fill would wipe the
+    // neighbor's border glyph before this pane's border draws and fuses with it. The title row
+    // and the body frame each paint their own background, covering the full rect anyway.
+    let mut window_stack = VStack::new().align(Align::Stretch);
     if ctx.state.config.pane.show_titles {
         let title_bar_bg_target = if focused {
             theme.border_active
@@ -112,11 +130,20 @@ pub(crate) fn pane_element(
             );
         }
 
-        let title_bar: Element = MouseRegion::new()
+        let mut title_bar: Element = MouseRegion::new()
             .capture_click(true)
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
+        if merge.left_seam {
+            // Keep the title row off the shared border column. The spacer is an empty Text so
+            // the seam cell is left untouched for the neighbor's border glyph.
+            title_bar = HStack::new()
+                .height(Length::Px(1))
+                .child(Text::new("").width(Length::Px(1)).height(Length::Px(1)))
+                .child(title_bar)
+                .into();
+        }
         window_stack = window_stack.child(title_bar);
     }
 
@@ -159,9 +186,18 @@ pub(crate) fn pane_element(
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane_terminal_key(id));
 
+    // Border fusing is buffer-level: any two box-drawing glyphs sharing a cell merge unless the
+    // later frame draws in Replace mode, so only panes in the settled merged layer may use Exact
+    // (the caller decides - floating, fullscreen, scratch, mid-drag, and mid-animation panes must
+    // occlude whatever is beneath them, not grow junctions into it).
     let body: Element = Frame::new()
         .border(true)
         .border_style(border_style)
+        .border_merge_mode(if merge.enabled {
+            BorderMergeMode::Exact
+        } else {
+            BorderMergeMode::Replace
+        })
         .style(frame_style)
         .focus_style(Style::default())
         .child(terminal)
@@ -295,9 +331,10 @@ fn active_search_match_style() -> Style {
         .contrast_policy(ContrastPolicy::BlackOrWhite)
 }
 
-/// Draggable strips in the gaps between adjacent tiled panes. Each strip resizes the split on
-/// that boundary. Only dwindle (both axes) and master (the master/stack divider) have
-/// adjustable ratios, so grid and monocle get no strips.
+/// Draggable strips on the boundary between adjacent tiled panes. Each strip resizes the split
+/// on that boundary. Only dwindle (both axes) and master (the master/stack divider) have
+/// adjustable ratios, so grid and monocle get no strips. With border merging on the gap is zero,
+/// so the strip straddles the shared seam column/row (one cell thick) instead of filling a gap.
 pub(crate) fn tiled_resize_strips(
     ctx: &Context<HyprmuxApp>,
     placements: &[PanePlacement],
@@ -315,40 +352,46 @@ pub(crate) fn tiled_resize_strips(
         .map(|placement| (placement.id, placement.rect))
         .collect();
 
+    let gap = ctx.state.tile_gap();
+    // Grab at least one cell so a merged seam (a single shared column/row) stays draggable.
+    let h_gap = gap.horizontal;
+    let v_gap = gap.vertical;
+    let h_thickness = h_gap.max(1.0);
+    let v_thickness = v_gap.max(1.0);
     let eps = 1.5;
     let mut strips = Vec::new();
     for (a_id, a) in &tiled {
         for (_b_id, b) in &tiled {
-            // Vertical gap → horizontal (left|right) split. `a` is the left pane.
+            // Vertical boundary → horizontal (left|right) split. `a` is the left pane.
             let a_right = a.x + a.w;
-            if (b.x - (a_right + TILE_GAP)).abs() < eps {
+            if (b.x - (a_right + h_gap)).abs() < eps {
                 let y0 = a.y.max(b.y);
                 let y1 = (a.y + a.h).min(b.y + b.h);
                 if y1 - y0 > eps {
                     strips.push((
                         FloatRect {
-                            x: a_right,
+                            x: a_right + h_gap / 2.0 - h_thickness / 2.0,
                             y: y0,
-                            w: TILE_GAP,
+                            w: h_thickness,
                             h: y1 - y0,
                         },
                         resize_strip_element(ctx, *a_id, true),
                     ));
                 }
             }
-            // Horizontal gap → vertical (top|bottom) split. Not adjustable in master.
+            // Horizontal boundary → vertical (top|bottom) split. Not adjustable in master.
             if !master {
                 let a_bottom = a.y + a.h;
-                if (b.y - (a_bottom + TILE_GAP)).abs() < eps {
+                if (b.y - (a_bottom + v_gap)).abs() < eps {
                     let x0 = a.x.max(b.x);
                     let x1 = (a.x + a.w).min(b.x + b.w);
                     if x1 - x0 > eps {
                         strips.push((
                             FloatRect {
                                 x: x0,
-                                y: a_bottom,
+                                y: a_bottom + v_gap / 2.0 - v_thickness / 2.0,
                                 w: x1 - x0,
-                                h: TILE_GAP,
+                                h: v_thickness,
                             },
                             resize_strip_element(ctx, *a_id, false),
                         ));

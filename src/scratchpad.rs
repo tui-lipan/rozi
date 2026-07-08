@@ -203,7 +203,15 @@ pub(crate) fn scratch_placement(
         progress,
         top_gap,
     );
-    let element = view::pane_element(app, ctx, pane, rect, Some(SCRATCH_PANE_ID), "S");
+    let element = view::pane_element(
+        app,
+        ctx,
+        pane,
+        rect,
+        Some(SCRATCH_PANE_ID),
+        "S",
+        view::PaneMerge::default(),
+    );
     Some((rect, element))
 }
 

@@ -42,6 +42,7 @@ pub(crate) fn spawn_pane_in_workspace(
 ) -> (PaneId, Update) {
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
+    let tile_gap = ctx.state.tile_gap();
     let id = ctx.state.next_pane_id;
     ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
     let generation = ctx.state.next_pty_generation;
@@ -89,7 +90,7 @@ pub(crate) fn spawn_pane_in_workspace(
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
-    place_spawned_pane(workspace, id, previous_focused, bounds, top_gap);
+    place_spawned_pane(workspace, id, previous_focused, bounds, top_gap, tile_gap);
     workspace.focused_pane = Some(id);
     ctx.state.active_workspace = workspace_index;
     ctx.state.focused_pane = Some(id);
@@ -143,9 +144,10 @@ pub(crate) fn begin_close_pane(
 pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
+    let tile_gap = ctx.state.tile_gap();
     let placements = {
         let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-        workspace_target_rects(workspace, bounds, top_gap)
+        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
     let mut generation = None;
     let client = ctx.state.session_client.clone();

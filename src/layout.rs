@@ -2,7 +2,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{
-    LayoutKind, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TILE_GAP, Workspace,
+    LayoutKind, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TileGap, Workspace,
 };
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
@@ -14,8 +14,9 @@ pub fn workspace_target_rects(
     workspace: &Workspace,
     bounds: FloatRect,
     top_gap: f32,
+    tile_gap: TileGap,
 ) -> Vec<PanePlacement> {
-    workspace_target_rects_excluding(workspace, bounds, None, top_gap)
+    workspace_target_rects_excluding(workspace, bounds, None, top_gap, tile_gap)
 }
 
 pub fn workspace_target_rects_excluding(
@@ -23,13 +24,14 @@ pub fn workspace_target_rects_excluding(
     bounds: FloatRect,
     exclude_tiled: Option<PaneId>,
     top_gap: f32,
+    tile_gap: TileGap,
 ) -> Vec<PanePlacement> {
     let mut placements = Vec::new();
     let tile_bounds = workspace_tile_bounds(bounds, top_gap);
     match workspace.layout_kind {
         LayoutKind::Dwindle => {
             if let Some(tree) = effective_tile_tree(workspace, exclude_tiled) {
-                allocate_dwindle(&tree, tile_bounds, TILE_GAP, &mut placements);
+                allocate_dwindle(&tree, tile_bounds, tile_gap, &mut placements);
             }
         }
         LayoutKind::Master => {
@@ -37,14 +39,14 @@ pub fn workspace_target_rects_excluding(
             allocate_master(
                 &ids,
                 tile_bounds,
-                TILE_GAP,
+                tile_gap,
                 ratio_at(&workspace.split_ratios, 0),
                 &mut placements,
             );
         }
         LayoutKind::Grid => {
             let ids = order_driven_ids(workspace, exclude_tiled);
-            allocate_grid(&ids, tile_bounds, TILE_GAP, &mut placements);
+            allocate_grid(&ids, tile_bounds, tile_gap, &mut placements);
         }
         LayoutKind::Monocle => {
             let ids = order_driven_ids(workspace, exclude_tiled);
@@ -183,9 +185,11 @@ pub fn insert_tiled_pane_at_point(
     point: (f32, f32),
     bounds: FloatRect,
     top_gap: f32,
+    tile_gap: TileGap,
 ) -> Option<(PaneId, bool)> {
     let target = {
-        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
+        let placements =
+            workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         let tiled_ids: Vec<PaneId> = workspace
             .tiled_ids()
             .into_iter()
@@ -242,6 +246,7 @@ pub fn place_spawned_pane(
     previous_focused: Option<PaneId>,
     bounds: FloatRect,
     top_gap: f32,
+    tile_gap: TileGap,
 ) -> SpawnPlacement {
     // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
     // new pane simply appends to the end. Dwindle splits the focused tile.
@@ -254,7 +259,8 @@ pub fn place_spawned_pane(
     }
 
     if let Some(target) = previous_focused.filter(|target| *target != id) {
-        let placements = workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap);
+        let placements =
+            workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         if let Some(rect) = placement_for(&placements, target) {
             let axis = spawn_split_for_target(workspace, id, target)
                 .unwrap_or_else(|| spawn_split_for_rect(rect).0);
@@ -319,7 +325,14 @@ mod tests {
         for id in 1..=5 {
             let previous_focused = workspace.focused_pane;
             workspace.panes.push(Pane::new(id, 100, bounds));
-            place_spawned_pane(&mut workspace, id, previous_focused, bounds, 0.0);
+            place_spawned_pane(
+                &mut workspace,
+                id,
+                previous_focused,
+                bounds,
+                0.0,
+                crate::state::TileGap::DEFAULT,
+            );
             workspace.focused_pane = Some(id);
         }
 
@@ -348,6 +361,53 @@ mod tests {
             collect_axes(first, out);
             collect_axes(second, out);
         }
+    }
+
+    #[test]
+    fn merge_gap_overlaps_adjacent_tiles_by_one_cell() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 20.0,
+        };
+        let mut workspace = Workspace::new(0);
+        for id in 1..=2 {
+            let previous_focused = workspace.focused_pane;
+            workspace.panes.push(Pane::new(id, 100, bounds));
+            place_spawned_pane(
+                &mut workspace,
+                id,
+                previous_focused,
+                bounds,
+                0.0,
+                crate::state::TileGap::DEFAULT,
+            );
+            workspace.focused_pane = Some(id);
+        }
+
+        // The wide bounds split left|right. With the border-merge overlap gap (-1) the right
+        // pane's left edge lands one cell left of the left pane's right edge, so their borders
+        // share a column and the union still spans the tile bounds exactly.
+        let mut rects: Vec<FloatRect> = workspace_target_rects(
+            &workspace,
+            bounds,
+            0.0,
+            TileGap {
+                horizontal: -1.0,
+                vertical: 0.0,
+            },
+        )
+        .into_iter()
+        .map(|placement| placement.rect)
+        .collect();
+        rects.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let [left, right] = rects.as_slice() else {
+            panic!("expected two tiled placements, got {}", rects.len());
+        };
+        assert_eq!(right.x, left.x + left.w - 1.0, "panes overlap by one cell");
+        assert_eq!(left.x, 0.0);
+        assert_eq!(right.x + right.w, bounds.w, "union spans the bounds");
     }
 
     #[test]

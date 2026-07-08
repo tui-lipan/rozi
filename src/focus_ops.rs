@@ -29,7 +29,12 @@ pub(crate) fn focus_in_direction(
 ) -> Option<PaneId> {
     let bounds = state.canvas_bounds(viewport);
     let workspace = &state.workspaces[state.active_workspace];
-    let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
+    let placements = workspace_target_rects(
+        workspace,
+        bounds,
+        state.workspace_top_gap(),
+        state.tile_gap(),
+    );
     let candidates: Vec<_> = workspace
         .panes
         .iter()
@@ -384,7 +389,12 @@ pub(crate) fn visible_pane_placements(
 ) -> Vec<(PaneId, FloatRect)> {
     if let Some(viewport) = state.last_viewport.get() {
         let bounds = state.canvas_bounds(viewport);
-        let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
+        let placements = workspace_target_rects(
+            workspace,
+            bounds,
+            state.workspace_top_gap(),
+            state.tile_gap(),
+        );
         return workspace
             .panes
             .iter()
@@ -412,7 +422,12 @@ pub(crate) fn reference_pane_rect(
     }
     if let Some(viewport) = state.last_viewport.get() {
         let bounds = state.canvas_bounds(viewport);
-        let placements = workspace_target_rects(workspace, bounds, state.workspace_top_gap());
+        let placements = workspace_target_rects(
+            workspace,
+            bounds,
+            state.workspace_top_gap(),
+            state.tile_gap(),
+        );
         if let Some(rect) = placement_for(&placements, id) {
             return Some(rect);
         }

@@ -10,7 +10,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::input::Action;
-use crate::state::ThemePreset;
+use crate::state::{PaneBorderStyle, ThemePreset};
 
 // === Config schema ===
 
@@ -137,6 +137,11 @@ pub struct HyprmuxPaneConfig {
     pub show_top_bar: bool,
     /// Whether tiled/floating panes render their titlebars.
     pub show_titles: bool,
+    /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
+    /// instead of drawing a gap between separate boxes.
+    pub merge_borders: bool,
+    /// App-wide border glyphs for tiled panes.
+    pub border_style: PaneBorderStyle,
 }
 
 impl Default for HyprmuxPaneConfig {
@@ -146,6 +151,8 @@ impl Default for HyprmuxPaneConfig {
             focus_on_hover: true,
             show_top_bar: true,
             show_titles: true,
+            merge_borders: false,
+            border_style: PaneBorderStyle::Rounded,
         }
     }
 }
@@ -497,6 +504,8 @@ struct PaneFileConfig {
     focus_on_hover: Option<bool>,
     show_top_bar: Option<bool>,
     show_titles: Option<bool>,
+    merge_borders: Option<bool>,
+    border_style: Option<String>,
 }
 
 #[cfg(test)]
@@ -1086,6 +1095,17 @@ pub fn load_config() -> LoadedConfig {
     if let Some(show_titles) = parsed.pane.show_titles {
         config.pane.show_titles = show_titles;
     }
+    if let Some(merge_borders) = parsed.pane.merge_borders {
+        config.pane.merge_borders = merge_borders;
+    }
+    if let Some(border_style) = parsed.pane.border_style.as_deref() {
+        match PaneBorderStyle::parse(border_style) {
+            Some(style) => config.pane.border_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.border_style \"{border_style}\" (expected one of: rounded, plain, double, thick)"
+            )),
+        }
+    }
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
@@ -1326,9 +1346,40 @@ pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf,
     Ok(path)
 }
 
+pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_value_in_section(&text, "pane", key, &format!("\"{value}\""));
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Could not create config directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&path, updated)
+        .map_err(|err| format!("Could not write config {}: {err}", path.display()))?;
+    Ok(path)
+}
+
 fn upsert_bool_in_section(text: &str, section: &str, key: &str, value: bool) -> String {
+    upsert_value_in_section(text, section, key, if value { "true" } else { "false" })
+}
+
+/// Insert or replace `key = <line_value>` inside `[section]`, creating the section at the end
+/// of the file when it does not exist yet. `line_value` is written verbatim (already quoted for
+/// strings, bare for bools/numbers).
+fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &str) -> String {
     let section_header = format!("[{section}]");
-    let line_value = if value { "true" } else { "false" };
     let mut output = String::new();
     let mut in_section = false;
     let mut saw_section = false;

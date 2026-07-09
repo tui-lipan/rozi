@@ -7,10 +7,8 @@ use crate::config::{
 };
 use crate::focus_ops::request_profile_picker_focus;
 use crate::focus_ops::request_save_profile_focus;
-use crate::pane_lifecycle;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
-use crate::startup_spawns;
 use crate::state::{Mode, PaneRenameState, ProfilePickerState, State};
 use crate::theme_ops;
 
@@ -239,12 +237,28 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         }
     };
 
-    kill_all_live_ptys(&mut ctx.state);
+    // Loading a profile replaces the whole layout, so tear down the current session and start the
+    // profile in a fresh ephemeral. An ephemeral session is disposable (shut it down); a named one
+    // is parked (detached) so it can be reattached later.
+    if let Some(client) = ctx.state.session_client.clone() {
+        if ctx.state.is_ephemeral_session() {
+            client.shutdown();
+        } else {
+            client.push_layout(
+                profile_from_state(&ctx.state)
+                    .to_toml_string()
+                    .unwrap_or_default(),
+            );
+            client.detach();
+        }
+    }
+
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();
     let control_socket_path = ctx.state.control_socket_path.clone();
-    let next_pty_generation = ctx.state.next_pty_generation;
-    let runtime_epoch = ctx.state.runtime_epoch.saturating_add(1);
+    let old_epoch = ctx.state.runtime_epoch;
+    let epoch = old_epoch.saturating_add(1);
+    let name = crate::state::fresh_ephemeral_session_name(epoch);
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
 
@@ -252,8 +266,14 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     new_state.theme_watcher = theme_watcher;
     new_state.system_theme = system_theme;
     new_state.control_socket_path = control_socket_path;
-    new_state.next_pty_generation = next_pty_generation;
-    new_state.runtime_epoch = runtime_epoch;
+    new_state.runtime_epoch = old_epoch;
+    new_state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+        epoch,
+        name: name.clone(),
+        client: None,
+        migrate_local_panes: true,
+        autostart: true,
+    });
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
     theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
@@ -264,15 +284,10 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     // The theme-tick, bar-tick, and bar-command loops started at app launch are
-    // self-sustaining and survive the state swap, so don't restart them
-    // here - doing so would spawn duplicate loops on every load.
-    Update::with_command(pane_lifecycle::initial_command(
-        startup_spawns(&mut ctx.state),
-        false,
-        false,
-        Vec::new(),
-        None,
-    ))
+    // self-sustaining and survive the state swap, so don't restart them here.
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+    }))
 }
 
 fn selected_profile_entry(ctx: &Context<HyprmuxApp>) -> Option<crate::config::ProfileEntry> {
@@ -293,46 +308,4 @@ fn refresh_profile_picker_entries(ctx: &mut Context<HyprmuxApp>) {
         return;
     }
     picker.selected = picker.selected.min(picker.entries.len() - 1);
-}
-
-fn kill_all_live_ptys(state: &mut State) {
-    for workspace in &mut state.workspaces {
-        for pane in &mut workspace.panes {
-            if !pane.closing {
-                pane.closing = true;
-                pane.terminal.kill();
-            }
-        }
-    }
-    if let Some(scratch) = state.scratch.as_mut() {
-        scratch.closing = true;
-        scratch.terminal.kill();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::state::Pane;
-
-    fn rect() -> FloatRect {
-        FloatRect {
-            x: 0.0,
-            y: 0.0,
-            w: 80.0,
-            h: 24.0,
-        }
-    }
-
-    #[test]
-    fn profile_teardown_marks_panes_closing_before_kill() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
-        state.scratch = Some(Pane::new(crate::state::SCRATCH_PANE_ID, 100, rect()));
-
-        kill_all_live_ptys(&mut state);
-
-        assert!(state.workspaces[0].panes.iter().all(|pane| pane.closing));
-        assert!(state.scratch.as_ref().is_some_and(|pane| pane.closing));
-    }
 }

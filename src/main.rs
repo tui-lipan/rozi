@@ -159,8 +159,6 @@ pub enum Msg {
     FinishOpen(u64, PaneId, u64),
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),
-    PtyReady(u64, PaneId, u64, TerminalPty),
-    PtyEvent(u64, PaneId, u64, TerminalPtyEvent),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
     PaneMouse(PaneId, Vec<u8>),
@@ -266,50 +264,43 @@ impl Component for HyprmuxApp {
             }
         }
 
-        let attach_session = self.attach_session.clone();
+        // Always-server model: with no explicit `--attach`, attach to this process's ephemeral
+        // session (`eph-<pid>`), autostarting its server. Restored/initial panes are spawned on
+        // the server once `Msg::SessionAttached` reports an empty session.
         let control_listener = self.control_listener.take();
-        if let Some(name) = attach_session {
-            let theme_tick = ctx.state.theme_watcher.is_some();
-            let bar_tick = ctx.state.config.bar.has_clock();
-            let bar_commands = ctx.state.config.bar.command_specs();
-            ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
-            let epoch = ctx.state.runtime_epoch;
-            ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
-                epoch,
-                name: name.clone(),
-                client: None,
-                migrate_local_panes: true,
-            });
-            return Some(Command::spawn(move |link: CommandLink<Msg>| {
-                config_ops::spawn_config_watcher(&link);
-                if let Some(listener) = control_listener {
-                    let listener_link = link.clone();
-                    std::thread::spawn(move || {
-                        crate::control::run_listener(listener, listener_link)
-                    });
-                }
-                let session_link = link.clone();
-                std::thread::spawn(move || attach_session_client(epoch, name, session_link));
-                if theme_tick {
-                    std::thread::sleep(std::time::Duration::from_millis(150));
-                    link.send(Msg::ThemeTick);
-                }
-                if bar_tick {
-                    link.send(Msg::BarTick);
-                }
-                pane_lifecycle::spawn_bar_command_pollers(bar_commands, &link);
-            }));
-        }
-        let spawns = startup_spawns(&mut ctx.state);
+        let name = self
+            .attach_session
+            .clone()
+            .unwrap_or_else(state::ephemeral_session_name);
+        let theme_tick = ctx.state.theme_watcher.is_some();
+        let bar_tick = ctx.state.config.bar.has_clock();
         let bar_commands = ctx.state.config.bar.command_specs();
         ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
-        pane_lifecycle::initial_command(
-            spawns,
-            ctx.state.theme_watcher.is_some(),
-            ctx.state.config.bar.has_clock(),
-            bar_commands,
-            control_listener,
-        )
+        let epoch = ctx.state.runtime_epoch;
+        ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+            epoch,
+            name: name.clone(),
+            client: None,
+            migrate_local_panes: true,
+            autostart: true,
+        });
+        Some(Command::spawn(move |link: CommandLink<Msg>| {
+            config_ops::spawn_config_watcher(&link);
+            if let Some(listener) = control_listener {
+                let listener_link = link.clone();
+                std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
+            }
+            let session_link = link.clone();
+            std::thread::spawn(move || attach_session_client(epoch, name, true, session_link));
+            if theme_tick {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                link.send(Msg::ThemeTick);
+            }
+            if bar_tick {
+                link.send(Msg::BarTick);
+            }
+            pane_lifecycle::spawn_bar_command_pollers(bar_commands, &link);
+        }))
     }
 
     fn update(&mut self, msg: Self::Message, ctx: &mut Context<Self>) -> Update {
@@ -339,35 +330,12 @@ impl Component for HyprmuxApp {
     }
 }
 
-pub(crate) fn startup_spawns(state: &mut State) -> Vec<pane_lifecycle::StartupSpawn> {
-    let epoch = state.runtime_epoch;
-    let mut next_generation = state.next_pty_generation;
-    let socket_path = state.control_socket_path.clone();
-    let config = state.config.clone();
-    let mut spawns = Vec::new();
-    state
-        .workspaces
-        .iter_mut()
-        .flat_map(|workspace| workspace.panes.iter_mut())
-        .filter(|pane| !pane.closing)
-        .for_each(|pane| {
-            let generation = next_generation;
-            next_generation = next_generation.saturating_add(1);
-            pane.pty_generation = generation;
-            pane.terminal.bind_session(pane.id, generation);
-            spawns.push((
-                epoch,
-                pane.id,
-                generation,
-                pane_lifecycle::pty_config_for_pane(&config, socket_path.as_deref(), pane),
-                Some((Duration::ZERO, Duration::ZERO)),
-            ));
-        });
-    state.next_pty_generation = next_generation;
-    spawns
-}
-
-pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<Msg>) {
+pub(crate) fn attach_session_client(
+    epoch: u64,
+    name: String,
+    autostart: bool,
+    link: CommandLink<Msg>,
+) {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -407,6 +375,15 @@ pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<
                         message: format!(
                             "session {name:?} is busy or not accepting clients: {err}"
                         ),
+                    });
+                    return;
+                }
+                if !autostart && should_autostart_session(&err) {
+                    // A named session that isn't running should surface as an error, not a silent
+                    // empty resurrection. Only ephemeral/initial attaches autostart a server.
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("session {name:?} is not running"),
                     });
                     return;
                 }
@@ -1259,66 +1236,6 @@ fn print_version() {
 mod tests {
     use super::*;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
-
-    fn rect() -> FloatRect {
-        FloatRect {
-            x: 0.0,
-            y: 0.0,
-            w: 80.0,
-            h: 24.0,
-        }
-    }
-
-    #[test]
-    fn startup_spawns_include_all_non_closing_panes() {
-        let config = HyprmuxConfig {
-            shell: Some("/bin/bash".to_string()),
-            cwd: Some("/repo".into()),
-            ..HyprmuxConfig::default()
-        };
-        let mut state = State::new(config, Theme::default());
-        state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
-        let mut restored = Pane::new(3, 100, rect());
-        restored.identity.cwd = Some("/repo/backend".to_string());
-        restored.identity.command = Some("cargo run".to_string());
-        state.workspaces[1].panes.push(restored);
-        let mut closing = Pane::new(4, 100, rect());
-        closing.closing = true;
-        state.workspaces[1].panes.push(closing);
-
-        let spawns = startup_spawns(&mut state);
-        let ids: Vec<PaneId> = spawns.iter().map(|(_, id, _, _, _)| *id).collect();
-
-        assert_eq!(ids, vec![1, 2, 3]);
-
-        let restored_config = spawns
-            .iter()
-            .find(|(_, id, _, _, _)| *id == 3)
-            .map(|(_, _, _, config, _)| format!("{config:?}"))
-            .expect("restored pane spawn config");
-
-        assert!(restored_config.contains("/bin/bash"), "{restored_config}");
-        assert!(restored_config.contains("-lc"), "{restored_config}");
-        assert!(restored_config.contains("cargo run"), "{restored_config}");
-        assert!(
-            restored_config.contains("/repo/backend"),
-            "{restored_config}"
-        );
-        assert!(
-            state.workspaces[0]
-                .panes
-                .iter()
-                .any(|pane| pane.id == 1 && pane.pty_generation > 0)
-        );
-        assert!(
-            state.next_pty_generation
-                > spawns
-                    .iter()
-                    .map(|(_, _, generation, _, _)| *generation)
-                    .max()
-                    .unwrap()
-        );
-    }
 
     #[test]
     fn cli_parses_profile_flag_and_positional() {

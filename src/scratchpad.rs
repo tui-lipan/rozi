@@ -2,10 +2,10 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::config::{HyprmuxConfig, SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
+use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
 use crate::geometry::workspace_tile_bounds;
-use crate::pane_lifecycle::{pty_config_for_pane, spawn_pty_command};
+use crate::pane_lifecycle::{pane_env, request_pane_spawn};
 use crate::state::{Pane, SCRATCH_PANE_ID};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::view;
@@ -87,7 +87,10 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
         pane.pty_generation = generation;
-        pane.terminal.bind_session(SCRATCH_PANE_ID, generation);
+        pane.identity.command = ctx.state.config.scratchpad.command.clone();
+        pane.identity.cwd = ctx.state.config.scratchpad.cwd.clone();
+        pane.terminal
+            .bind_server_backend(SCRATCH_PANE_ID, generation);
         pane.terminal.set_palette(terminal_palette(
             &ctx.state.theme,
             pane_frame_background(
@@ -100,14 +103,25 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         // is no FinishOpen(scratch) message to clear an `opening` flag.
         pane.opening = false;
         pane.terminal_active = true;
+        let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+        let command = pane.identity.command.clone();
+        let cwd = pane.identity.cwd.clone();
+        let cols = pane.terminal.cols;
+        let rows = pane.terminal.rows;
         ctx.state.scratch = Some(pane);
-        return Update::with_command(spawn_pty_command(
-            ctx.state.runtime_epoch,
+        request_pane_spawn(
+            &mut ctx.state,
             SCRATCH_PANE_ID,
             generation,
-            scratch_pty_config(&ctx.state.config, ctx.state.control_socket_path.as_deref()),
+            command,
+            cwd,
+            cols,
+            rows,
+            false,
+            env,
             None,
-        ));
+        );
+        return Update::full();
     }
 
     Update::full()
@@ -128,24 +142,6 @@ pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(crate) fn is_scratch(id: crate::state::PaneId) -> bool {
     id == SCRATCH_PANE_ID
-}
-
-/// Build the scratch PTY config, honoring `[scratchpad]` command/cwd overrides by reusing the
-/// per-pane config path (a command is wrapped in `shell -lc`).
-fn scratch_pty_config(
-    config: &HyprmuxConfig,
-    control_socket_path: Option<&std::path::Path>,
-) -> TerminalPtyConfig {
-    let rect = FloatRect {
-        x: 0.0,
-        y: 0.0,
-        w: 80.0,
-        h: 24.0,
-    };
-    let mut pane = Pane::new(SCRATCH_PANE_ID, config.scrollback, rect);
-    pane.identity.command = config.scratchpad.command.clone();
-    pane.identity.cwd = config.scratchpad.cwd.clone();
-    pty_config_for_pane(config, control_socket_path, &pane)
 }
 
 /// A dimming scrim covering the whole canvas, drawn behind the dropdown so the scratchpad

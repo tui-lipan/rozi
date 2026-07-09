@@ -44,18 +44,32 @@ fn confirm_second_press(
     false
 }
 
+/// Leave the TUI while keeping the session server running for later reattach (tmux-style detach).
+/// The layout is pushed to the server and mirrored to disk so a fresh launch can restore it.
 pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending(ctx);
-    if ctx.state.session_attached {
-        return crate::session_ops::detach_current_session(ctx);
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.push_layout(
+            profiles::profile_from_state(&ctx.state)
+                .to_toml_string()
+                .unwrap_or_default(),
+        );
+        client.detach();
     }
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()
 }
 
+/// Quit the client. An ephemeral session is shut down (its PTYs die with it); a named session is
+/// left running so it can be reattached later.
 pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending(ctx);
+    if ctx.state.is_ephemeral_session()
+        && let Some(client) = ctx.state.session_client.clone()
+    {
+        client.shutdown();
+    }
     profiles::persist_session_if_enabled(&ctx.state);
     ctx.quit();
     Update::none()

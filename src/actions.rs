@@ -9,7 +9,7 @@ use crate::focus_ops::{
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
-use crate::pane_lifecycle::{find_pane_mut, spawn_pane, spawn_pane_in_workspace};
+use crate::pane_lifecycle::{spawn_pane, spawn_pane_in_workspace};
 use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
@@ -39,9 +39,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     if text.is_empty() {
         return Update::full();
     }
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
-        && let Err(err) = pane.terminal.send_bytes(&wrap_bracketed_paste(&text))
-    {
+    if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, wrap_bracketed_paste(&text)) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
             "Paste failed",
@@ -72,9 +70,7 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
             let Some(id) = ctx.state.focused_pane else {
                 return Update::full();
             };
-            if let Some(pane) = find_pane_mut(&mut ctx.state, id)
-                && let Err(err) = pane.terminal.send_bytes(text.as_bytes())
-            {
+            if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.into_bytes()) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
                     "Command failed",

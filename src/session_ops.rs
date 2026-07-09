@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::focus_ops::request_session_picker_focus;
 use crate::state::SessionPickerState;
-use crate::{HyprmuxApp, pane_lifecycle, pty_events::info_toast, startup_spawns};
+use crate::{HyprmuxApp, pty_events::info_toast};
 
 pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     match discovered_with_current(ctx) {
@@ -63,6 +63,8 @@ fn discovered_with_current(
     Ok(rows)
 }
 
+/// Detach the current session (leaving its server running) and switch the UI to a fresh ephemeral
+/// session, so the user keeps a working terminal while the old session stays parked for reattach.
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     if !ctx.state.session_attached {
         ctx.toast()
@@ -82,17 +84,23 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();
     let control_socket_path = ctx.state.control_socket_path.clone();
-    let epoch = ctx
-        .state
-        .pending_session_attach
-        .as_ref()
-        .map(|pending| pending.epoch.saturating_add(1))
-        .unwrap_or_else(|| ctx.state.runtime_epoch.saturating_add(1));
+    let old_epoch = ctx.state.runtime_epoch;
+    let epoch = old_epoch.saturating_add(1);
+    let name = crate::state::fresh_ephemeral_session_name(epoch);
     let mut fresh = crate::state::State::new(config, theme);
     fresh.theme_watcher = theme_watcher;
     fresh.system_theme = system_theme;
     fresh.control_socket_path = control_socket_path;
-    fresh.runtime_epoch = epoch;
+    // Keep the pre-attach epoch so stale messages from the just-detached connection are filtered
+    // out; `Msg::SessionAttached` advances it to `epoch` once the fresh ephemeral is live.
+    fresh.runtime_epoch = old_epoch;
+    fresh.pending_session_attach = Some(crate::state::PendingSessionAttach {
+        epoch,
+        name: name.clone(),
+        client: None,
+        migrate_local_panes: true,
+        autostart: true,
+    });
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
@@ -100,17 +108,16 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         &ctx.state.theme,
         "Detached (session still running)",
     ));
-    Update::with_command(pane_lifecycle::initial_command(
-        startup_spawns(&mut ctx.state),
-        false,
-        false,
-        Vec::new(),
-        None,
-    ))
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+    }))
 }
 
-#[allow(dead_code)]
-pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
+pub(crate) fn attach_session_by_name(
+    ctx: &mut Context<HyprmuxApp>,
+    name: String,
+    autostart: bool,
+) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
@@ -147,9 +154,10 @@ pub(crate) fn attach_session_by_name(ctx: &mut Context<HyprmuxApp>, name: String
         name: name.clone(),
         client: None,
         migrate_local_panes: !ctx.state.session_attached,
+        autostart,
     });
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, link));
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, autostart, link));
     }))
 }
 
@@ -162,7 +170,9 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
     else {
         return Update::full();
     };
-    attach_session_by_name(ctx, name)
+    // A session shown in the picker is already running, so don't autostart a replacement if it
+    // died between discovery and attach.
+    attach_session_by_name(ctx, name, false)
 }
 
 pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -180,7 +190,8 @@ pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    attach_session_by_name(ctx, name)
+    // Creating a session from the query starts a new named server.
+    attach_session_by_name(ctx, name, true)
 }
 
 pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {

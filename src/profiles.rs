@@ -229,6 +229,7 @@ pub fn restore_state_from_profile(
         session_name: None,
         session_attached: false,
         pending_session_attach: None,
+        pending_spawns: Vec::new(),
         pending_destructive: None,
         last_pushed_layout: None,
         bar_command_output: std::collections::HashMap::new(),

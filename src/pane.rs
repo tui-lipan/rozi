@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
 use tui_lipan::prelude::*;
 
+/// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
+/// broadcast from the session server; the server owns the actual PTY.
 pub struct TerminalPane {
     pub pane_id: crate::state::PaneId,
     pub generation: u64,
@@ -13,24 +13,7 @@ pub struct TerminalPane {
     pub cwd: Option<String>,
     pub child_pid: Option<u32>,
     pub last_palette: Option<TerminalColorPalette>,
-    backend: TerminalBackend,
-}
-
-enum TerminalBackend {
-    /// Compatibility runtime used by the app until Phase 3.4 wires session attach/lifecycle.
-    Local {
-        screen: Box<TerminalScreen>,
-        pty: Option<TerminalPty>,
-    },
-    Server {
-        screen: Box<TerminalScreen>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PaneWriteResult {
-    pub forwarded: bool,
-    pub repaint: bool,
+    screen: Box<TerminalScreen>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,10 +56,7 @@ impl TerminalPane {
             cwd: None,
             child_pid: None,
             last_palette: None,
-            backend: TerminalBackend::Local {
-                screen: Box::new(screen),
-                pty: None,
-            },
+            screen: Box::new(screen),
         }
     }
 
@@ -85,29 +65,28 @@ impl TerminalPane {
         self.generation = generation;
     }
 
+    /// Prepare the pane to (re)receive a server pane's output: reset the parser to a fresh screen
+    /// of the current size, ready to be seeded by the replay bytes that follow an attach or spawn.
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
-        let mut screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        *self.screen = TerminalScreen::new(self.rows, self.cols, 5000);
         if let Some(palette) = self.last_palette {
-            screen.set_palette(palette);
+            self.screen.set_palette(palette);
         }
-        self.snapshot = screen.render_snapshot();
-        self.backend = TerminalBackend::Server {
-            screen: Box::new(screen),
-        };
+        self.snapshot = self.screen.render_snapshot();
     }
 
+    /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
+    /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
     pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
-        let TerminalBackend::Server { screen } = &mut self.backend else {
-            return PaneEventOutcome::Repaint;
-        };
-        screen.process_bytes(bytes);
-        let _ = screen.drain_responses();
-        self.title = screen
+        self.screen.process_bytes(bytes);
+        let _ = self.screen.drain_responses();
+        self.title = self
+            .screen
             .title()
             .map(|title| title.trim().to_string())
             .filter(|title| !title.is_empty());
-        self.snapshot = screen.render_snapshot();
+        self.snapshot = self.screen.render_snapshot();
         self.status = ManagedTerminalStatus::Ready;
         PaneEventOutcome::Repaint
     }
@@ -124,156 +103,41 @@ impl TerminalPane {
     }
 
     pub fn accepts_input(&self) -> bool {
-        match &self.backend {
-            TerminalBackend::Local { pty, .. } => pty.is_some() && self.is_ready(),
-            TerminalBackend::Server { .. } => self.is_ready(),
-        }
-    }
-
-    pub fn is_server_backed(&self) -> bool {
-        matches!(self.backend, TerminalBackend::Server { .. })
+        self.is_ready()
     }
 
     pub fn set_palette(&mut self, palette: TerminalColorPalette) -> bool {
         if self.last_palette == Some(palette) {
             return false;
         }
-        match &mut self.backend {
-            TerminalBackend::Local { screen, .. } => {
-                screen.set_palette(palette);
-                self.snapshot = screen.render_snapshot();
-                self.last_palette = Some(palette);
-                true
-            }
-            TerminalBackend::Server { screen } => {
-                screen.set_palette(palette);
-                self.snapshot = screen.render_snapshot();
-                self.last_palette = Some(palette);
-                true
-            }
-        }
+        self.screen.set_palette(palette);
+        self.snapshot = self.screen.render_snapshot();
+        self.last_palette = Some(palette);
+        true
     }
 
-    pub fn set_pty(&mut self, pty: TerminalPty) -> std::result::Result<(), String> {
-        pty.resize(self.cols, self.rows)
-            .map_err(|err| format!("pty resize failed: {err}"))?;
-        match &mut self.backend {
-            TerminalBackend::Local { pty: slot, .. } => *slot = Some(pty),
-            TerminalBackend::Server { .. } => {
-                let mut screen = TerminalScreen::new(self.rows, self.cols, 0);
-                if let Some(palette) = self.last_palette {
-                    screen.set_palette(palette);
-                }
-                self.snapshot = screen.render_snapshot();
-                self.backend = TerminalBackend::Local {
-                    screen: Box::new(screen),
-                    pty: Some(pty),
-                };
-            }
-        }
-        self.status = ManagedTerminalStatus::Ready;
-        Ok(())
-    }
-
-    pub fn handle_pty_event(&mut self, event: TerminalPtyEvent) -> PaneEventOutcome {
-        match event {
-            TerminalPtyEvent::Output(bytes) => {
-                let TerminalBackend::Local { screen, pty } = &mut self.backend else {
-                    return PaneEventOutcome::Repaint;
-                };
-                screen.process_bytes(&bytes);
-                if let Some(pty) = pty {
-                    for response in screen.drain_responses() {
-                        if let Err(err) = pty.write(&response) {
-                            self.status = ManagedTerminalStatus::Error(Arc::from(format!(
-                                "pty response write failed: {err}"
-                            )));
-                            self.snapshot = screen.render_snapshot();
-                            return PaneEventOutcome::StatusChanged;
-                        }
-                    }
-                }
-                self.title = screen
-                    .title()
-                    .map(|title| title.trim().to_string())
-                    .filter(|title| !title.is_empty());
-                self.snapshot = screen.render_snapshot();
-                PaneEventOutcome::Repaint
-            }
-            TerminalPtyEvent::Exited(code) => {
-                self.status = ManagedTerminalStatus::Exited(code);
-                if let TerminalBackend::Local { pty, .. } = &mut self.backend {
-                    *pty = None;
-                }
-                PaneEventOutcome::Exited(code)
-            }
-            TerminalPtyEvent::Error(message) => {
-                self.status = ManagedTerminalStatus::Error(message);
-                PaneEventOutcome::StatusChanged
-            }
-        }
-    }
-
-    pub fn send_key(&mut self, key: KeyEvent) -> std::result::Result<PaneWriteResult, String> {
-        if !self.accepts_input() {
-            return Ok(PaneWriteResult::default());
-        }
-        let TerminalBackend::Local { pty: Some(pty), .. } = &mut self.backend else {
-            return Err("server-backed key forwarding is not wired yet".to_string());
-        };
-        let forwarded = pty
-            .send_key(key)
-            .map_err(|err| format!("stdin write failed: {err}"))?;
-        let repaint = self.snap_to_live_scrollback();
-        Ok(PaneWriteResult { forwarded, repaint })
-    }
-
-    pub fn send_bytes(&mut self, bytes: &[u8]) -> std::result::Result<(), String> {
-        if !self.accepts_input() {
-            return Ok(());
-        }
-        let TerminalBackend::Local { pty: Some(pty), .. } = &mut self.backend else {
-            return Err("server-backed byte forwarding is not wired yet".to_string());
-        };
-        pty.write(bytes)
-            .map_err(|err| format!("pty write failed: {err}"))
-    }
-
-    pub fn resize(&mut self, cols: u16, rows: u16) -> std::result::Result<bool, String> {
+    /// Resize the client-side parser. The server owns the PTY, so this only reshapes the local
+    /// screen; it is driven by the server's ordered `Resized` broadcast so both parsers reshape
+    /// at the same byte position.
+    pub fn apply_server_resize(&mut self, cols: u16, rows: u16) -> bool {
         let cols = cols.max(1);
         let rows = rows.max(1);
         if cols == self.cols && rows == self.rows {
-            return Ok(false);
+            return false;
         }
-
         self.cols = cols;
         self.rows = rows;
-        match &mut self.backend {
-            TerminalBackend::Local { screen, pty } => {
-                if let Some(pty) = pty {
-                    pty.resize(cols, rows)
-                        .map_err(|err| format!("pty resize failed: {err}"))?;
-                }
-                screen.resize(rows, cols);
-                self.snapshot = screen.render_snapshot();
-            }
-            TerminalBackend::Server { screen } => {
-                screen.resize(rows, cols);
-                self.snapshot = screen.render_snapshot();
-            }
-        }
-        Ok(true)
+        self.screen.resize(rows, cols);
+        self.snapshot = self.screen.render_snapshot();
+        true
     }
 
     pub fn set_scrollback(&mut self, offset: usize) -> bool {
-        let screen = match &mut self.backend {
-            TerminalBackend::Local { screen, .. } | TerminalBackend::Server { screen } => screen,
-        };
-        if screen.scrollback_offset() == offset {
+        if self.screen.scrollback_offset() == offset {
             return false;
         }
-        screen.set_scrollback(offset);
-        self.snapshot = screen.render_snapshot();
+        self.screen.set_scrollback(offset);
+        self.snapshot = self.screen.render_snapshot();
         true
     }
 
@@ -283,9 +147,7 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let screen = match &mut self.backend {
-            TerminalBackend::Local { screen, .. } | TerminalBackend::Server { screen } => screen,
-        };
+        let screen = &mut self.screen;
         let original_offset = screen.scrollback_offset();
         let max_offset = screen.total_scrollback_rows();
         let mut matches = Vec::new();
@@ -436,24 +298,16 @@ impl TerminalPane {
         out
     }
 
+    /// Mark the pane as exited locally. The server owns the PTY and is asked to kill it via a
+    /// separate `Kill` RPC (see `close_pane_state`).
     pub fn kill(&mut self) {
-        if let TerminalBackend::Local { pty, .. } = &mut self.backend
-            && let Some(pty) = pty.take()
-        {
-            let _ = pty.kill();
-        }
         self.status = ManagedTerminalStatus::Exited(0);
     }
 
-    /// The working directory last reported by the session server for the pane's shell.
+    /// The live working directory of the pane's shell, read from `/proc/<pid>/cwd` using the pid
+    /// the server reported, falling back to the last cwd the server sent.
     pub fn working_directory(&self) -> Option<String> {
-        if let TerminalBackend::Local { pty, .. } = &self.backend
-            && let Some(pid) = pty.as_ref().and_then(TerminalPty::pid)
-        {
-            return cwd_for_pid(pid);
-        }
-        if let TerminalBackend::Server { .. } = &self.backend
-            && let Some(pid) = self.child_pid
+        if let Some(pid) = self.child_pid
             && let Some(cwd) = cwd_for_pid(pid)
         {
             return Some(cwd);
@@ -477,18 +331,6 @@ impl TerminalPane {
             ManagedTerminalStatus::Exited(code) => format!("exited {code}"),
             ManagedTerminalStatus::Error(message) => format!("error: {message}"),
         }
-    }
-
-    fn snap_to_live_scrollback(&mut self) -> bool {
-        let TerminalBackend::Local { screen, .. } = &mut self.backend else {
-            return false;
-        };
-        if screen.scrollback_offset() == 0 {
-            return false;
-        }
-        screen.set_scrollback(0);
-        self.snapshot = screen.render_snapshot();
-        true
     }
 }
 

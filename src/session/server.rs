@@ -321,7 +321,13 @@ impl SessionServer {
 
     fn spawn_pane(&mut self, request: SpawnRequest) -> ServerMessage {
         let id = request.pane_id;
-        if self.panes.contains_key(&id) {
+        // A live pane with this id already exists; refuse. An *exited* pane is replaced in place
+        // so keep-open respawn (client re-sends `SpawnPane` with a fresh generation) works.
+        if self
+            .panes
+            .get(&id)
+            .is_some_and(|pane| pane.exited.is_none())
+        {
             return ServerMessage::SpawnResult {
                 pane_id: id,
                 generation: request.generation,
@@ -330,6 +336,7 @@ impl SessionServer {
                 error: Some(format!("pane {id} already exists")),
             };
         }
+        self.panes.remove(&id);
         let cols = if request.cols == 0 {
             DEFAULT_COLS
         } else {
@@ -940,6 +947,47 @@ mod tests {
             result,
             ServerMessage::SpawnResult { ok: false, .. }
         ));
+    }
+
+    #[test]
+    fn exited_pane_can_be_respawned() {
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(
+            1,
+            ServerPane {
+                generation: 2,
+                title: None,
+                cwd: None,
+                pty: None,
+                screen: TerminalScreen::new(5, 20, 100),
+                cols: 20,
+                rows: 5,
+                exited: Some(0),
+            },
+        );
+
+        let result = server.spawn_pane(SpawnRequest {
+            pane_id: 1,
+            generation: 3,
+            command: Some("true".into()),
+            cwd: None,
+            title: None,
+            cols: 20,
+            rows: 5,
+            keep_open: false,
+            env: Vec::new(),
+        });
+
+        assert!(matches!(
+            result,
+            ServerMessage::SpawnResult {
+                pane_id: 1,
+                generation: 3,
+                ok: true,
+                ..
+            }
+        ));
+        assert_eq!(server.panes.get(&1).unwrap().generation, 3);
     }
 
     #[test]

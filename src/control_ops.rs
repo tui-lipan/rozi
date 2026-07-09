@@ -136,17 +136,11 @@ fn send_text(
     if !pane.terminal.accepts_input() {
         return ControlResponse::error(format!("pane {id} PTY is not ready"));
     }
-    if pane.terminal.is_server_backed() {
-        if let Some(client) = client {
-            client.send_input(id, pane.pty_generation, text.into_bytes());
-            return ControlResponse::empty();
-        }
+    let Some(client) = client else {
         return ControlResponse::error(format!("pane {id} session is not connected"));
-    }
-    match pane.terminal.send_bytes(text.as_bytes()) {
-        Ok(()) => ControlResponse::empty(),
-        Err(err) => ControlResponse::error(err),
-    }
+    };
+    client.send_input(id, pane.pty_generation, text.into_bytes());
+    ControlResponse::empty()
 }
 
 /// Run any keybindable action by its stable id, the same names used in `[keys]` config and the

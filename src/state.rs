@@ -847,6 +847,10 @@ pub struct State {
     pub session_name: Option<String>,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
+    /// Pane spawns requested while no session client was connected yet (e.g. a scratchpad toggle
+    /// during the initial attach or a reconnect window). Flushed to the server once
+    /// [`Msg::SessionAttached`](crate::Msg::SessionAttached) installs the client.
+    pub pending_spawns: Vec<PendingPaneSpawn>,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -871,6 +875,43 @@ pub struct PendingSessionAttach {
     pub name: String,
     pub client: Option<crate::session::client::SessionClient>,
     pub migrate_local_panes: bool,
+    /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
+    /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
+    pub autostart: bool,
+}
+
+/// A pane spawn deferred until a session client is available (see [`State::pending_spawns`]).
+#[derive(Clone, Debug)]
+pub struct PendingPaneSpawn {
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub keep_open: bool,
+    pub env: Vec<(String, String)>,
+    pub title: Option<String>,
+}
+
+/// The prefix that marks an auto-named ephemeral session. Ephemeral servers shut down on a clean
+/// quit but survive a UI crash for reattach; user-typed names may not use this prefix.
+pub const EPHEMERAL_SESSION_PREFIX: &str = "eph-";
+
+/// Whether `name` denotes an auto-managed ephemeral session.
+pub fn is_ephemeral_session_name(name: &str) -> bool {
+    name.starts_with(EPHEMERAL_SESSION_PREFIX)
+}
+
+/// The ephemeral session name for this UI process (`eph-<pid>`).
+pub fn ephemeral_session_name() -> String {
+    format!("{EPHEMERAL_SESSION_PREFIX}{}", std::process::id())
+}
+
+/// A fresh ephemeral name that will not collide with a still-running ephemeral server left behind
+/// by a prior detach (`eph-<pid>-<salt>`).
+pub fn fresh_ephemeral_session_name(salt: u64) -> String {
+    format!("{EPHEMERAL_SESSION_PREFIX}{}-{salt}", std::process::id())
 }
 
 impl State {
@@ -930,6 +971,7 @@ impl State {
             session_name: None,
             session_attached: false,
             pending_session_attach: None,
+            pending_spawns: Vec::new(),
             pending_destructive: None,
             last_pushed_layout: None,
             bar_command_output: HashMap::new(),
@@ -944,6 +986,13 @@ impl State {
         profile: crate::profiles::HyprmuxProfile,
     ) -> Self {
         crate::profiles::restore_state_from_profile(config, theme, profile)
+    }
+
+    /// Whether the currently attached session is an auto-managed ephemeral session.
+    pub fn is_ephemeral_session(&self) -> bool {
+        self.session_name
+            .as_deref()
+            .is_some_and(is_ephemeral_session_name)
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether

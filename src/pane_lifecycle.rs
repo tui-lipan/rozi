@@ -3,7 +3,6 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
-use crate::config::HyprmuxConfig;
 use crate::focus_ops::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
     request_current_pane_focus, total_visible_panes,
@@ -14,9 +13,6 @@ use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
-
-pub(crate) type OpenTimers = Option<(Duration, Duration)>;
-pub(crate) type StartupSpawn = (u64, PaneId, u64, TerminalPtyConfig, OpenTimers);
 
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
@@ -50,10 +46,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.pty_generation = generation;
-    pane.terminal.bind_session(id, generation);
-    if ctx.state.session_attached {
-        pane.terminal.bind_server_backend(id, generation);
-    }
+    pane.terminal.bind_server_backend(id, generation);
     pane.identity = identity;
     pane.terminal.set_palette(terminal_palette(
         &ctx.state.theme,
@@ -65,29 +58,13 @@ pub(crate) fn spawn_pane_in_workspace(
     ));
     pane.opening = true;
 
-    let pty_config = pty_config_for_pane(
-        &ctx.state.config,
-        ctx.state.control_socket_path.as_deref(),
-        &pane,
-    );
-    let server_spawn = ctx
-        .state
-        .session_attached
-        .then(|| {
-            ctx.state.session_client.clone().map(|client| {
-                (
-                    client,
-                    pane.identity.command.clone(),
-                    pane.identity.cwd.clone(),
-                    pane.identity.custom_title.clone(),
-                    pane.terminal.cols,
-                    pane.terminal.rows,
-                    pane.identity.keep_open,
-                    pane_env(ctx.state.control_socket_path.as_deref(), &pane),
-                )
-            })
-        })
-        .flatten();
+    let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+    let command = pane.identity.command.clone();
+    let cwd = pane.identity.cwd.clone();
+    let title = pane.identity.custom_title.clone();
+    let keep_open = pane.identity.keep_open;
+    let cols = pane.terminal.cols;
+    let rows = pane.terminal.rows;
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
@@ -99,28 +76,60 @@ pub(crate) fn spawn_pane_in_workspace(
     let open_delay = anim::open_delay(ctx.state.config.animations);
     let activate_delay = anim::activation_delay(ctx.state.config.animations);
 
-    let update =
-        if let Some((client, command, cwd, title, cols, rows, keep_open, env)) = server_spawn {
-            client.spawn_pane(
-                id, generation, command, cwd, cols, rows, keep_open, env, title,
-            );
-            Update::with_command(open_timers_command(
-                ctx.state.runtime_epoch,
-                id,
-                generation,
-                open_delay,
-                activate_delay,
-            ))
-        } else {
-            Update::with_command(spawn_pty_command(
-                ctx.state.runtime_epoch,
-                id,
-                generation,
-                pty_config,
-                Some((open_delay, activate_delay)),
-            ))
-        };
+    request_pane_spawn(
+        &mut ctx.state,
+        id,
+        generation,
+        command,
+        cwd,
+        cols,
+        rows,
+        keep_open,
+        env,
+        title,
+    );
+    let update = Update::with_command(open_timers_command(
+        ctx.state.runtime_epoch,
+        id,
+        generation,
+        open_delay,
+        activate_delay,
+    ));
     (id, update)
+}
+
+/// Spawn a pane on the session server, or queue it if no client is connected yet (initial attach
+/// or a reconnect window). Queued spawns are flushed by [`crate::update`] once the client arrives.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn request_pane_spawn(
+    state: &mut State,
+    pane_id: PaneId,
+    generation: u64,
+    command: Option<String>,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    keep_open: bool,
+    env: Vec<(String, String)>,
+    title: Option<String>,
+) {
+    if let Some(client) = state.session_client.clone() {
+        client.spawn_pane(
+            pane_id, generation, command, cwd, cols, rows, keep_open, env, title,
+        );
+    } else {
+        state.pending_spawns.push(crate::state::PendingPaneSpawn {
+            pane_id,
+            generation,
+            command,
+            cwd,
+            cols,
+            rows,
+            keep_open,
+            env,
+            title,
+        });
+    }
 }
 
 pub(crate) fn begin_close_pane(
@@ -159,9 +168,7 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
         && !pane.closing
     {
         generation = Some(pane.pty_generation);
-        if pane.terminal.is_server_backed()
-            && let Some(client) = client
-        {
+        if let Some(client) = client {
             client.kill(id, pane.pty_generation);
         }
         pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
@@ -275,43 +282,6 @@ fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
         .any(|pane| pane.id == id && pane.pty_generation == generation && pane.closing)
 }
 
-pub(crate) fn initial_command(
-    spawns: Vec<StartupSpawn>,
-    theme_tick: bool,
-    bar_tick: bool,
-    bar_commands: Vec<(String, u64)>,
-    control_listener: Option<std::os::unix::net::UnixListener>,
-) -> Option<Command> {
-    Some(Command::spawn(move |link: CommandLink<Msg>| {
-        crate::config_ops::spawn_config_watcher(&link);
-        if let Some(listener) = control_listener {
-            let listener_link = link.clone();
-            std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
-        }
-        for (epoch, id, generation, config, open_timers) in spawns {
-            spawn_pty(epoch, id, generation, config, link.clone());
-            if let Some((open_delay, activate_delay)) = open_timers {
-                run_open_timers(
-                    epoch,
-                    id,
-                    generation,
-                    open_delay,
-                    activate_delay,
-                    link.clone(),
-                );
-            }
-        }
-        if theme_tick {
-            std::thread::sleep(Duration::from_millis(150));
-            link.send(Msg::ThemeTick);
-        }
-        if bar_tick {
-            link.send(Msg::BarTick);
-        }
-        spawn_bar_command_pollers(bar_commands, &link);
-    }))
-}
-
 /// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
 /// command, sends its output, sleeps, and repeats for the life of the app - the same
 /// fire-and-forget pattern as the PTY read threads.
@@ -352,72 +322,6 @@ fn run_bar_command(command: &str) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn pty_config(config: &HyprmuxConfig) -> TerminalPtyConfig {
-    let mut pty_config = if let Some(shell) = shell_for_config(config) {
-        TerminalPtyConfig::new(shell)
-    } else {
-        TerminalPtyConfig::default()
-    }
-    .term("xterm-256color");
-
-    if let Some(cwd) = &config.cwd {
-        pty_config = pty_config.cwd(cwd.clone());
-    }
-
-    pty_config
-}
-
-fn shell_for_config(config: &HyprmuxConfig) -> Option<String> {
-    config.shell.clone()
-}
-
-fn default_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "/bin/sh".to_string())
-}
-
-pub(crate) fn pty_config_for_pane(
-    config: &HyprmuxConfig,
-    control_socket_path: Option<&std::path::Path>,
-    pane: &Pane,
-) -> TerminalPtyConfig {
-    let mut pty_config = if let Some(command) = pane
-        .identity
-        .command
-        .as_deref()
-        .filter(|command| !command.trim().is_empty())
-    {
-        let shell = shell_for_config(config).unwrap_or_else(default_shell);
-        let wrapped = if pane.identity.keep_open {
-            format!("{command}; exec {shell}")
-        } else {
-            command.to_string()
-        };
-        TerminalPtyConfig::new(shell)
-            .arg("-lc")
-            .arg(wrapped)
-            .term("xterm-256color")
-    } else {
-        pty_config(config)
-    };
-
-    if let Some(cwd) = &config.cwd {
-        pty_config = pty_config.cwd(cwd.clone());
-    }
-
-    if let Some(cwd) = &pane.identity.cwd {
-        pty_config = pty_config.cwd(cwd.clone());
-    }
-
-    for (key, value) in pane_env(control_socket_path, pane) {
-        pty_config = pty_config.env(key, value);
-    }
-
-    pty_config
-}
-
 pub(crate) fn pane_env(
     control_socket_path: Option<&std::path::Path>,
     pane: &Pane,
@@ -430,21 +334,6 @@ pub(crate) fn pane_env(
         env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
     }
     env
-}
-
-pub(crate) fn spawn_pty_command(
-    epoch: u64,
-    id: PaneId,
-    generation: u64,
-    config: TerminalPtyConfig,
-    open_timers: OpenTimers,
-) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        spawn_pty(epoch, id, generation, config, link.clone());
-        if let Some((open_delay, activate_delay)) = open_timers {
-            run_open_timers(epoch, id, generation, open_delay, activate_delay, link);
-        }
-    })
 }
 
 pub(crate) fn open_timers_command(
@@ -478,25 +367,32 @@ fn run_open_timers(
     link.send(Msg::ActivatePane(epoch, id, generation));
 }
 
-pub(crate) fn spawn_pty(
+/// Run the open/activate reveal timers for several panes at once. Panes created directly in state
+/// (the initial pane, a restored profile/autosave layout, migrated panes) start with `opening =
+/// true` (opacity 0) and are only spawned on the server via
+/// [`crate::update`]; without these timers they would stay invisible. Interactive spawns get their
+/// timers from [`spawn_pane_in_workspace`] instead.
+pub(crate) fn open_timers_batch_command(
     epoch: u64,
-    id: PaneId,
-    generation: u64,
-    config: TerminalPtyConfig,
-    link: CommandLink<Msg>,
-) {
-    let event_link = link.clone();
-    match TerminalPty::spawn(config, move |event| {
-        event_link.send(Msg::PtyEvent(epoch, id, generation, event));
-    }) {
-        Ok(pty) => link.send(Msg::PtyReady(epoch, id, generation, pty)),
-        Err(err) => link.send(Msg::PtyEvent(
-            epoch,
-            id,
-            generation,
-            TerminalPtyEvent::Error(err.to_string().into()),
-        )),
-    }
+    targets: Vec<(PaneId, u64)>,
+    open_delay: Duration,
+    activate_delay: Duration,
+) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        if !open_delay.is_zero() {
+            std::thread::sleep(open_delay);
+        }
+        for (id, generation) in &targets {
+            link.send(Msg::FinishOpen(epoch, *id, *generation));
+        }
+        let remaining = activate_delay.saturating_sub(open_delay);
+        if !remaining.is_zero() {
+            std::thread::sleep(remaining);
+        }
+        for (id, generation) in &targets {
+            link.send(Msg::ActivatePane(epoch, *id, *generation));
+        }
+    })
 }
 
 pub(crate) fn prune_closed_command(
@@ -534,53 +430,9 @@ pub(crate) fn prune_closed_batch_command(
 mod tests {
     use super::*;
 
-    fn rect() -> FloatRect {
-        FloatRect {
-            x: 0.0,
-            y: 0.0,
-            w: 80.0,
-            h: 24.0,
-        }
-    }
-
-    #[test]
-    fn pane_config_prefers_pane_cwd_and_wraps_command_in_shell() {
-        let config = HyprmuxConfig {
-            shell: Some("/bin/bash".to_string()),
-            cwd: Some("/repo".into()),
-            ..HyprmuxConfig::default()
-        };
-
-        let mut pane = Pane::new(1, 100, rect());
-        pane.identity.cwd = Some("/repo/backend".to_string());
-        pane.identity.command = Some("cargo run".to_string());
-
-        let debug = format!("{:?}", pty_config_for_pane(&config, None, &pane));
-
-        assert!(debug.contains("/bin/bash"), "{debug}");
-        assert!(debug.contains("-lc"), "{debug}");
-        assert!(debug.contains("cargo run"), "{debug}");
-        assert!(debug.contains("/repo/backend"), "{debug}");
-    }
-
-    #[test]
-    fn keep_open_wraps_command_with_exec_shell() {
-        let config = HyprmuxConfig {
-            shell: Some("/bin/bash".to_string()),
-            ..HyprmuxConfig::default()
-        };
-
-        let mut pane = Pane::new(1, 100, rect());
-        pane.identity.command = Some("lazygit".to_string());
-        pane.identity.keep_open = true;
-
-        let debug = format!("{:?}", pty_config_for_pane(&config, None, &pane));
-
-        assert!(debug.contains("lazygit; exec /bin/bash"), "{debug}");
-    }
-
     #[test]
     fn stale_prune_token_does_not_match_reused_pane_id() {
+        use crate::config::HyprmuxConfig;
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
         state.workspaces[0].panes[0].pty_generation = 42;
         state.workspaces[0].panes[0].closing = true;

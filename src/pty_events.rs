@@ -1,11 +1,7 @@
-use std::sync::Arc;
-use std::time::Instant;
-
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::pane::PaneEventOutcome;
-use crate::pane_lifecycle::{begin_close_pane, find_pane_mut};
+use crate::pane_lifecycle::find_pane_mut;
 use crate::state::PaneId;
 
 pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
@@ -60,39 +56,7 @@ pub(crate) fn forward_key_to_pane(
     key: KeyEvent,
 ) -> Update {
     let targets = synchronized_key_targets(&ctx.state, id);
-    if targets.len() > 1 {
-        return forward_key_to_targets(ctx, &targets, key);
-    }
-
-    let client = ctx.state.session_client.clone();
-    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
-        return Update::none();
-    };
-
-    if pane.terminal.is_server_backed() {
-        if client.is_none() {
-            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-            return Update::full();
-        }
-        if let Some(client) = client {
-            let _ = send_key_to_session_client(&client, id, pane.pty_generation, key);
-            return Update::none();
-        }
-    }
-
-    match pane.terminal.send_key(key) {
-        Ok(result) => {
-            if result.repaint {
-                Update::full()
-            } else {
-                Update::none()
-            }
-        }
-        Err(message) => {
-            pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-            Update::full()
-        }
-    }
+    forward_key_to_targets(ctx, &targets, key)
 }
 
 fn forward_key_to_targets(
@@ -106,21 +70,11 @@ fn forward_key_to_targets(
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
         };
-        if pane.terminal.is_server_backed() {
-            if let Some(client) = client.clone() {
-                let _ = send_key_to_session_client(&client, *id, pane.pty_generation, key);
-            } else {
-                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                repaint = true;
-            }
-            continue;
-        }
-        match pane.terminal.send_key(key) {
-            Ok(result) => repaint |= result.repaint,
-            Err(message) => {
-                pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-                repaint = true;
-            }
+        if let Some(client) = client.clone() {
+            let _ = send_key_to_session_client(&client, *id, pane.pty_generation, key);
+        } else {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+            repaint = true;
         }
     }
     if repaint {
@@ -128,6 +82,25 @@ fn forward_key_to_targets(
     } else {
         Update::none()
     }
+}
+
+/// Send raw bytes (paste payloads, user `Send` commands, control-socket text) to a pane's shell
+/// through the session server. Returns an error string when no client is connected.
+pub(crate) fn send_pane_bytes(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    bytes: Vec<u8>,
+) -> std::result::Result<(), String> {
+    let client = ctx.state.session_client.clone();
+    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+        return Ok(());
+    };
+    let Some(client) = client else {
+        pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+        return Err("session disconnected".to_string());
+    };
+    client.send_input(id, pane.pty_generation, bytes);
+    Ok(())
 }
 
 pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: PaneId) -> Vec<PaneId> {
@@ -150,62 +123,7 @@ pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: Pane
         .collect()
 }
 
-pub(crate) fn handle_pty_event(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    generation: u64,
-    event: TerminalPtyEvent,
-) -> Update {
-    let (outcome, was_closing, status_text): (PaneEventOutcome, bool, String) = {
-        let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
-            return Update::none();
-        };
-        if pane.pty_generation != generation {
-            return Update::none();
-        }
-        let outcome = pane.terminal.handle_pty_event(event);
-        (outcome, pane.closing, pane.terminal.status_text())
-    };
-    match outcome {
-        PaneEventOutcome::Repaint => {
-            let focused = ctx.state.focused_pane;
-            if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-                pane.activity.last_activity = Some(Instant::now());
-                if focused != Some(id) {
-                    pane.activity.has_unseen_output = true;
-                }
-            }
-            Update::full()
-        }
-        PaneEventOutcome::StatusChanged => {
-            if let Some(message) = status_text.strip_prefix("error: ").map(str::to_string) {
-                ctx.toast()
-                    .push(error_toast(&ctx.state.theme, format!("Pane {id}"), message));
-            }
-            Update::full()
-        }
-        PaneEventOutcome::Exited(code) => {
-            if crate::scratchpad::is_scratch(id) {
-                // The scratch shell exited; drop it so the next toggle re-spawns a fresh one.
-                return crate::scratchpad::handle_scratch_exit(ctx);
-            }
-            if was_closing {
-                return Update::full();
-            }
-            maybe_notify_pane_exit(&ctx.state.config, id, code);
-            // A clean exit closes the pane on its own; only a failure code is worth surfacing.
-            if code != 0 {
-                ctx.toast().push(info_toast(
-                    &ctx.state.theme,
-                    format!("Pane {id} exited ({code})"),
-                ));
-            }
-            begin_close_pane(ctx, id, ctx.state.config.animations)
-        }
-    }
-}
-
-fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: PaneId, code: i32) {
+pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: PaneId, code: i32) {
     if !config.notifications.enabled || !config.notifications.pane_exit {
         return;
     }
@@ -231,17 +149,10 @@ pub(crate) fn handle_pane_input(
 
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.terminal.is_server_backed() {
-            if let Some(client) = client {
-                client.send_input(id, pane.pty_generation, input.bytes.to_vec());
-            } else {
-                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                return Update::full();
-            }
-            return Update::none();
-        }
-        if let Err(message) = pane.terminal.send_bytes(&input.bytes) {
-            pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+        if let Some(client) = client {
+            client.send_input(id, pane.pty_generation, input.bytes.to_vec());
+        } else {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
         }
     }
@@ -253,28 +164,16 @@ pub(crate) fn handle_pane_mouse(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> Update {
-    let mut error = false;
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.terminal.is_server_backed() {
-            if let Some(client) = client {
-                client.send_input(id, pane.pty_generation, bytes);
-            } else {
-                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-                return Update::full();
-            }
-            return Update::none();
-        }
-        if let Err(message) = pane.terminal.send_bytes(&bytes) {
-            error = true;
-            pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
+        if let Some(client) = client {
+            client.send_input(id, pane.pty_generation, bytes);
+        } else {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+            return Update::full();
         }
     }
-    if error {
-        Update::full()
-    } else {
-        Update::none()
-    }
+    Update::none()
 }
 
 pub(crate) fn handle_pane_resize(
@@ -283,28 +182,18 @@ pub(crate) fn handle_pane_resize(
     cols: u16,
     rows: u16,
 ) -> Update {
+    // The pane rect updates immediately, but the client-side screen only reshapes on the server's
+    // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.terminal.is_server_backed()
-            && let Some(client) = client
-        {
+        if let Some(client) = client {
             client.resize(id, pane.pty_generation, cols.max(1), rows.max(1));
-            return Update::none();
-        } else if pane.terminal.is_server_backed() {
+        } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
         }
-        match pane.terminal.resize(cols, rows) {
-            Ok(true) => Update::full(),
-            Ok(false) => Update::none(),
-            Err(message) => {
-                pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-                Update::full()
-            }
-        }
-    } else {
-        Update::none()
     }
+    Update::none()
 }
 
 pub(crate) fn handle_pane_scroll(
@@ -334,30 +223,6 @@ pub(crate) fn send_key_to_session_client(
         .ok_or_else(|| "key is not representable for session forwarding yet".to_string())?;
     client.send_input(pane_id, generation, bytes);
     Ok(())
-}
-
-pub(crate) fn handle_pty_ready(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    generation: u64,
-    pty: TerminalPty,
-) -> Update {
-    let mut error = None;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.pty_generation != generation {
-            return Update::none();
-        }
-        pane.terminal.bind_session(id, generation);
-        if let Err(message) = pane.terminal.set_pty(pty) {
-            error = Some(message.clone());
-            pane.terminal.status = ManagedTerminalStatus::Error(Arc::from(message));
-        }
-    }
-    if let Some(message) = error {
-        ctx.toast()
-            .push(error_toast(&ctx.state.theme, format!("Pane {id}"), message));
-    }
-    Update::full()
 }
 
 #[cfg(test)]

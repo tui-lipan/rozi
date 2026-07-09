@@ -18,9 +18,9 @@ pub struct DiscoveredSession {
     pub status: DiscoveredSessionStatus,
 }
 
-#[allow(dead_code)]
 pub fn valid_session_name(name: &str) -> bool {
     !name.is_empty()
+        && !crate::state::is_ephemeral_session_name(name)
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
@@ -145,5 +145,7 @@ mod tests {
         assert!(!valid_session_name(""));
         assert!(!valid_session_name("bad/name"));
         assert!(!valid_session_name("bad name"));
+        // The `eph-` prefix is reserved for auto-managed ephemeral sessions.
+        assert!(!valid_session_name("eph-1234"));
     }
 }

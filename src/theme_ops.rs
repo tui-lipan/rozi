@@ -158,10 +158,7 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
             let palette = terminal_palette(theme, background);
             let pane_changed = pane.terminal.set_palette(palette);
             changed |= pane_changed;
-            if pane_changed
-                && pane.terminal.is_server_backed()
-                && let Some(client) = &client
-            {
+            if pane_changed && let Some(client) = &client {
                 client.set_palette(pane.id, pane.pty_generation, palette);
             }
         }

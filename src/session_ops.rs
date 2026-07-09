@@ -71,14 +71,20 @@ pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 
 pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     match picker_rows(ctx) {
         Ok(rows) => {
-            let query = ctx
+            // Carry the typed query and the highlighted row across the rebuild. After a kill the
+            // killed row is gone, so clamping keeps the highlight on the row that slid into its
+            // place instead of snapping back to the top; it also keeps our `selected` in step with
+            // the persistent `SearchPalette` component, which does not re-resolve its internal
+            // keyboard selection when the entry list changes underneath it.
+            let (query, selected) = ctx
                 .state
                 .session_picker
                 .as_ref()
-                .map(|p| p.input.text().to_string())
+                .map(|p| (p.input.text().to_string(), p.selected))
                 .unwrap_or_default();
             let mut picker = SessionPickerState::new(rows);
             picker.input.set_text(query);
+            picker.selected = selected.min(picker.entries.len().saturating_sub(1));
             ctx.state.session_picker = Some(picker);
         }
         Err(err) => {

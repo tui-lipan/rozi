@@ -605,6 +605,38 @@ fn resize_junction_element(ctx: &Context<HyprmuxApp>, left_id: PaneId, top_id: P
         .into()
 }
 
+/// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
+/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching `extract_text`).
+fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
+    let copy = ctx.state.copy_mode.filter(|copy| copy.target == id)?;
+    let cursor = (copy.cursor_row, copy.cursor_col);
+    let (a, b) = copy
+        .anchor
+        .map(|anchor| (anchor, cursor))
+        .unwrap_or((cursor, cursor));
+    Some(selection_from_points(a, b))
+}
+
+fn copy_flash_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
+    let flash = ctx.state.copy_flash.filter(|flash| flash.target == id)?;
+    Some(selection_from_points(flash.selection.0, flash.selection.1))
+}
+
+fn selection_from_points(a: (usize, usize), b: (usize, usize)) -> TerminalSelection {
+    let (start, end) = if a <= b { (a, b) } else { (b, a) };
+    TerminalSelection {
+        anchor: tui_lipan::utils::GridPos {
+            row: start.0,
+            col: start.1,
+        },
+        // Exclusive end column so the cursor/anchor cell is included in the highlight.
+        cursor: tui_lipan::utils::GridPos {
+            row: end.0,
+            col: end.1 + 1,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,37 +687,5 @@ mod tests {
         .unwrap();
 
         assert_eq!(junction, rect(9.0, 9.0, 2.0, 2.0));
-    }
-}
-
-/// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
-/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching `extract_text`).
-fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
-    let copy = ctx.state.copy_mode.filter(|copy| copy.target == id)?;
-    let cursor = (copy.cursor_row, copy.cursor_col);
-    let (a, b) = copy
-        .anchor
-        .map(|anchor| (anchor, cursor))
-        .unwrap_or((cursor, cursor));
-    Some(selection_from_points(a, b))
-}
-
-fn copy_flash_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
-    let flash = ctx.state.copy_flash.filter(|flash| flash.target == id)?;
-    Some(selection_from_points(flash.selection.0, flash.selection.1))
-}
-
-fn selection_from_points(a: (usize, usize), b: (usize, usize)) -> TerminalSelection {
-    let (start, end) = if a <= b { (a, b) } else { (b, a) };
-    TerminalSelection {
-        anchor: tui_lipan::utils::GridPos {
-            row: start.0,
-            col: start.1,
-        },
-        // Exclusive end column so the cursor/anchor cell is included in the highlight.
-        cursor: tui_lipan::utils::GridPos {
-            row: end.0,
-            col: end.1 + 1,
-        },
     }
 }

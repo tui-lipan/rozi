@@ -95,32 +95,6 @@ impl TerminalPane {
         };
     }
 
-    pub fn apply_snapshot(
-        &mut self,
-        snapshot: TerminalRenderSnapshot,
-        title: Option<String>,
-        cwd: Option<String>,
-    ) {
-        self.snapshot = snapshot;
-        self.title = title.filter(|title| !title.trim().is_empty());
-        self.cwd = cwd;
-        self.status = ManagedTerminalStatus::Ready;
-        let mut screen = TerminalScreen::new(self.rows, self.cols, 5000);
-        if let Some(palette) = self.last_palette {
-            screen.set_palette(palette);
-        }
-        for (index, line) in self.snapshot.text.lines().enumerate() {
-            if index > 0 {
-                screen.process_bytes(b"\r\n");
-            }
-            screen.process_bytes(line.as_bytes());
-        }
-        screen.set_scrollback(self.snapshot.scrollback_offset);
-        self.backend = TerminalBackend::Server {
-            screen: Box::new(screen),
-        };
-    }
-
     pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
         let TerminalBackend::Server { screen } = &mut self.backend else {
             return PaneEventOutcome::Repaint;

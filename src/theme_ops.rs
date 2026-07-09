@@ -156,15 +156,13 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
                 highlight_focused_background,
             );
             let palette = terminal_palette(theme, background);
-            if pane.terminal.is_server_backed() {
-                if pane.terminal.last_palette != Some(palette) {
-                    if let Some(client) = &client {
-                        client.set_palette(pane.id, pane.pty_generation, palette);
-                        pane.terminal.last_palette = Some(palette);
-                    }
-                }
-            } else {
-                changed |= pane.terminal.set_palette(palette);
+            let pane_changed = pane.terminal.set_palette(palette);
+            changed |= pane_changed;
+            if pane_changed
+                && pane.terminal.is_server_backed()
+                && let Some(client) = &client
+            {
+                client.set_palette(pane.id, pane.pty_generation, palette);
             }
         }
     }

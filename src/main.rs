@@ -194,12 +194,6 @@ pub enum Msg {
         ok: bool,
         error: Option<String>,
     },
-    SessionSnapshot {
-        epoch: u64,
-        pane_id: PaneId,
-        generation: u64,
-        snapshot: session::protocol::WireSnapshot,
-    },
     SessionOutput {
         epoch: u64,
         pane_id: PaneId,
@@ -519,16 +513,6 @@ fn server_message_to_msg(
                 session,
                 panes,
                 layout_blob,
-            },
-            ServerMessage::Snapshot {
-                pane_id,
-                generation,
-                snapshot,
-            } => Msg::SessionSnapshot {
-                epoch,
-                pane_id,
-                generation,
-                snapshot,
             },
             ServerMessage::Exited {
                 pane_id,

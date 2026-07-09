@@ -1,5 +1,4 @@
 use std::io::{Read, Write};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
@@ -11,47 +10,6 @@ pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
 const FRAME_KIND_PANE_INPUT: u8 = 3;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WireSpan {
-    pub content: String,
-    pub style: Style,
-    pub allow_row_style: bool,
-}
-
-impl From<&Span> for WireSpan {
-    fn from(span: &Span) -> Self {
-        Self {
-            content: span.content.to_string(),
-            style: span.style,
-            allow_row_style: span.allow_row_style,
-        }
-    }
-}
-
-impl From<WireSpan> for Span {
-    fn from(span: WireSpan) -> Self {
-        Span::new(Arc::<str>::from(span.content))
-            .style(span.style)
-            .allow_row_style(span.allow_row_style)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WireSnapshot {
-    pub version: u32,
-    pub title: Option<String>,
-    pub cwd: Option<String>,
-    pub text: String,
-    pub color_lines: Vec<Vec<WireSpan>>,
-    pub cursor_row: u16,
-    pub cursor_col: u16,
-    pub cursor_visible: bool,
-    pub sequence: u64,
-    pub scrollback_offset: usize,
-    pub total_scrollback_rows: usize,
-    pub mouse_mode: MouseModeState,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WirePalette {
@@ -90,83 +48,6 @@ pub struct PaneMeta {
     pub title: Option<String>,
     pub cwd: Option<String>,
     pub exited: Option<i32>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SnapshotVersionError {
-    pub found: u32,
-    pub expected: u32,
-}
-
-impl std::fmt::Display for SnapshotVersionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "unsupported wire snapshot version {}, expected {}",
-            self.found, self.expected
-        )
-    }
-}
-
-impl std::error::Error for SnapshotVersionError {}
-
-impl WireSnapshot {
-    pub fn from_snapshot(
-        title: Option<String>,
-        cwd: Option<String>,
-        snapshot: &TerminalRenderSnapshot,
-    ) -> Self {
-        Self {
-            version: PROTOCOL_VERSION,
-            title,
-            cwd,
-            text: snapshot.text.to_string(),
-            color_lines: snapshot
-                .color_lines
-                .iter()
-                .map(|line| line.iter().map(WireSpan::from).collect())
-                .collect(),
-            cursor_row: snapshot.cursor_row,
-            cursor_col: snapshot.cursor_col,
-            cursor_visible: snapshot.cursor_visible,
-            sequence: snapshot.sequence,
-            scrollback_offset: snapshot.scrollback_offset,
-            total_scrollback_rows: snapshot.total_scrollback_rows,
-            mouse_mode: snapshot.mouse_mode,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn try_into_snapshot(
-        self,
-    ) -> std::result::Result<TerminalRenderSnapshot, SnapshotVersionError> {
-        if self.version != PROTOCOL_VERSION {
-            return Err(SnapshotVersionError {
-                found: self.version,
-                expected: PROTOCOL_VERSION,
-            });
-        }
-        Ok(TerminalRenderSnapshot::from_parts(
-            self.text,
-            self.color_lines
-                .into_iter()
-                .map(|line| line.into_iter().map(Span::from).collect())
-                .collect(),
-            self.cursor_row,
-            self.cursor_col,
-            self.cursor_visible,
-            self.sequence,
-            self.scrollback_offset,
-            self.total_scrollback_rows,
-            self.mouse_mode,
-        ))
-    }
-}
-
-impl From<&TerminalRenderSnapshot> for WireSnapshot {
-    fn from(snapshot: &TerminalRenderSnapshot) -> Self {
-        Self::from_snapshot(None, None, snapshot)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -228,11 +109,6 @@ pub enum ServerMessage {
         session: String,
         panes: Vec<PaneMeta>,
         layout_blob: Option<String>,
-    },
-    Snapshot {
-        pane_id: PaneId,
-        generation: u64,
-        snapshot: WireSnapshot,
     },
     Exited {
         pane_id: PaneId,
@@ -546,35 +422,6 @@ mod tests {
     }
 
     #[test]
-    fn wire_snapshot_converts_to_render_snapshot() {
-        let snapshot = TerminalRenderSnapshot::from_parts(
-            "hello",
-            vec![vec![Span::new("hello").style(Style::new().bold())]],
-            0,
-            4,
-            true,
-            12,
-            1,
-            5,
-            MouseModeState::default(),
-        );
-        let wire =
-            WireSnapshot::from_snapshot(Some("title".into()), Some("/tmp".into()), &snapshot);
-        let restored = wire.clone().try_into_snapshot().unwrap();
-        assert_eq!(wire.title.as_deref(), Some("title"));
-        assert_eq!(restored.text.as_ref(), "hello");
-        assert_eq!(restored.cursor_col, 4);
-        assert_eq!(restored.color_lines[0][0].content.as_ref(), "hello");
-    }
-
-    #[test]
-    fn wire_snapshot_version_mismatch_is_error() {
-        let mut wire = WireSnapshot::from_snapshot(None, None, &TerminalRenderSnapshot::default());
-        wire.version = PROTOCOL_VERSION + 1;
-        assert!(wire.try_into_snapshot().is_err());
-    }
-
-    #[test]
     fn golden_client_attach_json_shape() {
         let value = serde_json::to_value(ClientMessage::Attach {
             session: "dev".into(),
@@ -654,16 +501,6 @@ mod tests {
 
     #[test]
     fn golden_server_messages_json_shape() {
-        let snapshot = WireSnapshot::from_snapshot(None, None, &TerminalRenderSnapshot::default());
-        assert_eq!(
-            serde_json::to_value(ServerMessage::Snapshot {
-                pane_id: 1,
-                generation: 2,
-                snapshot
-            })
-            .unwrap()["type"],
-            "snapshot"
-        );
         assert_eq!(
             serde_json::to_value(ServerMessage::Error {
                 code: "bad".into(),

@@ -12,7 +12,6 @@ use tui_lipan::prelude::*;
 use crate::control;
 use crate::session::protocol::{
     self, ClientMessage, Frame, PROTOCOL_VERSION, PaneMeta, ServerMessage, WirePalette,
-    WireSnapshot,
 };
 use crate::state::PaneId;
 
@@ -258,11 +257,6 @@ impl SessionServer {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.resize(pane.cols, pane.rows);
                     }
-                    return vec![ServerMessage::Snapshot {
-                        pane_id,
-                        generation,
-                        snapshot: pane.snapshot(),
-                    }];
                 }
                 Vec::new()
             }
@@ -299,11 +293,6 @@ impl SessionServer {
                     if let Some(palette) = palette {
                         pane.screen.set_palette(palette.into());
                     }
-                    return vec![ServerMessage::Snapshot {
-                        pane_id,
-                        generation,
-                        snapshot: pane.snapshot(),
-                    }];
                 }
                 Vec::new()
             }
@@ -499,11 +488,6 @@ impl SessionServer {
     ) -> Vec<ServerMessage> {
         if let Some(pane) = self.live_pane_mut(id, generation) {
             pane.screen.set_palette(palette.into());
-            return vec![ServerMessage::Snapshot {
-                pane_id: id,
-                generation,
-                snapshot: pane.snapshot(),
-            }];
         }
         Vec::new()
     }
@@ -553,11 +537,6 @@ struct SpawnRequest {
 }
 
 impl ServerPane {
-    fn snapshot(&mut self) -> WireSnapshot {
-        let snapshot = self.screen.render_snapshot();
-        WireSnapshot::from_snapshot(self.effective_title(), self.effective_cwd(), &snapshot)
-    }
-
     fn effective_title(&self) -> Option<String> {
         self.screen.title().or_else(|| self.title.clone())
     }
@@ -857,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn set_palette_updates_screen_and_returns_snapshot() {
+    fn set_palette_updates_screen_without_response() {
         let mut server = SessionServer::new_named("dev");
         server.panes.insert(
             1,
@@ -878,10 +857,7 @@ mod tests {
             generation: 2,
             palette,
         });
-        assert!(matches!(
-            responses.as_slice(),
-            [ServerMessage::Snapshot { .. }]
-        ));
+        assert!(responses.is_empty());
     }
 
     #[test]

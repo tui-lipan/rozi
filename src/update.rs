@@ -532,33 +532,6 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::SessionSnapshot {
-            epoch,
-            pane_id,
-            generation,
-            snapshot,
-        } => {
-            if epoch != ctx.state.runtime_epoch {
-                return Update::none();
-            }
-            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
-                && pane.pty_generation == generation
-                && pane.terminal.is_server_backed()
-            {
-                let title = snapshot.title.clone();
-                let cwd = snapshot.cwd.clone();
-                match crate::session::client::apply_wire_snapshot(snapshot) {
-                    Ok(render_snapshot) => {
-                        pane.terminal.apply_snapshot(render_snapshot, title, cwd)
-                    }
-                    Err(err) => {
-                        ctx.toast()
-                            .push(error_toast(&ctx.state.theme, "Session", err.to_string()));
-                    }
-                }
-            }
-            Update::full()
-        }
         Msg::SessionOutput {
             epoch,
             pane_id,

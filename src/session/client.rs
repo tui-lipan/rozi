@@ -32,12 +32,7 @@ impl SessionClient {
     #[cfg(test)]
     pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientOutbound>) {
         let (tx, rx) = mpsc::channel();
-        (
-            Self {
-                tx,
-            },
-            rx,
-        )
+        (Self { tx }, rx)
     }
 
     pub fn connect(
@@ -129,10 +124,7 @@ impl SessionClient {
                 }
             }
         });
-        Ok((
-            Self { tx },
-            attached,
-        ))
+        Ok((Self { tx }, attached))
     }
 
     pub fn spawn_pane(
@@ -204,24 +196,5 @@ impl SessionClient {
 
     fn send(&self, message: ClientOutbound) {
         let _ = self.tx.send(message);
-    }
-}
-
-pub fn apply_wire_snapshot(
-    wire: crate::session::protocol::WireSnapshot,
-) -> std::result::Result<TerminalRenderSnapshot, protocol::SnapshotVersionError> {
-    wire.try_into_snapshot()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::session::protocol::WireSnapshot;
-
-    #[test]
-    fn apply_wire_snapshot_rejects_bad_version() {
-        let mut wire = WireSnapshot::from_snapshot(None, None, &TerminalRenderSnapshot::default());
-        wire.version = PROTOCOL_VERSION + 1;
-        assert!(apply_wire_snapshot(wire).is_err());
     }
 }

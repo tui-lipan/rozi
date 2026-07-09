@@ -325,6 +325,7 @@ impl SessionServer {
             return ServerMessage::SpawnResult {
                 pane_id: id,
                 generation: request.generation,
+                pid: None,
                 ok: false,
                 error: Some(format!("pane {id} already exists")),
             };
@@ -354,6 +355,7 @@ impl SessionServer {
             let _ = tx.send(ServerEvent::Pty(id, generation, event));
         }) {
             Ok(pty) => {
+                let pid = pty.pid();
                 let _ = pty.resize(cols.max(1), rows.max(1));
                 screen.resize(rows.max(1), cols.max(1));
                 self.panes.insert(
@@ -372,6 +374,7 @@ impl SessionServer {
                 ServerMessage::SpawnResult {
                     pane_id: id,
                     generation,
+                    pid,
                     ok: true,
                     error: None,
                 }
@@ -379,6 +382,7 @@ impl SessionServer {
             Err(err) => ServerMessage::SpawnResult {
                 pane_id: id,
                 generation,
+                pid: None,
                 ok: false,
                 error: Some(err.to_string()),
             },
@@ -427,6 +431,7 @@ impl SessionServer {
                         Some(ServerOutbound::Control(ServerMessage::SpawnResult {
                             pane_id: id,
                             generation,
+                            pid: None,
                             ok: false,
                             error: Some(message.to_string()),
                         }))

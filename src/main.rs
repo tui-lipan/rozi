@@ -191,6 +191,7 @@ pub enum Msg {
         epoch: u64,
         pane_id: PaneId,
         generation: u64,
+        pid: Option<u32>,
         ok: bool,
         error: Option<String>,
     },
@@ -541,12 +542,14 @@ fn server_message_to_msg(
             ServerMessage::SpawnResult {
                 pane_id,
                 generation,
+                pid,
                 ok,
                 error,
             } => Msg::SessionSpawnResult {
                 epoch,
                 pane_id,
                 generation,
+                pid,
                 ok,
                 error,
             },

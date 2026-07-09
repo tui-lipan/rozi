@@ -124,6 +124,7 @@ pub enum ServerMessage {
     SpawnResult {
         pane_id: PaneId,
         generation: u64,
+        pid: Option<u32>,
         ok: bool,
         error: Option<String>,
     },

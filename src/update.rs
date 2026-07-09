@@ -610,6 +610,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             epoch,
             pane_id,
             generation,
+            pid,
             ok,
             error,
         } => {
@@ -623,6 +624,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                     return Update::none();
                 }
                 pane.terminal.bind_server_backend(pane_id, generation);
+                pane.terminal.child_pid = pid;
                 if ok {
                     pane.terminal.status = ManagedTerminalStatus::Ready;
                 } else {
@@ -748,6 +750,7 @@ fn apply_attached_panes(
                 .bind_server_backend(attached.pane_id, attached.generation);
             pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
             pane.terminal.cwd = attached.cwd;
+            pane.terminal.child_pid = attached.pid;
             pane.terminal.status = ManagedTerminalStatus::Ready;
         }
         ctx.state.next_pane_id = ctx

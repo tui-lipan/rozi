@@ -11,6 +11,7 @@ pub struct TerminalPane {
     pub status: ManagedTerminalStatus,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub child_pid: Option<u32>,
     pub last_palette: Option<TerminalColorPalette>,
     backend: TerminalBackend,
 }
@@ -70,6 +71,7 @@ impl TerminalPane {
             status: ManagedTerminalStatus::Starting,
             title: None,
             cwd: None,
+            child_pid: None,
             last_palette: None,
             backend: TerminalBackend::Local {
                 screen: Box::new(screen),
@@ -449,6 +451,12 @@ impl TerminalPane {
             && let Some(pid) = pty.as_ref().and_then(TerminalPty::pid)
         {
             return cwd_for_pid(pid);
+        }
+        if let TerminalBackend::Server { .. } = &self.backend
+            && let Some(pid) = self.child_pid
+            && let Some(cwd) = cwd_for_pid(pid)
+        {
+            return Some(cwd);
         }
         self.cwd.clone()
     }

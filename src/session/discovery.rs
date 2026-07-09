@@ -18,6 +18,22 @@ pub struct DiscoveredSession {
     pub status: DiscoveredSessionStatus,
     /// Auto-managed per-process session (`eph-*`), disposable and not user-named.
     pub ephemeral: bool,
+    /// A synthetic picker row (not a real discovered session): the always-present "new ephemeral
+    /// session" entry. It has no socket, renders with a fixed label, always sits at the top, is
+    /// always actionable via Enter, and cannot be killed.
+    pub synthetic: bool,
+}
+
+impl DiscoveredSession {
+    /// The synthetic "new ephemeral session" row shown at the top of the picker.
+    pub fn new_ephemeral_row() -> Self {
+        Self {
+            name: String::new(),
+            status: DiscoveredSessionStatus::Unknown,
+            ephemeral: true,
+            synthetic: true,
+        }
+    }
 }
 
 pub fn valid_session_name(name: &str) -> bool {
@@ -136,6 +152,7 @@ pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession
         name: name.to_string(),
         ephemeral: crate::state::is_ephemeral_session_name(name),
         status,
+        synthetic: false,
     })
 }
 
@@ -150,5 +167,15 @@ mod tests {
         assert!(!valid_session_name("bad name"));
         // The `eph-` prefix is reserved for auto-managed ephemeral sessions.
         assert!(!valid_session_name("eph-1234"));
+    }
+
+    #[test]
+    fn synthetic_new_ephemeral_row_is_flagged_and_nameless() {
+        let row = DiscoveredSession::new_ephemeral_row();
+        assert!(row.synthetic);
+        assert!(row.ephemeral);
+        assert!(row.name.is_empty());
+        // A nameless synthetic row must never be mistaken for a real, killable/attachable session.
+        assert!(!valid_session_name(&row.name));
     }
 }

@@ -237,21 +237,10 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         }
     };
 
-    // Loading a profile replaces the whole layout, so tear down the current session and start the
-    // profile in a fresh ephemeral. An ephemeral session is disposable (shut it down); a named one
-    // is parked (detached) so it can be reattached later.
-    if let Some(client) = ctx.state.session_client.clone() {
-        if ctx.state.is_ephemeral_session() {
-            client.shutdown();
-        } else {
-            client.push_layout(
-                profile_from_state(&ctx.state)
-                    .to_toml_string()
-                    .unwrap_or_default(),
-            );
-            client.detach();
-        }
-    }
+    // Loading a profile replaces the whole layout, so release the current session (an ephemeral
+    // one is disposable and shut down; a named one is parked for reattach) and start the profile in
+    // a fresh ephemeral.
+    crate::session_ops::release_current_session(ctx);
 
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();

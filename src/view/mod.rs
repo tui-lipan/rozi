@@ -5,8 +5,8 @@ mod pane;
 
 pub use keys::{
     appearance_palette_key, palette_key, pane_terminal_key, pane_window_key, profile_picker_key,
-    rename_input_key, rename_workspace_input_key, save_profile_key, search_input_key,
-    session_picker_key, theme_picker_key,
+    rename_input_key, rename_session_input_key, rename_workspace_input_key, save_profile_key,
+    search_input_key, session_picker_key, theme_picker_key,
 };
 pub(crate) use pane::{PaneMerge, pane_element};
 
@@ -25,8 +25,8 @@ use pane::pane_title_bg;
 use bar::{empty_workspace_panel, workbar};
 use overlays::{
     appearance_overlay, help_overlay, palette_overlay, profile_picker_overlay, rename_overlay,
-    rename_workspace_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    theme_picker_overlay,
+    rename_session_overlay, rename_workspace_overlay, save_profile_overlay, search_overlay,
+    session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 
@@ -64,6 +64,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.show_theme_picker
         || ctx.state.rename.is_some()
         || ctx.state.rename_workspace.is_some()
+        || ctx.state.rename_session.is_some()
         || ctx.state.save_profile_prompt.is_some()
         || ctx.state.show_profile_picker
         || ctx.state.show_session_picker;
@@ -294,6 +295,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.rename_workspace.is_some() {
         root = root.child(rename_workspace_overlay(ctx));
+    }
+    if ctx.state.rename_session.is_some() {
+        root = root.child(rename_session_overlay(ctx));
     }
     if ctx.state.save_profile_prompt.is_some() {
         root = root.child(save_profile_overlay(ctx));

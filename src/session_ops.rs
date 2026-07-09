@@ -1,11 +1,21 @@
+use std::time::Duration;
+
 use tui_lipan::prelude::*;
 
-use crate::focus_ops::request_session_picker_focus;
-use crate::state::SessionPickerState;
+use crate::Msg;
+use crate::focus_ops::{
+    request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
+};
+use crate::session::discovery::DiscoveredSession;
+use crate::state::{SessionPickerState, SessionRenameState};
 use crate::{HyprmuxApp, pty_events::info_toast};
 
+/// Cadence for the off-thread auto-refresh that keeps the open session picker current (sessions
+/// appearing/disappearing from other UIs) without a manual refresh key.
+const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
+
 pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
-    match discovered_with_current(ctx) {
+    match picker_rows(ctx) {
         Ok(rows) => ctx.state.session_picker = Some(SessionPickerState::new(rows)),
         Err(err) => {
             ctx.toast().push(crate::pty_events::error_toast(
@@ -13,16 +23,40 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
                 "Sessions",
                 err.to_string(),
             ));
-            ctx.state.session_picker = Some(SessionPickerState::new(Vec::new()));
+            let mut rows = Vec::new();
+            prepend_new_ephemeral_row(&mut rows);
+            ctx.state.session_picker = Some(SessionPickerState::new(rows));
         }
     }
     ctx.state.show_session_picker = true;
+    // A new opening invalidates any in-flight watcher tick from a prior opening.
+    ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
     request_session_picker_focus(ctx);
-    Update::full()
+    Update::with_command(session_watch_command(
+        ctx.state.session_picker_epoch,
+        ctx.state.session_name.clone(),
+    ))
+}
+
+/// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
+/// the watcher epoch so `init` can kick off the first discovery tick. Discovery failures degrade to
+/// a picker holding just the synthetic "new ephemeral session" row.
+pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 {
+    let rows = picker_rows(ctx).unwrap_or_else(|_| {
+        let mut rows = Vec::new();
+        prepend_new_ephemeral_row(&mut rows);
+        rows
+    });
+    ctx.state.session_picker = Some(SessionPickerState::new(rows));
+    ctx.state.show_session_picker = true;
+    ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    ctx.state.commands_dirty = true;
+    request_session_picker_focus(ctx);
+    ctx.state.session_picker_epoch
 }
 
 pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
-    match discovered_with_current(ctx) {
+    match picker_rows(ctx) {
         Ok(rows) => {
             let query = ctx
                 .state
@@ -45,34 +79,91 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-fn discovered_with_current(
-    ctx: &Context<HyprmuxApp>,
-) -> std::io::Result<Vec<crate::session::discovery::DiscoveredSession>> {
+/// Apply a batch of freshly discovered sessions from the auto-refresh watcher, then re-arm the next
+/// tick. Ignored (stopping the loop) once the picker is closed or a newer opening supersedes this
+/// `epoch`, which is how the watcher shuts itself down. Selection and the typed query are preserved
+/// so a live refresh never disrupts navigation.
+pub(crate) fn apply_discovered_sessions(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    mut rows: Vec<DiscoveredSession>,
+) -> Update {
+    if !ctx.state.show_session_picker || epoch != ctx.state.session_picker_epoch {
+        return Update::none();
+    }
+    push_current_session_row(ctx, &mut rows);
+    prepend_new_ephemeral_row(&mut rows);
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.entries = rows;
+        picker.selected = picker.selected.min(picker.entries.len().saturating_sub(1));
+        if picker
+            .pending_kill
+            .is_some_and(|index| index >= picker.entries.len())
+        {
+            picker.pending_kill = None;
+        }
+    }
+    Update::with_command(session_watch_command(epoch, ctx.state.session_name.clone()))
+}
+
+fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        std::thread::sleep(SESSION_PICKER_REFRESH_INTERVAL);
+        // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
+        // the loop stop rather than clobbering the last good list.
+        if let Ok(rows) =
+            crate::session::discovery::discover_sessions_excluding(current_name.as_deref())
+        {
+            link.send(Msg::SessionsDiscovered { epoch, rows });
+        }
+    })
+}
+
+/// Build the full picker row list: the synthetic "new ephemeral session" row pinned at the top,
+/// followed by every discovered session plus a row for the currently attached one, sorted by name.
+fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
     let current_name = ctx.state.session_name.as_deref();
     let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
+    push_current_session_row(ctx, &mut rows);
+    prepend_new_ephemeral_row(&mut rows);
+    Ok(rows)
+}
+
+/// Pin the synthetic "new ephemeral session" row at index 0. Kept out of the sort so it never
+/// drifts into the middle of the discovered list.
+fn prepend_new_ephemeral_row(rows: &mut Vec<DiscoveredSession>) {
+    rows.insert(0, DiscoveredSession::new_ephemeral_row());
+}
+
+/// Append a row for the attached session (discovery excludes it) and keep the list sorted. Does not
+/// touch the synthetic row (which callers prepend afterward via [`prepend_new_ephemeral_row`]).
+fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<DiscoveredSession>) {
     if let Some(name) = &ctx.state.session_name {
-        rows.push(crate::session::discovery::DiscoveredSession {
+        rows.push(DiscoveredSession {
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
                 has_layout: true,
             },
+            synthetic: false,
         });
         rows.sort_by(|a, b| a.name.cmp(&b.name));
     }
-    Ok(rows)
 }
 
-/// Detach the current session (leaving its server running) and switch the UI to a fresh ephemeral
-/// session, so the user keeps a working terminal while the old session stays parked for reattach.
-pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.session_attached {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
-        return Update::full();
-    }
-    if let Some(client) = ctx.state.session_client.clone() {
+/// Release the currently attached session before switching away from it. The single rule used
+/// everywhere a transition leaves the current session: an ephemeral session is torn down
+/// (`shutdown`, its PTYs die with it — it is disposable and would otherwise leak an orphan
+/// server), while a named session is parked (its layout is pushed and the client detaches, so the
+/// server stays running for later reattach). A no-op when nothing is attached.
+pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
+    let Some(client) = ctx.state.session_client.clone() else {
+        return;
+    };
+    if ctx.state.is_ephemeral_session() {
+        client.shutdown();
+    } else {
         client.push_layout(
             crate::profiles::profile_from_state(&ctx.state)
                 .to_toml_string()
@@ -80,6 +171,47 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         );
         client.detach();
     }
+}
+
+/// Detach the current session and switch the UI to a fresh ephemeral session, so the user keeps a
+/// working terminal. A named session stays parked for reattach; an ephemeral one is shut down (it
+/// is disposable), which is equivalent to starting a brand-new unnamed session.
+pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.session_attached {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    }
+    let was_named = !ctx.state.is_ephemeral_session();
+    release_current_session(ctx);
+    let update = swap_to_fresh_ephemeral(ctx);
+    let message = if was_named {
+        "Detached (session still running)"
+    } else {
+        "Started a fresh unnamed session"
+    };
+    ctx.toast().push(info_toast(&ctx.state.theme, message));
+    update
+}
+
+/// Kill the current session's server (its PTYs die with it) but keep the UI alive by switching to a
+/// fresh ephemeral session — the picker equivalent of "kill session" without quitting the client.
+fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.shutdown();
+    }
+    let update = swap_to_fresh_ephemeral(ctx);
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Killed session `{name}`"),
+    ));
+    update
+}
+
+/// Replace `ctx.state` with a brand-new ephemeral session and spawn its attach. Shared by detach
+/// (old server left running) and killing the current session (old server already told to shut down);
+/// the caller is responsible for detaching/shutting down the outgoing connection first.
+fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
     let theme_watcher = ctx.state.theme_watcher.take();
@@ -92,7 +224,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     fresh.theme_watcher = theme_watcher;
     fresh.system_theme = system_theme;
     fresh.control_socket_path = control_socket_path;
-    // Keep the pre-attach epoch so stale messages from the just-detached connection are filtered
+    // Keep the pre-attach epoch so stale messages from the just-closed connection are filtered
     // out; `Msg::SessionAttached` advances it to `epoch` once the fresh ephemeral is live.
     fresh.runtime_epoch = old_epoch;
     fresh.pending_session_attach = Some(crate::state::PendingSessionAttach {
@@ -104,10 +236,6 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
-        "Detached (session still running)",
-    ));
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
     }))
@@ -138,23 +266,9 @@ pub(crate) fn attach_session_by_name(
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
     }
-    // Attach-elsewhere: park the current session (push its layout, detach) and leave its server
-    // running so it can be reattached later. Leaving an ephemeral is allowed but noted, since a
-    // clean quit is the only thing that shuts an ephemeral down.
-    if let Some(client) = ctx.state.session_client.clone() {
-        client.push_layout(
-            crate::profiles::profile_from_state(&ctx.state)
-                .to_toml_string()
-                .unwrap_or_default(),
-        );
-        client.detach();
-        if ctx.state.is_ephemeral_session() {
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
-                "Left ephemeral session running — reattach from the session picker",
-            ));
-        }
-    }
+    // Attach-elsewhere: release the current session (a named one is parked for reattach; an
+    // ephemeral one is torn down so it does not leak an orphan server), then attach to the target.
+    release_current_session(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
@@ -171,17 +285,71 @@ pub(crate) fn attach_session_by_name(
 }
 
 pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some(name) = ctx
+    let Some(entry) = ctx
         .state
         .session_picker
         .as_ref()
-        .and_then(|picker| picker.entries.get(index).map(|entry| entry.name.clone()))
+        .and_then(|picker| picker.entries.get(index).cloned())
     else {
         return Update::full();
     };
+    // The synthetic top row starts a fresh ephemeral session rather than attaching to a discovered
+    // one.
+    if entry.synthetic {
+        return activate_new_ephemeral(ctx);
+    }
     // A session shown in the picker is already running, so don't autostart a replacement if it
     // died between discovery and attach.
-    attach_session_by_name(ctx, name, false)
+    attach_session_by_name(ctx, entry.name, false)
+}
+
+/// Activate the synthetic "new ephemeral session" row. In-app (something is already attached) this
+/// releases the current session and swaps to a brand-new empty ephemeral. At startup (nothing
+/// attached yet) it attaches the initial/profile state to this process's ephemeral session, exactly
+/// as a bare launch without the picker would.
+fn activate_new_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if ctx.state.session_attached || ctx.state.session_client.is_some() {
+        release_current_session(ctx);
+        return swap_to_fresh_ephemeral(ctx);
+    }
+    attach_startup_ephemeral(ctx)
+}
+
+/// Attach the current (initial or restored-profile) state to this process's ephemeral session.
+/// Used when the startup picker's "new ephemeral" row is chosen or the picker is dismissed with no
+/// session attached, so a launch always ends with a working terminal.
+pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.commands_dirty = true;
+    let epoch = ctx.state.runtime_epoch;
+    let name = crate::state::ephemeral_session_name();
+    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+        epoch,
+        name: name.clone(),
+        client: None,
+        autostart: true,
+    });
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+    }))
+}
+
+/// Close the session picker. Normally this just returns focus to the current pane, but if it is the
+/// startup picker being dismissed with nothing attached, fall back to attaching an ephemeral session
+/// so the launch is never stranded without a terminal.
+pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.commands_dirty = true;
+    if !ctx.state.session_attached
+        && ctx.state.session_client.is_none()
+        && ctx.state.pending_session_attach.is_none()
+    {
+        return attach_startup_ephemeral(ctx);
+    }
+    request_current_pane_focus(ctx);
+    Update::full()
 }
 
 pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -199,24 +367,118 @@ pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    // From an ephemeral session, "create named" is a rename in place: the same server keeps its
-    // live panes and simply becomes discoverable under the new name — zero pane movement. The
-    // `Renamed` reply updates `session_name` and toasts (a collision surfaces as an error).
-    if ctx.state.session_attached && ctx.state.is_ephemeral_session() {
+    // Creating/selecting from the picker always goes to a *separate* session, parking the current
+    // one (see `attach_session_by_name`). Renaming the session you're in is a distinct action
+    // (`open_rename_session`) so the two intents never share one gesture.
+    attach_session_by_name(ctx, name, true)
+}
+
+/// Open the prompt to rename the *current* session in place. Unlike the picker (which switches to a
+/// separate session), this keeps every live pane where it is and just changes the name the server is
+/// discoverable under. Works for both ephemeral (naming it for the first time) and already-named
+/// sessions.
+pub(crate) fn open_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.session_attached {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    }
+    // Seed with the current name only when it's a real one; an ephemeral's generated `eph-…` name is
+    // never a useful starting point.
+    let initial = if ctx.state.is_ephemeral_session() {
+        String::new()
+    } else {
+        ctx.state.session_name.clone().unwrap_or_default()
+    };
+    ctx.state.rename_session = Some(SessionRenameState::new(initial));
+    ctx.state.show_palette = false;
+    ctx.state.show_help = false;
+    ctx.state.search = None;
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.mode = crate::state::Mode::Normal;
+    request_rename_session_focus(ctx);
+    Update::full()
+}
+
+/// Open the name prompt raised by `prefix d` on an ephemeral session: naming it detaches durably,
+/// cancelling quits (see [`crate::exit_ops::detach`]). Distinct from [`open_rename_session`] only
+/// in the `detach_after` intent it carries.
+pub(crate) fn open_rename_for_detach(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.rename_session = Some(SessionRenameState::for_detach());
+    ctx.state.show_palette = false;
+    ctx.state.show_help = false;
+    ctx.state.search = None;
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.mode = crate::state::Mode::Normal;
+    request_rename_session_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some((name, detach_after)) = ctx
+        .state
+        .rename_session
+        .as_ref()
+        .map(|rename| (rename.input.text().trim().to_string(), rename.detach_after))
+    else {
+        return Update::none();
+    };
+    if !crate::session::discovery::valid_session_name(&name) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Sessions",
+            "Use letters, numbers, _ or - for session names",
+        ));
+        return Update::full();
+    }
+    // Name-on-detach: rename in place (so the server persists under a real name), push the layout,
+    // then detach and quit. The rename and detach travel the same ordered connection, so the server
+    // renames first (and thus never self-reaps as an ephemeral) and keeps running after the detach.
+    if detach_after {
         if let Some(client) = ctx.state.session_client.clone() {
             client.rename(name);
-            // The rename keeps the current panes in place (no attach round-trip), so close the
-            // picker the same way `CloseSessionPicker` does: resync commands and hand focus back to
-            // the active pane, otherwise prefix/held-modifier keys stay captured by the picker input.
-            ctx.state.show_session_picker = false;
-            ctx.state.session_picker = None;
-            ctx.state.commands_dirty = true;
-            crate::focus_ops::request_current_pane_focus(ctx);
-            return Update::full();
+            client.push_layout(
+                crate::profiles::profile_from_state(&ctx.state)
+                    .to_toml_string()
+                    .unwrap_or_default(),
+            );
+            client.detach();
         }
+        crate::profiles::persist_session_on_detach(&ctx.state);
+        ctx.state.rename_session = None;
+        ctx.quit();
+        return Update::none();
     }
-    // From a named session (or when not attached), start/attach a separate named server.
-    attach_session_by_name(ctx, name, true)
+    if ctx.state.session_name.as_deref() == Some(name.as_str()) {
+        return close_rename_session(ctx);
+    }
+    // The rename is server-side and asynchronous: the `Renamed` reply updates `session_name` and
+    // toasts (a collision or reserved name surfaces there as an error). Panes never move.
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.rename(name);
+    }
+    close_rename_session(ctx)
+}
+
+pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    // Cancelling a name-on-detach prompt means the user declined to name the session, which the
+    // detach flow treats as a plain quit (shutting the still-ephemeral server down).
+    let detach_after = ctx
+        .state
+        .rename_session
+        .as_ref()
+        .is_some_and(|rename| rename.detach_after);
+    ctx.state.rename_session = None;
+    if detach_after {
+        // Declining the name-on-detach prompt is already an explicit "quit and shut down"
+        // decision, so it bypasses the ephemeral-quit confirmation.
+        return crate::exit_ops::quit_client(ctx, false);
+    }
+    ctx.state.commands_dirty = true;
+    request_current_pane_focus(ctx);
+    Update::full()
 }
 
 pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -227,29 +489,37 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    // The synthetic "new ephemeral session" row is not a real session and cannot be killed.
+    if entry.synthetic {
+        picker.pending_kill = None;
+        return Update::full();
+    }
+    // The current session may be ephemeral (shown as "unnamed"); keep the toast label in sync.
+    let display = if entry.ephemeral {
+        "unnamed".to_string()
+    } else {
+        entry.name.clone()
+    };
     if picker.pending_kill != Some(index) {
         picker.pending_kill = Some(index);
         ctx.toast().push(info_toast(
             &ctx.state.theme,
-            format!("Press Ctrl+K again to kill `{}`", entry.name),
+            format!("Press Ctrl+K again to kill `{display}`"),
         ));
         return Update::full();
     }
     picker.pending_kill = None;
+    // Killing the session you're attached to is fine: shut its server down and hop the UI onto a
+    // fresh ephemeral session rather than quitting the client.
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(entry.name.as_str())
     {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Sessions",
-            "Detach before killing the current session",
-        ));
-        return Update::full();
+        return kill_current_session(ctx, display);
     }
     match shutdown_session(&entry.name) {
         Ok(()) => {
             ctx.toast().push(info_toast(
                 &ctx.state.theme,
-                format!("Killed session `{}`", entry.name),
+                format!("Killed session `{display}`"),
             ));
             refresh_session_picker(ctx)
         }

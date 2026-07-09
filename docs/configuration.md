@@ -43,6 +43,7 @@ prefix = "ctrl-a"           # prefix key (default: ctrl-a)
 [input]                      # alternative place for the same two keys
 modifier = "alt"
 prefix = "ctrl-a"
+modifier_shortcuts = true    # also mirror each default key onto Alt+<key> (default: true)
 
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
@@ -84,9 +85,11 @@ pane_exit = true             # notify on natural pane process exits when enabled
 close_pane = false           # confirm closing a pane with a live process (default: false)
 kill_workspace = true        # confirm killing all panes on a workspace (default: true)
 kill_session = true          # confirm shutting down the attached session (default: true)
+quit_ephemeral = true        # confirm quitting an ephemeral session that still has a live pane (default: true)
 
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
+startup = "picker"           # "ephemeral" (default) attaches directly; "picker" shows the session picker
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
 
 [scratchpad]
@@ -120,6 +123,16 @@ copy-mode = "prefix y"
 
 `modifier` and `prefix` can also live under `[input]`; the top-level keys take precedence if
 both are present.
+
+### `[input] modifier_shortcuts`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `modifier_shortcuts` | bool | `true` | When true, every built-in default key is also bound as a held `<modifier>+<key>` chord (e.g. `Alt+q`) alongside its `<prefix> <key>` leader chord. Set to `false` to drop the held-modifier layer entirely and keep prefix-only bindings, so held `Alt`/`Super` chords pass through to the focused pane. |
+
+This is an all-or-nothing switch. To drop the mirror for a single command only, override it in
+`[keys]` with a leader-only binding, e.g. `detach = "ctrl-a d"`. Explicit `[keys]` overrides are
+unaffected by `modifier_shortcuts` — they bind exactly what you specify.
 
 ### Prefix syntax
 
@@ -220,6 +233,7 @@ so it executes directly without a second confirmation.
 | `close_pane` | `false` | Confirm closing a pane whose process is still running. |
 | `kill_workspace` | `true` | Confirm closing every pane on the active workspace. |
 | `kill_session` | `true` | Confirm shutting down the attached named session. |
+| `quit_ephemeral` | `true` | Confirm quitting an ephemeral session that still has a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
 
 ## `[session]`
 
@@ -233,9 +247,15 @@ background session server and can be detached/reattached with live terminal stat
 | Key | Default | Notes |
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
+| `startup` | `"ephemeral"` | Startup session behavior. `"ephemeral"` attaches directly to a fresh ephemeral session; `"picker"` opens the session picker first (equivalent to `--pick`). |
 | `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 
 A CLI profile or `[profile] default` takes precedence over the autosaved session at startup.
+
+With `startup = "picker"` (or `--pick`), the session picker is shown at launch **only when at least
+one named session already exists**; otherwise the launch attaches to an ephemeral session as usual.
+Choosing the pinned **＋ New ephemeral session** row or dismissing the picker attaches a fresh
+ephemeral session. See [Sessions](sessions.md).
 
 ## `[scratchpad]`
 
@@ -304,8 +324,8 @@ Examples:
 
 ```toml
 [keys]
-toggle-pane-synchronization = "prefix s"
-save-profile = "prefix S"
+toggle-pane-synchronization = "ctrl-a y"
+save-profile = "ctrl-a z, alt-z"
 scratchpad = []
 ```
 
@@ -316,7 +336,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `detach`, `quit`, `kill-workspace`, `kill-session`,
+`save-profile`, `open-profile`, `sessions`, `rename-session`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-animations`, `toggle-focus-on-hover`,

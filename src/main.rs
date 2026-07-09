@@ -50,6 +50,10 @@ pub struct HyprmuxApp {
     control_listener: Option<std::os::unix::net::UnixListener>,
     control_guard: Option<control::ControlSocketGuard>,
     attach_session: Option<String>,
+    /// Whether a bare launch should open the session picker before attaching (`--pick` or
+    /// `[session] startup = "picker"`). Only honored when there is no `--attach`/`--session` and at
+    /// least one named session exists at startup.
+    want_startup_picker: bool,
 }
 
 impl Default for HyprmuxApp {
@@ -64,6 +68,7 @@ impl Default for HyprmuxApp {
             control_listener: None,
             control_guard: None,
             attach_session: None,
+            want_startup_picker: false,
         }
     }
 }
@@ -79,6 +84,7 @@ impl HyprmuxApp {
         control_listener: Option<std::os::unix::net::UnixListener>,
         control_guard: Option<control::ControlSocketGuard>,
         attach_session: Option<String>,
+        want_startup_picker: bool,
     ) -> Self {
         Self {
             config,
@@ -89,6 +95,7 @@ impl HyprmuxApp {
             control_listener,
             control_guard,
             attach_session,
+            want_startup_picker,
         }
     }
 }
@@ -124,6 +131,9 @@ pub enum Msg {
     CloseRenameWorkspace,
     RenameWorkspaceChanged(InputEvent),
     SubmitRenameWorkspace,
+    CloseRenameSession,
+    RenameSessionChanged(InputEvent),
+    SubmitRenameSession,
     CloseSaveProfile,
     SaveProfileNameChanged(InputEvent),
     SubmitSaveProfile,
@@ -134,7 +144,11 @@ pub enum Msg {
     ProfilePickerDelete,
     SelectProfile(usize),
     CloseSessionPicker,
-    SessionPickerRefresh,
+    /// Off-thread auto-refresh results for the open session picker, tagged with the opening's epoch.
+    SessionsDiscovered {
+        epoch: u64,
+        rows: Vec<crate::session::discovery::DiscoveredSession>,
+    },
     SessionPickerQueryChanged(String),
     SessionPickerSelect(usize),
     SessionPickerActivate(usize),
@@ -270,31 +284,60 @@ impl Component for HyprmuxApp {
 
         // Always-server model: with no explicit `--attach`, attach to this process's ephemeral
         // session (`eph-<pid>`), autostarting its server. Restored/initial panes are spawned on
-        // the server once `Msg::SessionAttached` reports an empty session.
+        // the server once `Msg::SessionAttached` reports an empty session. Opt-in `--pick` /
+        // `[session] startup = "picker"` instead opens the session picker first when a named
+        // session exists, so nothing is attached until the user chooses.
         let control_listener = self.control_listener.take();
-        let name = self
-            .attach_session
-            .clone()
-            .unwrap_or_else(state::ephemeral_session_name);
         let theme_tick = ctx.state.theme_watcher.is_some();
         let bar_tick = ctx.state.config.bar.has_clock();
         let bar_commands = ctx.state.config.bar.command_specs();
         ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
-        let epoch = ctx.state.runtime_epoch;
-        ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
-            epoch,
-            name: name.clone(),
-            client: None,
-            autostart: true,
-        });
+
+        let start = if self.want_startup_picker && has_named_session() {
+            let epoch = session_ops::open_startup_session_picker(ctx);
+            SessionStart::Picker { epoch }
+        } else {
+            let name = self
+                .attach_session
+                .clone()
+                .unwrap_or_else(state::ephemeral_session_name);
+            let epoch = ctx.state.runtime_epoch;
+            ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch,
+                name: name.clone(),
+                client: None,
+                autostart: true,
+            });
+            SessionStart::Attach { epoch, name }
+        };
+
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             config_ops::spawn_config_watcher(&link);
             if let Some(listener) = control_listener {
                 let listener_link = link.clone();
                 std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
             }
-            let session_link = link.clone();
-            std::thread::spawn(move || attach_session_client(epoch, name, true, session_link));
+            match start {
+                SessionStart::Attach { epoch, name } => {
+                    let session_link = link.clone();
+                    std::thread::spawn(move || {
+                        attach_session_client(epoch, name, true, session_link)
+                    });
+                }
+                SessionStart::Picker { epoch } => {
+                    // Kick off the first discovery tick; `apply_discovered_sessions` re-arms the
+                    // auto-refresh loop from there, exactly as an in-app picker opening would.
+                    let watch_link = link.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(1500));
+                        if let Ok(rows) =
+                            crate::session::discovery::discover_sessions_excluding(None)
+                        {
+                            watch_link.send(Msg::SessionsDiscovered { epoch, rows });
+                        }
+                    });
+                }
+            }
             if theme_tick {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 link.send(Msg::ThemeTick);
@@ -331,6 +374,22 @@ impl Component for HyprmuxApp {
     fn view(&self, ctx: &Context<Self>) -> Element {
         view::render(self, ctx)
     }
+}
+
+/// How a launch begins its session: either attach straight to a session, or show the startup
+/// picker and defer attaching until the user chooses.
+enum SessionStart {
+    Attach { epoch: u64, name: String },
+    Picker { epoch: u64 },
+}
+
+/// Whether any *named* (non-ephemeral) session is currently discoverable. Used to gate the startup
+/// picker: with no named session to reattach to, a bare launch skips the picker and attaches to an
+/// ephemeral session as usual.
+fn has_named_session() -> bool {
+    session::discovery::discover_sessions()
+        .map(|rows| rows.iter().any(|row| !row.ephemeral))
+        .unwrap_or(false)
 }
 
 pub(crate) fn attach_session_client(
@@ -755,6 +814,10 @@ fn main() -> Result<()> {
     }
     let config = loaded.config;
     let attach_session = cli.attach_session.clone();
+    // Open the picker at startup only for a bare launch (no explicit attach target). The
+    // "any named session exists" gate is checked in `init` so it reflects live state at mount.
+    let want_startup_picker = attach_session.is_none()
+        && (cli.pick || config.session.startup == config::SessionStartup::Picker);
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
@@ -795,6 +858,7 @@ fn main() -> Result<()> {
         control_listener,
         control_guard,
         attach_session,
+        want_startup_picker,
     ))
     .run()
 }
@@ -804,6 +868,10 @@ struct CliArgs {
     profile: Option<String>,
     config_path: Option<String>,
     attach_session: Option<String>,
+    /// Open the session picker at startup instead of silently attaching to an ephemeral session
+    /// (also enabled by `[session] startup = "picker"`). Ignored when `--attach`/`--session` is
+    /// given or no named session exists.
+    pick: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -874,6 +942,9 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
                     iter.next()
                         .ok_or_else(|| "--attach requires a session name".to_string())?,
                 );
+            }
+            "--pick" => {
+                cli.pick = true;
             }
             "--profile" | "-p" => {
                 let name = iter
@@ -1215,6 +1286,7 @@ USAGE:
     hyprmux [--socket PATH] move-to-workspace <1-9>
     hyprmux --attach <NAME>
     hyprmux --session <NAME>
+    hyprmux --pick
     hyprmux list-sessions
     hyprmux kill-session <NAME>
     hyprmux --server <NAME>
@@ -1226,6 +1298,7 @@ OPTIONS:
     -p, --profile <NAME>  Load a named profile from ~/.config/hyprmux/profiles/<NAME>.toml
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this socket
+        --pick            Open the session picker at startup when a named session exists
 
 A bare PROFILE positional is equivalent to --profile PROFILE.
 Leave the running app with prefix d (detach) or a configured quit binding."
@@ -1519,6 +1592,19 @@ mod tests {
     #[test]
     fn cli_rejects_unknown_flags() {
         assert!(parse_cli_args(vec!["--nope".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_pick_flag() {
+        let default = expect_run(parse_cli_args(vec![]).expect("parses"));
+        assert!(!default.pick);
+        let picked = expect_run(parse_cli_args(vec!["--pick".into()]).expect("parses"));
+        assert!(picked.pick);
+        // `--pick` composes with a profile positional.
+        let with_profile =
+            expect_run(parse_cli_args(vec!["--pick".into(), "dev".into()]).expect("parses"));
+        assert!(with_profile.pick);
+        assert_eq!(with_profile.profile.as_deref(), Some("dev"));
     }
 
     fn expect_run(parsed: ParsedCli) -> CliArgs {

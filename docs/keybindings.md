@@ -27,6 +27,13 @@ forwarded to the focused shell.
 
 You can also configure an exact held chord in `[keys]`, for example `spawn = "alt-enter"`.
 
+**Disabling the held-modifier layer:** every default key ships with both its `Ctrl-a <key>` leader
+chord and an `Alt+<key>` mirror. If you would rather keep held `Alt`/`Super` chords free for the
+shell and programs in your panes (readline word-editing, `Alt+Tab`, editor `Alt+Enter`, etc.), set
+`[input] modifier_shortcuts = false` to drop the mirror entirely and use prefix mode only. To drop
+the mirror for just one command instead, override it in `[keys]` with an explicit leader-only
+binding, e.g. `detach = "ctrl-a d"`.
+
 All exit and lifecycle commands are prefix/modifier actions like everything else. hyprmux
 disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); bind
 `quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux.
@@ -69,7 +76,7 @@ Spatial focus moves to the nearest pane in a direction (not just the next in a l
 | --- | --- |
 | Flip focused split axis | `Space` |
 | Grow split | `]` or `+` |
-| Shrink split | `-` |
+| Shrink split | `-` or `_` |
 | Enter resize mode | `r` |
 | Cycle layout (dwindle → master → grid → monocle) | `m` |
 
@@ -101,19 +108,28 @@ Names are saved with profiles and session autosave.
 | Copy mode | `[` |
 | Search scrollback | `/` |
 | Toggle scratchpad | `` ` `` (backtick) |
+| Open profiles picker | `o` |
+| Save profile | `O` (`Shift+o`) |
 
 ### Leaving and lifecycle
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Detach | `d` | Attached: leave the session and return to a fresh local client (server keeps running). Local: save the live layout unconditionally, then exit the client. |
-| Quit client | *(palette only)* | Exit this UI. Attached: server keeps running. Local: saves only when `[session] autosave` is enabled. |
-| Kill workspace | `q` | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). |
+| Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching an anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel to quit and shut it down). A named session detaches immediately. |
+| Quit client | `q` | Exit this UI. The current server keeps running unless the session is ephemeral, in which case it shuts down. Quitting an ephemeral session that still has a live pane asks for a second press first (press `q` again within the confirm window); disable via `[confirm] quit_ephemeral = false`. |
+| Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound — reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached named session and exit. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
 
 Configured `[confirm]` prompts apply to key/chord and control-socket action triggers. Commands
 chosen from the command palette are treated as explicit selections and run without an extra
 second confirmation.
+
+### Sessions
+
+| Command | Default keys | What it does |
+| --- | --- | --- |
+| Sessions… | `s` | Open the session picker. A pinned **＋ New ephemeral session** row at the top starts a fresh unnamed session (never killable). `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches; `Ctrl+K` (twice) kills the selected session — including the current one, which shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists. |
+| Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. Names an ephemeral session for the first time or changes a named one. See [Sessions](sessions.md). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
@@ -129,9 +145,9 @@ keyboard - save profile, change appearance, promote to master, plus discoverable
 copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
 palette groups theme, titlebar, workbar, animation, and border controls.
 Frequent single-key actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the
-help overlay only, since the key is faster than a search box. "Save profile", "Change
-appearance", and "Toggle focus on hover" are palette-only - they have no default key. So are
-"Open config file" and "Reload config" - see
+help overlay only, since the key is faster than a search box. "Change appearance" and "Toggle
+focus on hover" are palette-only - they have no default key. So are "Open config file" and
+"Reload config" - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,

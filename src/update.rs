@@ -211,6 +211,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
+        Msg::CloseRenameSession => crate::session_ops::close_rename_session(ctx),
+        Msg::RenameSessionChanged(event) => {
+            if let Some(rename) = ctx.state.rename_session.as_mut() {
+                event.apply_to(&mut rename.input);
+            }
+            crate::focus_ops::request_rename_session_focus(ctx);
+            Update::full()
+        }
+        Msg::SubmitRenameSession => crate::session_ops::apply_rename_session(ctx),
         Msg::CloseSaveProfile => {
             let update = close_save_profile_prompt(ctx);
             request_current_pane_focus(ctx);
@@ -242,14 +251,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
-        Msg::CloseSessionPicker => {
-            ctx.state.show_session_picker = false;
-            ctx.state.session_picker = None;
-            ctx.state.commands_dirty = true;
-            request_current_pane_focus(ctx);
-            Update::full()
+        Msg::CloseSessionPicker => crate::session_ops::close_session_picker(ctx),
+        Msg::SessionsDiscovered { epoch, rows } => {
+            crate::session_ops::apply_discovered_sessions(ctx, epoch, rows)
         }
-        Msg::SessionPickerRefresh => crate::session_ops::refresh_session_picker(ctx),
         Msg::SessionPickerQueryChanged(query) => {
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.input.set_text(query);

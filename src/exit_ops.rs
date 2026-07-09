@@ -7,7 +7,7 @@ use crate::anim;
 use crate::pane_lifecycle::{begin_close_pane, close_pane_state, prune_closed_batch_command};
 use crate::profiles;
 use crate::pty_events::{confirm_toast, info_toast};
-use crate::state::{PendingDestructive, PendingDestructiveConfirmation};
+use crate::state::{PendingDestructive, PendingDestructiveConfirmation, State};
 
 /// How long a destructive action stays armed after its first press. The confirm toast is shown
 /// for the same duration, so the toast disappearing means the confirmation expired.
@@ -46,8 +46,19 @@ fn confirm_second_press(
 
 /// Leave the TUI while keeping the session server running for later reattach (tmux-style detach).
 /// The layout is pushed to the server and mirrored to disk so a fresh launch can restore it.
+///
+/// Detaching an *anonymous* ephemeral session is contradictory (there is no name to reattach by),
+/// so an attached ephemeral session first prompts for a name; naming it turns the detach into a
+/// durable named detach (see [`crate::session_ops::apply_rename_session`]). A named session (or one
+/// with no live client to rename) detaches immediately.
 pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending(ctx);
+    if ctx.state.session_attached
+        && ctx.state.is_ephemeral_session()
+        && ctx.state.session_client.is_some()
+    {
+        return crate::session_ops::open_rename_for_detach(ctx);
+    }
     if let Some(client) = ctx.state.session_client.clone() {
         client.push_layout(
             profiles::profile_from_state(&ctx.state)
@@ -61,9 +72,38 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::none()
 }
 
+/// Whether any tiled/floating pane still has a running process. Used to decide whether quitting
+/// an ephemeral session (which shuts the server down and kills its PTYs) warrants a confirmation.
+fn any_pane_live(state: &State) -> bool {
+    state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .any(|pane| !pane.closing && pane.terminal.is_running())
+}
+
 /// Quit the client. An ephemeral session is shut down (its PTYs die with it); a named session is
 /// left running so it can be reattached later.
-pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>) -> Update {
+///
+/// When `confirmations_enabled` and `[confirm].quit_ephemeral` are both set, quitting an
+/// ephemeral session that still has a live pane routes through the shared confirm flow (arm on
+/// the first press, quit on a second press within the confirm window) so an accidental `q`
+/// doesn't tear down running work. A named session, a session with no live pane, or the flag
+/// being off quits immediately as before.
+pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: bool) -> Update {
+    if confirmations_enabled
+        && ctx.state.config.confirm.quit_ephemeral
+        && ctx.state.is_ephemeral_session()
+        && any_pane_live(&ctx.state)
+        && !confirm_second_press(
+            ctx,
+            PendingDestructive::Quit,
+            confirm_toast(&ctx.state.theme, "Again to quit and close panes"),
+        )
+    {
+        return Update::full();
+    }
+
     clear_pending(ctx);
     if ctx.state.is_ephemeral_session()
         && let Some(client) = ctx.state.session_client.clone()

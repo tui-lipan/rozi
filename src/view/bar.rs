@@ -225,16 +225,9 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
     let theme = &ctx.state.theme;
     let name = attached_session_name(ctx)?;
-    // Ephemeral sessions carry an ugly auto-generated `eph-<pid>` name; surface them as
-    // "(ephemeral)" instead, since a bare launch is a disposable per-process session.
-    let label = if ctx.state.is_ephemeral_session() {
-        "(ephemeral)".to_string()
-    } else {
-        name
-    };
     // A right-region chip, so it takes a left cap like the mode chips.
     Some(workbar_badge(
-        &format!(" 󰛤 {label} "),
+        &format!(" 󰛤 {name} "),
         theme.surface.backdrop,
         theme.border_active,
         theme.surface.panel,
@@ -249,11 +242,13 @@ fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
 }
 
 /// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.
+/// Unnamed (ephemeral) sessions return `None`: a bare launch is a disposable per-process session, so
+/// the badge/placeholder stays empty until the session is given a real name.
 fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
-    ctx.state
-        .session_attached
-        .then(|| ctx.state.session_name.clone())
-        .flatten()
+    if !ctx.state.session_attached || ctx.state.is_ephemeral_session() {
+        return None;
+    }
+    ctx.state.session_name.clone()
 }
 
 fn bar_hostname() -> String {

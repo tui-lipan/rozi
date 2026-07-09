@@ -18,7 +18,11 @@ use crate::state::PaneId;
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
 const DEFAULT_SCROLLBACK: usize = 5000;
-const EXITED_NO_CLIENT_GRACE: Duration = Duration::from_secs(30);
+/// How long an *ephemeral* session server survives with no client attached before it self-reaps,
+/// regardless of pane state. This is only a crash/abnormal-exit backstop: a clean quit or normal
+/// transition tears an ephemeral server down client-side (`ClientMessage::Shutdown`). A *named*
+/// session never self-reaps from client absence — it is durable until explicitly killed.
+const EPHEMERAL_NO_CLIENT_GRACE: Duration = Duration::from_secs(45);
 
 pub struct SessionServer {
     panes: HashMap<PaneId, ServerPane>,
@@ -74,24 +78,29 @@ impl SessionServer {
 
     pub fn run_listener(&mut self, listener: UnixListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
-        let mut exited_idle_since: Option<Instant> = None;
+        // Tracks how long an ephemeral session has had no client attached. Reset whenever a client
+        // connects (below). A named session ignores this timer entirely and is durable until it is
+        // explicitly shut down.
+        let mut no_client_since: Option<Instant> = None;
         while !self.shutdown {
             while let Ok(event) = self.event_rx.try_recv() {
                 let _ = self.handle_event(event);
             }
             match listener.accept() {
                 Ok((stream, _)) => {
-                    exited_idle_since = None;
+                    no_client_since = None;
                     let _ = self.handle_client(stream);
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    if self.all_panes_exited() {
-                        let since = exited_idle_since.get_or_insert_with(Instant::now);
-                        if since.elapsed() >= EXITED_NO_CLIENT_GRACE {
+                    // Ephemeral servers self-reap after a grace period with no client, regardless of
+                    // pane state (a crash/abnormal-exit backstop). Named servers never self-reap.
+                    if crate::state::is_ephemeral_session_name(&self.session_name) {
+                        let since = no_client_since.get_or_insert_with(Instant::now);
+                        if since.elapsed() >= EPHEMERAL_NO_CLIENT_GRACE {
                             self.shutdown = true;
                         }
                     } else {
-                        exited_idle_since = None;
+                        no_client_since = None;
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
@@ -543,10 +552,6 @@ impl SessionServer {
         }
         let restore = stream.set_nonblocking(true);
         result.and(restore)
-    }
-
-    fn all_panes_exited(&self) -> bool {
-        !self.panes.is_empty() && self.panes.values().all(|pane| pane.exited.is_some())
     }
 
     fn apply_palette(

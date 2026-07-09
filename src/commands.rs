@@ -45,7 +45,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::Spawn,
         label: "New pane",
         category: "Panes",
-        default_keys: &["enter", "c", "shift-c"],
+        default_keys: &["enter", "c"],
         palette: false,
     },
     BuiltinCommand {
@@ -171,7 +171,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::AdjustRatio(-RATIO_STEP),
         label: "Shrink split",
         category: "Layout",
-        default_keys: &["minus"],
+        default_keys: &["minus", "shift-minus"],
         palette: false,
     },
     BuiltinCommand {
@@ -269,19 +269,26 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::SaveProfile,
         label: "Save profile",
         category: "Profile",
-        default_keys: &[],
+        default_keys: &["shift-o"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::OpenProfilePicker,
         label: "Profiles…",
         category: "Profile",
-        default_keys: &[],
+        default_keys: &["o"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::OpenSessionPicker,
         label: "Sessions…",
+        category: "Session",
+        default_keys: &["s"],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::RenameSession,
+        label: "Rename session",
         category: "Session",
         default_keys: &[],
         palette: true,
@@ -297,16 +304,17 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::Quit,
         label: "Quit client",
         category: "Session",
-        default_keys: &[],
+        // `q` yields the leader chord `<prefix> q` and the WM-modifier chord `<mod>-q` (Alt+q).
+        default_keys: &["q"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::KillWorkspace,
         label: "Kill workspace",
         category: "Session",
-        // Not "shift-7": that collides with the workspace-7 move/relocate chord
-        // (`WORKSPACE_SHIFT_SYMBOLS`/`shift-{digit}` in `register_workspace_commands`).
-        default_keys: &["q", "shift-q"],
+        // No default key: rarely used and destructive, so it ships unbound and is reached via the
+        // command palette or a user `[keys]` binding.
+        default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
@@ -452,6 +460,7 @@ pub(crate) fn commands_active(state: &State) -> bool {
         && state.search.is_none()
         && state.rename.is_none()
         && state.rename_workspace.is_none()
+        && state.rename_session.is_none()
         && state.save_profile_prompt.is_none()
         && !state.show_profile_picker
         && !state.show_session_picker
@@ -656,20 +665,26 @@ fn builtin_keybinding_hint(
     (!hint.is_empty()).then(|| Arc::<str>::from(hint))
 }
 
-/// For each key step, build the leader-prefix chord (`<prefix> <key>`) and the WM-modifier
-/// held chord (`<modifier>-<key>`), skipping either that fails to parse (e.g. a key step that
-/// already carries `ctrl-`/`shift-` composes fine with a modifier prefix, but a malformed
-/// default would simply be dropped rather than panic).
+/// For each key step, build the leader-prefix chord (`<prefix> <key>`) and, when
+/// `[input] modifier_shortcuts` is enabled (the default), the WM-modifier held chord
+/// (`<modifier>-<key>`), skipping either that fails to parse (e.g. a key step that already carries
+/// `ctrl-`/`shift-` composes fine with a modifier prefix, but a malformed default would simply be
+/// dropped rather than panic).
+///
+/// The modifier mirror is an all-or-nothing layer controlled by `modifier_shortcuts`: with it off,
+/// only leader chords are emitted so held `Alt`/`Super` chords reach the focused pane instead. A
+/// user who wants to drop the mirror for one specific command uses a `[keys]` override instead.
 fn default_shortcuts_for<S: AsRef<str>>(config: &HyprmuxConfig, keys: &[S]) -> Vec<KeyBinding> {
     let prefix = config.input.prefix.canonical_lowercase();
     let modifier = modifier_token(config.input.modifier);
+    let mirror = config.input.modifier_shortcuts;
     let mut out = Vec::new();
     for key in keys {
         let key = key.as_ref();
         if let Ok(chord) = KeyBinding::from_str(&format!("{prefix} {key}")) {
             out.push(chord);
         }
-        if let Ok(held) = KeyBinding::from_str(&format!("{modifier}-{key}")) {
+        if mirror && let Ok(held) = KeyBinding::from_str(&format!("{modifier}-{key}")) {
             out.push(held);
         }
     }
@@ -830,6 +845,68 @@ mod tests {
     }
 
     #[test]
+    fn modifier_shortcuts_toggle_controls_the_alt_mirror() {
+        let has_alt = |shortcuts: &[KeyBinding], code: KeyCode| {
+            shortcuts.iter().any(|binding| {
+                binding.matches_sequence(&[KeyEvent {
+                    code,
+                    mods: KeyMods::ALT,
+                }])
+            })
+        };
+        let code_for = |key: &str| match key {
+            "tab" => KeyCode::Tab,
+            "enter" => KeyCode::Enter,
+            other => KeyCode::Char(other.chars().next().unwrap()),
+        };
+
+        // Enabled by default: every default key mirrors onto its Alt chord, with no per-key
+        // carve-outs - keys that once had exceptions (Tab, detach `d`, paste `v`, spawn `enter`)
+        // all mirror now.
+        let config = HyprmuxConfig::default();
+        assert!(config.input.modifier_shortcuts);
+        for key in ["d", "v", "tab", "enter", "c"] {
+            let shortcuts = default_shortcuts_for(&config, &[key]);
+            assert!(
+                has_alt(&shortcuts, code_for(key)),
+                "expected an Alt mirror for `{key}` when modifier_shortcuts is on: {shortcuts:?}"
+            );
+        }
+
+        // Disabled: only leader chords remain, no Alt mirror anywhere.
+        let mut prefix_only = HyprmuxConfig::default();
+        prefix_only.input.modifier_shortcuts = false;
+        let shortcuts = default_shortcuts_for(&prefix_only, &["c"]);
+        assert!(
+            shortcuts
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('a'), plain('c')])),
+            "leader chord must remain when modifier_shortcuts is off: {shortcuts:?}"
+        );
+        assert!(
+            !has_alt(&shortcuts, KeyCode::Char('c')),
+            "no Alt mirror when modifier_shortcuts is off: {shortcuts:?}"
+        );
+    }
+
+    #[test]
+    fn no_two_builtin_commands_share_a_default_key() {
+        use std::collections::HashMap;
+        let mut seen: HashMap<&str, &str> = HashMap::new();
+        for command in BUILTIN_COMMANDS {
+            let id = command
+                .action
+                .id()
+                .expect("every builtin command has a stable id");
+            for key in command.default_keys {
+                if let Some(previous) = seen.insert(key, id) {
+                    panic!("default key `{key}` is bound to both `{previous}` and `{id}`");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn key_override_replaces_defaults_verbatim() {
         let mut config = HyprmuxConfig::default();
         config.key_overrides.insert(
@@ -837,7 +914,7 @@ mod tests {
             vec![KeyBinding::from_str("ctrl-b c").unwrap()],
         );
 
-        let shortcuts = resolve_shortcuts(&config, "spawn", &["enter", "c", "shift-c"]);
+        let shortcuts = resolve_shortcuts(&config, "spawn", &["enter", "c"]);
         assert_eq!(shortcuts.len(), 1);
         assert!(
             shortcuts

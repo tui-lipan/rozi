@@ -24,6 +24,10 @@ pub fn rename_workspace_input_key() -> &'static str {
     "hyprmux-rename-workspace-input"
 }
 
+pub fn rename_session_input_key() -> &'static str {
+    "hyprmux-rename-session-input"
+}
+
 pub fn save_profile_key() -> &'static str {
     "hyprmux-save-profile-input"
 }

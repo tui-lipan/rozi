@@ -202,8 +202,9 @@ fn execute_action_inner(
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
+        Action::RenameSession => crate::session_ops::open_rename_session(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
-        Action::Quit => crate::exit_ops::quit_client(ctx),
+        Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),
         Action::KillWorkspace => {
             crate::exit_ops::kill_workspace_with_confirmation(ctx, confirmations_enabled)
         }

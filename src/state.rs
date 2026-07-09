@@ -585,6 +585,32 @@ impl WorkspaceRenameState {
     }
 }
 
+/// Rename prompt state for the current session (renames the attached session in place).
+pub struct SessionRenameState {
+    pub input: TextInput,
+    /// When set, a successful rename is a *name-on-detach*: after naming the (previously ephemeral)
+    /// session, the client detaches and quits (the now-named server keeps running). Cancelling the
+    /// prompt in this mode quits and shuts the still-ephemeral session down.
+    pub detach_after: bool,
+}
+
+impl SessionRenameState {
+    pub fn new(initial: impl AsRef<str>) -> Self {
+        Self {
+            input: TextInput::new(initial.as_ref()),
+            detach_after: false,
+        }
+    }
+
+    /// A rename prompt raised by `prefix d` on an ephemeral session: name it, then detach.
+    pub fn for_detach() -> Self {
+        Self {
+            input: TextInput::new(""),
+            detach_after: true,
+        }
+    }
+}
+
 pub struct ProfilePickerState {
     pub entries: Vec<ProfileEntry>,
     pub input: TextInput,
@@ -606,6 +632,8 @@ pub enum PendingDestructive {
     ClosePane(PaneId),
     KillWorkspace(usize),
     KillSession,
+    /// Quit an ephemeral session that still has a live pane (shuts the server down).
+    Quit,
 }
 
 pub struct PendingDestructiveConfirmation {
@@ -830,11 +858,15 @@ pub struct State {
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
     pub rename_workspace: Option<WorkspaceRenameState>,
+    pub rename_session: Option<SessionRenameState>,
     pub save_profile_prompt: Option<PaneRenameState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
+    /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
+    /// stale ticks from a previous opening (or after close) are ignored.
+    pub session_picker_epoch: u64,
     pub copy_mode: Option<CopyModeState>,
     pub copy_flash: Option<CopyFlashState>,
     pub next_copy_flash_id: u64,
@@ -954,11 +986,13 @@ impl State {
             search: None,
             rename: None,
             rename_workspace: None,
+            rename_session: None,
             save_profile_prompt: None,
             show_profile_picker: false,
             profile_picker: None,
             show_session_picker: false,
             session_picker: None,
+            session_picker_epoch: 0,
             copy_mode: None,
             copy_flash: None,
             next_copy_flash_id: 1,

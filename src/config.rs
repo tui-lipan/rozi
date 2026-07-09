@@ -51,6 +51,11 @@ impl WmModifier {
 pub struct InputConfig {
     pub prefix: KeyBinding,
     pub modifier: WmModifier,
+    /// When true (the default), every built-in default key is also registered as a held
+    /// WM-modifier chord (`<modifier>-<key>`, e.g. `Alt+q`) alongside its `<prefix> <key>`
+    /// leader chord. Set to false to drop the modifier layer entirely, leaving prefix-only
+    /// bindings so held `Alt`/`Super` chords pass straight through to the focused pane.
+    pub modifier_shortcuts: bool,
 }
 
 impl Default for InputConfig {
@@ -58,6 +63,7 @@ impl Default for InputConfig {
         Self {
             prefix: KeyBinding::from_str("ctrl-a").expect("default prefix key parses"),
             modifier: WmModifier::Alt,
+            modifier_shortcuts: true,
         }
     }
 }
@@ -119,12 +125,35 @@ pub struct ProfileEntry {
     pub path: PathBuf,
 }
 
+/// What a bare launch (no `--attach`/`--session`) does before opening the UI.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionStartup {
+    /// Silently attach to this process's ephemeral session (the historical behavior).
+    #[default]
+    Ephemeral,
+    /// Show the session picker first (when any named session exists), so the user can reattach to a
+    /// named session or start a fresh ephemeral one. Equivalent to passing `--pick`.
+    Picker,
+}
+
+impl SessionStartup {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "ephemeral" | "default" | "attach" => Some(Self::Ephemeral),
+            "picker" | "pick" | "choose" => Some(Self::Picker),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct HyprmuxSessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
     pub autosave: bool,
     /// Override the session file location; defaults to `$XDG_STATE_HOME/hyprmux/session.toml`.
     pub path: Option<PathBuf>,
+    /// Whether a bare launch attaches to an ephemeral session or opens the session picker first.
+    pub startup: SessionStartup,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -208,6 +237,9 @@ pub struct HyprmuxConfirmConfig {
     pub kill_workspace: bool,
     /// Confirm before shutting down the attached session server.
     pub kill_session: bool,
+    /// Confirm before quitting an ephemeral session that still has a live pane (quitting it
+    /// shuts the server down and kills those PTYs). Named-session quits are unaffected.
+    pub quit_ephemeral: bool,
 }
 
 impl Default for HyprmuxConfirmConfig {
@@ -216,6 +248,7 @@ impl Default for HyprmuxConfirmConfig {
             close_pane: false,
             kill_workspace: true,
             kill_session: true,
+            quit_ephemeral: true,
         }
     }
 }
@@ -514,6 +547,7 @@ struct ConfirmFileConfig {
     close_pane: Option<bool>,
     kill_workspace: Option<bool>,
     kill_session: Option<bool>,
+    quit_ephemeral: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -543,6 +577,7 @@ struct ProfileFileConfig {
 struct SessionFileConfig {
     autosave: Option<bool>,
     path: Option<String>,
+    startup: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -571,12 +606,14 @@ mod tests {
         assert!(!defaults.close_pane);
         assert!(defaults.kill_workspace);
         assert!(defaults.kill_session);
+        assert!(defaults.quit_ephemeral);
 
         let parsed: FileConfig = toml::from_str(
             r#"
             [confirm]
             close_pane = true
             kill_workspace = false
+            quit_ephemeral = false
             "#,
         )
         .expect("config parses");
@@ -584,6 +621,38 @@ mod tests {
         assert_eq!(parsed.confirm.close_pane, Some(true));
         assert_eq!(parsed.confirm.kill_workspace, Some(false));
         assert_eq!(parsed.confirm.kill_session, None);
+        assert_eq!(parsed.confirm.quit_ephemeral, Some(false));
+    }
+
+    #[test]
+    fn session_startup_parses_known_values_and_defaults_to_ephemeral() {
+        assert_eq!(SessionStartup::default(), SessionStartup::Ephemeral);
+        assert_eq!(
+            SessionStartup::parse("ephemeral"),
+            Some(SessionStartup::Ephemeral)
+        );
+        assert_eq!(
+            SessionStartup::parse("PICKER"),
+            Some(SessionStartup::Picker)
+        );
+        assert_eq!(
+            SessionStartup::parse(" pick "),
+            Some(SessionStartup::Picker)
+        );
+        assert_eq!(SessionStartup::parse("nonsense"), None);
+    }
+
+    #[test]
+    fn session_section_parses_startup() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [session]
+            startup = "picker"
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.session.startup.as_deref(), Some("picker"));
     }
 
     #[test]
@@ -776,8 +845,8 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [keys]
-            toggle-pane-synchronization = "ctrl-a s"
-            save-profile = "alt-s"
+            toggle-pane-synchronization = "ctrl-a y"
+            rename-session = "alt-y"
             "#,
         )
         .expect("config parses");
@@ -787,11 +856,11 @@ mod tests {
 
         assert_eq!(
             overrides.get("toggle-pane-synchronization"),
-            Some(&vec![KeyBinding::from_str("ctrl-a s").unwrap()])
+            Some(&vec![KeyBinding::from_str("ctrl-a y").unwrap()])
         );
         assert_eq!(
-            overrides.get("save-profile"),
-            Some(&vec![KeyBinding::from_str("alt-s").unwrap()])
+            overrides.get("rename-session"),
+            Some(&vec![KeyBinding::from_str("alt-y").unwrap()])
         );
         assert!(warnings.is_empty(), "{warnings:?}");
     }
@@ -1086,6 +1155,7 @@ mod tests {
 struct InputFileConfig {
     modifier: Option<String>,
     prefix: Option<String>,
+    modifier_shortcuts: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1180,6 +1250,7 @@ pub fn load_config() -> LoadedConfig {
         &mut input,
         parsed.modifier.or(parsed.input.modifier),
         parsed.prefix.or(parsed.input.prefix),
+        parsed.input.modifier_shortcuts,
         &mut warnings,
     );
     config.input = input;
@@ -1196,6 +1267,14 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(path) = non_empty(parsed.session.path) {
         config.session.path = Some(expand_path(path));
+    }
+    if let Some(startup) = non_empty(parsed.session.startup) {
+        match SessionStartup::parse(&startup) {
+            Some(value) => config.session.startup = value,
+            None => warnings.push(format!(
+                "Ignored unknown session.startup \"{startup}\" (expected `ephemeral` or `picker`)"
+            )),
+        }
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
         config.pane.highlight_focused_background = highlight_focused_background;
@@ -1265,6 +1344,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(kill_session) = parsed.confirm.kill_session {
         config.confirm.kill_session = kill_session;
+    }
+    if let Some(quit_ephemeral) = parsed.confirm.quit_ephemeral {
+        config.confirm.quit_ephemeral = quit_ephemeral;
     }
 
     config.scratchpad.command = non_empty(parsed.scratchpad.command);
@@ -1732,8 +1814,12 @@ fn apply_input_config(
     input: &mut InputConfig,
     modifier: Option<String>,
     prefix: Option<String>,
+    modifier_shortcuts: Option<bool>,
     warnings: &mut Vec<String>,
 ) {
+    if let Some(modifier_shortcuts) = modifier_shortcuts {
+        input.modifier_shortcuts = modifier_shortcuts;
+    }
     if let Some(modifier) = modifier {
         match parse_modifier(&modifier) {
             Some(parsed) => input.modifier = parsed,

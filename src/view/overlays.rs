@@ -12,8 +12,8 @@ use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
     appearance_palette_key, help_scroll_key, palette_key, profile_picker_key, rename_input_key,
-    rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
-    theme_picker_key,
+    rename_session_input_key, rename_workspace_input_key, save_profile_key, search_input_key,
+    session_picker_key, theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, fg_only, modal_scrollbar_config,
@@ -310,6 +310,43 @@ pub(crate) fn rename_workspace_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
+pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(rename) = ctx.state.rename_session.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    let input = Input::bound(&rename.input)
+        .placeholder("Session name")
+        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+        .focus_style(
+            Style::new()
+                .fg(theme.border_active)
+                .bg(theme.surface.element),
+        )
+        .selection_style(theme.text_selection)
+        .width(Length::Flex(1))
+        .on_change(ctx.link().callback(Msg::RenameSessionChanged))
+        .on_key(ctx.link().key_handler(|key| {
+            if key.is(KeyCode::Esc) {
+                Some(Msg::CloseRenameSession)
+            } else if key.code == KeyCode::Enter
+                && !key.mods.ctrl
+                && !key.mods.alt
+                && !key.mods.super_key
+            {
+                Some(Msg::SubmitRenameSession)
+            } else {
+                None
+            }
+        }));
+
+    styled_modal(ctx, "Rename session", 56)
+        .padding((1, 2, 1, 2))
+        .on_close(ctx.link().callback(|_| Msg::CloseRenameSession))
+        .child(input.key(rename_session_input_key()))
+        .into()
+}
+
 pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(prompt) = ctx.state.save_profile_prompt.as_ref() else {
         return Text::new("").into();
@@ -527,15 +564,21 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let query_lower = query.to_ascii_lowercase();
     let current = ctx.state.session_name.as_deref();
     let visible = |entry: &crate::session::discovery::DiscoveredSession| {
-        query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
+        entry.synthetic
+            || query_lower.is_empty()
+            || entry.name.to_ascii_lowercase().contains(&query_lower)
     };
     let selected = picker
         .entries
         .get(picker.selected)
         .filter(|entry| visible(entry));
-    // Opening or killing the session you are already attached to is a no-op, so only offer them
-    // for some other session.
-    let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
+    // Opening (attaching to) the session you are already on is a no-op, so only offer it for some
+    // other session. The synthetic row always starts a fresh session, so it is always actionable.
+    // Killing the current session is allowed — it shuts the server down and hops the UI onto a fresh
+    // ephemeral — so its hint follows any selection, but the synthetic row cannot be killed.
+    let selected_actionable =
+        selected.is_some_and(|entry| entry.synthetic || current != Some(entry.name.as_str()));
+    let can_kill = selected.is_some_and(|entry| !entry.synthetic);
     let can_new = !query.is_empty()
         && crate::session::discovery::valid_session_name(query)
         && !picker.entries.iter().any(|entry| entry.name == query);
@@ -554,10 +597,9 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.session_attached {
         row = row.child(hint("detach", "ctrl+d"));
     }
-    if selected_actionable {
+    if can_kill {
         row = row.child(hint("kill", "ctrl+k"));
     }
-    row = row.child(hint("refresh", "ctrl+r"));
     row.into()
 }
 
@@ -572,13 +614,21 @@ fn session_picker_palette(
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
+        .filter(|(_, entry)| {
+            entry.synthetic || query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
+        })
         .map(|(index, entry)| {
-            let mut label = entry.name.clone();
-            if entry.ephemeral {
-                label.push_str("  (ephemeral)");
-            }
-            if current == Some(entry.name.as_str()) {
+            // The synthetic row starts a fresh session; ephemeral sessions carry an ugly generated
+            // `eph-<pid>` name shown as "unnamed" (they stay reattachable — activation is by row
+            // index, not this label).
+            let mut label = if entry.synthetic {
+                "＋ New ephemeral session".to_string()
+            } else if entry.ephemeral {
+                "unnamed".to_string()
+            } else {
+                entry.name.clone()
+            };
+            if !entry.synthetic && current == Some(entry.name.as_str()) {
                 label.push_str("  • current");
             }
             SearchEntry::item(label, index)
@@ -647,6 +697,9 @@ fn session_picker_palette(
 
 fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
+    if entry.synthetic {
+        return ItemDescription::new().right("start fresh");
+    }
     match &entry.status {
         DiscoveredSessionStatus::Running { panes, has_layout } => {
             ItemDescription::new().right(format!(
@@ -669,8 +722,6 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             Some(Msg::SessionPickerDetachCurrent)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
-            Some(Msg::SessionPickerRefresh)
         } else {
             None
         }

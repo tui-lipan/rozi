@@ -25,10 +25,12 @@ switch workspaces, and lay them out as described in [Keybindings](keybindings.md
 
 ## Quitting
 
-- **`prefix d`** (default) **detaches**: the current session's server keeps running and the UI
-  switches to a fresh ephemeral session, so you always have a working terminal.
-- **`quit`** has no default key; bind it in `[keys]` or use the command palette. Quitting shuts down
-  the current server only when it is an ephemeral session; named servers keep running.
+- **`prefix d`** (default) **detaches**: it leaves the TUI back to your shell (tmux-style) while the
+  session server keeps running for later reattach. Detaching an *anonymous* ephemeral session first
+  prompts you to name it (confirm to detach durably under that name; cancel to quit and shut the
+  ephemeral server down). An already-named session detaches immediately.
+- **`prefix q`** / **`Alt+q`** (default) **quit**: exits the client. Quitting shuts down the current
+  server only when it is an ephemeral session; named servers keep running.
 - Closing the **last pane in a workspace** leaves an empty workspace panel; the app stays running.
   Use detach or quit to leave explicitly.
 
@@ -40,8 +42,8 @@ cargo clippy      # lint
 cargo fmt         # format (use rustfmt --edition 2024 if running rustfmt directly)
 ```
 
-`cargo run` needs an interactive terminal; leave with **`prefix d`** (detach) or bind `quit` in
-`hyprmux.toml`. For details on the module
+`cargo run` needs an interactive terminal; leave with **`prefix d`** (detach) or **`prefix q`** /
+**`Alt+q`** (quit). For details on the module
 layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 
 ## First-run configuration

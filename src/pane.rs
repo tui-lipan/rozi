@@ -158,6 +158,15 @@ impl TerminalPane {
         Ok(())
     }
 
+    #[cfg(unix)]
+    pub fn handoff_pty(&mut self) -> std::result::Result<TerminalPtyHandoff, String> {
+        let TerminalBackend::Local { pty: Some(pty), .. } = &mut self.backend else {
+            return Err("pane is not backed by a local pty".to_string());
+        };
+        pty.handoff()
+            .map_err(|err| format!("pty handoff failed: {err}"))
+    }
+
     pub fn handle_pty_event(&mut self, event: TerminalPtyEvent) -> PaneEventOutcome {
         match event {
             TerminalPtyEvent::Output(bytes) => {

@@ -31,6 +31,14 @@ does not kill arbitrary processes or remove unrelated files.
 Attached panes are server-backed. The UI receives terminal snapshots from the server and sends
 input, resize, scroll, palette, search, and kill requests back through the session protocol.
 
+When you create or attach to a new empty session from inside a local client, hyprmux migrates the
+current panes into the session server. On Unix this uses live PTY adoption, so running shells and
+programs keep their process state instead of being restarted. If adoption cannot be prepared before
+handoff, hyprmux falls back to spawning server-backed panes from the saved command/cwd metadata.
+Adopted panes preserve the running process and immediately transfer the client's last rendered
+snapshot to the server; exact process exit codes after adoption are unavailable, so adopted panes
+report `-1` on PTY EOF.
+
 `prefix d` (detach) leaves the UI. In attached mode the session server and its PTYs keep
 running until panes exit naturally or the session is shut down. Use **Kill session** from the
 command palette (or bind `kill-session`) to shut down the current attached session. If the

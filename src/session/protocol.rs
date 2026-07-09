@@ -189,6 +189,17 @@ pub enum ClientMessage {
         env: Vec<(String, String)>,
         title: Option<String>,
     },
+    AdoptPane {
+        pane_id: PaneId,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+        pid: Option<u32>,
+        title: Option<String>,
+        cwd: Option<String>,
+        snapshot: WireSnapshot,
+        socket_path: String,
+    },
     Input {
         pane_id: PaneId,
         generation: u64,
@@ -519,6 +530,24 @@ mod tests {
             value,
             serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell"})
         );
+    }
+
+    #[test]
+    fn golden_client_adopt_json_shape() {
+        let value = serde_json::to_value(ClientMessage::AdoptPane {
+            pane_id: 7,
+            generation: 9,
+            cols: 80,
+            rows: 24,
+            pid: Some(1234),
+            title: Some("shell".into()),
+            cwd: Some("/repo".into()),
+            snapshot: WireSnapshot::from_snapshot(None, None, &TerminalRenderSnapshot::default()),
+            socket_path: "/tmp/hyprmux-adopt.sock".into(),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "adopt-pane");
+        assert_eq!(value["snapshot"]["version"], PROTOCOL_VERSION);
     }
 
     #[test]

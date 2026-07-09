@@ -3,8 +3,7 @@
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -17,7 +16,6 @@ use crate::state::PaneId;
 #[derive(Clone)]
 pub struct SessionClient {
     tx: mpsc::Sender<ClientOutbound>,
-    next_request_id: Arc<AtomicU64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -37,7 +35,6 @@ impl SessionClient {
         (
             Self {
                 tx,
-                next_request_id: Arc::new(AtomicU64::new(1)),
             },
             rx,
         )
@@ -133,10 +130,7 @@ impl SessionClient {
             }
         });
         Ok((
-            Self {
-                tx,
-                next_request_id: Arc::new(AtomicU64::new(1)),
-            },
+            Self { tx },
             attached,
         ))
     }
@@ -180,13 +174,6 @@ impl SessionClient {
             rows,
         });
     }
-    pub fn scroll(&self, pane_id: PaneId, generation: u64, offset: usize) {
-        self.send_control(ClientMessage::Scroll {
-            pane_id,
-            generation,
-            offset,
-        });
-    }
     pub fn kill(&self, pane_id: PaneId, generation: u64) {
         self.send_control(ClientMessage::Kill {
             pane_id,
@@ -209,17 +196,6 @@ impl SessionClient {
 
     pub fn shutdown(&self) {
         self.send_control(ClientMessage::Shutdown);
-    }
-
-    pub fn search(&self, pane_id: PaneId, generation: u64, query: String) -> u64 {
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        self.send_control(ClientMessage::Search {
-            request_id,
-            pane_id,
-            generation,
-            query,
-        });
-        request_id
     }
 
     fn send_control(&self, message: ClientMessage) {

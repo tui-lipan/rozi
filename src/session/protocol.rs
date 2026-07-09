@@ -80,15 +80,6 @@ impl From<WirePalette> for TerminalColorPalette {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WireSearchMatch {
-    pub offset: usize,
-    pub line: usize,
-    pub start_col: usize,
-    pub end_col: usize,
-    pub text: String,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PaneMeta {
     pub pane_id: PaneId,
@@ -202,20 +193,9 @@ pub enum ClientMessage {
         cols: u16,
         rows: u16,
     },
-    Scroll {
-        pane_id: PaneId,
-        generation: u64,
-        offset: usize,
-    },
     Kill {
         pane_id: PaneId,
         generation: u64,
-    },
-    Search {
-        request_id: u64,
-        pane_id: PaneId,
-        generation: u64,
-        query: String,
     },
     SetPalette {
         pane_id: PaneId,
@@ -262,13 +242,6 @@ pub enum ServerMessage {
     Bell {
         pane_id: PaneId,
         generation: u64,
-    },
-    SearchResult {
-        request_id: u64,
-        pane_id: PaneId,
-        generation: u64,
-        query: String,
-        matches: Vec<WireSearchMatch>,
     },
     SpawnResult {
         pane_id: PaneId,
@@ -690,23 +663,6 @@ mod tests {
             })
             .unwrap()["type"],
             "snapshot"
-        );
-        assert_eq!(
-            serde_json::to_value(ServerMessage::SearchResult {
-                request_id: 4,
-                pane_id: 1,
-                generation: 2,
-                query: "abc".into(),
-                matches: vec![WireSearchMatch {
-                    offset: 0,
-                    line: 1,
-                    start_col: 2,
-                    end_col: 5,
-                    text: "xxabc".into()
-                }],
-            })
-            .unwrap(),
-            serde_json::json!({"type":"search-result","request_id":4,"pane_id":1,"generation":2,"query":"abc","matches":[{"offset":0,"line":1,"start_col":2,"end_col":5,"text":"xxabc"}]})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Error {

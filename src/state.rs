@@ -520,7 +520,6 @@ pub struct ScrollbackSearchState {
     pub matches: Vec<ScrollbackMatch>,
     pub current: usize,
     pub status: String,
-    pub pending_server_requests: Vec<u64>,
 }
 
 impl ScrollbackSearchState {
@@ -532,7 +531,6 @@ impl ScrollbackSearchState {
             matches: Vec::new(),
             current: 0,
             status: "Type to search scrollback".to_string(),
-            pending_server_requests: Vec::new(),
         }
     }
 }

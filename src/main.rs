@@ -217,14 +217,6 @@ pub enum Msg {
         pane_id: PaneId,
         generation: u64,
     },
-    SessionSearchResult {
-        epoch: u64,
-        request_id: u64,
-        pane_id: PaneId,
-        generation: u64,
-        query: String,
-        matches: Vec<session::protocol::WireSearchMatch>,
-    },
     SessionError {
         epoch: u64,
         message: String,
@@ -555,20 +547,6 @@ fn server_message_to_msg(
                 epoch,
                 pane_id,
                 generation,
-            },
-            ServerMessage::SearchResult {
-                request_id,
-                pane_id,
-                generation,
-                query,
-                matches,
-            } => Msg::SessionSearchResult {
-                epoch,
-                request_id,
-                pane_id,
-                generation,
-                query,
-                matches,
             },
             ServerMessage::SpawnResult {
                 pane_id,

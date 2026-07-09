@@ -58,21 +58,9 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
 
     let mut matches: Vec<ScrollbackMatch> = Vec::new();
-    let mut pending_server_requests = Vec::new();
     if !query.is_empty() {
         for pane_id in panes_in_scope(&ctx.state, target, scope) {
-            let client = ctx.state.session_client.clone();
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
-                if pane.terminal.is_server_backed() {
-                    if let Some(client) = client {
-                        pending_server_requests.push(client.search(
-                            pane_id,
-                            pane.pty_generation,
-                            query.clone(),
-                        ));
-                    }
-                    continue;
-                }
                 matches.extend(pane.terminal.search_scrollback(&query).into_iter().map(
                     |matched| ScrollbackMatch {
                         offset: matched.offset,
@@ -90,7 +78,6 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(search) = ctx.state.search.as_mut() {
         search.matches = matches;
         search.current = 0;
-        search.pending_server_requests = pending_server_requests;
         let scope_label = search.scope.label();
         search.status = if query.is_empty() {
             format!("Type to search scrollback ({scope_label})")
@@ -176,14 +163,7 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
     }
     focus_pane(&mut ctx.state, matched.pane);
 
-    let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, matched.pane) {
-        if pane.terminal.is_server_backed() {
-            if let Some(client) = client {
-                client.scroll(matched.pane, pane.pty_generation, matched.offset);
-            }
-            return;
-        }
         pane.terminal.set_scrollback(matched.offset);
     }
 }

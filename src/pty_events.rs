@@ -308,14 +308,7 @@ pub(crate) fn handle_pane_scroll(
     id: PaneId,
     offset: usize,
 ) -> Update {
-    let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.terminal.is_server_backed()
-            && let Some(client) = client
-        {
-            client.scroll(id, pane.pty_generation, offset);
-            return Update::none();
-        }
         if pane.terminal.set_scrollback(offset) {
             return Update::full();
         }

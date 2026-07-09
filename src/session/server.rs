@@ -12,7 +12,7 @@ use tui_lipan::prelude::*;
 use crate::control;
 use crate::session::protocol::{
     self, ClientMessage, Frame, PROTOCOL_VERSION, PaneMeta, ServerMessage, WirePalette,
-    WireSearchMatch, WireSnapshot,
+    WireSnapshot,
 };
 use crate::state::PaneId;
 
@@ -266,21 +266,6 @@ impl SessionServer {
                 }
                 Vec::new()
             }
-            ClientMessage::Scroll {
-                pane_id,
-                generation,
-                offset,
-            } => {
-                if let Some(pane) = self.live_pane_mut(pane_id, generation) {
-                    pane.screen.set_scrollback(offset);
-                    return vec![ServerMessage::Snapshot {
-                        pane_id,
-                        generation,
-                        snapshot: pane.snapshot(),
-                    }];
-                }
-                Vec::new()
-            }
             ClientMessage::Kill {
                 pane_id,
                 generation,
@@ -291,26 +276,6 @@ impl SessionServer {
                     let _ = pty.kill();
                 }
                 Vec::new()
-            }
-            ClientMessage::Search {
-                request_id,
-                pane_id,
-                generation,
-                query,
-            } => {
-                let matches = self
-                    .panes
-                    .get_mut(&pane_id)
-                    .filter(|pane| pane.generation == generation)
-                    .map(|pane| search_visible(pane, &query))
-                    .unwrap_or_default();
-                vec![ServerMessage::SearchResult {
-                    request_id,
-                    pane_id,
-                    generation,
-                    query,
-                    matches,
-                }]
             }
             ClientMessage::SetPalette {
                 pane_id,
@@ -638,72 +603,6 @@ fn pty_config(command: Option<&str>, keep_open: bool) -> TerminalPtyConfig {
     }
 }
 
-fn search_visible(pane: &mut ServerPane, query: &str) -> Vec<WireSearchMatch> {
-    let query = query.trim();
-    if query.is_empty() {
-        return Vec::new();
-    }
-    let original = pane.screen.scrollback_offset();
-    let max_offset = pane.screen.total_scrollback_rows();
-    let step = usize::from(pane.rows.max(1));
-    let mut matches = Vec::new();
-    let mut seen_matches = std::collections::HashMap::new();
-    let mut offset = max_offset;
-    loop {
-        pane.screen.set_scrollback(offset);
-        let snapshot = pane.screen.render_snapshot();
-        for (line, text) in snapshot.text.lines().enumerate() {
-            let logical_line = line as isize - offset as isize;
-            for (start_col, end_col) in search_match_ranges(text, query) {
-                let matched = WireSearchMatch {
-                    offset,
-                    line,
-                    start_col,
-                    end_col,
-                    text: text.to_string(),
-                };
-                let key = (logical_line, start_col, end_col);
-                if let Some(index) = seen_matches.get(&key).copied() {
-                    matches[index] = matched;
-                } else {
-                    seen_matches.insert(key, matches.len());
-                    matches.push(matched);
-                }
-            }
-        }
-        if offset == 0 {
-            break;
-        }
-        offset = offset.saturating_sub(step);
-    }
-    pane.screen.set_scrollback(original);
-    matches
-}
-
-fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
-    let needle = query.to_ascii_lowercase();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    let haystack = line.to_ascii_lowercase();
-    let mut ranges = Vec::new();
-    let mut search_from = 0usize;
-    while search_from < haystack.len() {
-        let Some(relative_start) = haystack[search_from..].find(&needle) else {
-            break;
-        };
-        let start = search_from + relative_start;
-        let end = start + needle.len();
-        let start_col = haystack[..start].chars().count();
-        let end_col = haystack[..end].chars().count();
-        if start_col < end_col {
-            ranges.push((start_col, end_col));
-        }
-        search_from = end;
-    }
-    ranges
-}
-
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {
     Ok(control::runtime_dir()?.join(format!("session-{}.sock", sanitize_session_name(name))))
 }
@@ -758,59 +657,6 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with("session-dev_______x")
-        );
-    }
-
-    #[test]
-    fn search_visible_returns_matching_lines() {
-        let mut pane = ServerPane {
-            generation: 2,
-            title: None,
-            cwd: None,
-            pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
-            cols: 20,
-            rows: 5,
-            exited: None,
-        };
-        pane.screen.process_bytes(b"alpha\r\nbeta\r\nalphabet");
-        let matches = search_visible(&mut pane, "alpha");
-        assert!(matches.iter().any(|item| item.text.contains("alpha")));
-        assert!(
-            matches
-                .iter()
-                .any(|item| item.start_col == 0 && item.end_col == 5)
-        );
-    }
-
-    #[test]
-    fn search_is_case_insensitive_dedupes_and_restores_offset() {
-        let mut pane = ServerPane {
-            generation: 2,
-            title: None,
-            cwd: None,
-            pty: None,
-            screen: TerminalScreen::new(2, 20, 100),
-            cols: 20,
-            rows: 2,
-            exited: None,
-        };
-        pane.screen.process_bytes(b"Alpha\r\nfiller\r\nalpha\r\n");
-        pane.screen.set_scrollback(1);
-        let original = pane.screen.scrollback_offset();
-
-        let matches = search_visible(&mut pane, "ALPHA");
-
-        assert_eq!(pane.screen.scrollback_offset(), original);
-        assert!(matches.len() >= 2, "matches: {matches:?}");
-        let unique: std::collections::HashSet<_> = matches
-            .iter()
-            .map(|m| (m.offset as isize - m.line as isize, m.start_col, m.end_col))
-            .collect();
-        assert_eq!(
-            unique.len(),
-            matches.len(),
-            "duplicate logical matches: {matches:?}"
         );
     }
 

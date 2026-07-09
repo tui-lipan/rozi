@@ -654,45 +654,6 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Update::full()
             }
         }
-        Msg::SessionSearchResult {
-            epoch,
-            request_id,
-            pane_id,
-            generation,
-            query,
-            matches,
-        } => {
-            if epoch != ctx.state.runtime_epoch {
-                return Update::none();
-            }
-            let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) else {
-                return Update::none();
-            };
-            if pane.pty_generation != generation || !pane.terminal.is_server_backed() {
-                return Update::none();
-            }
-            if let Some(search) = ctx.state.search.as_mut()
-                && search.input.text().trim() == query
-                && search.pending_server_requests.contains(&request_id)
-            {
-                search
-                    .pending_server_requests
-                    .retain(|id| *id != request_id);
-                search.matches.extend(matches.into_iter().map(|matched| {
-                    crate::state::ScrollbackMatch {
-                        offset: matched.offset,
-                        line: matched.line,
-                        start_col: matched.start_col,
-                        end_col: matched.end_col,
-                        text: matched.text,
-                        pane: pane_id,
-                    }
-                }));
-                search.current = search.current.min(search.matches.len().saturating_sub(1));
-                search.status = format!("{} matches", search.matches.len());
-            }
-            Update::full()
-        }
         Msg::SessionError { epoch, message } => {
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();

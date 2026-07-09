@@ -11,7 +11,7 @@ use crate::identity_ops::{
 };
 use crate::input::Action;
 use crate::key_routing::handle_key_routing;
-use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed};
+use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed, pane_env};
 use crate::profile_ops::{
     cancel_profile_picker, close_save_profile_prompt, profile_picker_delete_key,
     profile_picker_query_changed, profile_picker_selection_changed, profile_picker_set_default,
@@ -819,6 +819,7 @@ fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {
             pane.terminal.cols,
             pane.terminal.rows,
             pane.identity.keep_open,
+            pane_env(ctx.state.control_socket_path.as_deref(), pane),
             pane.identity.custom_title.clone(),
         );
     }

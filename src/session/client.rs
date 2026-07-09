@@ -136,6 +136,7 @@ impl SessionClient {
         cols: u16,
         rows: u16,
         keep_open: bool,
+        env: Vec<(String, String)>,
         title: Option<String>,
     ) {
         self.send_control(ClientMessage::SpawnPane {
@@ -146,7 +147,7 @@ impl SessionClient {
             cols,
             rows,
             keep_open,
-            env: Vec::new(),
+            env,
             title,
         });
     }

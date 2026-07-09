@@ -83,6 +83,7 @@ pub(crate) fn spawn_pane_in_workspace(
                     pane.terminal.cols,
                     pane.terminal.rows,
                     pane.identity.keep_open,
+                    pane_env(ctx.state.control_socket_path.as_deref(), &pane),
                 )
             })
         })
@@ -98,24 +99,27 @@ pub(crate) fn spawn_pane_in_workspace(
     let open_delay = anim::open_delay(ctx.state.config.animations);
     let activate_delay = anim::activation_delay(ctx.state.config.animations);
 
-    let update = if let Some((client, command, cwd, title, cols, rows, keep_open)) = server_spawn {
-        client.spawn_pane(id, generation, command, cwd, cols, rows, keep_open, title);
-        Update::with_command(open_timers_command(
-            ctx.state.runtime_epoch,
-            id,
-            generation,
-            open_delay,
-            activate_delay,
-        ))
-    } else {
-        Update::with_command(spawn_pty_command(
-            ctx.state.runtime_epoch,
-            id,
-            generation,
-            pty_config,
-            Some((open_delay, activate_delay)),
-        ))
-    };
+    let update =
+        if let Some((client, command, cwd, title, cols, rows, keep_open, env)) = server_spawn {
+            client.spawn_pane(
+                id, generation, command, cwd, cols, rows, keep_open, env, title,
+            );
+            Update::with_command(open_timers_command(
+                ctx.state.runtime_epoch,
+                id,
+                generation,
+                open_delay,
+                activate_delay,
+            ))
+        } else {
+            Update::with_command(spawn_pty_command(
+                ctx.state.runtime_epoch,
+                id,
+                generation,
+                pty_config,
+                Some((open_delay, activate_delay)),
+            ))
+        };
     (id, update)
 }
 
@@ -407,14 +411,25 @@ pub(crate) fn pty_config_for_pane(
         pty_config = pty_config.cwd(cwd.clone());
     }
 
-    pty_config = pty_config
-        .env("HYPRMUX", "1")
-        .env("HYPRMUX_PANE", pane.id.to_string());
-    if let Some(path) = control_socket_path {
-        pty_config = pty_config.env("HYPRMUX_SOCKET", path.display().to_string());
+    for (key, value) in pane_env(control_socket_path, pane) {
+        pty_config = pty_config.env(key, value);
     }
 
     pty_config
+}
+
+pub(crate) fn pane_env(
+    control_socket_path: Option<&std::path::Path>,
+    pane: &Pane,
+) -> Vec<(String, String)> {
+    let mut env = vec![
+        ("HYPRMUX".to_string(), "1".to_string()),
+        ("HYPRMUX_PANE".to_string(), pane.id.to_string()),
+    ];
+    if let Some(path) = control_socket_path {
+        env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
+    }
+    env
 }
 
 pub(crate) fn spawn_pty_command(

@@ -257,6 +257,12 @@ impl SessionServer {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.resize(pane.cols, pane.rows);
                     }
+                    return vec![ServerMessage::Resized {
+                        pane_id,
+                        generation,
+                        cols: pane.cols,
+                        rows: pane.rows,
+                    }];
                 }
                 Vec::new()
             }
@@ -858,6 +864,44 @@ mod tests {
             palette,
         });
         assert!(responses.is_empty());
+    }
+
+    #[test]
+    fn resize_updates_screen_and_returns_ordered_ack() {
+        let mut server = SessionServer::new_named("dev");
+        server.panes.insert(
+            1,
+            ServerPane {
+                generation: 2,
+                title: None,
+                cwd: None,
+                pty: None,
+                screen: TerminalScreen::new(5, 20, 100),
+                cols: 20,
+                rows: 5,
+                exited: None,
+            },
+        );
+
+        let responses = server.handle_message(ClientMessage::Resize {
+            pane_id: 1,
+            generation: 2,
+            cols: 80,
+            rows: 24,
+        });
+
+        assert!(matches!(
+            responses.as_slice(),
+            [ServerMessage::Resized {
+                pane_id: 1,
+                generation: 2,
+                cols: 80,
+                rows: 24,
+            }]
+        ));
+        let pane = server.panes.get_mut(&1).unwrap();
+        assert_eq!((pane.cols, pane.rows), (80, 24));
+        assert_eq!(pane.screen.render_snapshot().text.lines().count(), 24);
     }
 
     #[test]

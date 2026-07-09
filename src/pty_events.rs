@@ -289,6 +289,10 @@ pub(crate) fn handle_pane_resize(
             && let Some(client) = client
         {
             client.resize(id, pane.pty_generation, cols.max(1), rows.max(1));
+            return Update::none();
+        } else if pane.terminal.is_server_backed() {
+            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+            return Update::full();
         }
         match pane.terminal.resize(cols, rows) {
             Ok(true) => Update::full(),

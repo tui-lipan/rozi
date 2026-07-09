@@ -110,6 +110,12 @@ pub enum ServerMessage {
         panes: Vec<PaneMeta>,
         layout_blob: Option<String>,
     },
+    Resized {
+        pane_id: PaneId,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+    },
     Exited {
         pane_id: PaneId,
         generation: u64,
@@ -501,6 +507,16 @@ mod tests {
 
     #[test]
     fn golden_server_messages_json_shape() {
+        assert_eq!(
+            serde_json::to_value(ServerMessage::Resized {
+                pane_id: 1,
+                generation: 2,
+                cols: 80,
+                rows: 24,
+            })
+            .unwrap(),
+            serde_json::json!({"type":"resized","pane_id":1,"generation":2,"cols":80,"rows":24})
+        );
         assert_eq!(
             serde_json::to_value(ServerMessage::Error {
                 code: "bad".into(),

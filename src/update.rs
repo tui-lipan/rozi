@@ -554,6 +554,31 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
+        Msg::SessionResized {
+            epoch,
+            pane_id,
+            generation,
+            cols,
+            rows,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+                && pane.pty_generation == generation
+                && pane.terminal.is_server_backed()
+            {
+                match pane.terminal.resize(cols, rows) {
+                    Ok(true) => return Update::full(),
+                    Ok(false) => {}
+                    Err(message) => {
+                        pane.terminal.status = ManagedTerminalStatus::Error(message.into());
+                        return Update::full();
+                    }
+                }
+            }
+            Update::none()
+        }
         Msg::SessionExited {
             epoch,
             pane_id,

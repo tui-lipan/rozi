@@ -200,6 +200,13 @@ pub enum Msg {
         generation: u64,
         bytes: Vec<u8>,
     },
+    SessionResized {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+        cols: u16,
+        rows: u16,
+    },
     SessionExited {
         epoch: u64,
         pane_id: PaneId,
@@ -513,6 +520,18 @@ fn server_message_to_msg(
                 session,
                 panes,
                 layout_blob,
+            },
+            ServerMessage::Resized {
+                pane_id,
+                generation,
+                cols,
+                rows,
+            } => Msg::SessionResized {
+                epoch,
+                pane_id,
+                generation,
+                cols,
+                rows,
             },
             ServerMessage::Exited {
                 pane_id,

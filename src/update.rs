@@ -534,6 +534,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 restored.system_theme = system_theme;
                 ctx.state = restored;
             }
+            // The session identity just changed (ephemeral vs named), which the "Name/Rename
+            // session" palette label reflects.
+            ctx.state.commands_dirty = true;
             let had_panes = !panes.is_empty();
             let mut spawned: Vec<(crate::state::PaneId, u64)> = Vec::new();
             if had_panes {
@@ -690,6 +693,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::none();
             }
             ctx.state.session_name = Some(session.clone());
+            // An ephemeral session becoming named flips the "Name/Rename session" palette label.
+            ctx.state.commands_dirty = true;
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
                 format!("Renamed session to `{session}`"),

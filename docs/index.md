@@ -5,8 +5,9 @@
 arranged with dwindle (or master) tiling, with floating windows, fullscreen, 9 workspaces,
 animated geometry, and tmux-style prefix commands.
 
-Local mode keeps PTYs in the UI process. Explicit `--attach` / `--session` mode connects to a
-named session server for persistent PTYs.
+`hyprmux` runs an always-server model: a background session server owns every PTY and the UI
+attaches to it. A bare launch uses a disposable per-process ephemeral session; `--attach` /
+`--session` connects to a persistent named session.
 
 ## Contents
 

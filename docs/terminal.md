@@ -7,14 +7,19 @@ identity, and scrollback search on top.
 
 ## A pane is a live shell
 
-- Each pane owns a `TerminalScreen` (the VT emulator) and an optional `TerminalPty`
-  (the spawned process).
-- The PTY is spawned on a background thread; its output is streamed back, fed into the
-  screen, and re-rendered into a snapshot the UI displays.
-- Resizing a pane resizes both the emulator and the PTY (a single SIGWINCH after the geometry
-  settles - size changes are snapped rather than animated; see
+`hyprmux` runs an [always-server](sessions.md) model: a background session server owns every PTY,
+and the UI client parses the raw PTY byte stream into its own `TerminalScreen`.
+
+- The server spawns each PTY and broadcasts its raw output as pane frames; the client feeds those
+  bytes into a `TerminalScreen` (the VT emulator) and re-renders a snapshot the UI displays.
+- Query responses (DA/DSR/OSC) are answered by the server's own screen; the client parses the same
+  bytes and discards its responses so the two screens stay in lockstep.
+- Resizing a pane sends a resize request to the server; the client resizes its emulator only when
+  the server acknowledges it, so both parsers resize at the same byte position and wrap state stays
+  identical. Size changes are snapped rather than animated (see
   [Layouts & panes](layouts-and-panes.md#animation-policy)).
-- When the shell process exits, its pane closes. The app keeps running until you detach or quit.
+- When the shell process exits, its pane closes (keep-open panes can respawn). The app keeps running
+  until you detach or quit.
 
 The shell and starting directory come from the [config](configuration.md) (`shell`, `cwd`),
 falling back to the system `$SHELL` and the launch directory.
@@ -97,12 +102,15 @@ rendered terminal lines rather than relying on an in-terminal highlight search.
 
 ## Runtime persistence boundaries
 
-- **Local launches are still single-process.** In default local mode, PTYs live inside the UI
-  process; quitting that process ends its shells unless you only restore layout later from a
-  profile/autosave file.
-- **Named attached sessions are the live-state path.** `hyprmux --attach <name>` connects to a
-  background session server whose PTYs survive client detach/quit and can be reattached later.
-  See [Sessions](sessions.md).
+- **The server owns live state.** PTYs live in the session server, not the UI process. A bare
+  launch attaches to a disposable ephemeral session (`eph-<pid>`); a clean quit shuts it down, while
+  a UI crash leaves it running so you can reattach and recover scrollback. See [Sessions](sessions.md).
+- **Attach seeding replays real VT bytes.** When a client attaches, the server serializes each live
+  pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
+  byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it
+  through the same parser it uses for live output — one code path, exact reconstruction.
+- **Named sessions persist across detach.** `hyprmux --attach <name>` connects to a named server
+  whose PTYs survive client detach/quit and can be reattached later.
 - **Profiles restore layout and launch intent, not live state.** Restoring a
   [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect
   previous processes, scrollback, or environment.

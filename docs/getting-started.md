@@ -25,11 +25,10 @@ switch workspaces, and lay them out as described in [Keybindings](keybindings.md
 
 ## Quitting
 
-- **`prefix d`** (default) **detaches**: in attached mode you return to a fresh local client while
-  the session server keeps running; in local mode the live layout is saved unconditionally and
-  the client exits.
-- **`quit`** has no default key; bind it in `[keys]` or use the command palette. It exits the
-  client without the unconditional local save that detach performs.
+- **`prefix d`** (default) **detaches**: the current session's server keeps running and the UI
+  switches to a fresh ephemeral session, so you always have a working terminal.
+- **`quit`** has no default key; bind it in `[keys]` or use the command palette. Quitting shuts down
+  the current server only when it is an ephemeral session; named servers keep running.
 - Closing the **last pane in a workspace** leaves an empty workspace panel; the app stays running.
   Use detach or quit to leave explicitly.
 

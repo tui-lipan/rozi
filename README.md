@@ -5,8 +5,9 @@ out with dwindle tiling, plus floating windows, workspaces, animated geometry, a
 prefix commands. It is built on the [`tui-lipan`](../tui-lipan) TUI framework and was ported
 from that project's `window_manager` example.
 
-By default hyprmux runs in local single-process mode. Explicit `--attach` / `--session` mode
-connects to a named always-on session server for detach/reattach-style workflows.
+hyprmux runs an always-server model: a background session server owns every PTY and the UI always
+attaches to it. A bare launch uses a disposable per-process ephemeral session; explicit `--attach` /
+`--session` connects to a persistent named session for detach/reattach-style workflows.
 
 ```bash
 cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
@@ -59,7 +60,7 @@ Full docs live in [`docs/`](docs/):
 - [Project profiles & pane identity](docs/project-profiles.md) - save and restore layouts.
 - [Named profiles](docs/profiles.md) - profiles directory, CLI launch, keep-open, picker commands.
 - [Control socket](docs/control.md) - pane environment, JSON control protocol, and CLI automation.
-- [Sessions](docs/sessions.md) - local vs attached runtime, named sessions, and lifecycle limits.
+- [Sessions](docs/sessions.md) - always-server model, ephemeral vs named sessions, rename, and lifecycle.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

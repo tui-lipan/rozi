@@ -149,9 +149,9 @@ HyprmuxApp (tui-lipan Component)
   |-- actions dispatches Action values
   |-- view renders Canvas, panes, top bar, and overlays
   |
-  +--> Local mode: Pane -> TerminalPane -> TerminalScreen + TerminalPty
+  +--> Always-server: Pane -> TerminalPane -> client TerminalScreen (parses raw bytes)
   |
-  +--> Attached mode: session/client <-> session/server <-> server-owned PTYs
+  +--> session/client <-> session/server <-> server-owned PTYs
 ```
 
 `hyprmux` is an Elm-style app with one root `Component` (`HyprmuxApp`), a central `State`, and
@@ -159,17 +159,19 @@ HyprmuxApp (tui-lipan Component)
 mouse regions, overlays, and terminal widgets. The app owns window-manager policy: tiling trees,
 floating geometry, focus, input routing, profiles, sessions, and terminal palette synchronization.
 
-Local mode keeps PTYs in the UI process. Explicit `--attach` / `--session` mode connects to a
-named session server; detach leaves server PTYs running for later reattach. Profiles and local
-session autosave restore layout and launch intent only, while attached sessions preserve live PTY
-state.
+`hyprmux` is always-server: the session server owns every PTY and the client always attaches,
+parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
+ephemeral session (`eph-<pid>`); `--attach` / `--session` connects to a persistent named session.
+Detach leaves the server running for later reattach; a clean quit shuts an ephemeral server down.
+Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 Important data flow:
 
 1. Keys arrive via `Component::on_key` or focused terminal callbacks.
-2. `key_routing.rs` decides whether to run an app `Action` or forward to the PTY.
+2. `key_routing.rs` decides whether to run an app `Action` or forward input to the session server.
 3. `actions.rs` dispatches app actions to feature modules.
-4. `update.rs` handles async/runtime messages, PTY events, session snapshots, and palette changes.
+4. `update.rs` handles async/runtime messages, session pane output/spawn/exit/resize/rename frames,
+   and palette changes.
 5. `view/` renders current state into a `Canvas` and overlay stack.
 
 Major module map:

@@ -158,7 +158,6 @@ pub fn write_control_frame<W: Write, T: Serialize>(
     write_frame_body(writer, FRAME_KIND_CONTROL_JSON, &body)
 }
 
-#[allow(dead_code)]
 pub fn write_pane_output_frame<W: Write>(
     writer: &mut W,
     pane_id: PaneId,

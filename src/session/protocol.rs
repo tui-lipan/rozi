@@ -121,10 +121,6 @@ pub enum ServerMessage {
         generation: u64,
         code: i32,
     },
-    Bell {
-        pane_id: PaneId,
-        generation: u64,
-    },
     SpawnResult {
         pane_id: PaneId,
         generation: u64,

@@ -606,12 +606,6 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Update::full()
             }
         }
-        Msg::SessionBell { epoch, .. } => {
-            if epoch != ctx.state.runtime_epoch {
-                return Update::none();
-            }
-            Update::none()
-        }
         Msg::SessionSpawnResult {
             epoch,
             pane_id,

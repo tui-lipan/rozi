@@ -213,11 +213,6 @@ pub enum Msg {
         generation: u64,
         code: i32,
     },
-    SessionBell {
-        epoch: u64,
-        pane_id: PaneId,
-        generation: u64,
-    },
     SessionError {
         epoch: u64,
         message: String,
@@ -542,14 +537,6 @@ fn server_message_to_msg(
                 pane_id,
                 generation,
                 code,
-            },
-            ServerMessage::Bell {
-                pane_id,
-                generation,
-            } => Msg::SessionBell {
-                epoch,
-                pane_id,
-                generation,
             },
             ServerMessage::SpawnResult {
                 pane_id,

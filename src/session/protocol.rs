@@ -6,8 +6,11 @@ use tui_lipan::prelude::*;
 
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
+const FRAME_KIND_CONTROL_JSON: u8 = 1;
+const FRAME_KIND_PANE_OUTPUT: u8 = 2;
+const FRAME_KIND_PANE_INPUT: u8 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WireSpan {
@@ -189,11 +192,6 @@ pub enum ClientMessage {
         env: Vec<(String, String)>,
         title: Option<String>,
     },
-    Input {
-        pane_id: PaneId,
-        generation: u64,
-        bytes: Vec<u8>,
-    },
     Resize {
         pane_id: PaneId,
         generation: u64,
@@ -276,23 +274,78 @@ pub enum ServerMessage {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum Frame<C> {
+    Control(C),
+    PaneBytes {
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
+}
+
 pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> std::io::Result<()> {
+    write_control_frame(writer, value)
+}
+
+pub fn write_control_frame<W: Write, T: Serialize>(
+    writer: &mut W,
+    value: &T,
+) -> std::io::Result<()> {
     let body = serde_json::to_vec(value).map_err(std::io::Error::other)?;
-    if body.len() > MAX_FRAME_SIZE {
+    write_frame_body(writer, FRAME_KIND_CONTROL_JSON, &body)
+}
+
+#[allow(dead_code)]
+pub fn write_pane_output_frame<W: Write>(
+    writer: &mut W,
+    pane_id: PaneId,
+    generation: u64,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    write_pane_frame(writer, FRAME_KIND_PANE_OUTPUT, pane_id, generation, bytes)
+}
+
+pub fn write_pane_input_frame<W: Write>(
+    writer: &mut W,
+    pane_id: PaneId,
+    generation: u64,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    write_pane_frame(writer, FRAME_KIND_PANE_INPUT, pane_id, generation, bytes)
+}
+
+fn write_pane_frame<W: Write>(
+    writer: &mut W,
+    kind: u8,
+    pane_id: PaneId,
+    generation: u64,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    let mut body = Vec::with_capacity(12 + bytes.len());
+    body.extend_from_slice(&pane_id.to_be_bytes());
+    body.extend_from_slice(&generation.to_be_bytes());
+    body.extend_from_slice(bytes);
+    write_frame_body(writer, kind, &body)
+}
+
+fn write_frame_body<W: Write>(writer: &mut W, kind: u8, body: &[u8]) -> std::io::Result<()> {
+    let frame_len = body.len().saturating_add(1);
+    if frame_len > MAX_FRAME_SIZE {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
                 "frame length {} exceeds maximum {MAX_FRAME_SIZE}",
-                body.len()
+                frame_len
             ),
         ));
     }
-    let len: u32 = body
-        .len()
+    let len: u32 = frame_len
         .try_into()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "frame too large"))?;
     writer.write_all(&len.to_be_bytes())?;
-    writer.write_all(&body)
+    writer.write_all(&[kind])?;
+    writer.write_all(body)
 }
 
 pub fn read_frame<R: Read, T: for<'de> Deserialize<'de>>(reader: &mut R) -> std::io::Result<T> {
@@ -312,9 +365,22 @@ pub fn read_frame_with_limit<R: Read, T: for<'de> Deserialize<'de>>(
             format!("frame length {len} exceeds maximum {max_size}"),
         ));
     }
+    if len == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "empty frame",
+        ));
+    }
     let mut body = vec![0; len];
     reader.read_exact(&mut body)?;
-    serde_json::from_slice(&body).map_err(std::io::Error::other)
+    let (kind, payload) = body.split_first().expect("non-empty frame");
+    if *kind != FRAME_KIND_CONTROL_JSON {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("expected control frame, got kind {kind}"),
+        ));
+    }
+    serde_json::from_slice(payload).map_err(std::io::Error::other)
 }
 
 #[derive(Debug)]
@@ -369,7 +435,9 @@ impl FrameDecoder {
         }
     }
 
-    pub fn next<T: for<'de> Deserialize<'de>>(&mut self) -> std::io::Result<Option<T>> {
+    pub fn next_frame<T: for<'de> Deserialize<'de>>(
+        &mut self,
+    ) -> std::io::Result<Option<Frame<T>>> {
         if self.buffer.len() < 4 {
             return Ok(None);
         }
@@ -385,10 +453,43 @@ impl FrameDecoder {
         }
         let body = self.buffer[4..4 + len].to_vec();
         self.buffer.drain(..4 + len);
-        serde_json::from_slice(&body)
-            .map(Some)
-            .map_err(std::io::Error::other)
+        decode_frame(&body).map(Some)
     }
+}
+
+fn decode_frame<T: for<'de> Deserialize<'de>>(body: &[u8]) -> std::io::Result<Frame<T>> {
+    let Some((&kind, payload)) = body.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "empty frame",
+        ));
+    };
+    match kind {
+        FRAME_KIND_CONTROL_JSON => serde_json::from_slice(payload)
+            .map(Frame::Control)
+            .map_err(std::io::Error::other),
+        FRAME_KIND_PANE_OUTPUT | FRAME_KIND_PANE_INPUT => decode_pane_frame(payload),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("unknown frame kind {kind}"),
+        )),
+    }
+}
+
+fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
+    if payload.len() < 12 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "pane byte frame missing header",
+        ));
+    }
+    let pane_id = u32::from_be_bytes(payload[..4].try_into().expect("slice length"));
+    let generation = u64::from_be_bytes(payload[4..12].try_into().expect("slice length"));
+    Ok(Frame::PaneBytes {
+        pane_id,
+        generation,
+        bytes: payload[12..].to_vec(),
+    })
 }
 
 #[cfg(test)]
@@ -397,10 +498,9 @@ mod tests {
 
     #[test]
     fn protocol_frame_round_trips() {
-        let msg = ClientMessage::Input {
-            pane_id: 7,
-            generation: 9,
-            bytes: b"hi".to_vec(),
+        let msg = ClientMessage::Attach {
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &msg).unwrap();
@@ -431,10 +531,16 @@ mod tests {
 
     #[test]
     fn oversized_write_frame_is_rejected() {
-        let msg = ClientMessage::Input {
+        let msg = ClientMessage::SpawnPane {
             pane_id: 1,
             generation: 1,
-            bytes: vec![b'x'; MAX_FRAME_SIZE],
+            command: Some("x".repeat(MAX_FRAME_SIZE)),
+            cwd: None,
+            cols: 80,
+            rows: 24,
+            keep_open: false,
+            env: Vec::new(),
+            title: None,
         };
         let err = write_frame(&mut Vec::new(), &msg).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
@@ -451,12 +557,15 @@ mod tests {
             decoder.read_from_status(&mut &encoded[..split]).unwrap(),
             FrameReadStatus::Read(_)
         ));
-        assert!(decoder.next::<ClientMessage>().unwrap().is_none());
+        assert!(decoder.next_frame::<ClientMessage>().unwrap().is_none());
         assert!(matches!(
             decoder.read_from_status(&mut &encoded[split..]).unwrap(),
             FrameReadStatus::Read(_)
         ));
-        assert_eq!(decoder.next::<ClientMessage>().unwrap(), Some(msg));
+        assert_eq!(
+            decoder.next_frame::<ClientMessage>().unwrap(),
+            Some(Frame::Control(msg))
+        );
     }
 
     #[test]
@@ -492,13 +601,58 @@ mod tests {
     fn golden_client_attach_json_shape() {
         let value = serde_json::to_value(ClientMessage::Attach {
             session: "dev".into(),
-            protocol_version: 1,
+            protocol_version: PROTOCOL_VERSION,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":1})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":2})
         );
+    }
+
+    #[test]
+    fn binary_pane_frame_has_golden_shape() {
+        let mut buf = Vec::new();
+        write_pane_output_frame(&mut buf, 7, 9, b"abc").unwrap();
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&16_u32.to_be_bytes());
+        expected.push(FRAME_KIND_PANE_OUTPUT);
+        expected.extend_from_slice(&7_u32.to_be_bytes());
+        expected.extend_from_slice(&9_u64.to_be_bytes());
+        expected.extend_from_slice(b"abc");
+
+        assert_eq!(buf, expected);
+    }
+
+    #[test]
+    fn frame_decoder_decodes_interleaved_control_and_binary_frames() {
+        let attach = ClientMessage::Attach {
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+        };
+        let mut encoded = Vec::new();
+        write_frame(&mut encoded, &attach).unwrap();
+        write_pane_input_frame(&mut encoded, 7, 9, b"abc").unwrap();
+
+        let mut decoder = FrameDecoder::default();
+        assert!(matches!(
+            decoder.read_from_status(&mut &encoded[..]).unwrap(),
+            FrameReadStatus::Read(_)
+        ));
+        assert_eq!(
+            decoder.next_frame::<ClientMessage>().unwrap(),
+            Some(Frame::Control(attach))
+        );
+        assert_eq!(
+            decoder.next_frame::<ClientMessage>().unwrap(),
+            Some(Frame::PaneBytes {
+                pane_id: 7,
+                generation: 9,
+                bytes: b"abc".to_vec(),
+            })
+        );
+        assert_eq!(decoder.next_frame::<ClientMessage>().unwrap(), None);
     }
 
     #[test]

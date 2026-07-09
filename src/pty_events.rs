@@ -412,7 +412,7 @@ mod tests {
 
         assert_eq!(
             rx.recv().expect("first message"),
-            crate::session::protocol::ClientMessage::Input {
+            crate::session::client::ClientOutbound::PaneInput {
                 pane_id: 7,
                 generation: 9,
                 bytes: b"\x1b\x1b[15~".to_vec(),
@@ -420,7 +420,7 @@ mod tests {
         );
         assert_eq!(
             rx.recv().expect("second message"),
-            crate::session::protocol::ClientMessage::Input {
+            crate::session::client::ClientOutbound::PaneInput {
                 pane_id: 7,
                 generation: 9,
                 bytes: vec![3],

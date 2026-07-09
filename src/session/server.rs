@@ -11,7 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::control;
 use crate::session::protocol::{
-    self, AttachedPane, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette,
+    self, AttachedPane, ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
     WireSearchMatch, WireSnapshot,
 };
 use crate::state::PaneId;
@@ -120,8 +120,8 @@ impl SessionServer {
             }
 
             loop {
-                let message = match decoder.next::<ClientMessage>() {
-                    Ok(Some(message)) => message,
+                let frame = match decoder.next_frame::<ClientMessage>() {
+                    Ok(Some(frame)) => frame,
                     Ok(None) => break,
                     Err(err) => {
                         let _ = write_frame_blocking(
@@ -132,6 +132,28 @@ impl SessionServer {
                             },
                         );
                         return Ok(());
+                    }
+                };
+
+                let message = match frame {
+                    Frame::Control(message) => message,
+                    Frame::PaneBytes {
+                        pane_id,
+                        generation,
+                        bytes,
+                    } => {
+                        if !attached {
+                            write_frame_blocking(
+                                &mut stream,
+                                &ServerMessage::Error {
+                                    code: "attach-required".to_string(),
+                                    message: "first client message must be attach".to_string(),
+                                },
+                            )?;
+                            return Ok(());
+                        }
+                        self.handle_pane_input(pane_id, generation, &bytes);
+                        continue;
                     }
                 };
 
@@ -210,18 +232,6 @@ impl SessionServer {
                     keep_open,
                     env,
                 })]
-            }
-            ClientMessage::Input {
-                pane_id,
-                generation,
-                bytes,
-            } => {
-                if let Some(pane) = self.live_pane_mut(pane_id, generation)
-                    && let Some(pty) = &pane.pty
-                {
-                    let _ = pty.write(&bytes);
-                }
-                Vec::new()
             }
             ClientMessage::Resize {
                 pane_id,
@@ -400,6 +410,14 @@ impl SessionServer {
                 ok: false,
                 error: Some(err.to_string()),
             },
+        }
+    }
+
+    fn handle_pane_input(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        if let Some(pane) = self.live_pane_mut(pane_id, generation)
+            && let Some(pty) = &pane.pty
+        {
+            let _ = pty.write(bytes);
         }
     }
 

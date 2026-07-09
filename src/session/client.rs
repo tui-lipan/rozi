@@ -15,13 +15,23 @@ use crate::state::PaneId;
 
 #[derive(Clone)]
 pub struct SessionClient {
-    tx: mpsc::Sender<ClientMessage>,
+    tx: mpsc::Sender<ClientOutbound>,
     next_request_id: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ClientOutbound {
+    Control(ClientMessage),
+    PaneInput {
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
 }
 
 impl SessionClient {
     #[cfg(test)]
-    pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientMessage>) {
+    pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientOutbound>) {
         let (tx, rx) = mpsc::channel();
         (
             Self {
@@ -80,10 +90,20 @@ impl SessionClient {
                 format!("attach handshake failed: {attached:?}"),
             ));
         }
-        let (tx, rx) = mpsc::channel::<ClientMessage>();
+        let (tx, rx) = mpsc::channel::<ClientOutbound>();
         thread::spawn(move || {
             for message in rx {
-                if protocol::write_frame(&mut stream, &message).is_err() {
+                let result = match message {
+                    ClientOutbound::Control(message) => {
+                        protocol::write_frame(&mut stream, &message)
+                    }
+                    ClientOutbound::PaneInput {
+                        pane_id,
+                        generation,
+                        bytes,
+                    } => protocol::write_pane_input_frame(&mut stream, pane_id, generation, &bytes),
+                };
+                if result.is_err() {
                     break;
                 }
             }
@@ -115,7 +135,7 @@ impl SessionClient {
         keep_open: bool,
         title: Option<String>,
     ) {
-        self.send(ClientMessage::SpawnPane {
+        self.send_control(ClientMessage::SpawnPane {
             pane_id,
             generation,
             command,
@@ -129,14 +149,14 @@ impl SessionClient {
     }
 
     pub fn send_input(&self, pane_id: PaneId, generation: u64, bytes: Vec<u8>) {
-        self.send(ClientMessage::Input {
+        self.send(ClientOutbound::PaneInput {
             pane_id,
             generation,
             bytes,
         });
     }
     pub fn resize(&self, pane_id: PaneId, generation: u64, cols: u16, rows: u16) {
-        self.send(ClientMessage::Resize {
+        self.send_control(ClientMessage::Resize {
             pane_id,
             generation,
             cols,
@@ -144,39 +164,39 @@ impl SessionClient {
         });
     }
     pub fn scroll(&self, pane_id: PaneId, generation: u64, offset: usize) {
-        self.send(ClientMessage::Scroll {
+        self.send_control(ClientMessage::Scroll {
             pane_id,
             generation,
             offset,
         });
     }
     pub fn kill(&self, pane_id: PaneId, generation: u64) {
-        self.send(ClientMessage::Kill {
+        self.send_control(ClientMessage::Kill {
             pane_id,
             generation,
         });
     }
     pub fn set_palette(&self, pane_id: PaneId, generation: u64, palette: TerminalColorPalette) {
-        self.send(ClientMessage::SetPalette {
+        self.send_control(ClientMessage::SetPalette {
             pane_id,
             generation,
             palette: WirePalette::from(palette),
         });
     }
     pub fn push_layout(&self, blob: String) {
-        self.send(ClientMessage::PushLayout { blob });
+        self.send_control(ClientMessage::PushLayout { blob });
     }
     pub fn detach(&self) {
-        self.send(ClientMessage::Detach);
+        self.send_control(ClientMessage::Detach);
     }
 
     pub fn shutdown(&self) {
-        self.send(ClientMessage::Shutdown);
+        self.send_control(ClientMessage::Shutdown);
     }
 
     pub fn search(&self, pane_id: PaneId, generation: u64, query: String) -> u64 {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        self.send(ClientMessage::Search {
+        self.send_control(ClientMessage::Search {
             request_id,
             pane_id,
             generation,
@@ -185,7 +205,11 @@ impl SessionClient {
         request_id
     }
 
-    fn send(&self, message: ClientMessage) {
+    fn send_control(&self, message: ClientMessage) {
+        self.send(ClientOutbound::Control(message));
+    }
+
+    fn send(&self, message: ClientOutbound) {
         let _ = self.tx.send(message);
     }
 }

@@ -966,9 +966,11 @@ impl State {
             w: 80.0,
             h: 24.0,
         };
-        workspaces[0]
-            .panes
-            .push(Pane::new(initial_id, config.scrollback, initial_rect));
+        let mut initial_pane = Pane::new(initial_id, config.scrollback, initial_rect);
+        // Launch the first pane in the directory hyprmux was started from; without this it
+        // spawns with no cwd and the PTY falls back to the shell's home directory.
+        initial_pane.identity.cwd = config.cwd.clone();
+        workspaces[0].panes.push(initial_pane);
         append_tiled_window(&mut workspaces[0], initial_id);
         workspaces[0].focused_pane = Some(initial_id);
 

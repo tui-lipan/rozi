@@ -125,12 +125,13 @@ overlay (under "Custom") and command palette with a generated label, but are con
 have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard - save profile, choose theme, toggle titlebars, promote to master, plus discoverable
-extras (search, copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help).
+keyboard - save profile, change appearance, promote to master, plus discoverable extras (search,
+copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
+palette groups theme, titlebar, workbar, animation, and border controls.
 Frequent single-key actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the
-help overlay only, since the key is faster than a search box. Theme selection and "Save profile" /
-"Toggle pane titlebars" / "Toggle focus on hover" are palette-only - they have no default key.
-So are "Open config file" and "Reload config" - see
+help overlay only, since the key is faster than a search box. "Save profile", "Change
+appearance", and "Toggle focus on hover" are palette-only - they have no default key. So are
+"Open config file" and "Reload config" - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,

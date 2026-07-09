@@ -1493,6 +1493,19 @@ pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf,
     Ok(path)
 }
 
+pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_bool_in_section(&text, "animations", key, value);
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
 pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {

@@ -583,7 +583,7 @@ impl HyprmuxApp {
             return anim::instant_transition();
         }
 
-        let animations = self.config.animations;
+        let animations = ctx.state.config.animations;
         if !animations.enabled {
             return anim::instant_transition();
         }
@@ -608,8 +608,12 @@ impl HyprmuxApp {
         anim::geometry_transition(duration)
     }
 
-    pub(crate) fn window_opacity_config(&self, pane: &Pane) -> TransitionConfig {
-        let animations = self.config.animations;
+    pub(crate) fn window_opacity_config(
+        &self,
+        ctx: &Context<Self>,
+        pane: &Pane,
+    ) -> TransitionConfig {
+        let animations = ctx.state.config.animations;
         if !animations.enabled {
             return anim::instant_transition();
         }
@@ -633,8 +637,8 @@ impl HyprmuxApp {
         }
     }
 
-    pub(crate) fn scratch_transition_config(&self) -> TransitionConfig {
-        let animations = self.config.animations;
+    pub(crate) fn scratch_transition_config(&self, ctx: &Context<Self>) -> TransitionConfig {
+        let animations = ctx.state.config.animations;
         if animations.enabled && animations.tile_float {
             anim::geometry_transition(anim::scratch_transition_duration(
                 animations.geometry_duration,
@@ -644,8 +648,8 @@ impl HyprmuxApp {
         }
     }
 
-    pub(crate) fn focus_chrome_transition_config(&self) -> TransitionConfig {
-        let animations = self.config.animations;
+    pub(crate) fn focus_chrome_transition_config(&self, ctx: &Context<Self>) -> TransitionConfig {
+        let animations = ctx.state.config.animations;
         if animations.enabled && animations.focus_chrome {
             TransitionConfig {
                 duration: animations.focus_chrome_duration,
@@ -670,7 +674,7 @@ impl HyprmuxApp {
         // shows as true cyan while the focus animation runs but as the palette color at
         // rest. Snapping keeps palette themes consistent (and matching the workbar).
         let config = if chrome_color_animates(target) {
-            self.focus_chrome_transition_config()
+            self.focus_chrome_transition_config(ctx)
         } else {
             anim::instant_transition()
         };

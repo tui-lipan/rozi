@@ -96,6 +96,16 @@ fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     }
 }
 
+fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
+    if let Err(err) = crate::config::persist_animation_flag(key, value) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Preference not saved",
+            err,
+        ));
+    }
+}
+
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     execute_action_inner(ctx, action, true)
 }
@@ -253,6 +263,11 @@ fn execute_action_inner(
                 "workbar_at_bottom",
                 ctx.state.config.pane.workbar_at_bottom,
             );
+            Update::full()
+        }
+        Action::ToggleAnimations => {
+            ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
+            persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
             Update::full()
         }
         Action::ToggleFocusOnHover => {

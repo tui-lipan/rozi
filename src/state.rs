@@ -312,6 +312,7 @@ pub enum AppearanceAction {
     ToggleWorkbar,
     ToggleWorkbarGap,
     ToggleWorkbarPosition,
+    ToggleAnimations,
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleBorderMerge,

@@ -358,7 +358,7 @@ pub(crate) fn pane_element(
         .into();
     let element: Element = Animated::new(pane_tree)
         .opacity(opacity)
-        .transition(app.window_opacity_config(pane))
+        .transition(app.window_opacity_config(ctx, pane))
         .into();
 
     element.key(pane_window_key(id))

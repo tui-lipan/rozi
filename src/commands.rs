@@ -359,6 +359,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleAnimations,
+        label: "Animations",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleFocusOnHover,
         label: "Focus on hover",
         category: "App",
@@ -716,6 +723,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             };
             format!("Move workbar to {edge}")
         }
+        Action::ToggleAnimations => {
+            enable_disable_label("animations", state.config.animations.enabled)
+        }
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
         }
@@ -909,6 +919,7 @@ mod tests {
         assert!(!is_palette_eligible("choose-theme"));
         assert!(!is_palette_eligible("toggle-titles"));
         assert!(!is_palette_eligible("toggle-workbar"));
+        assert!(!is_palette_eligible("toggle-animations"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));
         assert!(!is_palette_eligible("toggle-border-merge"));

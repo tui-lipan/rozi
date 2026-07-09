@@ -55,7 +55,7 @@ pub(crate) fn scratch_progress(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> f
     ctx.transition::<f32>(
         "hyprmux-scratch-progress",
         target,
-        app.scratch_transition_config(),
+        app.scratch_transition_config(ctx),
     )
 }
 

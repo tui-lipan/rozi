@@ -319,7 +319,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `save-profile`, `open-profile`, `sessions`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-focus-on-hover`,
+`toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
 `cycle-workbar-badge-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket

@@ -727,6 +727,9 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "titlebar",
             "titlebars",
             "workbar",
+            "animations",
+            "motion",
+            "transitions",
             "focused border",
             "focused background",
         ]
@@ -779,6 +782,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             "Workbar badges",
             pane.workbar_badge_style.label().to_string(),
             AppearanceAction::CycleWorkbarBadgeStyle,
+        ),
+        appearance_entry(
+            "Animations",
+            enabled_status(ctx.state.config.animations.enabled),
+            AppearanceAction::ToggleAnimations,
         ),
         appearance_entry(
             "Focused pane background",

@@ -836,33 +836,6 @@ fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {
         let generation = ctx.state.next_pty_generation;
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         pane.pty_generation = generation;
-        #[cfg(unix)]
-        if let Ok((socket_path, listener)) = bind_adopt_socket(pane.id, generation) {
-            if let Ok(handoff) = pane.terminal.handoff_pty() {
-                let pid = handoff.pid;
-                let snapshot = crate::session::protocol::WireSnapshot::from_snapshot(
-                    pane.terminal.title.clone(),
-                    pane.terminal.cwd.clone(),
-                    &pane.terminal.snapshot,
-                );
-                spawn_adopt_fd_sender(socket_path.clone(), listener, handoff);
-                client.adopt_pane(
-                    pane.id,
-                    generation,
-                    pane.terminal.cols,
-                    pane.terminal.rows,
-                    pid,
-                    pane.identity.custom_title.clone(),
-                    pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
-                    snapshot,
-                    socket_path.to_string_lossy().to_string(),
-                );
-                pane.terminal.bind_server_backend(pane.id, generation);
-                continue;
-            } else {
-                let _ = std::fs::remove_file(socket_path);
-            }
-        }
         pane.terminal.bind_server_backend(pane.id, generation);
         client.spawn_pane(
             pane.id,
@@ -875,54 +848,4 @@ fn spawn_existing_panes_on_session(ctx: &mut Context<HyprmuxApp>) {
             pane.identity.custom_title.clone(),
         );
     }
-}
-
-#[cfg(unix)]
-fn spawn_adopt_fd_sender(
-    socket_path: std::path::PathBuf,
-    listener: std::os::unix::net::UnixListener,
-    handoff: TerminalPtyHandoff,
-) {
-    std::thread::spawn(move || {
-        let _ = listener.set_nonblocking(true);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        loop {
-            match listener.accept() {
-                Ok((stream, _)) => {
-                    let _ = crate::session::fdpass::send_raw_fd(&stream, handoff.master_fd);
-                    break;
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    if std::time::Instant::now() >= deadline {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                Err(_) => break,
-            }
-        }
-        drop(handoff);
-        let _ = std::fs::remove_file(socket_path);
-    });
-}
-
-#[cfg(unix)]
-fn bind_adopt_socket(
-    pane_id: crate::state::PaneId,
-    generation: u64,
-) -> std::io::Result<(std::path::PathBuf, std::os::unix::net::UnixListener)> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let path = crate::control::runtime_dir()?.join(format!(
-        "adopt-{}-{}-{}.sock",
-        std::process::id(),
-        pane_id,
-        generation
-    ));
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
-    }
-    let listener = std::os::unix::net::UnixListener::bind(&path)?;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    Ok((path, listener))
 }

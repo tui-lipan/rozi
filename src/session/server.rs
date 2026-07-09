@@ -1,18 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-#[cfg(unix)]
-use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tui_lipan::prelude::*;
@@ -43,163 +35,11 @@ pub struct ServerPane {
     pub generation: u64,
     pub title: Option<String>,
     pub cwd: Option<String>,
-    pub pty: Option<ServerPty>,
+    pub pty: Option<TerminalPty>,
     pub screen: TerminalScreen,
     pub cols: u16,
     pub rows: u16,
     pub exited: Option<i32>,
-}
-
-pub enum ServerPty {
-    Managed(TerminalPty),
-    #[cfg(unix)]
-    Adopted(AdoptedPty),
-}
-
-#[cfg(unix)]
-pub struct AdoptedPty {
-    fd: OwnedFd,
-    writer: Mutex<std::fs::File>,
-    active: Arc<AtomicBool>,
-    exited: Arc<AtomicBool>,
-    pid: Option<u32>,
-}
-
-#[cfg(unix)]
-impl AdoptedPty {
-    fn new(
-        fd: OwnedFd,
-        pid: Option<u32>,
-        on_event: impl Fn(TerminalPtyEvent) + Send + Sync + 'static,
-    ) -> io::Result<Self> {
-        let reader_fd = dup_raw_fd(fd.as_raw_fd())?;
-        let writer_fd = dup_raw_fd(fd.as_raw_fd())?;
-        let active = Arc::new(AtomicBool::new(true));
-        let exited = Arc::new(AtomicBool::new(false));
-        let thread_active = active.clone();
-        let thread_exited = exited.clone();
-        let on_event = Arc::new(on_event);
-        std::thread::spawn(move || {
-            let mut reader = std::fs::File::from(reader_fd);
-            let mut buffer = [0_u8; 8192];
-            while thread_active.load(Ordering::Acquire) {
-                if !wait_readable(reader.as_raw_fd(), &thread_active) {
-                    break;
-                }
-                match reader.read(&mut buffer) {
-                    Ok(0) => {
-                        thread_exited.store(true, Ordering::Release);
-                        on_event(TerminalPtyEvent::Exited(-1));
-                        break;
-                    }
-                    Ok(read) => {
-                        if thread_active.load(Ordering::Acquire) {
-                            on_event(TerminalPtyEvent::Output(buffer[..read].to_vec().into()));
-                        }
-                    }
-                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(err) if is_pty_eof_error(&err) => {
-                        thread_exited.store(true, Ordering::Release);
-                        on_event(TerminalPtyEvent::Exited(-1));
-                        break;
-                    }
-                    Err(err) => {
-                        on_event(TerminalPtyEvent::Error(err.to_string().into()));
-                        break;
-                    }
-                }
-            }
-        });
-        Ok(Self {
-            fd,
-            writer: Mutex::new(std::fs::File::from(writer_fd)),
-            active,
-            exited,
-            pid,
-        })
-    }
-
-    fn write(&self, bytes: &[u8]) -> io::Result<()> {
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| io::Error::other("adopted pty writer lock poisoned"))?;
-        writer.write_all(bytes)?;
-        writer.flush()
-    }
-
-    fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        let size = libc::winsize {
-            ws_row: rows.max(1),
-            ws_col: cols.max(1),
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), libc::TIOCSWINSZ, &size) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-
-    fn kill(&self) -> io::Result<()> {
-        self.active.store(false, Ordering::Release);
-        if self.exited.load(Ordering::Acquire) {
-            return Ok(());
-        }
-        if let Some(pid) = self.pid {
-            let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
-            if rc != 0 {
-                let err = io::Error::last_os_error();
-                if err.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(err);
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-#[cfg(unix)]
-impl Drop for AdoptedPty {
-    fn drop(&mut self) {
-        let _ = self.kill();
-    }
-}
-
-impl ServerPty {
-    fn write(&self, bytes: &[u8]) -> io::Result<()> {
-        match self {
-            Self::Managed(pty) => pty.write(bytes),
-            #[cfg(unix)]
-            Self::Adopted(pty) => pty.write(bytes),
-        }
-    }
-
-    fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        match self {
-            Self::Managed(pty) => pty.resize(cols, rows),
-            #[cfg(unix)]
-            Self::Adopted(pty) => pty.resize(cols, rows),
-        }
-    }
-
-    fn kill(&self) -> io::Result<()> {
-        match self {
-            Self::Managed(pty) => pty.kill(),
-            #[cfg(unix)]
-            Self::Adopted(pty) => pty.kill(),
-        }
-    }
-
-    fn pid(&self) -> Option<u32> {
-        match self {
-            Self::Managed(pty) => pty.pid(),
-            #[cfg(unix)]
-            Self::Adopted(pty) => pty.pid,
-        }
-    }
 }
 
 enum ServerEvent {
@@ -371,27 +211,6 @@ impl SessionServer {
                     env,
                 })]
             }
-            ClientMessage::AdoptPane {
-                pane_id,
-                generation,
-                cols,
-                rows,
-                pid,
-                title,
-                cwd,
-                snapshot,
-                socket_path,
-            } => self.adopt_pane(AdoptRequest {
-                pane_id,
-                generation,
-                cols,
-                rows,
-                pid,
-                title,
-                cwd,
-                snapshot,
-                socket_path,
-            }),
             ClientMessage::Input {
                 pane_id,
                 generation,
@@ -561,7 +380,7 @@ impl SessionServer {
                         generation,
                         title: request.title,
                         cwd: request.cwd,
-                        pty: Some(ServerPty::Managed(pty)),
+                        pty: Some(pty),
                         screen,
                         cols: cols.max(1),
                         rows: rows.max(1),
@@ -582,107 +401,6 @@ impl SessionServer {
                 error: Some(err.to_string()),
             },
         }
-    }
-
-    #[cfg(unix)]
-    fn adopt_pane(&mut self, request: AdoptRequest) -> Vec<ServerMessage> {
-        let id = request.pane_id;
-        if self.panes.contains_key(&id) {
-            return vec![ServerMessage::SpawnResult {
-                pane_id: id,
-                generation: request.generation,
-                ok: false,
-                error: Some(format!("pane {id} already exists")),
-            }];
-        }
-        if let Err(err) = validate_adopt_socket_path(&request.socket_path) {
-            return vec![ServerMessage::SpawnResult {
-                pane_id: id,
-                generation: request.generation,
-                ok: false,
-                error: Some(format!("invalid pty adoption socket: {err}")),
-            }];
-        }
-        let stream = match connect_adopt_socket(&request.socket_path) {
-            Ok(stream) => stream,
-            Err(err) => {
-                return vec![ServerMessage::SpawnResult {
-                    pane_id: id,
-                    generation: request.generation,
-                    ok: false,
-                    error: Some(format!("pty adoption socket failed: {err}")),
-                }];
-            }
-        };
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-        let fd = match crate::session::fdpass::recv_fd(&stream) {
-            Ok(fd) => fd,
-            Err(err) => {
-                return vec![ServerMessage::SpawnResult {
-                    pane_id: id,
-                    generation: request.generation,
-                    ok: false,
-                    error: Some(format!("pty fd receive failed: {err}")),
-                }];
-            }
-        };
-        let generation = request.generation;
-        self.next_generation = self.next_generation.max(generation.saturating_add(1));
-        let tx = self.event_tx.clone();
-        let pty = match AdoptedPty::new(fd, request.pid, move |event| {
-            let _ = tx.send(ServerEvent::Pty(id, generation, event));
-        }) {
-            Ok(pty) => pty,
-            Err(err) => {
-                return vec![ServerMessage::SpawnResult {
-                    pane_id: id,
-                    generation,
-                    ok: false,
-                    error: Some(format!("pty adoption failed: {err}")),
-                }];
-            }
-        };
-        let cols = request.cols.max(1);
-        let rows = request.rows.max(1);
-        let _ = pty.resize(cols, rows);
-        let screen = seed_screen_from_snapshot(rows, cols, request.snapshot.clone());
-        let snapshot = request.snapshot;
-        self.panes.insert(
-            id,
-            ServerPane {
-                generation,
-                title: request.title,
-                cwd: request.cwd,
-                pty: Some(ServerPty::Adopted(pty)),
-                screen,
-                cols,
-                rows,
-                exited: None,
-            },
-        );
-        vec![
-            ServerMessage::SpawnResult {
-                pane_id: id,
-                generation,
-                ok: true,
-                error: None,
-            },
-            ServerMessage::Snapshot {
-                pane_id: id,
-                generation,
-                snapshot,
-            },
-        ]
-    }
-
-    #[cfg(not(unix))]
-    fn adopt_pane(&mut self, request: AdoptRequest) -> Vec<ServerMessage> {
-        vec![ServerMessage::SpawnResult {
-            pane_id: request.pane_id,
-            generation: request.generation,
-            ok: false,
-            error: Some("pty adoption is only supported on Unix".to_string()),
-        }]
     }
 
     fn handle_event(&mut self, event: ServerEvent) -> Option<ServerMessage> {
@@ -780,110 +498,6 @@ fn write_frame_blocking(stream: &mut UnixStream, message: &ServerMessage) -> io:
     result.and(restore)
 }
 
-#[cfg(unix)]
-fn connect_adopt_socket(path: &str) -> io::Result<UnixStream> {
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-        match UnixStream::connect(path) {
-            Ok(stream) => return Ok(stream),
-            Err(err) => {
-                if Instant::now() >= deadline {
-                    return Err(err);
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-fn validate_adopt_socket_path(path: &str) -> io::Result<()> {
-    let path = Path::new(path);
-    if !path.is_absolute() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "path must be absolute",
-        ));
-    }
-    let runtime_dir = control::runtime_dir()?;
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
-    })?;
-    if parent != runtime_dir {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "path is outside hyprmux runtime directory",
-        ));
-    }
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_none_or(|name| !name.starts_with("adopt-") || !name.ends_with(".sock"))
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "unexpected adoption socket name",
-        ));
-    }
-    if let Ok(metadata) = fs::symlink_metadata(path)
-        && metadata.file_type().is_symlink()
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "adoption socket must not be a symlink",
-        ));
-    }
-    Ok(())
-}
-
-fn seed_screen_from_snapshot(rows: u16, cols: u16, snapshot: WireSnapshot) -> TerminalScreen {
-    let mut screen = TerminalScreen::new(rows, cols, DEFAULT_SCROLLBACK);
-    for (index, line) in snapshot.text.lines().enumerate() {
-        if index > 0 {
-            screen.process_bytes(b"\r\n");
-        }
-        screen.process_bytes(line.as_bytes());
-    }
-    screen.set_scrollback(snapshot.scrollback_offset);
-    screen
-}
-
-#[cfg(unix)]
-fn dup_raw_fd(fd: RawFd) -> io::Result<OwnedFd> {
-    let dup = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
-    if dup < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(unsafe { OwnedFd::from_raw_fd(dup) })
-}
-
-#[cfg(unix)]
-fn wait_readable(fd: RawFd, active: &AtomicBool) -> bool {
-    while active.load(Ordering::Acquire) {
-        let mut pollfd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let rc = unsafe { libc::poll(&mut pollfd, 1, 100) };
-        if rc > 0 {
-            return pollfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0;
-        }
-        if rc == 0 {
-            continue;
-        }
-        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
-            return false;
-        }
-    }
-    false
-}
-
-#[cfg(unix)]
-fn is_pty_eof_error(err: &io::Error) -> bool {
-    err.raw_os_error() == Some(libc::EIO)
-}
-
 struct SpawnRequest {
     pane_id: PaneId,
     generation: u64,
@@ -894,18 +508,6 @@ struct SpawnRequest {
     rows: u16,
     keep_open: bool,
     env: Vec<(String, String)>,
-}
-
-struct AdoptRequest {
-    pane_id: PaneId,
-    generation: u64,
-    cols: u16,
-    rows: u16,
-    pid: Option<u32>,
-    title: Option<String>,
-    cwd: Option<String>,
-    snapshot: WireSnapshot,
-    socket_path: String,
 }
 
 impl ServerPane {
@@ -1080,13 +682,6 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("session-dev_______x")
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn linux_pty_eio_maps_to_eof() {
-        let err = io::Error::from_raw_os_error(libc::EIO);
-        assert!(is_pty_eof_error(&err));
     }
 
     #[test]

@@ -10,9 +10,7 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
-use crate::session::protocol::{
-    self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette, WireSnapshot,
-};
+use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
 use crate::state::PaneId;
 
 #[derive(Clone)]
@@ -130,32 +128,6 @@ impl SessionClient {
         });
     }
 
-    #[cfg(unix)]
-    pub fn adopt_pane(
-        &self,
-        pane_id: PaneId,
-        generation: u64,
-        cols: u16,
-        rows: u16,
-        pid: Option<u32>,
-        title: Option<String>,
-        cwd: Option<String>,
-        snapshot: WireSnapshot,
-        socket_path: String,
-    ) {
-        self.send(ClientMessage::AdoptPane {
-            pane_id,
-            generation,
-            cols,
-            rows,
-            pid,
-            title,
-            cwd,
-            snapshot,
-            socket_path,
-        });
-    }
-
     pub fn send_input(&self, pane_id: PaneId, generation: u64, bytes: Vec<u8>) {
         self.send(ClientMessage::Input {
             pane_id,
@@ -219,7 +191,7 @@ impl SessionClient {
 }
 
 pub fn apply_wire_snapshot(
-    wire: WireSnapshot,
+    wire: crate::session::protocol::WireSnapshot,
 ) -> std::result::Result<TerminalRenderSnapshot, protocol::SnapshotVersionError> {
     wire.try_into_snapshot()
 }
@@ -227,6 +199,7 @@ pub fn apply_wire_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::protocol::WireSnapshot;
 
     #[test]
     fn apply_wire_snapshot_rejects_bad_version() {

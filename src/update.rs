@@ -118,6 +118,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                     crate::state::AppearanceAction::CycleWorkbarBadgeStyle => {
                         execute_action(ctx, Action::CycleWorkbarBadgeStyle);
                     }
+                    crate::state::AppearanceAction::CycleWorkbarStyle => {
+                        execute_action(ctx, Action::CycleWorkbarStyle);
+                    }
                 }
                 if !matches!(action, crate::state::AppearanceAction::Theme) {
                     ctx.state.show_appearance = true;

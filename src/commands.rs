@@ -453,6 +453,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::CycleWorkbarStyle,
+        label: "Workbar style",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::TogglePalette,
         label: "Command palette",
         category: "App",
@@ -742,7 +749,12 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         // An ephemeral (or not-yet-attached) session carries no user-facing name, so this command
         // *names* it for the first time (turning it durable) rather than renaming an existing name.
         let named = state.session_attached && !state.is_ephemeral_session();
-        return if named { "Rename session" } else { "Name session" }.to_string();
+        return if named {
+            "Rename session"
+        } else {
+            "Name session"
+        }
+        .to_string();
     }
     base_label.to_string()
 }
@@ -802,6 +814,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
                 "Workbar badges: {}",
                 state.config.pane.workbar_badge_style.label()
             )
+        }
+        Action::CycleWorkbarStyle => {
+            format!("Workbar style: {}", state.config.pane.workbar_style.label())
         }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => return None,

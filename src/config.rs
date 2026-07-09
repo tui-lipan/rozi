@@ -186,6 +186,9 @@ pub struct HyprmuxPaneConfig {
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
     pub workbar_badge_style: CapStyle,
+    /// End-cap style for the workbar itself: the whole panel bar reads as a pill/point over the
+    /// backdrop rather than a flush edge-to-edge bar.
+    pub workbar_style: CapStyle,
 }
 
 impl Default for HyprmuxPaneConfig {
@@ -203,6 +206,7 @@ impl Default for HyprmuxPaneConfig {
             padding: 0,
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
+            workbar_style: CapStyle::Padded,
         }
     }
 }
@@ -652,6 +656,7 @@ struct PaneFileConfig {
     padding: Option<u16>,
     title_style: Option<String>,
     workbar_badge_style: Option<String>,
+    workbar_style: Option<String>,
 }
 
 #[cfg(test)]
@@ -1026,6 +1031,7 @@ mod tests {
             padding = 2
             title_style = "round"
             workbar_badge_style = "arrow"
+            workbar_style = "half"
             "#,
         )
         .expect("config parses");
@@ -1040,6 +1046,7 @@ mod tests {
         assert_eq!(parsed.pane.padding, Some(2));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
+        assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
     }
 
     #[test]
@@ -1432,6 +1439,14 @@ pub fn load_config() -> LoadedConfig {
             Some(style) => config.pane.workbar_badge_style = style,
             None => warnings.push(format!(
                 "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
+    if let Some(workbar_style) = parsed.pane.workbar_style.as_deref() {
+        match CapStyle::parse(workbar_style) {
+            Some(style) => config.pane.workbar_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
             )),
         }
     }

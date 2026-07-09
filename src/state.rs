@@ -319,6 +319,7 @@ pub enum AppearanceAction {
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
+    CycleWorkbarStyle,
 }
 
 impl AppearanceAction {
@@ -328,7 +329,10 @@ impl AppearanceAction {
     pub fn disabled_reason(self, pane: &crate::config::HyprmuxPaneConfig) -> Option<&'static str> {
         match self {
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
-            Self::ToggleWorkbarGap | Self::ToggleWorkbarPosition | Self::CycleWorkbarBadgeStyle
+            Self::ToggleWorkbarGap
+            | Self::ToggleWorkbarPosition
+            | Self::CycleWorkbarBadgeStyle
+            | Self::CycleWorkbarStyle
                 if !pane.show_workbar =>
             {
                 Some("Needs workbar")

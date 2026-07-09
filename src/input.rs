@@ -55,6 +55,7 @@ pub enum Action {
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
+    CycleWorkbarStyle,
     TogglePaneSynchronization,
     OpenConfigFile,
     /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
@@ -128,6 +129,7 @@ impl Action {
             Action::CycleBorderStyle => "cycle-border-style",
             Action::CycleTitleStyle => "cycle-title-style",
             Action::CycleWorkbarBadgeStyle => "cycle-workbar-badge-style",
+            Action::CycleWorkbarStyle => "cycle-workbar-style",
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::OpenConfigFile => "open-config",
             Action::SwitchWorkspace(_)
@@ -202,6 +204,7 @@ impl Action {
             "cycle-border-style" => Action::CycleBorderStyle,
             "cycle-title-style" => Action::CycleTitleStyle,
             "cycle-workbar-badge-style" => Action::CycleWorkbarBadgeStyle,
+            "cycle-workbar-style" => Action::CycleWorkbarStyle,
             "toggle-pane-synchronization" => Action::TogglePaneSynchronization,
             "open-config" => Action::OpenConfigFile,
             _ => return None,

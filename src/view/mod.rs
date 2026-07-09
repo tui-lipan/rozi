@@ -17,7 +17,7 @@ use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
-use crate::state::{PaneId, WORKBAR_HEIGHT};
+use crate::state::PaneId;
 use crate::tiling::PanePlacement;
 
 use pane::pane_title_bg;
@@ -221,7 +221,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut app_root =
         VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
     if ctx.state.config.pane.show_workbar {
-        let workbar = workbar(ctx).height(Length::Px(WORKBAR_HEIGHT));
+        let workbar = workbar(ctx);
         if ctx.state.config.pane.workbar_at_bottom {
             app_root = app_root.child(canvas).child(workbar);
         } else {

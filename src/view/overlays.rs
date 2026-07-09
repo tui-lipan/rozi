@@ -614,9 +614,7 @@ fn session_picker_palette(
         .entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| {
-            query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
-        })
+        .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "unnamed" (they
             // stay reattachable — activation is by row index, not this label).
@@ -810,6 +808,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             }
             .to_string(),
             AppearanceAction::ToggleWorkbarPosition,
+        ),
+        appearance_entry(
+            "Workbar style",
+            pane.workbar_style.label().to_string(),
+            AppearanceAction::CycleWorkbarStyle,
         ),
         appearance_entry(
             "Workbar badges",

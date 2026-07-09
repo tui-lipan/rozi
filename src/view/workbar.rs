@@ -2,27 +2,39 @@ use tui_lipan::prelude::*;
 
 use crate::config::{InputConfig, WorkbarSegment};
 use crate::input::Action;
-use crate::state::Mode;
+use crate::state::{Mode, WORKBAR_HEIGHT};
 use crate::{HyprmuxApp, Msg};
 
-pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> HStack {
+pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
 
+    let panel_bg = theme.surface.panel;
     let mut row = HStack::new()
         .gap(1)
-        .height(Length::Px(1))
-        .style(Style::new().bg(theme.surface.panel));
+        .width(Length::Flex(1))
+        .height(Length::Px(WORKBAR_HEIGHT))
+        .style(Style::new().bg(panel_bg));
+
+    // Track the background color of the elements landing on each outer edge so the whole-workbar
+    // end caps can adopt it: a leading/trailing badge (the `hyprmux` title chip, session chip, or
+    // a mode chip) rounds off in its own color, while a plain segment leaves the cap panel-colored.
+    let mut left_cap_color: Option<Color> = None;
+    let mut right_cap_color = panel_bg;
 
     for segment in &workbar_cfg.left {
         if let Some(element) = workbar_segment_element(ctx, segment) {
             row = row.child(element);
+            let color = segment_edge_color(theme, segment);
+            left_cap_color.get_or_insert(color);
+            right_cap_color = color;
         }
     }
 
     // The workspace tabs already flex to fill slack; without them, insert a spacer so the
-    // right region lands flush against the trailing edge.
+    // right region lands flush against the trailing edge. The spacer is transparent, so a bare
+    // panel-colored cap sits on that edge.
     let has_workspaces = workbar_cfg
         .left
         .iter()
@@ -30,57 +42,209 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> HStack {
         .any(|segment| matches!(segment, WorkbarSegment::Workspaces));
     if !has_workspaces {
         row = row.child(Text::new("").width(Length::Flex(1)).height(Length::Px(1)));
+        right_cap_color = panel_bg;
     }
 
-    for segment in &workbar_cfg.right {
-        if let Some(element) = workbar_segment_element(ctx, segment) {
-            row = row.child(element);
-        }
-    }
-
-    // Mode chips sit at the trailing edge, so they take a left cap (the title chip at the leading
-    // edge takes a right cap instead - see `workbar_segment_element`).
-    let left_cap = ctx
-        .state
-        .config
-        .pane
-        .workbar_badge_style
-        .caps()
-        .map(|c| c.0);
-    let panel_bg = theme.surface.panel;
+    // Trailing cluster: transient mode chips first, then the configured right segments, so the
+    // session badge - usually the last right segment, and the one that stays visible - is pinned
+    // to the far edge and mode chips like PREFIX land to its left. Chips are collected first so
+    // the cluster can decide how to lay them out.
     let text_fg = theme.surface.backdrop;
+    let mut trailing: Vec<TrailingChip> = Vec::new();
     if ctx.command_chord_pending() {
-        row = row.child(workbar_badge(
+        trailing.push(TrailingChip::badge(
             " PREFIX ",
             text_fg,
             theme.status.warning,
-            panel_bg,
-            left_cap,
-            BadgeCap::Left,
         ));
     }
-
     if state.mode == Mode::Resize {
-        row = row.child(workbar_badge(
+        trailing.push(TrailingChip::badge(
             " RESIZE ",
             text_fg,
             theme.status.success,
-            panel_bg,
-            left_cap,
-            BadgeCap::Left,
         ));
     } else if state.mode == Mode::Copy {
-        row = row.child(workbar_badge(
-            " COPY ",
-            text_fg,
-            theme.status.info,
-            panel_bg,
-            left_cap,
-            BadgeCap::Left,
-        ));
+        trailing.push(TrailingChip::badge(" COPY ", text_fg, theme.status.info));
+    }
+    for segment in &workbar_cfg.right {
+        if let Some(chip) = trailing_chip(ctx, segment) {
+            trailing.push(chip);
+        }
     }
 
-    row
+    if let Some(last) = trailing.last() {
+        right_cap_color = last.edge_color(panel_bg);
+    }
+    let badge_caps = ctx.state.config.pane.workbar_badge_style.caps();
+    if let Some(cluster) = trailing_cluster(trailing, badge_caps, panel_bg) {
+        row = row.child(cluster);
+    }
+
+    workbar_with_caps(
+        ctx,
+        row,
+        left_cap_color.unwrap_or(panel_bg),
+        right_cap_color,
+    )
+}
+
+/// One element of the workbar's trailing (right-hand) cluster. `Badge` chips are colored pills
+/// that chain into a powerline when badge caps are on; `Flex` wraps an opaque element (a plain
+/// text segment or the workspace tabs) that just abuts its neighbors and breaks the color chain.
+enum TrailingChip {
+    Badge {
+        label: String,
+        text_fg: Color,
+        bg: Color,
+    },
+    Flex(Box<Element>),
+}
+
+impl TrailingChip {
+    fn badge(label: impl Into<String>, text_fg: Color, bg: Color) -> Self {
+        Self::Badge {
+            label: label.into(),
+            text_fg,
+            bg,
+        }
+    }
+
+    /// Background this chip paints where it meets a neighbor: its own color for a badge, the panel
+    /// surface for anything else.
+    fn edge_color(&self, panel_bg: Color) -> Color {
+        match self {
+            Self::Badge { bg, .. } => *bg,
+            Self::Flex(_) => panel_bg,
+        }
+    }
+}
+
+/// The trailing chip for a configured right-region segment, or `None` when it renders nothing.
+/// Colored badges become `Badge` chips (so they can chain); every other segment reuses the shared
+/// `workbar_segment_element` and rides along as an opaque `Flex` chip.
+fn trailing_chip(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<TrailingChip> {
+    let theme = &ctx.state.theme;
+    match segment {
+        WorkbarSegment::Session => {
+            let name = attached_session_name(ctx)?;
+            Some(TrailingChip::badge(
+                format!(" 󰛤 {name} "),
+                theme.surface.backdrop,
+                theme.border_active,
+            ))
+        }
+        WorkbarSegment::Title => Some(TrailingChip::badge(
+            " hyprmux ",
+            theme.surface.backdrop,
+            theme.border_active,
+        )),
+        _ => workbar_segment_element(ctx, segment).map(|el| TrailingChip::Flex(Box::new(el))),
+    }
+}
+
+/// Assemble the trailing cluster. With badge caps off it is a gap-separated run of plain chips
+/// (the historical look). With caps on the gap collapses to zero and each badge's left cap is
+/// drawn over its left neighbor's color, so the chips interlock into a powerline that flows out of
+/// the panel bar. Returns `None` when there is nothing trailing. Sizes to `Auto` so the cluster
+/// only occupies its own width and stays pinned to the trailing edge.
+fn trailing_cluster(
+    chips: Vec<TrailingChip>,
+    caps: Option<(&'static str, &'static str)>,
+    panel_bg: Color,
+) -> Option<Element> {
+    if chips.is_empty() {
+        return None;
+    }
+    let left_cap = caps.map(|c| c.0);
+    let mut cluster = HStack::new()
+        .width(Length::Auto)
+        .height(Length::Px(WORKBAR_HEIGHT))
+        .gap(if caps.is_some() { 0 } else { 1 });
+    // A badge's cap blends from its left neighbor's color; the first chip starts from the panel bar.
+    let mut prev_bg = panel_bg;
+    for chip in chips {
+        match chip {
+            TrailingChip::Badge { label, text_fg, bg } => {
+                cluster = cluster.child(workbar_badge(
+                    &label,
+                    text_fg,
+                    bg,
+                    prev_bg,
+                    left_cap,
+                    BadgeCap::Left,
+                ));
+                prev_bg = bg;
+            }
+            TrailingChip::Flex(element) => {
+                cluster = cluster.child(*element);
+                prev_bg = panel_bg;
+            }
+        }
+    }
+    Some(cluster.into())
+}
+
+/// Background color a rendered workbar segment paints at the workbar's outer edge. The colored
+/// badges (`Title`, `Session`) use the active accent; every other segment renders on the panel
+/// surface. Only called for segments that actually rendered, so it need not re-check visibility.
+fn segment_edge_color(theme: &Theme, segment: &WorkbarSegment) -> Color {
+    match segment {
+        WorkbarSegment::Title | WorkbarSegment::Session => theme.border_active,
+        _ => theme.surface.panel,
+    }
+}
+
+/// Wrap the full-width workbar in end caps so the whole panel bar reads as a pill/point over the
+/// backdrop, mirroring the pane titlebar and badge cap styles. `Padded` keeps the flush
+/// edge-to-edge bar as-is.
+///
+/// The caps are painted over the bar's own two edge cells rather than added beside it: those cells
+/// hold the outer segments' blank side padding, so - exactly like a capped titlebar dropping its
+/// side padding - the cap stands in for that padding and the bar stays full width with its content
+/// unshifted. Each cap is drawn in `left_color`/`right_color` - the background of the badge or
+/// segment sitting on that edge - so a leading/trailing chip rounds off in its own color and a
+/// plain bar edge stays panel-colored. A transparent spacer between the caps lets the panel bar
+/// show through everywhere else. The `Frame` (borderless, no padding) only exists to give the
+/// overlay stack the same `Flex(1)` width the bare row carried, since `ZStack` has no width
+/// control of its own.
+fn workbar_with_caps(
+    ctx: &Context<HyprmuxApp>,
+    row: HStack,
+    left_color: Color,
+    right_color: Color,
+) -> Element {
+    let Some((left, right)) = ctx.state.config.pane.workbar_style.caps() else {
+        return row.into();
+    };
+    let backdrop = ctx.state.theme.surface.backdrop;
+    let cap = |glyph: &'static str, color: Color| {
+        Text::new(glyph)
+            .style(Style::new().fg(color).bg(backdrop))
+            .width(Length::Px(1))
+            .height(Length::Px(WORKBAR_HEIGHT))
+    };
+    let caps_overlay = HStack::new()
+        .width(Length::Flex(1))
+        .height(Length::Px(WORKBAR_HEIGHT))
+        .child(cap(left, left_color))
+        .child(Spacer::new())
+        .child(cap(right, right_color));
+    Frame::new()
+        .border(false)
+        .padding(0)
+        .width(Length::Flex(1))
+        .height(Length::Px(WORKBAR_HEIGHT))
+        // passthrough: the cap overlay is purely decorative, so pointer events must fall through
+        // to the interactive bar beneath it (workspace tabs, mode chips) instead of the caps/spacer
+        // swallowing every hover and click over the workbar.
+        .child(
+            ZStack::new()
+                .passthrough(true)
+                .child(row)
+                .child(caps_overlay),
+        )
+        .into()
 }
 
 /// Which end a workbar badge's cap sits on. The title chip caps on the right (it starts flush at
@@ -280,6 +444,16 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         })
         .collect();
 
+    // Reuse the workbar badge cap style for the tab pills, but the framework only caps
+    // the active/hovered tab (no powerline chaining between tabs) since they are peers.
+    let tab_caps = ctx
+        .state
+        .config
+        .pane
+        .workbar_badge_style
+        .caps()
+        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
+
     Tabs::new()
         .tabs(tabs)
         .active(state.active_workspace.min(shown.saturating_sub(1)))
@@ -287,6 +461,7 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         .width(Length::Flex(1))
         .height(Length::Px(1))
         .divider(' ')
+        .caps(tab_caps)
         .style(Style::new().fg(theme.surface.menu).bg(theme.surface.panel))
         .active_style(
             Style::new()

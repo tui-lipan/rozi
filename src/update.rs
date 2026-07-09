@@ -452,7 +452,6 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 epoch: new_epoch,
                 name: name.clone(),
                 client: None,
-                migrate_local_panes: false,
                 autostart,
             });
             ctx.toast().push(crate::pty_events::info_toast(
@@ -525,16 +524,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             let had_panes = !panes.is_empty();
             let mut spawned: Vec<(crate::state::PaneId, u64)> = Vec::new();
-            if !had_panes && !pending.migrate_local_panes {
-                replace_with_fresh_server_state(ctx, epoch);
-                spawned = spawn_state_panes_on_session(ctx);
-            } else {
+            if had_panes {
+                // The server already owns panes (reattach, or attach-elsewhere to a live session):
+                // adopt them, replacing whatever the client currently shows.
                 apply_attached_panes(ctx, panes, restore_layout);
-                if !had_panes && pending.migrate_local_panes {
-                    // A fresh (empty) session: spawn the panes the client already holds in state
-                    // (the initial pane, or a restored profile/autosave layout).
-                    spawned = spawn_state_panes_on_session(ctx);
-                }
+            } else {
+                // An empty server (fresh ephemeral, autostarted named session, or a session whose
+                // panes all exited): seed it with the panes the client already holds in state (the
+                // initial pane, or a restored profile/autosave layout).
+                spawned = spawn_state_panes_on_session(ctx);
             }
             flush_pending_spawns(ctx);
             // Panes created directly in state start with `opening = true` (opacity 0); schedule the
@@ -675,6 +673,17 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 .push(error_toast(&ctx.state.theme, "Session", message));
             Update::full()
         }
+        Msg::SessionRenamed { epoch, session } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            ctx.state.session_name = Some(session.clone());
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                format!("Renamed session to `{session}`"),
+            ));
+            Update::full()
+        }
     };
 
     if crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
@@ -786,33 +795,6 @@ fn apply_attached_panes(
         ctx.state.focused_pane = ctx.state.workspaces[0].panes.first().map(|pane| pane.id);
         ctx.state.workspaces[0].focused_pane = ctx.state.focused_pane;
     }
-}
-
-fn replace_with_fresh_server_state(ctx: &mut Context<HyprmuxApp>, epoch: u64) {
-    let config = ctx.state.config.clone();
-    let theme = ctx.state.theme.clone();
-    let theme_watcher = ctx.state.theme_watcher.take();
-    let system_theme = ctx.state.system_theme.clone();
-    let control_socket_path = ctx.state.control_socket_path.clone();
-    let session_client = ctx.state.session_client.clone();
-    let session_name = ctx.state.session_name.clone();
-    let next_pty_generation = ctx.state.next_pty_generation;
-
-    let mut fresh = State::new(config, theme);
-    fresh.theme_watcher = theme_watcher;
-    fresh.system_theme = system_theme;
-    fresh.control_socket_path = control_socket_path;
-    fresh.session_client = session_client;
-    fresh.session_name = session_name;
-    fresh.session_attached = true;
-    fresh.runtime_epoch = epoch;
-    fresh.next_pty_generation = next_pty_generation;
-    ctx.state = fresh;
-    crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
-        "Attached; opened a fresh pane",
-    ));
 }
 
 /// Spawn every non-closing pane the client holds in state on a freshly attached (empty) session.

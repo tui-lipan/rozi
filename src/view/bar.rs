@@ -225,9 +225,16 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
     let theme = &ctx.state.theme;
     let name = attached_session_name(ctx)?;
+    // Ephemeral sessions carry an ugly auto-generated `eph-<pid>` name; surface them as
+    // "(ephemeral)" instead, since a bare launch is a disposable per-process session.
+    let label = if ctx.state.is_ephemeral_session() {
+        "(ephemeral)".to_string()
+    } else {
+        name
+    };
     // A right-region chip, so it takes a left cap like the mode chips.
     Some(workbar_badge(
-        &format!(" 󰛤 {name} "),
+        &format!(" 󰛤 {label} "),
         theme.surface.backdrop,
         theme.border_active,
         theme.surface.panel,

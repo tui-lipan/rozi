@@ -271,7 +271,6 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         epoch,
         name: name.clone(),
         client: None,
-        migrate_local_panes: true,
         autostart: true,
     });
     ctx.state = new_state;

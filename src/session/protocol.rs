@@ -93,6 +93,9 @@ pub enum ClientMessage {
     PushLayout {
         blob: String,
     },
+    Rename {
+        name: String,
+    },
     Detach,
     Shutdown,
 }
@@ -127,6 +130,9 @@ pub enum ServerMessage {
         pid: Option<u32>,
         ok: bool,
         error: Option<String>,
+    },
+    Renamed {
+        session: String,
     },
 }
 

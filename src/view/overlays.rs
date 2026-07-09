@@ -575,6 +575,9 @@ fn session_picker_palette(
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             let mut label = entry.name.clone();
+            if entry.ephemeral {
+                label.push_str("  (ephemeral)");
+            }
             if current == Some(entry.name.as_str()) {
                 label.push_str("  • current");
             }

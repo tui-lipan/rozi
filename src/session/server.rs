@@ -28,6 +28,9 @@ pub struct SessionServer {
     event_tx: mpsc::Sender<ServerEvent>,
     shutdown: bool,
     session_name: String,
+    /// The socket file this server currently listens on. Set by [`run_named_session`]; a rename
+    /// moves this file in place so the running listener keeps serving under the new name.
+    socket_path: Option<PathBuf>,
 }
 
 pub struct ServerPane {
@@ -65,6 +68,7 @@ impl SessionServer {
             event_tx,
             shutdown: false,
             session_name: session_name.into(),
+            socket_path: None,
         }
     }
 
@@ -306,6 +310,7 @@ impl SessionServer {
                 self.layout_blob = Some(blob);
                 Vec::new()
             }
+            ClientMessage::Rename { name } => vec![self.rename_session(name)],
             ClientMessage::Detach => Vec::new(),
             ClientMessage::Shutdown => {
                 self.shutdown = true;
@@ -317,6 +322,52 @@ impl SessionServer {
                 Vec::new()
             }
         }
+    }
+
+    /// Rename this session in place: move the listening socket to the new name so the same server
+    /// (and its live panes) becomes discoverable under `name` with zero pane movement. Rejects
+    /// invalid names and collisions with an already-running session.
+    fn rename_session(&mut self, name: String) -> ServerMessage {
+        if !crate::session::discovery::valid_session_name(&name) {
+            return ServerMessage::Error {
+                code: "invalid-name".to_string(),
+                message: format!("invalid session name {name:?}"),
+            };
+        }
+        if name == self.session_name {
+            return ServerMessage::Renamed { session: name };
+        }
+        let new_path = match session_socket_path(&name) {
+            Ok(path) => path,
+            Err(err) => {
+                return ServerMessage::Error {
+                    code: "rename-failed".to_string(),
+                    message: err.to_string(),
+                };
+            }
+        };
+        if new_path.exists() {
+            if UnixStream::connect(&new_path).is_ok() {
+                return ServerMessage::Error {
+                    code: "name-in-use".to_string(),
+                    message: format!("session `{name}` already exists"),
+                };
+            }
+            // A stale socket whose server is gone; clear it so the rename can take the name.
+            let _ = fs::remove_file(&new_path);
+        }
+        if let Some(old_path) = self.socket_path.clone() {
+            if let Err(err) = fs::rename(&old_path, &new_path) {
+                return ServerMessage::Error {
+                    code: "rename-failed".to_string(),
+                    message: err.to_string(),
+                };
+            }
+            let _ = fs::set_permissions(&new_path, fs::Permissions::from_mode(0o600));
+        }
+        self.socket_path = Some(new_path);
+        self.session_name = name.clone();
+        ServerMessage::Renamed { session: name }
     }
 
     fn spawn_pane(&mut self, request: SpawnRequest) -> ServerMessage {
@@ -621,8 +672,13 @@ fn bind_unix_socket(path: &Path) -> io::Result<()> {
 
 pub fn run_named_session(name: &str) -> io::Result<()> {
     let (listener, path) = bind_session_socket(name)?;
-    let result = SessionServer::new_named(name).run_listener(listener);
-    let _ = fs::remove_file(path);
+    let mut server = SessionServer::new_named(name);
+    server.socket_path = Some(path);
+    let result = server.run_listener(listener);
+    // A rename moves the socket file, so unlink the current path rather than the original one.
+    if let Some(path) = &server.socket_path {
+        let _ = fs::remove_file(path);
+    }
     result
 }
 
@@ -655,6 +711,26 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("session-dev_______x")
         );
+    }
+
+    #[test]
+    fn rename_in_place_updates_session_name() {
+        let mut server = SessionServer::new_named("eph-123");
+        // No socket bound in this unit context, so the on-disk rename is skipped and only the
+        // in-memory identity changes.
+        let response = server.rename_session("renametest-unlikely-xyz".into());
+        assert!(
+            matches!(response, ServerMessage::Renamed { session } if session == "renametest-unlikely-xyz")
+        );
+        assert_eq!(server.session_name, "renametest-unlikely-xyz");
+    }
+
+    #[test]
+    fn rename_rejects_reserved_ephemeral_prefix() {
+        let mut server = SessionServer::new_named("eph-123");
+        let response = server.rename_session("eph-999".into());
+        assert!(matches!(response, ServerMessage::Error { code, .. } if code == "invalid-name"));
+        assert_eq!(server.session_name, "eph-123");
     }
 
     #[test]

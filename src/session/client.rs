@@ -183,6 +183,9 @@ impl SessionClient {
     pub fn push_layout(&self, blob: String) {
         self.send_control(ClientMessage::PushLayout { blob });
     }
+    pub fn rename(&self, name: String) {
+        self.send_control(ClientMessage::Rename { name });
+    }
     pub fn detach(&self) {
         self.send_control(ClientMessage::Detach);
     }

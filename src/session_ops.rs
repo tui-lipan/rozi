@@ -53,6 +53,7 @@ fn discovered_with_current(
     if let Some(name) = &ctx.state.session_name {
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
+            ephemeral: ctx.state.is_ephemeral_session(),
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
                 has_layout: true,
@@ -98,7 +99,6 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         epoch,
         name: name.clone(),
         client: None,
-        migrate_local_panes: true,
         autostart: true,
     });
     ctx.state = fresh;
@@ -138,12 +138,22 @@ pub(crate) fn attach_session_by_name(
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
     }
+    // Attach-elsewhere: park the current session (push its layout, detach) and leave its server
+    // running so it can be reattached later. Leaving an ephemeral is allowed but noted, since a
+    // clean quit is the only thing that shuts an ephemeral down.
     if let Some(client) = ctx.state.session_client.clone() {
         client.push_layout(
             crate::profiles::profile_from_state(&ctx.state)
                 .to_toml_string()
                 .unwrap_or_default(),
         );
+        client.detach();
+        if ctx.state.is_ephemeral_session() {
+            ctx.toast().push(info_toast(
+                &ctx.state.theme,
+                "Left ephemeral session running — reattach from the session picker",
+            ));
+        }
     }
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
@@ -153,7 +163,6 @@ pub(crate) fn attach_session_by_name(
         epoch,
         name: name.clone(),
         client: None,
-        migrate_local_panes: !ctx.state.session_attached,
         autostart,
     });
     Update::with_command(Command::spawn(move |link| {
@@ -190,7 +199,18 @@ pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    // Creating a session from the query starts a new named server.
+    // From an ephemeral session, "create named" is a rename in place: the same server keeps its
+    // live panes and simply becomes discoverable under the new name — zero pane movement. The
+    // `Renamed` reply updates `session_name` and toasts (a collision surfaces as an error).
+    if ctx.state.session_attached && ctx.state.is_ephemeral_session() {
+        if let Some(client) = ctx.state.session_client.clone() {
+            client.rename(name);
+            ctx.state.show_session_picker = false;
+            ctx.state.session_picker = None;
+            return Update::full();
+        }
+    }
+    // From a named session (or when not attached), start/attach a separate named server.
     attach_session_by_name(ctx, name, true)
 }
 

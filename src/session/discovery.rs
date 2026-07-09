@@ -16,6 +16,8 @@ pub enum DiscoveredSessionStatus {
 pub struct DiscoveredSession {
     pub name: String,
     pub status: DiscoveredSessionStatus,
+    /// Auto-managed per-process session (`eph-*`), disposable and not user-named.
+    pub ephemeral: bool,
 }
 
 pub fn valid_session_name(name: &str) -> bool {
@@ -132,6 +134,7 @@ pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession
     };
     Some(DiscoveredSession {
         name: name.to_string(),
+        ephemeral: crate::state::is_ephemeral_session_name(name),
         status,
     })
 }

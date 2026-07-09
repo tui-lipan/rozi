@@ -216,6 +216,10 @@ pub enum Msg {
         epoch: u64,
         message: String,
     },
+    SessionRenamed {
+        epoch: u64,
+        session: String,
+    },
 }
 
 impl Component for HyprmuxApp {
@@ -281,7 +285,6 @@ impl Component for HyprmuxApp {
             epoch,
             name: name.clone(),
             client: None,
-            migrate_local_panes: true,
             autostart: true,
         });
         Some(Command::spawn(move |link: CommandLink<Msg>| {
@@ -531,6 +534,7 @@ fn server_message_to_msg(
                 error,
             },
             ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
+            ServerMessage::Renamed { session } => Msg::SessionRenamed { epoch, session },
         },
     }
 }

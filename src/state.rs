@@ -874,7 +874,6 @@ pub struct PendingSessionAttach {
     pub epoch: u64,
     pub name: String,
     pub client: Option<crate::session::client::SessionClient>,
-    pub migrate_local_panes: bool,
     /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
     /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
     pub autostart: bool,

@@ -236,13 +236,55 @@ fn search_match_description(matched: &ScrollbackMatch) -> String {
     )
 }
 
-pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let Some(rename) = ctx.state.rename.as_ref() else {
-        return Text::new("").into();
-    };
+/// A single `label key` footer hint (e.g. `submit enter`), styled like the palette hint bar.
+fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
+    HStack::new()
+        .gap(1)
+        .width(Length::Auto)
+        .height(Length::Auto)
+        .child(Text::new(label).style(fg_only(&theme.primary).bold()))
+        .child(Text::new(key).style(fg_only(&theme.muted)))
+        .into()
+}
+
+/// The base footer row shared by every overlay hint bar: content-height with a leading gap above
+/// it. Callers add [`hint_pill`] children and may override justify/gap.
+fn hint_row() -> HStack {
+    HStack::new()
+        .height(Length::Auto)
+        .padding((1, 1, 0, 1))
+        .justify(Justify::Start)
+        .gap(3)
+}
+
+/// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save
+/// profile) so they read like the command palette instead of a bare dialog.
+fn prompt_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    let input = Input::bound(&rename.input)
-        .placeholder("Pane name, empty clears custom title")
+    hint_row()
+        .child(hint_pill(theme, "submit", "enter"))
+        .child(hint_pill(theme, "cancel", "esc"))
+        .into()
+}
+
+/// Shared chrome for the single-input prompt overlays so they all read like the command palette:
+/// palette placement/border, no inner input border, a leading gap, and a submit/cancel hint footer.
+/// Callers supply only what differs (title, placeholder, bound state, focus key, and messages).
+#[allow(clippy::too_many_arguments)]
+fn prompt_overlay(
+    ctx: &Context<HyprmuxApp>,
+    title: &str,
+    placeholder: &str,
+    input_state: &TextInput,
+    input_key: &'static str,
+    on_change: impl Fn(InputEvent) -> Msg + 'static,
+    close: Msg,
+    submit: Msg,
+) -> Element {
+    let theme = &ctx.state.theme;
+    let close_on_key = close.clone();
+    let input = Input::bound(input_state)
+        .placeholder(placeholder)
         .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
         .focus_style(
             Style::new()
@@ -251,137 +293,113 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         )
         .selection_style(theme.text_selection)
         .width(Length::Flex(1))
-        .on_change(ctx.link().callback(Msg::RenamePaneChanged))
-        .on_key(ctx.link().key_handler(|key| {
+        .border(false)
+        .padding((0, 1))
+        .on_change(ctx.link().callback(on_change))
+        .on_key(ctx.link().key_handler(move |key| {
             if key.is(KeyCode::Esc) {
-                Some(Msg::CloseRenamePane)
+                Some(close_on_key.clone())
             } else if key.code == KeyCode::Enter
                 && !key.mods.ctrl
                 && !key.mods.alt
                 && !key.mods.super_key
             {
-                Some(Msg::SubmitRenamePane)
+                Some(submit.clone())
             } else {
                 None
             }
         }));
 
-    styled_modal(ctx, &format!("Rename pane {}", rename.target), 56)
-        .padding((1, 2, 1, 2))
-        .on_close(ctx.link().callback(|_| Msg::CloseRenamePane))
-        .child(input.key(rename_input_key()))
+    let body = VStack::new()
+        .height(Length::Auto)
+        .padding((1, 0, 0, 0))
+        .child(input.key(input_key))
+        .child(prompt_hints(ctx));
+
+    action_palette_modal(ctx, title)
+        .on_close(ctx.link().callback(move |_| close.clone()))
+        .child(action_palette_frame(body))
         .into()
+}
+
+pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(rename) = ctx.state.rename.as_ref() else {
+        return Text::new("").into();
+    };
+    prompt_overlay(
+        ctx,
+        &format!("Rename pane {}", rename.target),
+        "Pane name, empty clears custom title",
+        &rename.input,
+        rename_input_key(),
+        Msg::RenamePaneChanged,
+        Msg::CloseRenamePane,
+        Msg::SubmitRenamePane,
+    )
 }
 
 pub(crate) fn rename_workspace_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(rename) = ctx.state.rename_workspace.as_ref() else {
         return Text::new("").into();
     };
-    let theme = &ctx.state.theme;
-    let input = Input::bound(&rename.input)
-        .placeholder("Workspace name, empty clears it")
-        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-        .focus_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(theme.surface.element),
-        )
-        .selection_style(theme.text_selection)
-        .width(Length::Flex(1))
-        .on_change(ctx.link().callback(Msg::RenameWorkspaceChanged))
-        .on_key(ctx.link().key_handler(|key| {
-            if key.is(KeyCode::Esc) {
-                Some(Msg::CloseRenameWorkspace)
-            } else if key.code == KeyCode::Enter
-                && !key.mods.ctrl
-                && !key.mods.alt
-                && !key.mods.super_key
-            {
-                Some(Msg::SubmitRenameWorkspace)
-            } else {
-                None
-            }
-        }));
-
-    styled_modal(ctx, &format!("Rename workspace {}", rename.target + 1), 56)
-        .padding((1, 2, 1, 2))
-        .on_close(ctx.link().callback(|_| Msg::CloseRenameWorkspace))
-        .child(input.key(rename_workspace_input_key()))
-        .into()
+    prompt_overlay(
+        ctx,
+        &format!("Rename workspace {}", rename.target + 1),
+        "Workspace name, empty clears it",
+        &rename.input,
+        rename_workspace_input_key(),
+        Msg::RenameWorkspaceChanged,
+        Msg::CloseRenameWorkspace,
+        Msg::SubmitRenameWorkspace,
+    )
 }
 
 pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(rename) = ctx.state.rename_session.as_ref() else {
         return Text::new("").into();
     };
-    let theme = &ctx.state.theme;
-    let input = Input::bound(&rename.input)
-        .placeholder("Session name")
-        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-        .focus_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(theme.surface.element),
-        )
-        .selection_style(theme.text_selection)
-        .width(Length::Flex(1))
-        .on_change(ctx.link().callback(Msg::RenameSessionChanged))
-        .on_key(ctx.link().key_handler(|key| {
-            if key.is(KeyCode::Esc) {
-                Some(Msg::CloseRenameSession)
-            } else if key.code == KeyCode::Enter
-                && !key.mods.ctrl
-                && !key.mods.alt
-                && !key.mods.super_key
-            {
-                Some(Msg::SubmitRenameSession)
-            } else {
-                None
-            }
-        }));
-
-    styled_modal(ctx, "Rename session", 56)
-        .padding((1, 2, 1, 2))
-        .on_close(ctx.link().callback(|_| Msg::CloseRenameSession))
-        .child(input.key(rename_session_input_key()))
-        .into()
+    prompt_overlay(
+        ctx,
+        "Rename session",
+        "Session name",
+        &rename.input,
+        rename_session_input_key(),
+        Msg::RenameSessionChanged,
+        Msg::CloseRenameSession,
+        Msg::SubmitRenameSession,
+    )
 }
 
 pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(prompt) = ctx.state.save_profile_prompt.as_ref() else {
         return Text::new("").into();
     };
-    let theme = &ctx.state.theme;
-    let input = Input::bound(&prompt.input)
-        .placeholder("Profile name")
-        .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
-        .focus_style(
-            Style::new()
-                .fg(theme.border_active)
-                .bg(theme.surface.element),
-        )
-        .selection_style(theme.text_selection)
-        .width(Length::Flex(1))
-        .on_change(ctx.link().callback(Msg::SaveProfileNameChanged))
-        .on_key(ctx.link().key_handler(|key| {
-            if key.is(KeyCode::Esc) {
-                Some(Msg::CloseSaveProfile)
-            } else if key.code == KeyCode::Enter
-                && !key.mods.ctrl
-                && !key.mods.alt
-                && !key.mods.super_key
-            {
-                Some(Msg::SubmitSaveProfile)
-            } else {
-                None
-            }
-        }));
+    prompt_overlay(
+        ctx,
+        "Save profile",
+        "Profile name",
+        &prompt.input,
+        save_profile_key(),
+        Msg::SaveProfileNameChanged,
+        Msg::CloseSaveProfile,
+        Msg::SubmitSaveProfile,
+    )
+}
 
-    styled_modal(ctx, "Save profile", 56)
-        .padding((1, 2, 1, 2))
-        .on_close(ctx.link().callback(|_| Msg::CloseSaveProfile))
-        .child(input.key(save_profile_key()))
-        .into()
+/// Assemble a palette-style overlay: shared modal chrome, a borderless frame, a close handler, and
+/// the overlay's focus key. `content` is the palette itself, or a body wrapping a palette plus a
+/// hint footer.
+fn action_palette(
+    ctx: &Context<HyprmuxApp>,
+    title: &str,
+    key: &'static str,
+    close: Msg,
+    content: impl Into<Element>,
+) -> Element {
+    action_palette_modal(ctx, title)
+        .on_close(ctx.link().callback(move |_| close.clone()))
+        .child(action_palette_frame(content))
+        .key(key)
 }
 
 pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -394,32 +412,23 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .child(profile_picker_palette(ctx, picker))
         .child(profile_picker_hints(ctx));
 
-    action_palette_modal(ctx, "Profiles")
-        .on_close(ctx.link().callback(|_| Msg::CloseProfilePicker))
-        .child(action_palette_frame(body))
-        .key(profile_picker_key())
+    action_palette(
+        ctx,
+        "Profiles",
+        profile_picker_key(),
+        Msg::CloseProfilePicker,
+        body,
+    )
 }
 
 fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    let hint = |label: &str, key: &str| -> Element {
-        HStack::new()
-            .gap(1)
-            .width(Length::Auto)
-            .height(Length::Auto)
-            .child(Text::new(label).style(fg_only(&theme.primary).bold()))
-            .child(Text::new(key).style(fg_only(&theme.muted)))
-            .into()
-    };
-
-    HStack::new()
-        .height(Length::Auto)
-        .padding((1, 1, 0, 1))
+    hint_row()
         .justify(Justify::SpaceBetween)
         .gap(2)
-        .child(hint("open", "enter"))
-        .child(hint("default", "ctrl+f"))
-        .child(hint("delete", "ctrl+d"))
+        .child(hint_pill(theme, "open", "enter"))
+        .child(hint_pill(theme, "default", "ctrl+f"))
+        .child(hint_pill(theme, "delete", "ctrl+d"))
         .into()
 }
 
@@ -455,19 +464,7 @@ fn profile_picker_palette(
 
     let pending_delete = picker.pending_delete;
     let error_bg = theme.status.error;
-    let selection_style = if pending_delete.is_some() {
-        Style::new()
-            .bg(theme.status.error)
-            .fg(readable_text_color(None, error_bg))
-            .bold()
-            .contrast_policy(ContrastPolicy::BlackOrWhite)
-    } else {
-        Style::new()
-            .fg(theme.surface.backdrop)
-            .bg(theme.border_active)
-            .bold()
-            .contrast_policy(ContrastPolicy::BlackOrWhite)
-    };
+    let selection_style = picker_selection_style(theme, pending_delete.is_some());
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -517,6 +514,24 @@ fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     })
 }
 
+/// Selection highlight for the profile/session pickers. While a destructive action is pending
+/// confirmation the selected row turns the error color; otherwise it uses the normal accent.
+fn picker_selection_style(theme: &Theme, pending: bool) -> Style {
+    if pending {
+        Style::new()
+            .bg(theme.status.error)
+            .fg(readable_text_color(None, theme.status.error))
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    } else {
+        Style::new()
+            .fg(theme.surface.backdrop)
+            .bg(theme.border_active)
+            .bold()
+            .contrast_policy(ContrastPolicy::BlackOrWhite)
+    }
+}
+
 fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> ListItem {
     let fg = readable_text_color(None, error_bg);
     ListItem::from_spans(vec![
@@ -536,10 +551,13 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .child(session_picker_palette(ctx, picker))
         .child(session_picker_hints(ctx));
 
-    action_palette_modal(ctx, "Sessions")
-        .on_close(ctx.link().callback(|_| Msg::CloseSessionPicker))
-        .child(action_palette_frame(body))
-        .key(session_picker_key())
+    action_palette(
+        ctx,
+        "Sessions",
+        session_picker_key(),
+        Msg::CloseSessionPicker,
+        body,
+    )
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a
@@ -547,16 +565,6 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 /// non-current session, and `new` only once the query is a valid name that isn't already listed.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    let hint = |label: &str, key: &str| -> Element {
-        HStack::new()
-            .gap(1)
-            .width(Length::Auto)
-            .height(Length::Auto)
-            .child(Text::new(label).style(fg_only(&theme.primary).bold()))
-            .child(Text::new(key).style(fg_only(&theme.muted)))
-            .into()
-    };
-
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
@@ -579,22 +587,18 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         && crate::session::discovery::valid_session_name(query)
         && !picker.entries.iter().any(|entry| entry.name == query);
 
-    let mut row = HStack::new()
-        .height(Length::Auto)
-        .padding((1, 1, 0, 1))
-        .justify(Justify::Start)
-        .gap(3);
+    let mut row = hint_row();
     if selected_actionable {
-        row = row.child(hint("open", "enter"));
+        row = row.child(hint_pill(theme, "open", "enter"));
     }
     if can_new {
-        row = row.child(hint("new", "ctrl+n"));
+        row = row.child(hint_pill(theme, "new", "ctrl+n"));
     }
     if ctx.state.session_attached {
-        row = row.child(hint("detach", "ctrl+d"));
+        row = row.child(hint_pill(theme, "detach", "ctrl+d"));
     }
     if can_kill {
-        row = row.child(hint("kill", "ctrl+k"));
+        row = row.child(hint_pill(theme, "kill", "ctrl+k"));
     }
     row.into()
 }
@@ -639,19 +643,7 @@ fn session_picker_palette(
 
     let pending_kill = picker.pending_kill.map(|pending| pending.index);
     let error_bg = theme.status.error;
-    let selection_style = if pending_kill.is_some() {
-        Style::new()
-            .bg(theme.status.error)
-            .fg(readable_text_color(None, error_bg))
-            .bold()
-            .contrast_policy(ContrastPolicy::BlackOrWhite)
-    } else {
-        Style::new()
-            .fg(theme.surface.backdrop)
-            .bg(theme.border_active)
-            .bold()
-            .contrast_policy(ContrastPolicy::BlackOrWhite)
-    };
+    let selection_style = picker_selection_style(theme, pending_kill.is_some());
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -752,10 +744,7 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     }
     let palette = action_search_palette(ctx, entries, "Search commands…");
 
-    action_palette_modal(ctx, "Commands")
-        .on_close(ctx.link().callback(|_| Msg::ClosePalette))
-        .child(action_palette_frame(palette))
-        .key(palette_key())
+    action_palette(ctx, "Commands", palette_key(), Msg::ClosePalette, palette)
 }
 
 fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
@@ -873,10 +862,13 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             Msg::AppearanceActivate(event.item.value)
         }));
 
-    action_palette_modal(ctx, "Change appearance")
-        .on_close(ctx.link().callback(|_| Msg::CloseAppearance))
-        .child(action_palette_frame(palette))
-        .key(appearance_palette_key())
+    action_palette(
+        ctx,
+        "Change appearance",
+        appearance_palette_key(),
+        Msg::CloseAppearance,
+        palette,
+    )
 }
 
 fn appearance_entry(
@@ -950,10 +942,13 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .callback(|event: SearchEvent<usize>| Msg::SelectTheme(event.item.value)),
         );
 
-    action_palette_modal(ctx, "Change theme")
-        .on_close(ctx.link().callback(|_| Msg::CloseThemePicker))
-        .child(action_palette_frame(palette))
-        .key(theme_picker_key())
+    action_palette(
+        ctx,
+        "Change theme",
+        theme_picker_key(),
+        Msg::CloseThemePicker,
+        palette,
+    )
 }
 
 fn help_section(title: &str, theme: &Theme, spaced: bool) -> Element {

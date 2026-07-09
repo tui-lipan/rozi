@@ -624,7 +624,16 @@ pub struct SessionPickerState {
     pub entries: Vec<DiscoveredSession>,
     pub input: TextInput,
     pub selected: usize,
-    pub pending_kill: Option<usize>,
+    pub pending_kill: Option<PendingKill>,
+}
+
+/// A session-picker entry awaiting a second Ctrl+K to confirm its kill. The `toast_id` ties the
+/// "press again" confirmation toast to the armed state so the toast is dismissed the moment the
+/// kill runs or the arming is abandoned, rather than lingering for its full duration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingKill {
+    pub index: usize,
+    pub toast_id: OverlayId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

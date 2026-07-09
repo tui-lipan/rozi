@@ -258,16 +258,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SessionPickerQueryChanged(query) => {
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.input.set_text(query);
-                picker.pending_kill = None;
             }
+            crate::session_ops::clear_pending_kill(ctx);
             Update::full()
         }
         Msg::SessionPickerSelect(index) => {
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.selected = index.min(picker.entries.len().saturating_sub(1));
-                if picker.pending_kill != Some(index) {
-                    picker.pending_kill = None;
-                }
+            }
+            // Moving the highlight off the armed row cancels its kill confirmation (and dismisses
+            // the toast); staying on it keeps the arming alive for a confirming second press.
+            let moved_off_armed = ctx.state.session_picker.as_ref().is_some_and(|picker| {
+                picker
+                    .pending_kill
+                    .is_some_and(|pending| pending.index != picker.selected)
+            });
+            if moved_off_armed {
+                crate::session_ops::clear_pending_kill(ctx);
             }
             Update::full()
         }

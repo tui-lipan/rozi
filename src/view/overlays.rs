@@ -644,7 +644,7 @@ fn session_picker_palette(
         format!("No sessions match `{query}` - Ctrl+N creates it")
     };
 
-    let pending_kill = picker.pending_kill;
+    let pending_kill = picker.pending_kill.map(|pending| pending.index);
     let error_bg = theme.status.error;
     let selection_style = if pending_kill.is_some() {
         Style::new()

@@ -7,8 +7,27 @@ use crate::focus_ops::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
 };
 use crate::session::discovery::DiscoveredSession;
-use crate::state::{SessionPickerState, SessionRenameState};
-use crate::{HyprmuxApp, pty_events::info_toast};
+use crate::state::{PendingKill, SessionPickerState, SessionRenameState};
+use crate::{
+    HyprmuxApp,
+    pty_events::{confirm_toast, info_toast},
+};
+
+/// Clear any armed session-picker kill and dismiss its confirmation toast. Called from every path
+/// that abandons or resolves the arming (a confirmed kill, moving off the row, editing the query,
+/// refreshing, closing, or switching sessions) so the "press again" toast never outlives the
+/// confirmation. A no-op when nothing is armed.
+pub(crate) fn clear_pending_kill(ctx: &mut Context<HyprmuxApp>) {
+    let toast_id = ctx
+        .state
+        .session_picker
+        .as_mut()
+        .and_then(|picker| picker.pending_kill.take())
+        .map(|pending| pending.toast_id);
+    if let Some(toast_id) = toast_id {
+        ctx.toast().dismiss(toast_id);
+    }
+}
 
 /// Cadence for the off-thread auto-refresh that keeps the open session picker current (sessions
 /// appearing/disappearing from other UIs) without a manual refresh key.
@@ -96,12 +115,14 @@ pub(crate) fn apply_discovered_sessions(
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.entries = rows;
         picker.selected = picker.selected.min(picker.entries.len().saturating_sub(1));
-        if picker
+    }
+    let armed_out_of_range = ctx.state.session_picker.as_ref().is_some_and(|picker| {
+        picker
             .pending_kill
-            .is_some_and(|index| index >= picker.entries.len())
-        {
-            picker.pending_kill = None;
-        }
+            .is_some_and(|pending| pending.index >= picker.entries.len())
+    });
+    if armed_out_of_range {
+        clear_pending_kill(ctx);
     }
     Update::with_command(session_watch_command(epoch, ctx.state.session_name.clone()))
 }
@@ -177,6 +198,7 @@ pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
 /// working terminal. A named session stays parked for reattach; an ephemeral one is shut down (it
 /// is disposable), which is equivalent to starting a brand-new unnamed session.
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_kill(ctx);
     if !ctx.state.session_attached {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Not attached to a session"));
@@ -285,6 +307,7 @@ pub(crate) fn attach_session_by_name(
 }
 
 pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    clear_pending_kill(ctx);
     let Some(entry) = ctx
         .state
         .session_picker
@@ -339,6 +362,7 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
 /// startup picker being dismissed with nothing attached, fall back to attaching an ephemeral session
 /// so the launch is never stranded without a terminal.
 pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_kill(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
@@ -353,6 +377,7 @@ pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_kill(ctx);
     let name = ctx
         .state
         .session_picker
@@ -482,16 +507,19 @@ pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(picker) = ctx.state.session_picker.as_mut() else {
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Update::full();
     };
     let index = picker.selected.min(picker.entries.len().saturating_sub(1));
     let Some(entry) = picker.entries.get(index).cloned() else {
         return Update::full();
     };
+    let armed = picker
+        .pending_kill
+        .is_some_and(|pending| pending.index == index);
     // The synthetic "new ephemeral session" row is not a real session and cannot be killed.
     if entry.synthetic {
-        picker.pending_kill = None;
+        clear_pending_kill(ctx);
         return Update::full();
     }
     // The current session may be ephemeral (shown as "unnamed"); keep the toast label in sync.
@@ -500,15 +528,20 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     } else {
         entry.name.clone()
     };
-    if picker.pending_kill != Some(index) {
-        picker.pending_kill = Some(index);
-        ctx.toast().push(info_toast(
+    if !armed {
+        // First press arms the kill: drop any stale arming, then track the confirm toast's id so
+        // it can be dismissed the moment the kill runs or the arming is abandoned.
+        clear_pending_kill(ctx);
+        let toast_id = ctx.toast().push(confirm_toast(
             &ctx.state.theme,
             format!("Press Ctrl+K again to kill `{display}`"),
         ));
+        if let Some(picker) = ctx.state.session_picker.as_mut() {
+            picker.pending_kill = Some(PendingKill { index, toast_id });
+        }
         return Update::full();
     }
-    picker.pending_kill = None;
+    clear_pending_kill(ctx);
     // Killing the session you're attached to is fine: shut its server down and hop the UI onto a
     // fresh ephemeral session rather than quitting the client.
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(entry.name.as_str())

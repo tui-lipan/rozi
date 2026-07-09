@@ -19,7 +19,7 @@ could not be read or parsed.
 
 hyprmux watches the config file and applies every save live - config fields, `[keys]`
 bindings/user commands, theme (including switching which file the theme watcher follows), and
-bar segments - without touching running panes, workspaces, or the active session. A parse
+workbar segments - without touching running panes, workspaces, or the active session. A parse
 failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
 save again. Changes hyprmux persists itself (theme selection, appearance toggles, the default
 profile) are already applied and don't trigger a reload.
@@ -102,7 +102,7 @@ command = "btop"             # default: the normal shell
 cwd = "~"                    # default: the configured cwd
 height = 0.4                 # fraction of the viewport height, 0.1–0.9 (default: 0.4)
 
-[bar]
+[workbar]
 left = ["title", "workspaces"]   # default
 right = ["session", "clock"]      # default: empty
 clock_format = "%H:%M"            # strftime, only used by a clock segment
@@ -157,10 +157,10 @@ Pane focus and chrome behavior.
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
-| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the bar. The palette/appearance toggle writes this back to config. |
+| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The palette/appearance toggle writes this back to config. |
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
 | `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the bar. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
 
 ## `[animations]`
 
@@ -290,9 +290,9 @@ The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
 | `cwd` | the configured `cwd` | Working directory for the scratchpad shell. |
 | `height` | `0.4` | Fraction of the viewport height; clamped to `0.1`–`0.9`. |
 
-## `[bar]`
+## `[workbar]`
 
-Customize the workbar. The default reproduces the original bar (the `hyprmux` badge then the
+Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge then the
 workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_workbar` is
 enabled.
 
@@ -307,7 +307,7 @@ session name), `clock`, `layout` (active workspace layout name), `text:<literal>
 `{host}`, `{workspace}`, `{layout}`, `{session}` placeholders, and `command:<shell command>` /
 `command:<interval_secs>:<shell command>` to run a shell command on a timer and show the first
 line of its stdout. Unknown segment names emit a warning and are skipped. A `clock` segment
-enables a once-a-second repaint; without one the bar never wakes an idle app.
+enables a once-a-second repaint; without one the workbar never wakes an idle app.
 
 A `command` segment runs through `$SHELL -c` on a background thread (never the UI thread) and
 refreshes every `interval_secs` (default `60`, minimum `1`); a failing command or one with no
@@ -315,7 +315,7 @@ output renders as blank rather than an error. The same command string reuses one
 it appears in multiple segments.
 
 ```toml
-[bar]
+[workbar]
 right = ["command:30:uptime -p", "session"]
 ```
 

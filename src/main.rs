@@ -113,11 +113,11 @@ pub enum Msg {
     /// Index into [`config::theme_choices`]: commit the chosen theme.
     SelectTheme(usize),
     ThemeTick,
-    BarTick,
+    WorkbarTick,
     /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
-    /// A `BarSegment::Command` poller produced fresh output: (command string, first output line).
-    BarCommandOutput(String, String),
+    /// A `WorkbarSegment::Command` poller produced fresh output: (command string, first output line).
+    WorkbarCommandOutput(String, String),
     ThemeError(String),
     CloseSearch,
     SearchQueryChanged(String),
@@ -289,9 +289,10 @@ impl Component for HyprmuxApp {
         // session exists, so nothing is attached until the user chooses.
         let control_listener = self.control_listener.take();
         let theme_tick = ctx.state.theme_watcher.is_some();
-        let bar_tick = ctx.state.config.bar.has_clock();
-        let bar_commands = ctx.state.config.bar.command_specs();
-        ctx.state.bar_commands_running = bar_commands.iter().map(|(c, _)| c.clone()).collect();
+        let workbar_tick = ctx.state.config.workbar.has_clock();
+        let workbar_commands = ctx.state.config.workbar.command_specs();
+        ctx.state.workbar_commands_running =
+            workbar_commands.iter().map(|(c, _)| c.clone()).collect();
 
         let start = if self.want_startup_picker && has_named_session() {
             let epoch = session_ops::open_startup_session_picker(ctx);
@@ -342,10 +343,10 @@ impl Component for HyprmuxApp {
                 std::thread::sleep(std::time::Duration::from_millis(150));
                 link.send(Msg::ThemeTick);
             }
-            if bar_tick {
-                link.send(Msg::BarTick);
+            if workbar_tick {
+                link.send(Msg::WorkbarTick);
             }
-            pane_lifecycle::spawn_bar_command_pollers(bar_commands, &link);
+            pane_lifecycle::spawn_workbar_command_pollers(workbar_commands, &link);
         }))
     }
 
@@ -731,11 +732,11 @@ pub(crate) fn schedule_theme_tick() -> Command {
 }
 
 /// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
-/// segment is present, so an idle app with the default bar never wakes for this.
-pub(crate) fn schedule_bar_tick() -> Command {
+/// segment is present, so an idle app with the default workbar never wakes for this.
+pub(crate) fn schedule_workbar_tick() -> Command {
     Command::spawn(move |link: CommandLink<Msg>| {
         std::thread::sleep(Duration::from_secs(1));
-        link.send(Msg::BarTick);
+        link.send(Msg::WorkbarTick);
     })
 }
 

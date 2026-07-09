@@ -887,14 +887,14 @@ pub struct State {
     /// time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
     pub last_pushed_layout: Option<String>,
-    /// Cached first-line stdout for each configured `BarSegment::Command`, keyed by the raw
+    /// Cached first-line stdout for each configured `WorkbarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run
     /// completes.
-    pub bar_command_output: HashMap<String, String>,
+    pub workbar_command_output: HashMap<String, String>,
     /// Commands that already have a background poller thread running (see
-    /// [`crate::pane_lifecycle::spawn_bar_command_pollers`]). A config reload spawns pollers
+    /// [`crate::pane_lifecycle::spawn_workbar_command_pollers`]). A config reload spawns pollers
     /// only for commands newly added by the reload, since existing pollers never stop.
-    pub bar_commands_running: HashSet<String>,
+    pub workbar_commands_running: HashSet<String>,
     /// Set whenever something `crate::commands::sync` needs to see (shortcuts, dynamic labels,
     /// or the `commands_active` gate) may have changed. Checked once per message at the tail of
     /// `update::handle_msg` rather than resyncing unconditionally, since high-frequency messages
@@ -1007,8 +1007,8 @@ impl State {
             pending_spawns: Vec::new(),
             pending_destructive: None,
             last_pushed_layout: None,
-            bar_command_output: HashMap::new(),
-            bar_commands_running: HashSet::new(),
+            workbar_command_output: HashMap::new(),
+            workbar_commands_running: HashSet::new(),
             commands_dirty: false,
         }
     }
@@ -1029,7 +1029,7 @@ impl State {
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether
-    /// the bar sits at the top or the bottom - either way it consumes the same one row.
+    /// the workbar sits at the top or the bottom - either way it consumes the same one row.
     pub fn top_chrome_height(&self) -> u16 {
         if self.config.pane.show_workbar {
             WORKBAR_HEIGHT
@@ -1038,9 +1038,10 @@ impl State {
         }
     }
 
-    /// Row offset of the panes area from the top of the viewport: the workbar height when the bar
-    /// sits above the panes, and 0 when it sits below them (the panes start at the first row and
-    /// the bar is drawn on the last row). Used to translate between root and canvas-local space.
+    /// Row offset of the panes area from the top of the viewport: the workbar height when the
+    /// workbar sits above the panes, and 0 when it sits below them (the panes start at the first
+    /// row and the workbar is drawn on the last row). Used to translate between root and
+    /// canvas-local space.
     pub fn content_top_offset(&self) -> u16 {
         if self.config.pane.show_workbar && !self.config.pane.workbar_at_bottom {
             WORKBAR_HEIGHT
@@ -1050,8 +1051,9 @@ impl State {
     }
 
     /// Signed inset (in cells) that keeps the panes clear of the workbar. Positive insets the top
-    /// edge of the tile area (bar above the panes); negative insets the bottom edge (bar below the
-    /// panes), so the gap always lands between the panes and the bar. Zero when there is no gap.
+    /// edge of the tile area (workbar above the panes); negative insets the bottom edge (workbar
+    /// below the panes), so the gap always lands between the panes and the workbar. Zero when
+    /// there is no gap.
     pub fn workspace_top_gap(&self) -> f32 {
         if self.config.pane.show_workbar && self.config.pane.workbar_gap {
             if self.config.pane.workbar_at_bottom {

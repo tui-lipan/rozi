@@ -342,7 +342,7 @@ pub struct HyprmuxConfig {
     pub navigation: HyprmuxNavigationConfig,
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
-    pub bar: BarConfig,
+    pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
     /// present with an empty list is an explicit unbind; an id absent here uses the built-in
     /// defaults (see `crate::commands`).
@@ -422,22 +422,22 @@ impl Default for HyprmuxConfig {
             navigation: HyprmuxNavigationConfig::default(),
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
-            bar: BarConfig::default(),
+            workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),
             user_commands: Vec::new(),
         }
     }
 }
 
-/// Default refresh interval for a `command:` bar segment that doesn't specify one.
-pub const DEFAULT_BAR_COMMAND_INTERVAL_SECS: u64 = 60;
+/// Default refresh interval for a `command:` workbar segment that doesn't specify one.
+pub const DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS: u64 = 60;
 
 /// One segment of the configurable workbar. `Workspaces` is the workspace tab strip;
 /// `Session` is the live attach-connection badge (invisible until attached to a named session);
 /// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders;
 /// `Command` runs a shell command on a timer and shows the first line of its stdout.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BarSegment {
+pub enum WorkbarSegment {
     Title,
     Workspaces,
     Session,
@@ -448,7 +448,7 @@ pub enum BarSegment {
     Command { command: String, interval_secs: u64 },
 }
 
-impl BarSegment {
+impl WorkbarSegment {
     pub fn parse(value: &str) -> Option<Self> {
         let value = value.trim();
         if let Some(literal) = value.strip_prefix("text:") {
@@ -482,7 +482,7 @@ impl BarSegment {
         }
         Self::Command {
             command: rest.to_string(),
-            interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
+            interval_secs: DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS,
         }
     }
 
@@ -492,33 +492,33 @@ impl BarSegment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BarConfig {
-    pub left: Vec<BarSegment>,
-    pub right: Vec<BarSegment>,
+pub struct WorkbarConfig {
+    pub left: Vec<WorkbarSegment>,
+    pub right: Vec<WorkbarSegment>,
     pub clock_format: String,
 }
 
-impl Default for BarConfig {
+impl Default for WorkbarConfig {
     fn default() -> Self {
         // Badge + workspace tabs on the left; the session badge sits on the right but stays
         // invisible until an attach connection exists, so local mode looks unchanged.
         Self {
-            left: vec![BarSegment::Title, BarSegment::Workspaces],
-            right: vec![BarSegment::Session],
+            left: vec![WorkbarSegment::Title, WorkbarSegment::Workspaces],
+            right: vec![WorkbarSegment::Session],
             clock_format: "%H:%M".to_string(),
         }
     }
 }
 
-impl BarConfig {
+impl WorkbarConfig {
     pub fn has_clock(&self) -> bool {
         self.left
             .iter()
             .chain(self.right.iter())
-            .any(BarSegment::is_clock)
+            .any(WorkbarSegment::is_clock)
     }
 
-    /// Unique `(command, interval_secs)` pairs across both bar sides, one background poller
+    /// Unique `(command, interval_secs)` pairs across both workbar sides, one background poller
     /// per distinct command string even if it appears in multiple segments.
     pub fn command_specs(&self) -> Vec<(String, u64)> {
         let mut seen = std::collections::HashSet::new();
@@ -526,7 +526,7 @@ impl BarConfig {
             .iter()
             .chain(self.right.iter())
             .filter_map(|segment| match segment {
-                BarSegment::Command {
+                WorkbarSegment::Command {
                     command,
                     interval_secs,
                 } => Some((command.clone(), *interval_secs)),
@@ -562,7 +562,7 @@ struct FileConfig {
     navigation: NavigationFileConfig,
     confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
-    bar: BarFileConfig,
+    workbar: WorkbarFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
 }
 
@@ -612,7 +612,7 @@ struct ScratchpadFileConfig {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
-struct BarFileConfig {
+struct WorkbarFileConfig {
     left: Option<Vec<String>>,
     right: Option<Vec<String>>,
     clock_format: Option<String>,
@@ -1155,31 +1155,31 @@ mod tests {
     }
 
     #[test]
-    fn bar_segment_parses_builtins_and_text_literals() {
-        assert_eq!(BarSegment::parse("clock"), Some(BarSegment::Clock));
+    fn workbar_segment_parses_builtins_and_text_literals() {
+        assert_eq!(WorkbarSegment::parse("clock"), Some(WorkbarSegment::Clock));
         assert_eq!(
-            BarSegment::parse("Workspaces"),
-            Some(BarSegment::Workspaces)
+            WorkbarSegment::parse("Workspaces"),
+            Some(WorkbarSegment::Workspaces)
         );
         assert_eq!(
-            BarSegment::parse("text:hi {host}"),
-            Some(BarSegment::Text("hi {host}".to_string()))
+            WorkbarSegment::parse("text:hi {host}"),
+            Some(WorkbarSegment::Text("hi {host}".to_string()))
         );
-        assert_eq!(BarSegment::parse("bogus"), None);
+        assert_eq!(WorkbarSegment::parse("bogus"), None);
     }
 
     #[test]
-    fn bar_segment_parses_command_with_and_without_interval() {
+    fn workbar_segment_parses_command_with_and_without_interval() {
         assert_eq!(
-            BarSegment::parse("command:uptime -p"),
-            Some(BarSegment::Command {
+            WorkbarSegment::parse("command:uptime -p"),
+            Some(WorkbarSegment::Command {
                 command: "uptime -p".to_string(),
-                interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
+                interval_secs: DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS,
             })
         );
         assert_eq!(
-            BarSegment::parse("command:5:uptime -p"),
-            Some(BarSegment::Command {
+            WorkbarSegment::parse("command:5:uptime -p"),
+            Some(WorkbarSegment::Command {
                 command: "uptime -p".to_string(),
                 interval_secs: 5,
             })
@@ -1187,40 +1187,43 @@ mod tests {
         // A command containing colons but no valid leading integer keeps the default interval
         // and the whole remainder as the command.
         assert_eq!(
-            BarSegment::parse("command:echo 12:34"),
-            Some(BarSegment::Command {
+            WorkbarSegment::parse("command:echo 12:34"),
+            Some(WorkbarSegment::Command {
                 command: "echo 12:34".to_string(),
-                interval_secs: DEFAULT_BAR_COMMAND_INTERVAL_SECS,
+                interval_secs: DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS,
             })
         );
     }
 
     #[test]
-    fn bar_config_default_matches_current_layout() {
-        let bar = BarConfig::default();
-        assert_eq!(bar.left, vec![BarSegment::Title, BarSegment::Workspaces]);
-        assert_eq!(bar.right, vec![BarSegment::Session]);
-        assert!(!bar.has_clock());
-        assert_eq!(bar.clock_format, "%H:%M");
-        assert!(bar.command_specs().is_empty());
+    fn workbar_config_default_matches_current_layout() {
+        let workbar = WorkbarConfig::default();
+        assert_eq!(
+            workbar.left,
+            vec![WorkbarSegment::Title, WorkbarSegment::Workspaces]
+        );
+        assert_eq!(workbar.right, vec![WorkbarSegment::Session]);
+        assert!(!workbar.has_clock());
+        assert_eq!(workbar.clock_format, "%H:%M");
+        assert!(workbar.command_specs().is_empty());
     }
 
     #[test]
-    fn bar_config_command_specs_dedups_by_command_string() {
-        let mut bar = BarConfig::default();
-        bar.left.push(BarSegment::Command {
+    fn workbar_config_command_specs_dedups_by_command_string() {
+        let mut workbar = WorkbarConfig::default();
+        workbar.left.push(WorkbarSegment::Command {
             command: "uptime -p".to_string(),
             interval_secs: 10,
         });
-        bar.right.push(BarSegment::Command {
+        workbar.right.push(WorkbarSegment::Command {
             command: "uptime -p".to_string(),
             interval_secs: 30,
         });
-        bar.right.push(BarSegment::Command {
+        workbar.right.push(WorkbarSegment::Command {
             command: "whoami".to_string(),
             interval_secs: 5,
         });
-        let specs = bar.command_specs();
+        let specs = workbar.command_specs();
         assert_eq!(
             specs,
             vec![("uptime -p".to_string(), 10), ("whoami".to_string(), 5),]
@@ -1453,7 +1456,7 @@ pub fn load_config() -> LoadedConfig {
         config.scratchpad.height = clamped;
     }
 
-    apply_bar_config(&mut config.bar, parsed.bar, &mut warnings);
+    apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
     config.user_commands = user_commands;
@@ -2024,17 +2027,23 @@ fn bind_user_command(
     user_commands.push(UserCommand { action, binding });
 }
 
-fn apply_bar_config(bar: &mut BarConfig, raw: BarFileConfig, warnings: &mut Vec<String>) {
+fn apply_workbar_config(
+    workbar: &mut WorkbarConfig,
+    raw: WorkbarFileConfig,
+    warnings: &mut Vec<String>,
+) {
     fn parse_segments(
         raw: Vec<String>,
         region: &str,
         warnings: &mut Vec<String>,
-    ) -> Vec<BarSegment> {
+    ) -> Vec<WorkbarSegment> {
         raw.into_iter()
-            .filter_map(|name| match BarSegment::parse(&name) {
+            .filter_map(|name| match WorkbarSegment::parse(&name) {
                 Some(segment) => Some(segment),
                 None => {
-                    warnings.push(format!("Unknown {region} bar segment `{name}`; skipped"));
+                    warnings.push(format!(
+                        "Unknown {region} workbar segment `{name}`; skipped"
+                    ));
                     None
                 }
             })
@@ -2042,19 +2051,19 @@ fn apply_bar_config(bar: &mut BarConfig, raw: BarFileConfig, warnings: &mut Vec<
     }
 
     if let Some(left) = raw.left {
-        bar.left = parse_segments(left, "left", warnings);
+        workbar.left = parse_segments(left, "left", warnings);
     }
     if let Some(right) = raw.right {
-        bar.right = parse_segments(right, "right", warnings);
+        workbar.right = parse_segments(right, "right", warnings);
     }
     if let Some(format) = non_empty(raw.clock_format) {
         // Reject invalid strftime so a clock segment can't panic at render time.
         if chrono::format::StrftimeItems::new(&format).parse().is_ok() {
-            bar.clock_format = format;
+            workbar.clock_format = format;
         } else {
             warnings.push(format!(
                 "Invalid clock_format `{format}`; keeping `{}`",
-                bar.clock_format
+                workbar.clock_format
             ));
         }
     }

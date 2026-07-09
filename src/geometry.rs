@@ -33,7 +33,8 @@ pub fn empty_workspace_rect(bounds: FloatRect) -> FloatRect {
 
 pub fn workspace_tile_bounds(bounds: FloatRect, gap: f32) -> FloatRect {
     // A positive gap insets the top edge (workbar above the panes); a negative gap insets the
-    // bottom edge (workbar below the panes) so the empty gap row always lands next to the bar.
+    // bottom edge (workbar below the panes) so the empty gap row always lands next to the
+    // workbar.
     let inset = gap.abs().min(bounds.h / 2.0);
     let y = if gap < 0.0 {
         bounds.y

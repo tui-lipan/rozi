@@ -271,7 +271,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     ));
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
-    // The theme-tick, bar-tick, and bar-command loops started at app launch are
+    // The theme-tick, workbar-tick, and workbar-command loops started at app launch are
     // self-sustaining and survive the state swap, so don't restart them here.
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));

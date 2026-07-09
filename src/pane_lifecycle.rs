@@ -285,23 +285,26 @@ fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
 /// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
 /// command, sends its output, sleeps, and repeats for the life of the app - the same
 /// fire-and-forget pattern as the PTY read threads.
-pub(crate) fn spawn_bar_command_pollers(bar_commands: Vec<(String, u64)>, link: &CommandLink<Msg>) {
-    for (command, interval_secs) in bar_commands {
+pub(crate) fn spawn_workbar_command_pollers(
+    workbar_commands: Vec<(String, u64)>,
+    link: &CommandLink<Msg>,
+) {
+    for (command, interval_secs) in workbar_commands {
         let poller_link = link.clone();
         std::thread::spawn(move || {
             loop {
-                let output = run_bar_command(&command);
-                poller_link.send(Msg::BarCommandOutput(command.clone(), output));
+                let output = run_workbar_command(&command);
+                poller_link.send(Msg::WorkbarCommandOutput(command.clone(), output));
                 std::thread::sleep(Duration::from_secs(interval_secs.max(1)));
             }
         });
     }
 }
 
-/// Runs a `command:` bar segment's shell command through the user's shell and returns the
+/// Runs a `command:` workbar segment's shell command through the user's shell and returns the
 /// first line of stdout, trimmed. Failures (missing shell, non-zero exit, no output) collapse
-/// to an empty string rather than surfacing an error in the bar.
-fn run_bar_command(command: &str) -> String {
+/// to an empty string rather than surfacing an error in the workbar.
+fn run_workbar_command(command: &str) -> String {
     let shell = std::env::var("SHELL")
         .ok()
         .filter(|value| !value.trim().is_empty())

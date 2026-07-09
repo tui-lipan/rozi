@@ -135,16 +135,16 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SelectTheme(index) => select_theme(ctx, index),
         Msg::ThemeTick => theme_tick(ctx),
         Msg::ConfigFileChanged => crate::config_ops::config_file_changed(ctx),
-        Msg::BarTick => {
+        Msg::WorkbarTick => {
             // Repaint for the clock, then reschedule only while a clock segment is configured.
-            if ctx.state.config.bar.has_clock() {
-                Update::with_command(crate::schedule_bar_tick())
+            if ctx.state.config.workbar.has_clock() {
+                Update::with_command(crate::schedule_workbar_tick())
             } else {
                 Update::none()
             }
         }
-        Msg::BarCommandOutput(command, output) => {
-            ctx.state.bar_command_output.insert(command, output);
+        Msg::WorkbarCommandOutput(command, output) => {
+            ctx.state.workbar_command_output.insert(command, output);
             Update::full()
         }
         Msg::ThemeError(message) => {

@@ -13,7 +13,7 @@ use crate::{HyprmuxApp, Msg};
 /// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
 /// that save via write-to-temp + rename; hyprmux's own persistence writes are filtered out in
 /// the `Msg::ConfigFileChanged` handler by comparing against the last text this process read
-/// or wrote. Fire-and-forget for the life of the app, like the bar-command pollers.
+/// or wrote. Fire-and-forget for the life of the app, like the workbar-command pollers.
 pub(crate) fn spawn_config_watcher(link: &CommandLink<Msg>) {
     let link = link.clone();
     std::thread::spawn(move || {
@@ -117,21 +117,21 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
     ctx.state.theme = resolved.theme;
 
-    // The bar-command poller loop never stops itself, so only spawn one for commands that
+    // The workbar-command poller loop never stops itself, so only spawn one for commands that
     // aren't already running rather than restarting everything on every reload.
-    let new_bar_commands: Vec<(String, u64)> = new_config
-        .bar
+    let new_workbar_commands: Vec<(String, u64)> = new_config
+        .workbar
         .command_specs()
         .into_iter()
-        .filter(|(command, _)| !ctx.state.bar_commands_running.contains(command))
+        .filter(|(command, _)| !ctx.state.workbar_commands_running.contains(command))
         .collect();
-    for (command, _) in &new_bar_commands {
-        ctx.state.bar_commands_running.insert(command.clone());
+    for (command, _) in &new_workbar_commands {
+        ctx.state.workbar_commands_running.insert(command.clone());
     }
     // Same trick for the clock repaint loop: it reschedules itself only while a clock segment
     // is configured, so it needs a kick here exactly when it wasn't already running.
-    let had_bar_tick = ctx.state.config.bar.has_clock();
-    let start_bar_tick = !had_bar_tick && new_config.bar.has_clock();
+    let had_workbar_tick = ctx.state.config.workbar.has_clock();
+    let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
     ctx.state.config = new_config;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
@@ -150,16 +150,16 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
     }
 
-    if start_theme_tick || start_bar_tick || !new_bar_commands.is_empty() {
+    if start_theme_tick || start_workbar_tick || !new_workbar_commands.is_empty() {
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
                 std::thread::sleep(Duration::from_millis(150));
                 link.send(Msg::ThemeTick);
             }
-            if start_bar_tick {
-                link.send(Msg::BarTick);
+            if start_workbar_tick {
+                link.send(Msg::WorkbarTick);
             }
-            crate::pane_lifecycle::spawn_bar_command_pollers(new_bar_commands, &link);
+            crate::pane_lifecycle::spawn_workbar_command_pollers(new_workbar_commands, &link);
         }))
     } else {
         Update::full()

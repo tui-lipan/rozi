@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::config::{BarSegment, InputConfig};
+use crate::config::{InputConfig, WorkbarSegment};
 use crate::input::Action;
 use crate::state::Mode;
 use crate::{HyprmuxApp, Msg};
@@ -8,38 +8,38 @@ use crate::{HyprmuxApp, Msg};
 pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> HStack {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
-    let bar = &state.config.bar;
+    let workbar_cfg = &state.config.workbar;
 
     let mut row = HStack::new()
         .gap(1)
         .height(Length::Px(1))
         .style(Style::new().bg(theme.surface.panel));
 
-    for segment in &bar.left {
-        if let Some(element) = bar_segment_element(ctx, segment) {
+    for segment in &workbar_cfg.left {
+        if let Some(element) = workbar_segment_element(ctx, segment) {
             row = row.child(element);
         }
     }
 
     // The workspace tabs already flex to fill slack; without them, insert a spacer so the
     // right region lands flush against the trailing edge.
-    let has_workspaces = bar
+    let has_workspaces = workbar_cfg
         .left
         .iter()
-        .chain(bar.right.iter())
-        .any(|segment| matches!(segment, BarSegment::Workspaces));
+        .chain(workbar_cfg.right.iter())
+        .any(|segment| matches!(segment, WorkbarSegment::Workspaces));
     if !has_workspaces {
         row = row.child(Text::new("").width(Length::Flex(1)).height(Length::Px(1)));
     }
 
-    for segment in &bar.right {
-        if let Some(element) = bar_segment_element(ctx, segment) {
+    for segment in &workbar_cfg.right {
+        if let Some(element) = workbar_segment_element(ctx, segment) {
             row = row.child(element);
         }
     }
 
     // Mode chips sit at the trailing edge, so they take a left cap (the title chip at the leading
-    // edge takes a right cap instead - see `bar_segment_element`).
+    // edge takes a right cap instead - see `workbar_segment_element`).
     let left_cap = ctx
         .state
         .config
@@ -95,7 +95,8 @@ enum BadgeCap {
 /// end cap. The cap is drawn in the badge color over the panel background so the chip reads as a
 /// rounded/pointed pill; without a cap the chip is the plain flush block. Every element sizes to
 /// content (`Length::Auto`) so a chip only ever occupies its own width - stacks default to
-/// `Flex(1)`, which would otherwise let a capped chip swallow the whole bar and break placement.
+/// `Flex(1)`, which would otherwise let a capped chip swallow the whole workbar and break
+/// placement.
 fn workbar_badge(
     label: &str,
     text_fg: Color,
@@ -134,10 +135,10 @@ fn workbar_badge(
     .into()
 }
 
-fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Option<Element> {
+fn workbar_segment_element(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<Element> {
     let theme = &ctx.state.theme;
     match segment {
-        BarSegment::Title => Some(workbar_badge(
+        WorkbarSegment::Title => Some(workbar_badge(
             " hyprmux ",
             theme.surface.backdrop,
             theme.border_active,
@@ -150,16 +151,16 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
                 .map(|c| c.1),
             BadgeCap::Right,
         )),
-        BarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
-        BarSegment::Session => session_indicator(ctx),
-        BarSegment::Clock => {
+        WorkbarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
+        WorkbarSegment::Session => session_indicator(ctx),
+        WorkbarSegment::Clock => {
             let now = chrono::Local::now();
-            Some(bar_text(
-                format!(" {} ", now.format(&ctx.state.config.bar.clock_format)),
+            Some(workbar_text(
+                format!(" {} ", now.format(&ctx.state.config.workbar.clock_format)),
                 theme,
             ))
         }
-        BarSegment::Layout => Some(bar_text(
+        WorkbarSegment::Layout => Some(workbar_text(
             format!(
                 " {} ",
                 ctx.state.workspaces[ctx.state.active_workspace]
@@ -168,7 +169,7 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
             ),
             theme,
         )),
-        BarSegment::Activity => {
+        WorkbarSegment::Activity => {
             let count = ctx
                 .state
                 .workspaces
@@ -176,22 +177,24 @@ fn bar_segment_element(ctx: &Context<HyprmuxApp>, segment: &BarSegment) -> Optio
                 .flat_map(|ws| ws.panes.iter())
                 .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
                 .count();
-            (count > 0).then(|| bar_text(format!(" ●{count} "), theme))
+            (count > 0).then(|| workbar_text(format!(" ●{count} "), theme))
         }
-        BarSegment::Text(literal) => Some(bar_text(substitute_placeholders(ctx, literal), theme)),
-        BarSegment::Command { command, .. } => {
+        WorkbarSegment::Text(literal) => {
+            Some(workbar_text(substitute_placeholders(ctx, literal), theme))
+        }
+        WorkbarSegment::Command { command, .. } => {
             let output = ctx
                 .state
-                .bar_command_output
+                .workbar_command_output
                 .get(command)
                 .map(String::as_str)
                 .unwrap_or("");
-            Some(bar_text(format!(" {output} "), theme))
+            Some(workbar_text(format!(" {output} "), theme))
         }
     }
 }
 
-fn bar_text(text: impl Into<String>, theme: &Theme) -> Element {
+fn workbar_text(text: impl Into<String>, theme: &Theme) -> Element {
     Text::new(text.into())
         .style(Style::new().fg(theme.surface.menu))
         .height(Length::Px(1))
@@ -202,7 +205,7 @@ fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
     let state = &ctx.state;
     let active = &state.workspaces[state.active_workspace];
     literal
-        .replace("{host}", &bar_hostname())
+        .replace("{host}", &workbar_hostname())
         .replace(
             "{workspace}",
             &workspace_placeholder_label(active.name.as_deref(), state.active_workspace),
@@ -211,7 +214,7 @@ fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
         .replace("{session}", &attached_session_name(ctx).unwrap_or_default())
 }
 
-/// Value substituted for the `{workspace}` bar placeholder: the workspace's custom name when
+/// Value substituted for the `{workspace}` workbar placeholder: the workspace's custom name when
 /// set, otherwise its 1-based number.
 fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
     match name {
@@ -220,7 +223,7 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
     }
 }
 
-/// The `Session` bar segment: an accented badge naming the attached session server. Renders
+/// The `Session` workbar segment: an accented badge naming the attached session server. Renders
 /// nothing while unattached, so in local mode the segment simply takes no space.
 fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
     let theme = &ctx.state.theme;
@@ -251,7 +254,7 @@ fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
     ctx.state.session_name.clone()
 }
 
-fn bar_hostname() -> String {
+fn workbar_hostname() -> String {
     std::env::var("HOSTNAME")
         .ok()
         .filter(|host| !host.trim().is_empty())

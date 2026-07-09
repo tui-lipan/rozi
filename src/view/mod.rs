@@ -1,7 +1,7 @@
-mod bar;
 mod keys;
 mod overlays;
 mod pane;
+mod workbar;
 
 pub use keys::{
     appearance_palette_key, palette_key, pane_terminal_key, pane_window_key, profile_picker_key,
@@ -22,13 +22,13 @@ use crate::tiling::PanePlacement;
 
 use pane::pane_title_bg;
 
-use bar::{empty_workspace_panel, workbar};
 use overlays::{
     appearance_overlay, help_overlay, palette_overlay, profile_picker_overlay, rename_overlay,
     rename_session_overlay, rename_workspace_overlay, save_profile_overlay, search_overlay,
     session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
+use workbar::{empty_workspace_panel, workbar};
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -221,11 +221,11 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut app_root =
         VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
     if ctx.state.config.pane.show_workbar {
-        let bar = workbar(ctx).height(Length::Px(WORKBAR_HEIGHT));
+        let workbar = workbar(ctx).height(Length::Px(WORKBAR_HEIGHT));
         if ctx.state.config.pane.workbar_at_bottom {
-            app_root = app_root.child(canvas).child(bar);
+            app_root = app_root.child(canvas).child(workbar);
         } else {
-            app_root = app_root.child(bar).child(canvas);
+            app_root = app_root.child(workbar).child(canvas);
         }
     } else {
         app_root = app_root.child(canvas);

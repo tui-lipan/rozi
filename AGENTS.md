@@ -147,7 +147,7 @@ HyprmuxApp (tui-lipan Component)
   |-- update::handle_msg dispatches messages to *_ops modules
   |-- key_routing routes prefix/held-modifier/terminal keys
   |-- actions dispatches Action values
-  |-- view renders Canvas, panes, top bar, and overlays
+  |-- view renders Canvas, panes, workbar, and overlays
   |
   +--> Always-server: Pane -> TerminalPane -> client TerminalScreen (parses raw bytes)
   |
@@ -187,7 +187,7 @@ Major module map:
 - `session/` / `session_ops.rs` - Named session protocol, server/client, discovery, attach/kill.
 - `profiles.rs` / `profile_ops.rs` - Named profile serialization, restore, picker, default profile.
 - `config.rs` / `config_ops.rs` / `theme_ops.rs` - Config loading/reload, themes, terminal colors.
-- `view/` - Pane rendering, top bar, palettes, overlays, and callbacks.
+- `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
 
 ## Testing Strategy
 
@@ -258,7 +258,7 @@ Then rerun the relevant `hyprmux` tests and lints.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
-- `[bar]` supports built-in segments, text placeholders, and timed shell command segments.
+- `[workbar]` supports built-in segments, text placeholders, and timed shell command segments.
 - `[theme].name` selects built-in, `system`, or custom themes from `~/.config/hyprmux/themes/`.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.

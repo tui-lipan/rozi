@@ -148,8 +148,8 @@ with a live pane count.
 | Rename workspace | *Rename workspace* in the command palette (no default key) |
 
 A named workspace shows as `<number>:<name>` in the tabs (e.g. `1:code`) instead of just the
-number, and the `{workspace}` [bar placeholder](configuration.md#bar) resolves to the name.
-Names are saved with profiles and session autosave.
+number, and the `{workspace}` [workbar placeholder](configuration.md#workbar) resolves to the
+name. Names are saved with profiles and session autosave.
 
 ### App & overlays
 

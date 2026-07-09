@@ -28,7 +28,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
   reference (`?`).
 - **Pane identity** - rename panes (`n`); titles also follow the program's OSC title.
 - **Named workspaces** - rename a workspace to show `<number>:<name>` in the tabs, usable in the
-  `{workspace}` bar placeholder, saved with profiles and session autosave.
+  `{workspace}` workbar placeholder, saved with profiles and session autosave.
 - **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
 - **Named sessions** - attach to persistent server-backed sessions with `hyprmux --attach dev`,
   detach/reattach later, and shut them down explicitly when done.
@@ -43,7 +43,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 - **Scriptable control socket** - a per-run Unix socket and `hyprmux` CLI (`list-panes`, `focus`,
   `send-text`, `new-pane`, `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`)
   for external automation.
-- **Extensible bar & keybindings** - bar segments can run a shell command on a timer, and
+- **Extensible workbar & keybindings** - workbar segments can run a shell command on a timer, and
   `[keys]` entries can define new key-triggered commands that open a pane or send text, beyond
   rebinding built-in actions.
 

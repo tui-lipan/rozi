@@ -5,6 +5,11 @@ pub enum Action {
     Spawn,
     Close,
     Focus(Direction),
+    /// Move focus in `Direction`, unless the focused pane runs a split-aware program (see
+    /// `[navigation] editors`), in which case forward the matching `Ctrl-h/j/k/l` to it. Lets a
+    /// single `Ctrl-h/j/k/l` binding navigate hyprmux panes and vim/neovim splits seamlessly
+    /// (vim-tmux-navigator style).
+    SmartFocus(Direction),
     Move(Direction),
     SwitchWorkspace(usize),
     MoveToWorkspace(usize),
@@ -71,6 +76,10 @@ impl Action {
             Action::Focus(Down) => "focus-down",
             Action::Focus(Up) => "focus-up",
             Action::Focus(Right) => "focus-right",
+            Action::SmartFocus(Left) => "smart-focus-left",
+            Action::SmartFocus(Down) => "smart-focus-down",
+            Action::SmartFocus(Up) => "smart-focus-up",
+            Action::SmartFocus(Right) => "smart-focus-right",
             Action::Move(Left) => "move-left",
             Action::Move(Down) => "move-down",
             Action::Move(Up) => "move-up",
@@ -141,6 +150,10 @@ impl Action {
             "focus-down" => Action::Focus(Down),
             "focus-up" => Action::Focus(Up),
             "focus-right" => Action::Focus(Right),
+            "smart-focus-left" => Action::SmartFocus(Left),
+            "smart-focus-down" => Action::SmartFocus(Down),
+            "smart-focus-up" => Action::SmartFocus(Up),
+            "smart-focus-right" => Action::SmartFocus(Right),
             "move-left" => Action::Move(Left),
             "move-down" => Action::Move(Down),
             "move-up" => Action::Move(Up),

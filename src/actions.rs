@@ -9,14 +9,14 @@ use crate::focus_ops::{
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
-use crate::pane_lifecycle::{spawn_pane, spawn_pane_in_workspace};
+use crate::pane_lifecycle::{find_pane, spawn_pane, spawn_pane_in_workspace};
 use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
 use crate::resize_move_ops::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
 use crate::search_ops::open_search;
-use crate::state::{Mode, PaneIdentity};
+use crate::state::{Direction, Mode, PaneIdentity};
 use crate::theme_ops::{apply_terminal_palette_to_state, open_theme_picker};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
@@ -82,6 +82,50 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     }
 }
 
+/// vim-tmux-navigator-style directional focus: if the focused pane runs a split-aware program
+/// (see `[navigation] editors`), forward the matching `Ctrl-h/j/k/l` so that program moves its
+/// own split; otherwise move hyprmux pane focus. The forwarded program is expected to hand focus
+/// back at its split edge via the control socket (`hyprmux run-action focus-<dir>`), which yields
+/// the seamless "one keymap crosses both" behavior.
+fn smart_focus(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> Update {
+    if let Some(id) = ctx.state.focused_pane
+        && focused_pane_forwards_navigation(&ctx.state, id)
+    {
+        return crate::pty_events::forward_key_to_pane(ctx, id, navigation_key(direction));
+    }
+
+    let viewport = ctx.viewport();
+    if let Some(id) = focus_in_direction(&mut ctx.state, direction, viewport) {
+        request_pane_focus(ctx, id);
+    }
+    Update::full()
+}
+
+/// Whether the pane's foreground program is one that should receive navigation keys itself.
+fn focused_pane_forwards_navigation(state: &crate::state::State, id: crate::state::PaneId) -> bool {
+    find_pane(state, id)
+        .and_then(|pane| pane.terminal.foreground_command())
+        .is_some_and(|command| state.config.navigation.is_split_editor(&command))
+}
+
+/// The `Ctrl-h/j/k/l` key a split-aware program expects for the given navigation direction,
+/// matching vim-tmux-navigator's default mappings.
+fn navigation_key(direction: Direction) -> KeyEvent {
+    let ch = match direction {
+        Direction::Left => 'h',
+        Direction::Down => 'j',
+        Direction::Up => 'k',
+        Direction::Right => 'l',
+    };
+    KeyEvent {
+        code: KeyCode::Char(ch),
+        mods: KeyMods {
+            ctrl: true,
+            ..KeyMods::NONE
+        },
+    }
+}
+
 fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
         ctx.toast().push(crate::pty_events::error_toast(
@@ -132,6 +176,7 @@ fn execute_action_inner(
             }
             Update::full()
         }
+        Action::SmartFocus(direction) => smart_focus(ctx, direction),
         Action::Move(direction) => {
             move_focused_in_direction(ctx, direction);
             request_current_pane_focus(ctx);
@@ -348,5 +393,25 @@ fn execute_action_inner(
             ));
             Update::full()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_key_maps_directions_to_ctrl_hjkl() {
+        let ctrl = |ch| KeyEvent {
+            code: KeyCode::Char(ch),
+            mods: KeyMods {
+                ctrl: true,
+                ..KeyMods::NONE
+            },
+        };
+        assert_eq!(navigation_key(Direction::Left), ctrl('h'));
+        assert_eq!(navigation_key(Direction::Down), ctrl('j'));
+        assert_eq!(navigation_key(Direction::Up), ctrl('k'));
+        assert_eq!(navigation_key(Direction::Right), ctrl('l'));
     }
 }

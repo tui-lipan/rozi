@@ -81,6 +81,11 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 enabled = false              # desktop notifications are opt-in (default: false)
 pane_exit = true             # notify on natural pane process exits when enabled
 
+[navigation]
+# Programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to them
+# instead of moving pane focus. Matched case-insensitively on the pane's foreground process.
+editors = ["vim", "nvim", "vi", "view", "vimdiff", "hx", "helix", "kak", "emacs", "fzf"]
+
 [confirm]
 close_pane = false           # confirm closing a pane with a live process (default: false)
 kill_workspace = true        # confirm killing all panes on a workspace (default: true)
@@ -219,6 +224,24 @@ Failures are ignored and never block the UI.
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
 | `pane_exit` | `true` | Notify when a pane's process exits naturally. |
+
+## `[navigation]`
+
+Controls the vim-aware `smart-focus-left` / `-down` / `-up` / `-right` actions, which power
+seamless `Ctrl-h/j/k/l` navigation across both hyprmux panes and editor splits (see
+[Seamless vim / neovim navigation](keybindings.md#seamless-vim--neovim-navigation) for the full
+wiring). These actions are unbound by default.
+
+When a smart-focus action runs, hyprmux checks the focused pane's **foreground process name**. If
+it matches one of the `editors`, the matching `Ctrl-h/j/k/l` is forwarded to that program so it can
+move its own split; otherwise hyprmux moves pane focus in that direction.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `editors` | vim family + `hx`/`helix`/`kak`/`emacs`/`emacsclient`/`fzf` | Foreground process names (matched case-insensitively) that should receive `Ctrl-h/j/k/l` themselves. Setting this **replaces** the default list. Names match the executable basename as seen by the OS (e.g. `nvim`, not a full path). |
+
+Foreground detection uses Linux `/proc`; on other platforms the check is a no-op and smart-focus
+always moves pane focus.
 
 ## `[confirm]`
 

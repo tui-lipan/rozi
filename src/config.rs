@@ -228,6 +228,55 @@ impl Default for HyprmuxNotificationsConfig {
     }
 }
 
+/// Seamless-navigation policy for the `smart-focus-*` actions: the set of foreground programs
+/// that manage their own splits and should receive `Ctrl-h/j/k/l` themselves instead of having
+/// hyprmux move pane focus. Modeled on vim-tmux-navigator's `is_vim` check (see
+/// [docs/keybindings.md]); matching is case-insensitive against the pane's foreground process
+/// name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HyprmuxNavigationConfig {
+    pub editors: Vec<String>,
+}
+
+impl Default for HyprmuxNavigationConfig {
+    fn default() -> Self {
+        Self {
+            editors: DEFAULT_SPLIT_EDITORS
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+        }
+    }
+}
+
+impl HyprmuxNavigationConfig {
+    /// Whether `command` (a pane's foreground process name) is a program that handles its own
+    /// splits, so `smart-focus-*` should forward the navigation key to it rather than move focus.
+    pub fn is_split_editor(&self, command: &str) -> bool {
+        self.editors
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(command))
+    }
+}
+
+/// Foreground programs that `smart-focus-*` forwards navigation keys to by default. Names match
+/// `/proc/<pid>/comm` (the truncated executable basename), covering the common vim family plus a
+/// few other split-aware TUIs; extend or replace via `[navigation] editors`.
+const DEFAULT_SPLIT_EDITORS: &[&str] = &[
+    "vim",
+    "nvim",
+    "vi",
+    "view",
+    "vimdiff",
+    "nvim-wrapped",
+    "hx",
+    "helix",
+    "kak",
+    "emacs",
+    "emacsclient",
+    "fzf",
+];
+
 /// Which destructive actions require a confirming second press within the confirm window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HyprmuxConfirmConfig {
@@ -290,6 +339,7 @@ pub struct HyprmuxConfig {
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
     pub notifications: HyprmuxNotificationsConfig,
+    pub navigation: HyprmuxNavigationConfig,
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub bar: BarConfig,
@@ -369,6 +419,7 @@ impl Default for HyprmuxConfig {
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
             notifications: HyprmuxNotificationsConfig::default(),
+            navigation: HyprmuxNavigationConfig::default(),
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             bar: BarConfig::default(),
@@ -508,6 +559,7 @@ struct FileConfig {
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
     notifications: NotificationsFileConfig,
+    navigation: NavigationFileConfig,
     confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
     bar: BarFileConfig,
@@ -1026,6 +1078,32 @@ mod tests {
     }
 
     #[test]
+    fn file_config_parses_navigation_editors() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [navigation]
+            editors = ["nvim", "hx"]
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(
+            parsed.navigation.editors,
+            Some(vec!["nvim".to_string(), "hx".to_string()])
+        );
+    }
+
+    #[test]
+    fn default_navigation_recognizes_vim_family_case_insensitively() {
+        let nav = HyprmuxNavigationConfig::default();
+        assert!(nav.is_split_editor("nvim"));
+        assert!(nav.is_split_editor("VIM"));
+        assert!(nav.is_split_editor("vimdiff"));
+        assert!(!nav.is_split_editor("bash"));
+        assert!(!nav.is_split_editor("less"));
+    }
+
+    #[test]
     fn theme_choices_lead_with_system_then_builtins() {
         let choices = build_theme_choices(Vec::new());
         assert_eq!(choices.first(), Some(&ThemeChoice::System));
@@ -1175,6 +1253,12 @@ struct ClipboardFileConfig {
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct NavigationFileConfig {
+    editors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1335,6 +1419,13 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(pane_exit) = parsed.notifications.pane_exit {
         config.notifications.pane_exit = pane_exit;
+    }
+    if let Some(editors) = parsed.navigation.editors {
+        config.navigation.editors = editors
+            .into_iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
     }
     if let Some(close_pane) = parsed.confirm.close_pane {
         config.confirm.close_pane = close_pane;

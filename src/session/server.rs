@@ -11,7 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::control;
 use crate::session::protocol::{
-    self, AttachedPane, ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
+    self, ClientMessage, Frame, PROTOCOL_VERSION, PaneMeta, ServerMessage, WirePalette,
     WireSearchMatch, WireSnapshot,
 };
 use crate::state::PaneId;
@@ -181,6 +181,9 @@ impl SessionServer {
                 for response in responses {
                     write_frame_blocking(&mut stream, &response)?;
                 }
+                if is_attach && attached {
+                    self.write_attach_seeds(&mut stream)?;
+                }
                 if detach || self.shutdown || (is_attach && !attached) {
                     return Ok(());
                 }
@@ -214,7 +217,7 @@ impl SessionServer {
                     vec![ServerMessage::Attached {
                         protocol_version: PROTOCOL_VERSION,
                         session,
-                        panes: self.snapshots(),
+                        panes: self.pane_meta(),
                         layout_blob: self.layout_blob.clone(),
                     }]
                 }
@@ -479,16 +482,44 @@ impl SessionServer {
             .filter(|pane| pane.generation == generation && pane.exited.is_none())
     }
 
-    fn snapshots(&mut self) -> Vec<AttachedPane> {
+    fn pane_meta(&self) -> Vec<PaneMeta> {
         self.panes
-            .iter_mut()
-            .map(|(pane_id, pane)| AttachedPane {
+            .iter()
+            .map(|(pane_id, pane)| PaneMeta {
                 pane_id: *pane_id,
                 generation: pane.generation,
-                snapshot: pane.snapshot(),
+                cols: pane.cols,
+                rows: pane.rows,
+                pid: pane.pty.as_ref().and_then(TerminalPty::pid),
+                title: pane.effective_title(),
+                cwd: pane.effective_cwd(),
                 exited: pane.exited,
             })
             .collect()
+    }
+
+    fn write_attach_seeds(&mut self, stream: &mut UnixStream) -> io::Result<()> {
+        const SEED_CHUNK: usize = 256 * 1024;
+        stream.set_nonblocking(false)?;
+        let mut result = Ok(());
+        for (pane_id, pane) in &mut self.panes {
+            if pane.exited.is_some() {
+                continue;
+            }
+            let bytes = pane.screen.export_replay_bytes();
+            for chunk in bytes.chunks(SEED_CHUNK) {
+                result =
+                    protocol::write_pane_output_frame(stream, *pane_id, pane.generation, chunk);
+                if result.is_err() {
+                    break;
+                }
+            }
+            if result.is_err() {
+                break;
+            }
+        }
+        let restore = stream.set_nonblocking(true);
+        result.and(restore)
     }
 
     fn all_panes_exited(&self) -> bool {
@@ -974,7 +1005,9 @@ mod tests {
         assert_eq!(panes.len(), 1);
         assert_eq!(panes[0].pane_id, 4);
         assert_eq!(panes[0].generation, 8);
-        assert_eq!(panes[0].snapshot.title.as_deref(), Some("editor"));
+        assert_eq!(panes[0].title.as_deref(), Some("editor"));
+        assert_eq!(panes[0].cols, 20);
+        assert_eq!(panes[0].rows, 5);
     }
 
     #[test]

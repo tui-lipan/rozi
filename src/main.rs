@@ -184,7 +184,7 @@ pub enum Msg {
     SessionAttached {
         epoch: u64,
         session: String,
-        panes: Vec<session::protocol::AttachedPane>,
+        panes: Vec<session::protocol::PaneMeta>,
         layout_blob: Option<String>,
     },
     SessionSpawnResult {

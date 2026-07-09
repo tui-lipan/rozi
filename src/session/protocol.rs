@@ -90,10 +90,14 @@ pub struct WireSearchMatch {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AttachedPane {
+pub struct PaneMeta {
     pub pane_id: PaneId,
     pub generation: u64,
-    pub snapshot: WireSnapshot,
+    pub cols: u16,
+    pub rows: u16,
+    pub pid: Option<u32>,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
     pub exited: Option<i32>,
 }
 
@@ -242,7 +246,7 @@ pub enum ServerMessage {
     Attached {
         protocol_version: u32,
         session: String,
-        panes: Vec<AttachedPane>,
+        panes: Vec<PaneMeta>,
         layout_blob: Option<String>,
     },
     Snapshot {

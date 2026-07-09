@@ -736,7 +736,7 @@ fn logical_focus_pending_activation(state: &State) -> Option<crate::state::PaneI
 
 fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
-    panes: Vec<crate::session::protocol::AttachedPane>,
+    panes: Vec<crate::session::protocol::PaneMeta>,
     restored_layout: bool,
 ) {
     let panes: Vec<_> = panes
@@ -789,17 +789,13 @@ fn apply_attached_panes(
             pane.opening = false;
             pane.terminal_active = true;
             pane.pty_generation = attached.generation;
+            pane.terminal.cols = attached.cols.max(1);
+            pane.terminal.rows = attached.rows.max(1);
             pane.terminal
                 .bind_server_backend(attached.pane_id, attached.generation);
-            let title = attached.snapshot.title.clone();
-            let cwd = attached.snapshot.cwd.clone();
-            match crate::session::client::apply_wire_snapshot(attached.snapshot) {
-                Ok(snapshot) => pane.terminal.apply_snapshot(snapshot, title, cwd),
-                Err(err) => {
-                    ctx.toast()
-                        .push(error_toast(&ctx.state.theme, "Session", err.to_string()));
-                }
-            }
+            pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
+            pane.terminal.cwd = attached.cwd;
+            pane.terminal.status = ManagedTerminalStatus::Ready;
         }
         ctx.state.next_pane_id = ctx
             .state

@@ -205,8 +205,13 @@ pub(crate) fn create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
     if ctx.state.session_attached && ctx.state.is_ephemeral_session() {
         if let Some(client) = ctx.state.session_client.clone() {
             client.rename(name);
+            // The rename keeps the current panes in place (no attach round-trip), so close the
+            // picker the same way `CloseSessionPicker` does: resync commands and hand focus back to
+            // the active pane, otherwise prefix/held-modifier keys stay captured by the picker input.
             ctx.state.show_session_picker = false;
             ctx.state.session_picker = None;
+            ctx.state.commands_dirty = true;
+            crate::focus_ops::request_current_pane_focus(ctx);
             return Update::full();
         }
     }

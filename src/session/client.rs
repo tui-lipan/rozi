@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
+use crate::session::protocol::Frame;
 use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
 use crate::state::PaneId;
 
@@ -45,7 +46,7 @@ impl SessionClient {
     pub fn connect(
         path: &Path,
         session: impl Into<String>,
-        inbound: mpsc::Sender<ServerMessage>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<Self> {
         let stream = UnixStream::connect(path)?;
         Self::from_stream(stream, session, inbound)
@@ -54,7 +55,7 @@ impl SessionClient {
     pub fn connect_attached(
         path: &Path,
         session: impl Into<String>,
-        inbound: mpsc::Sender<ServerMessage>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<(Self, ServerMessage)> {
         let stream = UnixStream::connect(path)?;
         Self::from_stream_attached(stream, session, inbound)
@@ -63,7 +64,7 @@ impl SessionClient {
     pub fn from_stream(
         stream: UnixStream,
         session: impl Into<String>,
-        inbound: mpsc::Sender<ServerMessage>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<Self> {
         Ok(Self::from_stream_attached(stream, session, inbound)?.0)
     }
@@ -71,7 +72,7 @@ impl SessionClient {
     pub fn from_stream_attached(
         mut stream: UnixStream,
         session: impl Into<String>,
-        inbound: mpsc::Sender<ServerMessage>,
+        inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut reader = stream.try_clone()?;
         reader.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -109,9 +110,25 @@ impl SessionClient {
             }
         });
         thread::spawn(move || {
-            while let Ok(message) = protocol::read_frame::<_, ServerMessage>(&mut reader) {
-                if inbound.send(message).is_err() {
-                    break;
+            let mut decoder = protocol::FrameDecoder::default();
+            loop {
+                match decoder.read_from_status(&mut reader) {
+                    Ok(protocol::FrameReadStatus::Eof) => break,
+                    Ok(
+                        protocol::FrameReadStatus::Read(_) | protocol::FrameReadStatus::WouldBlock,
+                    ) => {}
+                    Err(_) => break,
+                }
+                loop {
+                    match decoder.next_frame::<ServerMessage>() {
+                        Ok(Some(frame)) => {
+                            if inbound.send(frame).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(_) => return,
+                    }
                 }
             }
         });

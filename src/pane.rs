@@ -21,8 +21,9 @@ enum TerminalBackend {
         screen: Box<TerminalScreen>,
         pty: Option<TerminalPty>,
     },
-    /// Server-backed cache façade. It intentionally owns no PTY/screen.
-    Server,
+    Server {
+        screen: Box<TerminalScreen>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,7 +85,14 @@ impl TerminalPane {
 
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
-        self.backend = TerminalBackend::Server;
+        let mut screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        if let Some(palette) = self.last_palette {
+            screen.set_palette(palette);
+        }
+        self.snapshot = screen.render_snapshot();
+        self.backend = TerminalBackend::Server {
+            screen: Box::new(screen),
+        };
     }
 
     pub fn apply_snapshot(
@@ -97,7 +105,35 @@ impl TerminalPane {
         self.title = title.filter(|title| !title.trim().is_empty());
         self.cwd = cwd;
         self.status = ManagedTerminalStatus::Ready;
-        self.backend = TerminalBackend::Server;
+        let mut screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        if let Some(palette) = self.last_palette {
+            screen.set_palette(palette);
+        }
+        for (index, line) in self.snapshot.text.lines().enumerate() {
+            if index > 0 {
+                screen.process_bytes(b"\r\n");
+            }
+            screen.process_bytes(line.as_bytes());
+        }
+        screen.set_scrollback(self.snapshot.scrollback_offset);
+        self.backend = TerminalBackend::Server {
+            screen: Box::new(screen),
+        };
+    }
+
+    pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
+        let TerminalBackend::Server { screen } = &mut self.backend else {
+            return PaneEventOutcome::Repaint;
+        };
+        screen.process_bytes(bytes);
+        let _ = screen.drain_responses();
+        self.title = screen
+            .title()
+            .map(|title| title.trim().to_string())
+            .filter(|title| !title.is_empty());
+        self.snapshot = screen.render_snapshot();
+        self.status = ManagedTerminalStatus::Ready;
+        PaneEventOutcome::Repaint
     }
 
     pub fn is_ready(&self) -> bool {
@@ -114,12 +150,12 @@ impl TerminalPane {
     pub fn accepts_input(&self) -> bool {
         match &self.backend {
             TerminalBackend::Local { pty, .. } => pty.is_some() && self.is_ready(),
-            TerminalBackend::Server => self.is_ready(),
+            TerminalBackend::Server { .. } => self.is_ready(),
         }
     }
 
     pub fn is_server_backed(&self) -> bool {
-        matches!(self.backend, TerminalBackend::Server)
+        matches!(self.backend, TerminalBackend::Server { .. })
     }
 
     pub fn set_palette(&mut self, palette: TerminalColorPalette) -> bool {
@@ -133,7 +169,12 @@ impl TerminalPane {
                 self.last_palette = Some(palette);
                 true
             }
-            TerminalBackend::Server => false,
+            TerminalBackend::Server { screen } => {
+                screen.set_palette(palette);
+                self.snapshot = screen.render_snapshot();
+                self.last_palette = Some(palette);
+                true
+            }
         }
     }
 
@@ -142,7 +183,7 @@ impl TerminalPane {
             .map_err(|err| format!("pty resize failed: {err}"))?;
         match &mut self.backend {
             TerminalBackend::Local { pty: slot, .. } => *slot = Some(pty),
-            TerminalBackend::Server => {
+            TerminalBackend::Server { .. } => {
                 let mut screen = TerminalScreen::new(self.rows, self.cols, 0);
                 if let Some(palette) = self.last_palette {
                     screen.set_palette(palette);
@@ -231,30 +272,32 @@ impl TerminalPane {
 
         self.cols = cols;
         self.rows = rows;
-        if let TerminalBackend::Local { screen, pty } = &mut self.backend {
-            if let Some(pty) = pty {
-                pty.resize(cols, rows)
-                    .map_err(|err| format!("pty resize failed: {err}"))?;
+        match &mut self.backend {
+            TerminalBackend::Local { screen, pty } => {
+                if let Some(pty) = pty {
+                    pty.resize(cols, rows)
+                        .map_err(|err| format!("pty resize failed: {err}"))?;
+                }
+                screen.resize(rows, cols);
+                self.snapshot = screen.render_snapshot();
             }
-            screen.resize(rows, cols);
-            self.snapshot = screen.render_snapshot();
+            TerminalBackend::Server { screen } => {
+                screen.resize(rows, cols);
+                self.snapshot = screen.render_snapshot();
+            }
         }
         Ok(true)
     }
 
     pub fn set_scrollback(&mut self, offset: usize) -> bool {
-        if let TerminalBackend::Local { screen, .. } = &mut self.backend {
-            if screen.scrollback_offset() == offset {
-                return false;
-            }
-            screen.set_scrollback(offset);
-            self.snapshot = screen.render_snapshot();
-            return true;
-        }
-        if self.snapshot.scrollback_offset == offset {
+        let screen = match &mut self.backend {
+            TerminalBackend::Local { screen, .. } | TerminalBackend::Server { screen } => screen,
+        };
+        if screen.scrollback_offset() == offset {
             return false;
         }
-        self.snapshot.scrollback_offset = offset;
+        screen.set_scrollback(offset);
+        self.snapshot = screen.render_snapshot();
         true
     }
 
@@ -264,8 +307,8 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let TerminalBackend::Local { screen, .. } = &mut self.backend else {
-            return Vec::new();
+        let screen = match &mut self.backend {
+            TerminalBackend::Local { screen, .. } | TerminalBackend::Server { screen } => screen,
         };
         let original_offset = screen.scrollback_offset();
         let max_offset = screen.total_scrollback_rows();

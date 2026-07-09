@@ -559,6 +559,28 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
+        Msg::SessionOutput {
+            epoch,
+            pane_id,
+            generation,
+            bytes,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            let focused = ctx.state.focused_pane;
+            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+                && pane.pty_generation == generation
+                && pane.terminal.is_server_backed()
+            {
+                pane.terminal.process_server_output(&bytes);
+                pane.activity.last_activity = Some(std::time::Instant::now());
+                if focused != Some(pane_id) {
+                    pane.activity.has_unseen_output = true;
+                }
+            }
+            Update::full()
+        }
         Msg::SessionExited {
             epoch,
             pane_id,

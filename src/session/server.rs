@@ -46,6 +46,15 @@ enum ServerEvent {
     Pty(PaneId, u64, TerminalPtyEvent),
 }
 
+enum ServerOutbound {
+    Control(ServerMessage),
+    PaneOutput {
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
+}
+
 impl SessionServer {
     pub fn new_named(session_name: impl Into<String>) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
@@ -96,9 +105,9 @@ impl SessionServer {
         let mut decoder = protocol::FrameDecoder::default();
         loop {
             while let Ok(event) = self.event_rx.try_recv() {
-                if let Some(message) = self.handle_event(event)
+                if let Some(outbound) = self.handle_event(event)
                     && attached
-                    && write_frame_blocking(&mut stream, &message).is_err()
+                    && write_server_frame_blocking(&mut stream, &outbound).is_err()
                 {
                     return Ok(());
                 }
@@ -421,7 +430,7 @@ impl SessionServer {
         }
     }
 
-    fn handle_event(&mut self, event: ServerEvent) -> Option<ServerMessage> {
+    fn handle_event(&mut self, event: ServerEvent) -> Option<ServerOutbound> {
         match event {
             ServerEvent::Pty(id, generation, event) => {
                 let pane = self.panes.get_mut(&id)?;
@@ -436,27 +445,29 @@ impl SessionServer {
                                 let _ = pty.write(&response);
                             }
                         }
-                        Some(ServerMessage::Snapshot {
+                        Some(ServerOutbound::PaneOutput {
                             pane_id: id,
                             generation,
-                            snapshot: pane.snapshot(),
+                            bytes: bytes.to_vec(),
                         })
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.exited = Some(code);
                         pane.pty = None;
-                        Some(ServerMessage::Exited {
+                        Some(ServerOutbound::Control(ServerMessage::Exited {
                             pane_id: id,
                             generation,
                             code,
-                        })
+                        }))
                     }
-                    TerminalPtyEvent::Error(message) => Some(ServerMessage::SpawnResult {
-                        pane_id: id,
-                        generation,
-                        ok: false,
-                        error: Some(message.to_string()),
-                    }),
+                    TerminalPtyEvent::Error(message) => {
+                        Some(ServerOutbound::Control(ServerMessage::SpawnResult {
+                            pane_id: id,
+                            generation,
+                            ok: false,
+                            error: Some(message.to_string()),
+                        }))
+                    }
                 }
             }
         }
@@ -512,6 +523,23 @@ fn attach_required_error(attached: bool, message: &ClientMessage) -> Option<Serv
 fn write_frame_blocking(stream: &mut UnixStream, message: &ServerMessage) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     let result = protocol::write_frame(stream, message);
+    let restore = stream.set_nonblocking(true);
+    result.and(restore)
+}
+
+fn write_server_frame_blocking(
+    stream: &mut UnixStream,
+    outbound: &ServerOutbound,
+) -> io::Result<()> {
+    stream.set_nonblocking(false)?;
+    let result = match outbound {
+        ServerOutbound::Control(message) => protocol::write_frame(stream, message),
+        ServerOutbound::PaneOutput {
+            pane_id,
+            generation,
+            bytes,
+        } => protocol::write_pane_output_frame(stream, *pane_id, *generation, bytes),
+    };
     let restore = stream.set_nonblocking(true);
     result.and(restore)
 }

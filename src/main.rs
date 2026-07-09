@@ -200,6 +200,12 @@ pub enum Msg {
         generation: u64,
         snapshot: session::protocol::WireSnapshot,
     },
+    SessionOutput {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+        bytes: Vec<u8>,
+    },
     SessionExited {
         epoch: u64,
         pane_id: PaneId,
@@ -395,7 +401,10 @@ pub(crate) fn attach_session_client(epoch: u64, name: String, link: CommandLink<
                     name: name.clone(),
                     client,
                 });
-                link.send(server_message_to_msg(epoch, attached));
+                link.send(server_message_to_msg(
+                    epoch,
+                    session::protocol::Frame::Control(attached),
+                ));
                 for message in rx {
                     link.send(server_message_to_msg(epoch, message));
                 }
@@ -491,75 +500,90 @@ fn is_busy_attach_error(err: &std::io::Error) -> bool {
     )
 }
 
-fn server_message_to_msg(epoch: u64, message: session::protocol::ServerMessage) -> Msg {
-    use session::protocol::ServerMessage;
-    match message {
-        ServerMessage::Attached {
-            session,
-            panes,
-            layout_blob,
-            ..
-        } => Msg::SessionAttached {
-            epoch,
-            session,
-            panes,
-            layout_blob,
-        },
-        ServerMessage::Snapshot {
+fn server_message_to_msg(
+    epoch: u64,
+    frame: session::protocol::Frame<session::protocol::ServerMessage>,
+) -> Msg {
+    use session::protocol::{Frame, ServerMessage};
+    match frame {
+        Frame::PaneBytes {
             pane_id,
             generation,
-            snapshot,
-        } => Msg::SessionSnapshot {
+            bytes,
+        } => Msg::SessionOutput {
             epoch,
             pane_id,
             generation,
-            snapshot,
+            bytes,
         },
-        ServerMessage::Exited {
-            pane_id,
-            generation,
-            code,
-        } => Msg::SessionExited {
-            epoch,
-            pane_id,
-            generation,
-            code,
+        Frame::Control(message) => match message {
+            ServerMessage::Attached {
+                session,
+                panes,
+                layout_blob,
+                ..
+            } => Msg::SessionAttached {
+                epoch,
+                session,
+                panes,
+                layout_blob,
+            },
+            ServerMessage::Snapshot {
+                pane_id,
+                generation,
+                snapshot,
+            } => Msg::SessionSnapshot {
+                epoch,
+                pane_id,
+                generation,
+                snapshot,
+            },
+            ServerMessage::Exited {
+                pane_id,
+                generation,
+                code,
+            } => Msg::SessionExited {
+                epoch,
+                pane_id,
+                generation,
+                code,
+            },
+            ServerMessage::Bell {
+                pane_id,
+                generation,
+            } => Msg::SessionBell {
+                epoch,
+                pane_id,
+                generation,
+            },
+            ServerMessage::SearchResult {
+                request_id,
+                pane_id,
+                generation,
+                query,
+                matches,
+            } => Msg::SessionSearchResult {
+                epoch,
+                request_id,
+                pane_id,
+                generation,
+                query,
+                matches,
+            },
+            ServerMessage::SpawnResult {
+                pane_id,
+                generation,
+                ok,
+                error,
+            } => Msg::SessionSpawnResult {
+                epoch,
+                pane_id,
+                generation,
+                ok,
+                error,
+            },
+            ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
         },
-        ServerMessage::Bell {
-            pane_id,
-            generation,
-        } => Msg::SessionBell {
-            epoch,
-            pane_id,
-            generation,
-        },
-        ServerMessage::SearchResult {
-            request_id,
-            pane_id,
-            generation,
-            query,
-            matches,
-        } => Msg::SessionSearchResult {
-            epoch,
-            request_id,
-            pane_id,
-            generation,
-            query,
-            matches,
-        },
-        ServerMessage::SpawnResult {
-            pane_id,
-            generation,
-            ok,
-            error,
-        } => Msg::SessionSpawnResult {
-            epoch,
-            pane_id,
-            generation,
-            ok,
-            error,
-        },
-        ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
     }
 }
 

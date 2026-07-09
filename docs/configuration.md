@@ -277,8 +277,7 @@ A CLI profile or `[profile] default` takes precedence over the autosaved session
 
 With `startup = "picker"` (or `--pick`), the session picker is shown at launch **only when at least
 one named session already exists**; otherwise the launch attaches to an ephemeral session as usual.
-Choosing the pinned **＋ New ephemeral session** row or dismissing the picker attaches a fresh
-ephemeral session. See [Sessions](sessions.md).
+Dismissing the picker with `Esc` attaches a fresh ephemeral session. See [Sessions](sessions.md).
 
 ## `[scratchpad]`
 

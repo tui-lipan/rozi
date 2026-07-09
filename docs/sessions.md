@@ -61,11 +61,9 @@ rejected with an error toast.
 Open the session picker (*Sessions…* in the command palette). The picker always switches you to a
 **separate** session — it never renames the one you're in:
 
-- A synthetic **＋ New ephemeral session** row is pinned at the top. Press `Enter` on it to start a
-  fresh unnamed session. It is always present, cannot be filtered away by typing, and cannot be
-  killed.
 - Highlight an existing session and press `Enter` to attach to it.
 - Type a new name and press `Ctrl+N` to create and attach to a brand-new named session.
+- Press `Ctrl+D` to detach the current session and drop onto a fresh ephemeral one.
 - Press `Ctrl+K` twice to kill the highlighted session.
 
 Switching away is a **release** of the current session: a named session's layout is pushed and the
@@ -83,9 +81,9 @@ disappear on their own), so there is no manual refresh key.
 By default a bare launch attaches straight to an ephemeral session. To be asked which session to
 attach to instead, launch with `--pick` or set `[session] startup = "picker"` (see
 [configuration.md](configuration.md)). The startup picker is only shown when at least one **named**
-session already exists; otherwise the launch falls through to a normal ephemeral attach. Choosing the
-**＋ New ephemeral session** row (or dismissing the picker with `Esc`) attaches a fresh ephemeral
-session, so a launch is never left without a terminal.
+session already exists; otherwise the launch falls through to a normal ephemeral attach. Dismissing
+the picker with `Esc` attaches a fresh ephemeral session, so a launch is never left without a
+terminal.
 
 ## Attach, detach, and quit
 

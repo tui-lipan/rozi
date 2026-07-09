@@ -180,7 +180,7 @@ second confirmation.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Sessions… | `s` | Open the session picker. A pinned **＋ New ephemeral session** row at the top starts a fresh unnamed session (never killable). `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches; `Ctrl+K` (twice) kills the selected session — including the current one, which shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists. |
+| Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches (leaving you on a fresh ephemeral session); `Ctrl+K` (twice) kills the selected session — including the current one, which shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. Names an ephemeral session for the first time or changes a named one. See [Sessions](sessions.md). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in

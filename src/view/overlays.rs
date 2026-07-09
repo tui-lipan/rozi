@@ -564,21 +564,17 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let query_lower = query.to_ascii_lowercase();
     let current = ctx.state.session_name.as_deref();
     let visible = |entry: &crate::session::discovery::DiscoveredSession| {
-        entry.synthetic
-            || query_lower.is_empty()
-            || entry.name.to_ascii_lowercase().contains(&query_lower)
+        query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
     };
     let selected = picker
         .entries
         .get(picker.selected)
         .filter(|entry| visible(entry));
     // Opening (attaching to) the session you are already on is a no-op, so only offer it for some
-    // other session. The synthetic row always starts a fresh session, so it is always actionable.
-    // Killing the current session is allowed — it shuts the server down and hops the UI onto a fresh
-    // ephemeral — so its hint follows any selection, but the synthetic row cannot be killed.
-    let selected_actionable =
-        selected.is_some_and(|entry| entry.synthetic || current != Some(entry.name.as_str()));
-    let can_kill = selected.is_some_and(|entry| !entry.synthetic);
+    // other session. Killing the current session is allowed — it shuts the server down and hops the
+    // UI onto a fresh ephemeral — so its hint follows any selection.
+    let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
+    let can_kill = selected.is_some();
     let can_new = !query.is_empty()
         && crate::session::discovery::valid_session_name(query)
         && !picker.entries.iter().any(|entry| entry.name == query);
@@ -615,20 +611,17 @@ fn session_picker_palette(
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
-            entry.synthetic || query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
+            query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
         })
         .map(|(index, entry)| {
-            // The synthetic row starts a fresh session; ephemeral sessions carry an ugly generated
-            // `eph-<pid>` name shown as "unnamed" (they stay reattachable — activation is by row
-            // index, not this label).
-            let mut label = if entry.synthetic {
-                "＋ New ephemeral session".to_string()
-            } else if entry.ephemeral {
+            // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "unnamed" (they
+            // stay reattachable — activation is by row index, not this label).
+            let mut label = if entry.ephemeral {
                 "unnamed".to_string()
             } else {
                 entry.name.clone()
             };
-            if !entry.synthetic && current == Some(entry.name.as_str()) {
+            if current == Some(entry.name.as_str()) {
                 label.push_str("  • current");
             }
             SearchEntry::item(label, index)
@@ -697,9 +690,6 @@ fn session_picker_palette(
 
 fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
-    if entry.synthetic {
-        return ItemDescription::new().right("start fresh");
-    }
     match &entry.status {
         DiscoveredSessionStatus::Running { panes, has_layout } => {
             ItemDescription::new().right(format!(

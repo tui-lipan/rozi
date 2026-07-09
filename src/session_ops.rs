@@ -42,9 +42,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
                 "Sessions",
                 err.to_string(),
             ));
-            let mut rows = Vec::new();
-            prepend_new_ephemeral_row(&mut rows);
-            ctx.state.session_picker = Some(SessionPickerState::new(rows));
+            ctx.state.session_picker = Some(SessionPickerState::new(Vec::new()));
         }
     }
     ctx.state.show_session_picker = true;
@@ -59,13 +57,9 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
 /// the watcher epoch so `init` can kick off the first discovery tick. Discovery failures degrade to
-/// a picker holding just the synthetic "new ephemeral session" row.
+/// an empty picker (Esc still falls back to a fresh ephemeral session).
 pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 {
-    let rows = picker_rows(ctx).unwrap_or_else(|_| {
-        let mut rows = Vec::new();
-        prepend_new_ephemeral_row(&mut rows);
-        rows
-    });
+    let rows = picker_rows(ctx).unwrap_or_default();
     ctx.state.session_picker = Some(SessionPickerState::new(rows));
     ctx.state.show_session_picker = true;
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
@@ -111,7 +105,6 @@ pub(crate) fn apply_discovered_sessions(
         return Update::none();
     }
     push_current_session_row(ctx, &mut rows);
-    prepend_new_ephemeral_row(&mut rows);
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.entries = rows;
         picker.selected = picker.selected.min(picker.entries.len().saturating_sub(1));
@@ -140,24 +133,16 @@ fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
     })
 }
 
-/// Build the full picker row list: the synthetic "new ephemeral session" row pinned at the top,
-/// followed by every discovered session plus a row for the currently attached one, sorted by name.
+/// Build the full picker row list: every discovered session plus a row for the currently attached
+/// one, sorted by name.
 fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
     let current_name = ctx.state.session_name.as_deref();
     let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
     push_current_session_row(ctx, &mut rows);
-    prepend_new_ephemeral_row(&mut rows);
     Ok(rows)
 }
 
-/// Pin the synthetic "new ephemeral session" row at index 0. Kept out of the sort so it never
-/// drifts into the middle of the discovered list.
-fn prepend_new_ephemeral_row(rows: &mut Vec<DiscoveredSession>) {
-    rows.insert(0, DiscoveredSession::new_ephemeral_row());
-}
-
-/// Append a row for the attached session (discovery excludes it) and keep the list sorted. Does not
-/// touch the synthetic row (which callers prepend afterward via [`prepend_new_ephemeral_row`]).
+/// Append a row for the attached session (discovery excludes it) and keep the list sorted.
 fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<DiscoveredSession>) {
     if let Some(name) = &ctx.state.session_name {
         rows.push(DiscoveredSession {
@@ -167,7 +152,6 @@ fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discovered
                 panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
                 has_layout: true,
             },
-            synthetic: false,
         });
         rows.sort_by(|a, b| a.name.cmp(&b.name));
     }
@@ -316,26 +300,9 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
     else {
         return Update::full();
     };
-    // The synthetic top row starts a fresh ephemeral session rather than attaching to a discovered
-    // one.
-    if entry.synthetic {
-        return activate_new_ephemeral(ctx);
-    }
     // A session shown in the picker is already running, so don't autostart a replacement if it
     // died between discovery and attach.
     attach_session_by_name(ctx, entry.name, false)
-}
-
-/// Activate the synthetic "new ephemeral session" row. In-app (something is already attached) this
-/// releases the current session and swaps to a brand-new empty ephemeral. At startup (nothing
-/// attached yet) it attaches the initial/profile state to this process's ephemeral session, exactly
-/// as a bare launch without the picker would.
-fn activate_new_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if ctx.state.session_attached || ctx.state.session_client.is_some() {
-        release_current_session(ctx);
-        return swap_to_fresh_ephemeral(ctx);
-    }
-    attach_startup_ephemeral(ctx)
 }
 
 /// Attach the current (initial or restored-profile) state to this process's ephemeral session.
@@ -529,11 +496,6 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let armed = picker
         .pending_kill
         .is_some_and(|pending| pending.index == index);
-    // The synthetic "new ephemeral session" row is not a real session and cannot be killed.
-    if entry.synthetic {
-        clear_pending_kill(ctx);
-        return Update::full();
-    }
     // The current session may be ephemeral (shown as "unnamed"); keep the toast label in sync.
     let display = if entry.ephemeral {
         "unnamed".to_string()

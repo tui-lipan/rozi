@@ -405,13 +405,13 @@ pub(crate) fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -
 /// The command palette / theme picker modal: shared chrome, content-sized, no inner padding
 /// (the `SearchPalette` manages its own). The modal hugs its content so filtering to a few
 /// matches shrinks it, but is capped at 65% of the viewport (the inner list scrolls past that);
-/// `reserve_max_height` keeps the modal's top edge fixed as it shrinks below the cap instead of
+/// `reserve_height` keeps the modal's top edge fixed as it shrinks below the cap instead of
 /// re-centering, so the palette does not drift while you type.
 pub(crate) fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
     styled_modal(ctx, title, 60)
         .height(Length::Auto)
         .max_height(Length::Percent(65))
-        .reserve_max_height(true)
+        .reserve_height(Length::Percent(65))
         .padding(0)
 }
 

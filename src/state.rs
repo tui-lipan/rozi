@@ -739,13 +739,15 @@ impl Pane {
             .or(self.identity.cwd.as_deref())
     }
 
-    pub fn subtitle_for_title(&self, title: &str) -> Option<&str> {
+    pub fn subtitle_for_title(&self, title: &str) -> Option<String> {
         if let Some(command) = self.identity.command.as_deref() {
-            return Some(command);
+            return Some(command.to_string());
         }
 
-        let cwd = self.identity.cwd.as_deref()?;
-        if title_contains_cwd(title, cwd) {
+        // Prefer the shell's real live cwd (which the initial pane never captures into its launch
+        // identity) and fall back to the configured launch cwd.
+        let cwd = self.live_cwd().or_else(|| self.identity.cwd.clone())?;
+        if title_contains_cwd(title, &cwd) {
             None
         } else {
             Some(cwd)
@@ -1213,7 +1215,7 @@ mod tests {
 
         assert_eq!(
             pane.subtitle_for_title("razuer@host:/tmp/project"),
-            Some("cargo run")
+            Some("cargo run".to_string())
         );
     }
 }

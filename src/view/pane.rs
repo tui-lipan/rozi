@@ -136,7 +136,7 @@ pub(crate) fn pane_element(
         let mut title = pane.display_title(pane.terminal.title());
         if let Some(subtitle) = pane.subtitle_for_title(&title) {
             title.push_str(" - ");
-            title.push_str(subtitle);
+            title.push_str(&subtitle);
         }
         let title_text: Element = Text::new(format!("{icon}  {display_number} · {title}"))
             .style(title_bar_text_style)

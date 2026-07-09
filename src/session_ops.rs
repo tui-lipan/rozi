@@ -462,15 +462,27 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     // then detach and quit. The rename and detach travel the same ordered connection, so the server
     // renames first (and thus never self-reaps as an ephemeral) and keeps running after the detach.
     if detach_after {
-        if let Some(client) = ctx.state.session_client.clone() {
-            client.rename(name);
-            client.push_layout(
-                crate::profiles::profile_from_state(&ctx.state)
-                    .to_toml_string()
-                    .unwrap_or_default(),
-            );
-            client.detach();
-        }
+        let Some(client) = ctx.state.session_client.clone() else {
+            // The session connection dropped (e.g. `SessionDisconnected` cleared the client) while
+            // this name-on-detach prompt was open. Quitting now would send no rename and leave the
+            // session ephemeral, so it would self-reap after the grace instead of persisting as the
+            // user asked. Surface the failure and keep the prompt open so they can retry once
+            // reconnected (or press Esc to quit and discard).
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Sessions",
+                "Lost connection to the session - can't name it right now. Try again, or press Esc to quit.",
+            ));
+            request_rename_session_focus(ctx);
+            return Update::full();
+        };
+        client.rename(name);
+        client.push_layout(
+            crate::profiles::profile_from_state(&ctx.state)
+                .to_toml_string()
+                .unwrap_or_default(),
+        );
+        client.detach();
         crate::profiles::persist_session_on_detach(&ctx.state);
         ctx.state.rename_session = None;
         ctx.quit();

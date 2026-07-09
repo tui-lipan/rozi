@@ -287,6 +287,7 @@ pub(crate) fn pane_element(
         } else {
             BorderMergeMode::Replace
         })
+        .padding(ctx.state.config.pane.padding)
         .style(frame_style)
         .focus_style(Style::default())
         .child(terminal)

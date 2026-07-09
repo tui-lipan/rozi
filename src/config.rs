@@ -178,6 +178,10 @@ pub struct HyprmuxPaneConfig {
     pub merge_borders: bool,
     /// App-wide border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
+    /// Blank cells inserted between a pane's border and its terminal grid, on every side. Purely
+    /// cosmetic: each cell of padding costs a column/row of usable terminal space, so this stays
+    /// off by default. Painted with the pane's frame background.
+    pub padding: u16,
     /// App-wide end-cap style for pane titlebars.
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
@@ -196,6 +200,7 @@ impl Default for HyprmuxPaneConfig {
             show_titles: true,
             merge_borders: false,
             border_style: PaneBorderStyle::Rounded,
+            padding: 0,
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
         }
@@ -644,6 +649,7 @@ struct PaneFileConfig {
     show_titles: Option<bool>,
     merge_borders: Option<bool>,
     border_style: Option<String>,
+    padding: Option<u16>,
     title_style: Option<String>,
     workbar_badge_style: Option<String>,
 }
@@ -1017,6 +1023,7 @@ mod tests {
             workbar_gap = false
             workbar_at_bottom = true
             show_titles = false
+            padding = 2
             title_style = "round"
             workbar_badge_style = "arrow"
             "#,
@@ -1030,6 +1037,7 @@ mod tests {
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
+        assert_eq!(parsed.pane.padding, Some(2));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
     }
@@ -1393,6 +1401,19 @@ pub fn load_config() -> LoadedConfig {
             None => warnings.push(format!(
                 "Ignored unknown pane.border_style \"{border_style}\" (expected one of: rounded, plain, double, thick)"
             )),
+        }
+    }
+    if let Some(padding) = parsed.pane.padding {
+        // Cap defensively: padding eats terminal grid on every side, so a large value would leave
+        // no usable pane. 8 cells is already generous for a cosmetic inset.
+        const MAX_PANE_PADDING: u16 = 8;
+        if padding > MAX_PANE_PADDING {
+            warnings.push(format!(
+                "Clamped pane.padding {padding} to the maximum of {MAX_PANE_PADDING}"
+            ));
+            config.pane.padding = MAX_PANE_PADDING;
+        } else {
+            config.pane.padding = padding;
         }
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {

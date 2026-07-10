@@ -25,7 +25,17 @@ The direct path uses the same active keymap as prefix mode: if a command key is 
 modifier path follows that rebind; if a modifier chord is not in the active keymap, it is
 forwarded to the focused shell.
 
-You can also configure an exact held chord in `[keys]`, for example `spawn = "alt-enter"`.
+The simplest rebind is a bare key in `[keys]`, for example `copy-mode = "b"`: it swaps the
+action's default key and keeps following the `[input]` scheme, binding `<prefix> b` plus
+`<modifier>-b`. You can also configure an exact literal chord instead, for example
+`spawn = "alt-enter"` (never mirrored or rewritten when `[input]` changes). To retain an action's
+generated defaults and add another shortcut, use `spawn = { add = "super-enter" }`; `add` accepts
+bare keys, `scheme:`-marked keys, literal bindings, or a list mixing them.
+
+A modified key is literal by default: `copy-mode = "ctrl-t"` means direct `Ctrl+T`. Prefix it with
+`scheme:` when it should instead follow `[input]`: `copy-mode = "scheme:ctrl-t"` generates
+`<prefix> Ctrl+T` and, while modifier shortcuts are enabled, `<modifier>+Ctrl+T`. The marker also
+composes with additions, such as `copy-mode = { add = "scheme:ctrl-t" }`.
 
 **Disabling the held-modifier layer:** every default key ships with both its `Ctrl-a <key>` leader
 chord and an `Alt+<key>` mirror. If you would rather keep held `Alt`/`Super` chords free for the
@@ -167,7 +177,7 @@ name. Names are saved with profiles and session autosave.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching an anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel to quit and shut it down). A named session detaches immediately. |
+| Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching never shuts panes down. An anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel returns to the session — use *Quit* to tear an ephemeral session down). A named session detaches immediately. |
 | Quit client | `q` | Exit this UI. The current server keeps running unless the session is ephemeral, in which case it shuts down. Quitting an ephemeral session that still has a live pane asks for a second press first (press `q` again within the confirm window); disable via `[confirm] quit_ephemeral = false`. |
 | Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound — reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached named session and exit. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
@@ -180,8 +190,9 @@ second confirmation.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches (leaving you on a fresh ephemeral session); `Ctrl+K` (twice) kills the selected session — including the current one, which shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
+| Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches the current named session and exits the client; `Ctrl+K` (twice) kills the selected named session or resets a selected ephemeral session. Killing or resetting the current session shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from *Detach*, which names if needed and then leaves. See [Sessions](sessions.md). |
+| New temporary session | *(palette only)* | Discard the current ephemeral session and start a fresh empty one (its panes are killed). Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls whether it needs a second trigger. |
 | Take layout control | `g` | Steal the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. Takes effect instantly; a brief cooldown blocks rapid tug-of-war. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in

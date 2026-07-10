@@ -6,8 +6,8 @@ mod workbar;
 pub use keys::{
     appearance_palette_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
     pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
-    rename_session_input_key, rename_workspace_input_key, save_profile_key, search_input_key,
-    session_picker_key, theme_picker_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    theme_picker_key,
 };
 pub(crate) use pane::{PaneMerge, pane_element};
 
@@ -25,8 +25,8 @@ use pane::pane_title_bg;
 
 use overlays::{
     appearance_overlay, help_overlay, palette_overlay, pane_padding_overlay,
-    profile_picker_overlay, rename_overlay, rename_session_overlay, rename_workspace_overlay,
-    save_profile_overlay, search_overlay, session_picker_overlay, theme_picker_overlay,
+    profile_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
+    search_overlay, session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{empty_workspace_panel, workbar};
@@ -67,7 +67,6 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.show_appearance
         || ctx.state.show_theme_picker
         || ctx.state.rename.is_some()
-        || ctx.state.rename_workspace.is_some()
         || ctx.state.rename_session.is_some()
         || ctx.state.save_profile_prompt.is_some()
         || ctx.state.show_profile_picker
@@ -314,9 +313,6 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.rename.is_some() {
         root = root.child(rename_overlay(ctx));
     }
-    if ctx.state.rename_workspace.is_some() {
-        root = root.child(rename_workspace_overlay(ctx));
-    }
     if ctx.state.rename_session.is_some() {
         root = root.child(rename_session_overlay(ctx));
     }
@@ -448,7 +444,15 @@ pub(crate) fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -
 /// `reserve_height` keeps the modal's top edge fixed as it shrinks below the cap instead of
 /// re-centering, so the palette does not drift while you type.
 pub(crate) fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
-    styled_modal(ctx, title, 60)
+    action_palette_modal_with_width(ctx, title, 60)
+}
+
+pub(crate) fn action_palette_modal_with_width(
+    ctx: &Context<HyprmuxApp>,
+    title: &str,
+    width: u16,
+) -> Modal {
+    styled_modal(ctx, title, width)
         .height(Length::Auto)
         .max_height(Length::Percent(65))
         .reserve_height(Length::Percent(65))

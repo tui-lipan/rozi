@@ -13,12 +13,11 @@ use crate::{HyprmuxApp, Msg};
 use super::keys::{
     appearance_palette_key, help_scroll_key, palette_key, pane_padding_horizontal_key,
     pane_padding_vertical_key, profile_picker_key, rename_input_key, rename_session_input_key,
-    rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
-    theme_picker_key,
+    save_profile_key, search_input_key, session_picker_key, theme_picker_key,
 };
 use super::{
-    action_palette_frame, action_palette_modal, fg_only, modal_scrollbar_config,
-    shared_search_palette, styled_modal,
+    action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
+    modal_scrollbar_config, shared_search_palette, styled_modal,
 };
 
 pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -271,6 +270,10 @@ fn prompt_hints(ctx: &Context<HyprmuxApp>) -> Element {
 /// Shared chrome for the single-input prompt overlays so they all read like the command palette:
 /// palette placement/border, no inner input border, a leading gap, and a submit/cancel hint footer.
 /// Callers supply only what differs (title, placeholder, bound state, focus key, and messages).
+///
+/// `confirm` arms an in-modal destructive warning: when `Some(note)` the modal border and title turn
+/// the error color and `note` renders as an inline caption above the hints, so a re-submit
+/// confirmation reads off the modal itself instead of a separate toast.
 #[allow(clippy::too_many_arguments)]
 fn prompt_overlay(
     ctx: &Context<HyprmuxApp>,
@@ -281,6 +284,7 @@ fn prompt_overlay(
     on_change: impl Fn(InputEvent) -> Msg + 'static,
     close: Msg,
     submit: Msg,
+    confirm: Option<&str>,
 ) -> Element {
     let theme = &ctx.state.theme;
     let close_on_key = close.clone();
@@ -311,16 +315,40 @@ fn prompt_overlay(
             }
         }));
 
-    let body = VStack::new()
+    let mut body = VStack::new()
         .height(Length::Auto)
         .padding((1, 0, 0, 0))
-        .child(input.key(input_key))
-        .child(prompt_hints(ctx));
+        .child(input.key(input_key));
+    if let Some(note) = confirm {
+        body = body.child(
+            HStack::new()
+                .height(Length::Auto)
+                .padding((1, 1, 0, 1))
+                .child(
+                    Text::new(note)
+                        .overflow(Overflow::Wrap)
+                        .style(Style::new().fg(theme.status.error).italic()),
+                ),
+        );
+    }
+    body = body.child(prompt_hints(ctx));
 
-    action_palette_modal(ctx, title)
+    let mut modal = action_palette_modal(ctx, title)
         .on_close(ctx.link().callback(move |_| close.clone()))
-        .child(action_palette_frame(body))
-        .into()
+        .child(action_palette_frame(body));
+    if confirm.is_some() {
+        // Recolor the shared modal chrome to the error accent so the whole dialog reads as "armed"
+        // (border + title), matching the inline caption. The modal captures focus the moment it
+        // opens, so `focus_style` must repeat the accent or the theme focus role repaints the border.
+        let armed_frame = Style::new()
+            .bg(theme.surface.element)
+            .fg(theme.status.error);
+        modal = modal
+            .frame_style(armed_frame)
+            .focus_style(armed_frame)
+            .title_style(Style::new().fg(theme.status.error).bold());
+    }
+    modal.into()
 }
 
 pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -336,22 +364,7 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::RenamePaneChanged,
         Msg::CloseRenamePane,
         Msg::SubmitRenamePane,
-    )
-}
-
-pub(crate) fn rename_workspace_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let Some(rename) = ctx.state.rename_workspace.as_ref() else {
-        return Text::new("").into();
-    };
-    prompt_overlay(
-        ctx,
-        &format!("Rename workspace {}", rename.target + 1),
-        "Workspace name, empty clears it",
-        &rename.input,
-        rename_workspace_input_key(),
-        Msg::RenameWorkspaceChanged,
-        Msg::CloseRenameWorkspace,
-        Msg::SubmitRenameWorkspace,
+        None,
     )
 }
 
@@ -359,15 +372,42 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(rename) = ctx.state.rename_session.as_ref() else {
         return Text::new("").into();
     };
+    let (title, placeholder) = match rename.mode {
+        crate::state::NamingMode::CreateSession => {
+            ("Create session".to_string(), "Session name".to_string())
+        }
+        // The same ephemeral-naming prompt serves in-place naming and detach-and-name; the latter
+        // keeps the server running for reattach, so it names the action to make that clear.
+        crate::state::NamingMode::NameEphemeralSession if rename.detach_after => (
+            "Detach session".to_string(),
+            "Name to keep it running".to_string(),
+        ),
+        crate::state::NamingMode::NameEphemeralSession => {
+            ("Name session".to_string(), "Session name".to_string())
+        }
+        crate::state::NamingMode::RenameSession => {
+            ("Rename session".to_string(), "Session name".to_string())
+        }
+        crate::state::NamingMode::RenameWorkspace { index } => (
+            format!("Rename workspace {}", index + 1),
+            "Workspace name, empty clears it".to_string(),
+        ),
+    };
+    // A create-session prompt that would discard the current disposable ephemeral session shows an
+    // in-modal warning once armed (see `SessionRenameState::pending_confirm`).
+    let confirm = rename
+        .pending_confirm
+        .then_some("again to confirm (ends ephemeral session)");
     prompt_overlay(
         ctx,
-        "Rename session",
-        "Session name",
+        &title,
+        &placeholder,
         &rename.input,
         rename_session_input_key(),
         Msg::RenameSessionChanged,
         Msg::CloseRenameSession,
         Msg::SubmitRenameSession,
+        confirm,
     )
 }
 
@@ -384,6 +424,7 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::SaveProfileNameChanged,
         Msg::CloseSaveProfile,
         Msg::SubmitSaveProfile,
+        None,
     )
 }
 
@@ -396,8 +437,9 @@ fn action_palette(
     key: &'static str,
     close: Msg,
     content: impl Into<Element>,
+    width: u16,
 ) -> Element {
-    action_palette_modal(ctx, title)
+    action_palette_modal_with_width(ctx, title, width)
         .on_close(ctx.link().callback(move |_| close.clone()))
         .child(action_palette_frame(content))
         .key(key)
@@ -419,6 +461,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         profile_picker_key(),
         Msg::CloseProfilePicker,
         body,
+        60,
     )
 }
 
@@ -465,7 +508,8 @@ fn profile_picker_palette(
 
     let pending_delete = picker.pending_delete;
     let error_bg = theme.status.error;
-    let selection_style = picker_selection_style(theme, pending_delete.is_some());
+    let selection_style =
+        picker_selection_style(theme, pending_delete.is_some().then_some(error_bg));
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -515,13 +559,14 @@ fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     })
 }
 
-/// Selection highlight for the profile/session pickers. While a destructive action is pending
-/// confirmation the selected row turns the error color; otherwise it uses the normal accent.
-fn picker_selection_style(theme: &Theme, pending: bool) -> Style {
-    if pending {
+/// Selection highlight for the profile/session pickers. While an action awaits its confirming
+/// second press the selected row adopts `pending_accent` (error for a kill/delete, warning for the
+/// cautionary open-discards-ephemeral guard); otherwise it uses the normal accent.
+fn picker_selection_style(theme: &Theme, pending_accent: Option<Color>) -> Style {
+    if let Some(accent) = pending_accent {
         Style::new()
-            .bg(theme.status.error)
-            .fg(readable_text_color(None, theme.status.error))
+            .bg(accent)
+            .fg(readable_text_color(None, accent))
             .bold()
             .contrast_policy(ContrastPolicy::BlackOrWhite)
     } else {
@@ -541,6 +586,20 @@ fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> List
     .description("again to confirm")
     .description_style(Style::new().fg(fg).italic())
     .style(Style::new().bg(error_bg).fg(fg))
+}
+
+/// The target row while an open awaits its confirming second Enter. Unlike a pending kill (which
+/// strikes the row through, since the row itself is going away), the target survives — the cost is
+/// to the *current* ephemeral session — so it reads as a warning-colored highlight whose hint spells
+/// out the trade rather than a deletion.
+fn render_pending_open_item(item: &SearchItem<usize>, warn_bg: Color) -> ListItem {
+    let fg = readable_text_color(None, warn_bg);
+    ListItem::from_spans(vec![
+        Span::new(item.label.as_ref()).style(Style::new().fg(fg).bold()),
+    ])
+    .description("again to confirm (ends ephemeral)")
+    .description_style(Style::new().fg(fg).italic())
+    .style(Style::new().bg(warn_bg).fg(fg))
 }
 
 fn render_ephemeral_session_item(
@@ -581,12 +640,13 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         session_picker_key(),
         Msg::CloseSessionPicker,
         body,
+        64,
     )
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a
-/// hint never lies: `detach` appears only while attached, `kill`/`open` only for a selectable
-/// non-current session, and `new` only once the query is a valid name that isn't already listed.
+/// hint never lies: `detach` appears only for an attached named session, `kill`/`reset` for a
+/// selectable session, and `open` only for a selectable non-current session.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
@@ -606,23 +666,21 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     // other session. Killing the current session is allowed — it shuts the server down and hops the
     // UI onto a fresh ephemeral — so its hint follows any selection.
     let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
-    let can_kill = selected.is_some();
-    let can_new = !query.is_empty()
-        && crate::session::discovery::valid_session_name(query)
-        && !picker.entries.iter().any(|entry| entry.name == query);
 
     let mut row = hint_row();
     if selected_actionable {
         row = row.child(hint_pill(theme, "open", "enter"));
     }
-    if can_new {
-        row = row.child(hint_pill(theme, "new", "ctrl+n"));
-    }
-    if ctx.state.session_attached {
+    row = row.child(hint_pill(theme, "new", "ctrl+n"));
+    if ctx.state.session_attached && !ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "detach", "ctrl+d"));
     }
-    if can_kill {
-        row = row.child(hint_pill(theme, "kill", "ctrl+k"));
+    if ctx.state.session_attached && ctx.state.is_ephemeral_session() {
+        row = row.child(hint_pill(theme, "name current", "ctrl+s"));
+    }
+    if let Some(entry) = selected {
+        let label = if entry.ephemeral { "reset" } else { "kill" };
+        row = row.child(hint_pill(theme, label, "ctrl+k"));
     }
     row.into()
 }
@@ -663,23 +721,30 @@ fn session_picker_palette(
         })
         .collect::<Vec<_>>();
     let empty_text = if picker.entries.is_empty() {
-        "No sessions - type a name and press Ctrl+N".to_string()
+        "No sessions - press Ctrl+N to create".to_string()
     } else if query.is_empty() {
-        "Type to filter sessions, or enter a new name".to_string()
+        "Type to filter sessions, or press Ctrl+N to create".to_string()
     } else {
-        format!("No sessions match `{query}` - Ctrl+N creates it")
+        format!("No sessions match `{query}` - press Ctrl+N to create")
     };
 
-    let pending_kill = picker.pending_kill.map(|pending| pending.index);
+    let pending_kill = picker.pending_kill;
+    let pending_open = picker.pending_open;
     let error_bg = theme.status.error;
+    let warn_bg = theme.status.warning;
     let ephemeral_style = fg_only(&theme.primary).italic();
     let description_style = fg_only(&theme.muted);
-    let selection_style = picker_selection_style(theme, pending_kill.is_some());
+    // A kill and an open are never armed at once; the kill's error red takes precedence over the
+    // open's warning tint if both were ever present.
+    let pending_accent = pending_kill
+        .map(|_| error_bg)
+        .or_else(|| pending_open.map(|_| warn_bg));
+    let selection_style = picker_selection_style(theme, pending_accent);
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
         .entries(entries)
-        .placeholder("Search or name session...")
+        .placeholder("Search sessions...")
         .initial_query(picker.input.text().to_string())
         .initial_selected_item_index(Some(picker.selected))
         .sync_selection(true)
@@ -700,10 +765,12 @@ fn session_picker_palette(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
         );
-    if pending_kill.is_some() || !ephemeral_entries.is_empty() {
+    if pending_kill.is_some() || pending_open.is_some() || !ephemeral_entries.is_empty() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             if pending_kill == Some(item.value) {
                 Some(render_pending_delete_item(item, error_bg))
+            } else if pending_open == Some(item.value) {
+                Some(render_pending_open_item(item, warn_bg))
             } else if ephemeral_entries.contains(&item.value) {
                 Some(render_ephemeral_session_item(
                     item,
@@ -747,13 +814,25 @@ fn session_description(
 }
 
 fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
-    ctx.link().key_handler(|key| {
+    let is_ephemeral = ctx.state.is_ephemeral_session();
+    let is_attached = ctx.state.session_attached;
+    ctx.link().key_handler(move |key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
             Some(Msg::SessionPickerCreateFromQuery)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
-            Some(Msg::SessionPickerDetachCurrent)
+            if !is_ephemeral {
+                Some(Msg::SessionPickerDetachCurrent)
+            } else {
+                None
+            }
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
+            if is_attached && is_ephemeral {
+                Some(Msg::SessionPickerNameCurrent)
+            } else {
+                None
+            }
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
         } else {
@@ -796,7 +875,14 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     }
     let palette = action_search_palette(ctx, entries, "Search commands…");
 
-    action_palette(ctx, "Commands", palette_key(), Msg::ClosePalette, palette)
+    action_palette(
+        ctx,
+        "Commands",
+        palette_key(),
+        Msg::ClosePalette,
+        palette,
+        60,
+    )
 }
 
 fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
@@ -940,6 +1026,7 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         appearance_palette_key(),
         Msg::CloseAppearance,
         palette,
+        60,
     )
 }
 
@@ -1114,6 +1201,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         theme_picker_key(),
         Msg::CloseThemePicker,
         palette,
+        60,
     )
 }
 

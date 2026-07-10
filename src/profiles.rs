@@ -213,7 +213,6 @@ pub fn restore_state_from_profile(
         theme_watcher: None,
         search: None,
         rename: None,
-        rename_workspace: None,
         rename_session: None,
         save_profile_prompt: None,
         show_profile_picker: false,

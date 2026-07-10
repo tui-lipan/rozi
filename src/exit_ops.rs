@@ -48,24 +48,22 @@ fn confirm_second_press(
 /// The server already holds the authoritative layout from live commits; detach mirrors it to disk
 /// so a fresh launch can restore it even after the server is gone.
 ///
-/// Detaching an *anonymous* ephemeral session is contradictory (there is no name to reattach by),
-/// so an attached ephemeral session first prompts for a name; naming it turns the detach into a
-/// durable named detach (see [`crate::session_ops::apply_rename_session`]). A named session (or one
-/// with no live client to rename) detaches immediately.
+/// Detaching an *anonymous* ephemeral session is contradictory: it has no name to reattach by, so a
+/// literal detach could only shut it down — indistinguishable from a quit, minus the confirmation.
+/// Instead an ephemeral session first prompts for a name; naming it turns the detach into a durable
+/// named detach that keeps the server running (see [`crate::session_ops::open_detach_rename`] and
+/// [`crate::session_ops::apply_rename_session`]), while cancelling returns to the session. Tearing an
+/// ephemeral session down is left to [`quit_client`], which guards it with `[confirm].quit_ephemeral`.
+/// A named session (or one with no live client to rename) detaches immediately.
 pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending(ctx);
-    if ctx.state.session_attached
-        && ctx.state.is_ephemeral_session()
-        && ctx.state.session_client.is_some()
-    {
-        return crate::session_ops::open_rename_for_detach(ctx);
+    if ctx.state.is_ephemeral_session() && ctx.state.session_client.is_some() {
+        return crate::session_ops::open_detach_rename(ctx);
     }
     if let Some(client) = ctx.state.session_client.clone() {
-        // The server is layout-authoritative from live commits, so there is nothing to push on
-        // detach; just release the connection. Disk autosave still mirrors the layout below.
         client.detach();
+        profiles::persist_session_on_detach(&ctx.state);
     }
-    profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()
 }
@@ -232,4 +230,13 @@ pub(crate) fn kill_session_with_confirmation(
     }
     ctx.quit();
     Update::none()
+}
+
+pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bool {
+    let pending = PendingDestructive::NewTemporarySession;
+    let toast = confirm_toast(
+        &ctx.state.theme,
+        "Again to start new temporary session (current will be discarded)",
+    );
+    confirm_second_press(ctx, pending, toast)
 }

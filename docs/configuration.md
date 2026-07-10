@@ -36,14 +36,10 @@ shell = "/bin/zsh"          # default: $SHELL chosen by the system
 cwd = "~/code"              # default: the directory hyprmux was launched from
 scrollback = 10000          # default: 5000 lines per pane
 
-# Window-management input
-modifier = "alt"            # held WM modifier: "alt" (default) or "super"
-prefix = "ctrl-a"           # prefix key (default: ctrl-a)
-
-[input]                      # alternative place for the same two keys
-modifier = "alt"
-prefix = "ctrl-a"
-modifier_shortcuts = true    # also mirror each default key onto Alt+<key> (default: true)
+[input]
+modifier = "alt"             # held WM modifier: "alt" (default) or "super"
+prefix = "ctrl-a"            # prefix key (default: ctrl-a)
+modifier_shortcuts = true     # mirror each built-in default onto Alt+<key> (default: true)
 
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
@@ -92,10 +88,11 @@ pane_exit = true             # notify on natural pane process exits when enabled
 editors = ["vim", "nvim", "vi", "view", "vimdiff", "hx", "helix", "kak", "emacs", "fzf"]
 
 [confirm]
-close_pane = false           # confirm closing a pane with a live process (default: false)
-kill_workspace = true        # confirm killing all panes on a workspace (default: true)
-kill_session = true          # confirm shutting down the attached session (default: true)
-quit_ephemeral = true        # confirm quitting an ephemeral session that still has a live pane (default: true)
+close_pane = false             # confirm closing a pane with a live process (default: false)
+kill_workspace = true          # confirm killing all panes on a workspace (default: true)
+kill_session = true            # confirm shutting down the attached session (default: true)
+quit_ephemeral = true          # confirm quitting an ephemeral session that still has a live pane (default: true)
+new_temporary_session = true   # confirm discarding the current ephemeral session for a fresh one (default: true)
 
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
@@ -115,12 +112,12 @@ right = ["session"]                         # default
 clock_format = "%H:%M"                       # strftime, only used by a clock segment
 
 [keys]
-# Rebind any action to one or more tui-lipan keybindings. Held chords
-# (alt-enter) or prefix sequences (prefix c / ctrl-a c). Configuring an
-# action replaces its defaults.
-spawn = ["alt-enter", "prefix c"]
-close = "prefix q"
-copy-mode = "prefix y"
+# A bare key replaces an action's key while following the input scheme.
+copy-mode = "b"
+# An additive override keeps the generated defaults and adds another binding.
+spawn = { add = "super-enter" }
+# A literal replacement can intentionally make one action prefix-only.
+close = "ctrl-a q"
 ```
 
 ## Top-level keys
@@ -130,21 +127,19 @@ copy-mode = "prefix y"
 | `shell` | string | system `$SHELL` | Program launched in each new pane. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |
-| `modifier` | string | `alt` | Held WM modifier for direct command keys and mouse gestures; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
-| `prefix` | string | `ctrl-a` | Prefix key, e.g. `ctrl-a`, `ctrl-b`. |
 
-`modifier` and `prefix` can also live under `[input]`; the top-level keys take precedence if
-both are present.
-
-### `[input] modifier_shortcuts`
+## `[input]`
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `modifier` | string | `alt` | Held WM modifier for generated direct command keys and mouse gestures; `alt`/`mod` or `super`/`meta`/`logo`/`win`. |
+| `prefix` | string | `ctrl-a` | Prefix key used by generated leader chords, e.g. `ctrl-a`, `ctrl-b`. |
 | `modifier_shortcuts` | bool | `true` | When true, every built-in default key is also bound as a held `<modifier>+<key>` chord (e.g. `Alt+q`) alongside its `<prefix> <key>` leader chord. Set to `false` to drop the held-modifier layer entirely and keep prefix-only bindings, so held `Alt`/`Super` chords pass through to the focused pane. |
 
 This is an all-or-nothing switch. To drop the mirror for a single command only, override it in
-`[keys]` with a leader-only binding, e.g. `detach = "ctrl-a d"`. Explicit `[keys]` overrides are
-unaffected by `modifier_shortcuts` — they bind exactly what you specify.
+`[keys]` with a literal leader-only binding, e.g. `detach = "ctrl-a d"`. Bare-key replacements
+and generated defaults follow `modifier_shortcuts`; literal bindings and additive literal bindings
+are used exactly as specified.
 
 ### Prefix syntax
 
@@ -256,18 +251,27 @@ always moves pane focus.
 
 ## `[confirm]`
 
-Which destructive actions require a confirming second press when triggered by keys, held
-modifier chords, or control-socket `run-action`. An armed confirmation shows a red-bordered
-toast and expires with it (3 seconds); after that, the next press arms again instead of firing.
-Picking the same destructive command from the command palette is already an explicit selection,
-so it executes directly without a second confirmation.
+`[confirm]` governs **one** confirmation layer: the destructive *shortcuts* — the actions that
+happen the instant you press a key, hold a modifier chord, or send a control-socket `run-action`.
+Each key below toggles whether that shortcut asks first. An armed confirmation shows a red-bordered
+toast and expires with it (3 seconds); the next press within that window fires, otherwise it arms
+again. Running the same command from the **command palette** always skips the confirmation — picking
+it from a searchable list is already a deliberate choice.
 
-| Key | Default | Notes |
+| Key | Default | Confirms before… |
 | --- | --- | --- |
-| `close_pane` | `false` | Confirm closing a pane whose process is still running. |
-| `kill_workspace` | `true` | Confirm closing every pane on the active workspace. |
-| `kill_session` | `true` | Confirm shutting down the attached named session. |
-| `quit_ephemeral` | `true` | Confirm quitting an ephemeral session that still has a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
+| `close_pane` | `false` | Closing a pane whose process is still running. |
+| `kill_workspace` | `true` | Closing every pane on the active workspace. |
+| `kill_session` | `true` | Shutting down the attached named session. |
+| `quit_ephemeral` | `true` | Quitting while on an ephemeral session with a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
+| `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). No effect on named sessions or when there is no live pane. |
+
+**Not covered by `[confirm]`:** the session picker and the session-naming prompt carry their own
+built-in confirmations that are **always on** and cannot be disabled here, because they read off the
+affected UI element rather than a toast (a second `Enter`/`Ctrl+K` after a visible cue). These are:
+killing a session in the picker (`Ctrl+K` twice), attaching away from an ephemeral session (`Enter`
+turns the target row amber), and creating a named session from an ephemeral one (`Enter` turns the
+name prompt's border red). See [sessions.md](sessions.md#switching-sessions-in-app-the-picker).
 
 ## `[session]`
 
@@ -364,14 +368,48 @@ and the session autosave (`[[workspaces]] name` in the profile TOML - see
 
 ## `[keys]`
 
-Rebind window-management actions. Each entry maps an **action id** to one native tui-lipan
-`KeyBinding` string or a list of them, e.g. `"ctrl-a c"` (prefix chord) or `"alt-c"` (held
-modifier) - there is no `prefix` sugar. Comma-separated alternatives also work inside one string.
-Configuring an action **replaces** both of its default keys (the leader-prefix chord and the
-WM-modifier chord). Empty values intentionally clear an action's defaults, for example
-`scratchpad = []` or `scratchpad = ""`. If every binding for an action fails to parse, that
-action keeps its default keys rather than becoming unbound; invalid bindings are warned and
-skipped either way. Workspace digits (`1`–`9`) are not individually rebindable.
+Rebind window-management actions. Each entry maps an **action id** to one binding string or a
+list of them; comma-separated alternatives also work inside one string. Each binding candidate
+takes one of three forms:
+
+- **Bare key** - a single key carrying at most `shift` (e.g. `"b"`, `"shift-w"`, `"tab"`):
+  replaces the action's default key and keeps following the `[input]` scheme, so
+  `copy-mode = "b"` binds `<prefix> b` plus `<modifier>-b` while `modifier_shortcuts` is on.
+  This is the recommended form - change `[input]` later and these bindings follow.
+- **Scheme-marked key** - `scheme:` followed by exactly one key step carrying any modifiers
+  (e.g. `"scheme:ctrl-t"`): explicitly expands through the same `[input]` scheme. This covers
+  modified command keys that should follow later prefix/modifier changes, producing
+  `<prefix> Ctrl+T` plus `<modifier>+Ctrl+T` in this example.
+- **Literal binding** - a native tui-lipan `KeyBinding` string with a real modifier or several
+  chord steps (e.g. `"ctrl-a c"`, `"alt-c"`, `"ctrl-b q"`): bound verbatim, never mirrored or
+  rewritten when `[input]` changes. Use this to control each side exactly, for example
+  `spawn = ["ctrl-b c", "super-enter"]`, or to make one action prefix-only by listing just its
+  leader chord.
+
+Configuring an action **replaces** all of its default keys. Empty values intentionally clear an
+action's defaults, for example `scratchpad = []` or `scratchpad = ""`. If every binding for an
+action fails to parse, that action keeps its default keys rather than becoming unbound; invalid
+bindings are warned and skipped either way. Workspace digits (`1`–`9`) are not individually
+rebindable.
+
+To keep an action's generated defaults and only add shortcuts, use an additive table. `add` accepts
+one binding or a list and applies the same bare, `scheme:`, and literal rules:
+
+```toml
+[keys]
+spawn = { add = "super-enter" }
+copy-mode = { add = ["b", "ctrl-shift-y"] }
+```
+
+Here `spawn` retains all of its normal prefix/modifier bindings and gains literal `Super+Enter`.
+`copy-mode` retains its defaults, gains scheme-generated `<prefix> b` and `<modifier>-b`, and gains
+literal `Ctrl+Shift+Y`. Bindings already present in the defaults are deduplicated.
+Use `scheme:` inside the same list when a modified addition should follow `[input]`, for example
+`copy-mode = { add = "scheme:ctrl-t" }`.
+
+Because a bare key always expands through the `[input]` scheme, a built-in action can never be
+bound to a plain unmodified key - by design, since such a binding would steal ordinary typing
+from the focused terminal. User-defined commands (below) still accept any literal trigger.
 
 hyprmux disables tui-lipan's built-in global `Ctrl-q` (`App::global_quit(None)`) so it never
 conflicts with app routing. Use hyprmux `[keys]` actions (`detach`, `quit`, …) instead; for
@@ -384,8 +422,10 @@ Examples:
 
 ```toml
 [keys]
-toggle-pane-synchronization = "ctrl-a y"
-save-profile = "ctrl-a z, alt-z"
+copy-mode = "b"                      # bare key: <prefix> b + <modifier>-b
+toggle-pane-synchronization = { add = "ctrl-a y" }
+search = "scheme:ctrl-f"             # <prefix> Ctrl+F + <modifier>+Ctrl+F
+save-profile = ["ctrl-a z", "alt-z"] # literal replacement
 scratchpad = []
 ```
 

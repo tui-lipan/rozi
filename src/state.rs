@@ -631,35 +631,33 @@ impl PaneRenameState {
     }
 }
 
-/// Rename prompt state for a workspace, keyed by its index rather than a `PaneId`.
-pub struct WorkspaceRenameState {
-    pub target: usize,
-    pub input: TextInput,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NamingMode {
+    CreateSession,
+    NameEphemeralSession,
+    RenameSession,
+    RenameWorkspace { index: usize },
 }
 
-impl WorkspaceRenameState {
-    pub fn new(target: usize, initial: impl AsRef<str>) -> Self {
-        Self {
-            target,
-            input: TextInput::new(initial.as_ref()),
-        }
-    }
-}
-
-/// Rename prompt state for the current session (renames the attached session in place).
+/// Prompt state for unified naming/renaming overlays.
 pub struct SessionRenameState {
     pub input: TextInput,
-    /// When set, a successful rename is a *name-on-detach*: after naming the (previously ephemeral)
-    /// session, the client detaches and quits (the now-named server keeps running). Cancelling the
-    /// prompt in this mode quits and shuts the still-ephemeral session down.
+    pub mode: NamingMode,
     pub detach_after: bool,
+    /// Set once the first Enter has warned that creating this session will discard the current
+    /// disposable ephemeral one; the modal shows the armed state (red border + inline note) and a
+    /// second Enter commits. Cleared when the name is edited so the guard re-arms. Only meaningful
+    /// for [`NamingMode::CreateSession`] while attached to an ephemeral session.
+    pub pending_confirm: bool,
 }
 
 impl SessionRenameState {
-    pub fn new(initial: impl AsRef<str>) -> Self {
+    pub fn new(initial: impl AsRef<str>, mode: NamingMode) -> Self {
         Self {
             input: TextInput::new(initial.as_ref()),
+            mode,
             detach_after: false,
+            pending_confirm: false,
         }
     }
 
@@ -667,8 +665,26 @@ impl SessionRenameState {
     pub fn for_detach() -> Self {
         Self {
             input: TextInput::new(""),
+            mode: NamingMode::NameEphemeralSession,
             detach_after: true,
+            pending_confirm: false,
         }
+    }
+
+    pub fn new_create() -> Self {
+        Self::new("", NamingMode::CreateSession)
+    }
+
+    pub fn new_name_ephemeral() -> Self {
+        Self::new("", NamingMode::NameEphemeralSession)
+    }
+
+    pub fn new_rename_workspace(index: usize, initial: impl AsRef<str>) -> Self {
+        Self::new(initial, NamingMode::RenameWorkspace { index })
+    }
+
+    pub fn new_rename_session(initial: impl AsRef<str>) -> Self {
+        Self::new(initial, NamingMode::RenameSession)
     }
 }
 
@@ -685,16 +701,14 @@ pub struct SessionPickerState {
     pub entries: Vec<DiscoveredSession>,
     pub input: TextInput,
     pub selected: usize,
-    pub pending_kill: Option<PendingKill>,
-}
-
-/// A session-picker entry awaiting a second Ctrl+K to confirm its kill. The `toast_id` ties the
-/// "press again" confirmation toast to the armed state so the toast is dismissed the moment the
-/// kill runs or the arming is abandoned, rather than lingering for its full duration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PendingKill {
-    pub index: usize,
-    pub toast_id: OverlayId,
+    /// Entry index awaiting a second Ctrl+K to confirm its kill. The armed state is shown inline on
+    /// the row itself (struck through in the error color), so no separate confirm toast is needed.
+    pub pending_kill: Option<usize>,
+    /// Entry index awaiting a second Enter to confirm attaching to it while the current session is a
+    /// disposable ephemeral one — opening the target shuts that ephemeral server down and kills its
+    /// panes, so it warrants the same two-press guard as a kill. Signalled inline on the row (a
+    /// warning-colored highlight), so it needs no confirm toast either.
+    pub pending_open: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -704,6 +718,7 @@ pub enum PendingDestructive {
     KillSession,
     /// Quit an ephemeral session that still has a live pane (shuts the server down).
     Quit,
+    NewTemporarySession,
 }
 
 pub struct PendingDestructiveConfirmation {
@@ -719,6 +734,7 @@ impl SessionPickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_kill: None,
+            pending_open: None,
         }
     }
 }
@@ -930,7 +946,6 @@ pub struct State {
     pub theme_watcher: Option<ThemeWatcher>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
-    pub rename_workspace: Option<WorkspaceRenameState>,
     pub rename_session: Option<SessionRenameState>,
     pub save_profile_prompt: Option<PaneRenameState>,
     pub show_profile_picker: bool,
@@ -1138,7 +1153,6 @@ impl State {
             theme_watcher: None,
             search: None,
             rename: None,
-            rename_workspace: None,
             rename_session: None,
             save_profile_prompt: None,
             show_profile_picker: false,

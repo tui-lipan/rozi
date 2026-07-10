@@ -289,6 +289,23 @@ fn execute_action_inner(
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
         Action::RenameSession => crate::session_ops::open_rename_session(ctx),
+        Action::NewTemporarySession => {
+            if ctx.state.session_attached
+                && ctx.state.is_ephemeral_session()
+                && confirmations_enabled
+                && ctx.state.config.confirm.new_temporary_session
+                && !crate::exit_ops::confirm_new_temporary_session(ctx)
+            {
+                return Update::full();
+            }
+            crate::session_ops::release_current_session(ctx);
+            let update = crate::session_ops::swap_to_fresh_ephemeral(ctx);
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                "Started a fresh ephemeral session",
+            ));
+            update
+        }
         Action::TakeControl => crate::session_ops::take_control(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
         Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),

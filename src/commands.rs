@@ -5,7 +5,8 @@
 //! - [`BUILTIN_COMMANDS`]: the ~45 stable, individually rebindable actions (`Action::id()`).
 //!   Each gets a leader-prefix chord (`<prefix> <key>`) and a WM-modifier chord
 //!   (`<modifier>-<key>`) by default; a `[keys]` override replaces both with the user's exact
-//!   bindings.
+//!   bindings, except that a bare key step (e.g. `"b"`) re-enters the same prefix/modifier
+//!   expansion with that key (resolved at config parse time in `build_key_overrides`).
 //! - Workspace digit switch/move/relocate (27 commands, `workspace.<kind>.<1-9>`): not
 //!   individually rebindable, generated straight from the configured prefix/modifier.
 //! - User `[keys]` `{ run = .. }` / `{ send = .. }` commands (`user.<index>`), one literal
@@ -21,7 +22,7 @@ use std::sync::Arc;
 
 use tui_lipan::prelude::*;
 
-use crate::config::{HyprmuxConfig, WmModifier};
+use crate::config::HyprmuxConfig;
 use crate::input::Action;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
@@ -324,6 +325,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::NewTemporarySession,
+        label: "New temporary session",
+        category: "Session",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::TakeControl,
         label: "Take layout control",
         category: "Session",
@@ -517,7 +525,6 @@ pub(crate) fn commands_active(state: &State) -> bool {
         && !state.show_theme_picker
         && state.search.is_none()
         && state.rename.is_none()
-        && state.rename_workspace.is_none()
         && state.rename_session.is_none()
         && state.save_profile_prompt.is_none()
         && !state.show_profile_picker
@@ -733,27 +740,25 @@ fn builtin_keybinding_hint(
 /// only leader chords are emitted so held `Alt`/`Super` chords reach the focused pane instead. A
 /// user who wants to drop the mirror for one specific command uses a `[keys]` override instead.
 fn default_shortcuts_for<S: AsRef<str>>(config: &HyprmuxConfig, keys: &[S]) -> Vec<KeyBinding> {
-    let prefix = config.input.prefix.canonical_lowercase();
-    let modifier = modifier_token(config.input.modifier);
-    let mirror = config.input.modifier_shortcuts;
-    let mut out = Vec::new();
-    for key in keys {
-        let key = key.as_ref();
-        if let Ok(chord) = KeyBinding::from_str(&format!("{prefix} {key}")) {
-            out.push(chord);
-        }
-        if mirror && let Ok(held) = KeyBinding::from_str(&format!("{modifier}-{key}")) {
-            out.push(held);
-        }
-    }
-    out
+    keys.iter()
+        .flat_map(|key| crate::config::scheme_shortcuts(&config.input, key.as_ref()))
+        .collect()
 }
 
-fn modifier_token(modifier: WmModifier) -> &'static str {
-    match modifier {
-        WmModifier::Alt => "alt",
-        WmModifier::Super => "super",
-    }
+pub(crate) fn default_shortcuts_for_action(
+    input: &crate::config::InputConfig,
+    id: &str,
+) -> Option<Vec<KeyBinding>> {
+    BUILTIN_COMMANDS
+        .iter()
+        .find(|command| command.action.id() == Some(id))
+        .map(|command| {
+            command
+                .default_keys
+                .iter()
+                .flat_map(|key| crate::config::scheme_shortcuts(input, key))
+                .collect()
+        })
 }
 
 /// Resolve a command's live display label, reflecting current state for toggle actions (e.g.

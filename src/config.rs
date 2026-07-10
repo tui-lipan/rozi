@@ -10,7 +10,6 @@ use serde::Deserialize;
 use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
-use crate::input::Action;
 use crate::state::{CapStyle, PaneBorderStyle, ThemePreset};
 
 // === Config schema ===
@@ -36,6 +35,14 @@ impl WmModifier {
                 ..KeyMods::NONE
             },
             Self::Alt => KeyMods::ALT,
+        }
+    }
+
+    /// Spelling of this modifier in tui-lipan `KeyBinding` strings (e.g. `alt-c`).
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Super => "super",
+            Self::Alt => "alt",
         }
     }
 
@@ -66,6 +73,24 @@ impl Default for InputConfig {
             modifier_shortcuts: true,
         }
     }
+}
+
+/// Expand one key step into its scheme-generated shortcuts: the leader chord
+/// (`<prefix> <key>`) plus, when `modifier_shortcuts` is enabled, the held WM-modifier chord
+/// (`<modifier>-<key>`). A step that fails to parse in either form is simply dropped, so a
+/// malformed step yields an empty result rather than a panic.
+pub fn scheme_shortcuts(input: &InputConfig, key: &str) -> Vec<KeyBinding> {
+    let prefix = input.prefix.canonical_lowercase();
+    let mut out = Vec::new();
+    if let Ok(chord) = KeyBinding::from_str(&format!("{prefix} {key}")) {
+        out.push(chord);
+    }
+    if input.modifier_shortcuts
+        && let Ok(held) = KeyBinding::from_str(&format!("{}-{key}", input.modifier.token()))
+    {
+        out.push(held);
+    }
+    out
 }
 
 #[derive(Clone, Debug)]
@@ -307,6 +332,9 @@ pub struct HyprmuxConfirmConfig {
     /// Confirm before quitting an ephemeral session that still has a live pane (quitting it
     /// shuts the server down and kills those PTYs). Named-session quits are unaffected.
     pub quit_ephemeral: bool,
+    /// Confirm before discarding the current ephemeral session to start a fresh one (its panes
+    /// are killed). No effect on named sessions or when there is no live pane.
+    pub new_temporary_session: bool,
 }
 
 impl Default for HyprmuxConfirmConfig {
@@ -316,6 +344,7 @@ impl Default for HyprmuxConfirmConfig {
             kill_workspace: true,
             kill_session: true,
             quit_ephemeral: true,
+            new_temporary_session: true,
         }
     }
 }
@@ -613,13 +642,11 @@ pub struct LoadedConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct FileConfig {
     shell: Option<String>,
     cwd: Option<String>,
     scrollback: Option<usize>,
-    modifier: Option<String>,
-    prefix: Option<String>,
     input: InputFileConfig,
     animations: AnimationFileConfig,
     theme: ThemeFileConfig,
@@ -635,28 +662,40 @@ struct FileConfig {
     keys: HashMap<String, KeyBindingSpec>,
 }
 
-/// A `[keys]` value: one binding string, a list of them, or a `{ run = ".." }` /
-/// `{ send = ".." }` table defining a user command (see [`build_key_overrides`]).
+/// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum KeyBindingSpec {
     One(String),
     Many(Vec<String>),
+    Add(AddKeyBindingSpec),
     UserCommand(UserCommandTableSpec),
 }
 
-impl KeyBindingSpec {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddKeyBindingSpec {
+    add: KeyBindingCandidates,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum KeyBindingCandidates {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl KeyBindingCandidates {
     fn into_vec(self) -> Vec<String> {
         match self {
             Self::One(value) => vec![value],
             Self::Many(values) => values,
-            Self::UserCommand(_) => Vec::new(),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct UserCommandTableSpec {
     run: Option<String>,
     send: Option<String>,
@@ -669,6 +708,7 @@ struct ConfirmFileConfig {
     kill_workspace: Option<bool>,
     kill_session: Option<bool>,
     quit_ephemeral: Option<bool>,
+    new_temporary_session: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -754,6 +794,7 @@ mod tests {
         assert!(defaults.kill_workspace);
         assert!(defaults.kill_session);
         assert!(defaults.quit_ephemeral);
+        assert!(defaults.new_temporary_session);
 
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -761,6 +802,7 @@ mod tests {
             close_pane = true
             kill_workspace = false
             quit_ephemeral = false
+            new_temporary_session = false
             "#,
         )
         .expect("config parses");
@@ -769,6 +811,7 @@ mod tests {
         assert_eq!(parsed.confirm.kill_workspace, Some(false));
         assert_eq!(parsed.confirm.kill_session, None);
         assert_eq!(parsed.confirm.quit_ephemeral, Some(false));
+        assert_eq!(parsed.confirm.new_temporary_session, Some(false));
     }
 
     #[test]
@@ -815,7 +858,12 @@ mod tests {
         .expect("config parses");
 
         let mut warnings = Vec::new();
-        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
 
         assert_eq!(
             overrides.get("spawn"),
@@ -843,7 +891,12 @@ mod tests {
 
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
+        build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut user_commands,
+            &mut warnings,
+        );
 
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(user_commands.len(), 1);
@@ -869,7 +922,12 @@ mod tests {
 
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
+        build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut user_commands,
+            &mut warnings,
+        );
 
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(user_commands.len(), 1);
@@ -891,7 +949,12 @@ mod tests {
 
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
+        build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut user_commands,
+            &mut warnings,
+        );
 
         assert!(user_commands.is_empty());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -910,7 +973,12 @@ mod tests {
 
         let mut user_commands = Vec::new();
         let mut warnings = Vec::new();
-        build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
+        build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut user_commands,
+            &mut warnings,
+        );
 
         assert!(user_commands.is_empty());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
@@ -945,6 +1013,216 @@ mod tests {
     }
 
     #[test]
+    fn bare_key_override_expands_through_the_input_scheme() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            copy-mode = "b"
+            close = "shift-w"
+            "#,
+        )
+        .expect("config parses");
+
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            overrides.get("copy-mode"),
+            Some(&vec![
+                KeyBinding::from_str("ctrl-a b").unwrap(),
+                KeyBinding::from_str("alt-b").unwrap(),
+            ])
+        );
+        // Shift-only steps count as bare keys too, matching the built-in default-key grammar.
+        assert_eq!(
+            overrides.get("close"),
+            Some(&vec![
+                KeyBinding::from_str("ctrl-a shift-w").unwrap(),
+                KeyBinding::from_str("alt-shift-w").unwrap(),
+            ])
+        );
+    }
+
+    #[test]
+    fn bare_key_override_follows_custom_prefix_modifier_and_mirror_toggle() {
+        let keys = || {
+            toml::from_str::<FileConfig>(
+                r#"
+                [keys]
+                copy-mode = "b"
+                "#,
+            )
+            .expect("config parses")
+            .keys
+        };
+
+        let mut input = InputConfig {
+            prefix: KeyBinding::from_str("ctrl-b").unwrap(),
+            modifier: WmModifier::Super,
+            modifier_shortcuts: true,
+        };
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(keys(), &input, &mut Vec::new(), &mut warnings);
+        assert_eq!(
+            overrides.get("copy-mode"),
+            Some(&vec![
+                KeyBinding::from_str("ctrl-b b").unwrap(),
+                KeyBinding::from_str("super-b").unwrap(),
+            ])
+        );
+
+        input.modifier_shortcuts = false;
+        let overrides = build_key_overrides(keys(), &input, &mut Vec::new(), &mut warnings);
+        assert_eq!(
+            overrides.get("copy-mode"),
+            Some(&vec![KeyBinding::from_str("ctrl-b b").unwrap()])
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn bare_keys_and_literal_bindings_mix_in_one_override() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            spawn = ["n", "super-enter"]
+            focus-left = "ctrl-h"
+            "#,
+        )
+        .expect("config parses");
+
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            overrides.get("spawn"),
+            Some(&vec![
+                KeyBinding::from_str("ctrl-a n").unwrap(),
+                KeyBinding::from_str("alt-n").unwrap(),
+                KeyBinding::from_str("super-enter").unwrap(),
+            ])
+        );
+        // A step with a real modifier stays a literal binding rather than expanding.
+        assert_eq!(
+            overrides.get("focus-left"),
+            Some(&vec![KeyBinding::from_str("ctrl-h").unwrap()])
+        );
+    }
+
+    #[test]
+    fn additive_key_override_keeps_defaults_and_accepts_bare_or_literal_bindings() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            spawn = { add = ["n", "super-enter", "enter"] }
+            "#,
+        )
+        .expect("config parses");
+
+        let input = InputConfig::default();
+        let defaults = crate::commands::default_shortcuts_for_action(&input, "spawn").unwrap();
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(parsed.keys, &input, &mut Vec::new(), &mut warnings);
+        let bindings = overrides.get("spawn").unwrap();
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(bindings.starts_with(&defaults));
+        assert!(bindings.contains(&KeyBinding::from_str("ctrl-a n").unwrap()));
+        assert!(bindings.contains(&KeyBinding::from_str("alt-n").unwrap()));
+        assert!(bindings.contains(&KeyBinding::from_str("super-enter").unwrap()));
+        assert_eq!(
+            bindings
+                .iter()
+                .filter(|binding| **binding == KeyBinding::from_str("ctrl-a enter").unwrap())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn scheme_marker_expands_modified_keys_in_replacements_and_additions() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            copy-mode = "scheme:ctrl-t"
+            spawn = { add = ["scheme:ctrl-n"] }
+            "#,
+        )
+        .expect("config parses");
+        let input = InputConfig {
+            prefix: KeyBinding::from_str("ctrl-b").unwrap(),
+            modifier: WmModifier::Super,
+            modifier_shortcuts: true,
+        };
+
+        let mut warnings = Vec::new();
+        let overrides = build_key_overrides(parsed.keys, &input, &mut Vec::new(), &mut warnings);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            overrides.get("copy-mode"),
+            Some(&vec![
+                KeyBinding::from_str("ctrl-b ctrl-t").unwrap(),
+                KeyBinding::from_str("super-ctrl-t").unwrap(),
+            ])
+        );
+        let spawn = overrides.get("spawn").unwrap();
+        assert!(spawn.contains(&KeyBinding::from_str("ctrl-b ctrl-n").unwrap()));
+        assert!(spawn.contains(&KeyBinding::from_str("super-ctrl-n").unwrap()));
+    }
+
+    #[test]
+    fn scheme_marker_rejects_multiple_key_steps() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [keys]
+            copy-mode = "scheme:ctrl-t x"
+            "#,
+        )
+        .expect("config parses");
+        let mut warnings = Vec::new();
+
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
+
+        assert!(!overrides.contains_key("copy-mode"));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("one key step"))
+        );
+    }
+
+    #[test]
+    fn top_level_input_aliases_are_rejected() {
+        let error = toml::from_str::<FileConfig>(
+            r#"
+            prefix = "ctrl-b"
+            modifier = "super"
+            "#,
+        )
+        .expect_err("top-level input aliases should not parse");
+
+        assert!(error.to_string().contains("unknown field"), "{error}");
+    }
+
+    #[test]
     fn empty_key_specs_record_an_explicit_unbind() {
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -956,7 +1234,12 @@ mod tests {
         .expect("config parses");
 
         let mut warnings = Vec::new();
-        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
 
         assert_eq!(overrides.get("scratchpad"), Some(&Vec::new()));
         assert_eq!(overrides.get("spawn"), Some(&Vec::new()));
@@ -974,7 +1257,12 @@ mod tests {
         .expect("config parses");
 
         let mut warnings = Vec::new();
-        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
 
         // A fully-unparseable spec is a config error, not an intentional unbind - no override
         // is recorded, so `resolve_shortcuts` falls back to `scratchpad`'s default shortcuts
@@ -999,7 +1287,12 @@ mod tests {
         .expect("config parses");
 
         let mut warnings = Vec::new();
-        let overrides = build_key_overrides(parsed.keys, &mut Vec::new(), &mut warnings);
+        let overrides = build_key_overrides(
+            parsed.keys,
+            &InputConfig::default(),
+            &mut Vec::new(),
+            &mut warnings,
+        );
 
         assert_eq!(
             overrides.get("toggle-pane-synchronization"),
@@ -1621,8 +1914,8 @@ pub fn load_config() -> LoadedConfig {
     let mut input = config.input.clone();
     apply_input_config(
         &mut input,
-        parsed.modifier.or(parsed.input.modifier),
-        parsed.prefix.or(parsed.input.prefix),
+        parsed.input.modifier,
+        parsed.input.prefix,
         parsed.input.modifier_shortcuts,
         &mut warnings,
     );
@@ -1723,6 +2016,9 @@ pub fn load_config() -> LoadedConfig {
     if let Some(quit_ephemeral) = parsed.confirm.quit_ephemeral {
         config.confirm.quit_ephemeral = quit_ephemeral;
     }
+    if let Some(new_temporary_session) = parsed.confirm.new_temporary_session {
+        config.confirm.new_temporary_session = new_temporary_session;
+    }
 
     config.scratchpad.command = non_empty(parsed.scratchpad.command);
     config.scratchpad.cwd =
@@ -1739,7 +2035,12 @@ pub fn load_config() -> LoadedConfig {
 
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     let mut user_commands = Vec::new();
-    config.key_overrides = build_key_overrides(parsed.keys, &mut user_commands, &mut warnings);
+    config.key_overrides = build_key_overrides(
+        parsed.keys,
+        &config.input,
+        &mut user_commands,
+        &mut warnings,
+    );
     config.user_commands = user_commands;
 
     LoadedConfig { config, warnings }
@@ -2266,13 +2567,30 @@ fn apply_input_config(
     }
 }
 
-/// Build `[keys]` overrides: for each TOML entry, either register a user command (table value
-/// with `run`/`send`, keyed by its own literal binding string) or record an explicit shortcut
-/// override for a built-in command id (string or list of native `KeyBinding` syntax; an empty
-/// list unbinds). Bindings are plain tui-lipan `KeyBinding` strings (e.g. `"ctrl-a c"`,
-/// `"alt-c"`) - there is no `prefix` sugar.
+/// True when a `[keys]` candidate is a bare key step: a single chord step carrying at most
+/// `shift` (e.g. `"b"`, `"shift-w"`, `"tab"`). A literal global binding on such a step would
+/// steal plain typing from the focused terminal, so it is treated as a default-key replacement
+/// and expanded through the `[input]` prefix/modifier scheme instead. Steps with a real
+/// modifier (`ctrl-h`, `alt-b`) and multi-step chords stay literal.
+fn is_bare_key_step(candidate: &str) -> bool {
+    let mut steps = candidate.split_whitespace();
+    let (Some(step), None) = (steps.next(), steps.next()) else {
+        return false;
+    };
+    // Non-shift modifier spellings accepted by tui-lipan's binding grammar.
+    const MODIFIERS: &[&str] = &[
+        "ctrl", "control", "alt", "option", "super", "cmd", "command", "meta", "win", "windows",
+    ];
+    !step
+        .split(['-', '+'])
+        .any(|token| MODIFIERS.contains(&token.to_ascii_lowercase().as_str()))
+}
+
+/// Build `[keys]` overrides. Strings/lists replace an action's defaults, `{ add = ... }` extends
+/// its generated defaults, and `{ run = ... }` / `{ send = ... }` defines a user command.
 fn build_key_overrides(
     keys: HashMap<String, KeyBindingSpec>,
+    input: &InputConfig,
     user_commands: &mut Vec<UserCommand>,
     warnings: &mut Vec<String>,
 ) -> HashMap<String, Vec<KeyBinding>> {
@@ -2286,22 +2604,67 @@ fn build_key_overrides(
             continue;
         }
 
-        if Action::from_id(&key).is_none() {
+        let Some(default_bindings) = crate::commands::default_shortcuts_for_action(input, &key)
+        else {
             warnings.push(format!("Unknown key action `{key}`; skipped"));
             continue;
-        }
+        };
 
-        let mut parsed_bindings = Vec::new();
+        let (bindings, additive) = match spec {
+            KeyBindingSpec::One(value) => (vec![value], false),
+            KeyBindingSpec::Many(values) => (values, false),
+            KeyBindingSpec::Add(table) => (table.add.into_vec(), true),
+            KeyBindingSpec::UserCommand(_) => unreachable!(),
+        };
+
+        let mut parsed_bindings = if additive {
+            default_bindings
+        } else {
+            Vec::new()
+        };
         let mut candidate_count = 0;
-        for binding in spec.into_vec() {
+        let initial_binding_count = parsed_bindings.len();
+        for binding in bindings {
             for candidate in binding
                 .split(',')
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
                 candidate_count += 1;
+                let scheme_key = if let Some(key_step) = candidate.strip_prefix("scheme:") {
+                    match KeyBinding::from_str(key_step) {
+                        Ok(binding) if binding.step_count() == 1 => Some(key_step),
+                        _ => {
+                            warnings.push(format!(
+                                "Could not parse scheme binding `{candidate}` for `{key}`; expected one key step"
+                            ));
+                            continue;
+                        }
+                    }
+                } else {
+                    is_bare_key_step(candidate).then_some(candidate)
+                };
+                if let Some(key_step) = scheme_key {
+                    let expanded = scheme_shortcuts(input, key_step);
+                    if expanded.is_empty() {
+                        warnings.push(format!(
+                            "Could not parse binding `{candidate}` for `{key}`; skipped"
+                        ));
+                    } else {
+                        for binding in expanded {
+                            if !parsed_bindings.contains(&binding) {
+                                parsed_bindings.push(binding);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 match KeyBinding::from_str(candidate) {
-                    Ok(parsed) => parsed_bindings.push(parsed),
+                    Ok(parsed) => {
+                        if !parsed_bindings.contains(&parsed) {
+                            parsed_bindings.push(parsed);
+                        }
+                    }
                     Err(_) => warnings.push(format!(
                         "Could not parse binding `{candidate}` for `{key}`; skipped"
                     )),
@@ -2312,7 +2675,7 @@ fn build_key_overrides(
         // was present but failed to parse (e.g. the pre-tui-lipan `"prefix c"` grammar), that's
         // a config error, not intent to unbind - keep the default shortcuts rather than
         // silently making the action unreachable, and say so plainly.
-        if candidate_count > 0 && parsed_bindings.is_empty() {
+        if candidate_count > 0 && parsed_bindings.len() == initial_binding_count && !additive {
             warnings.push(format!(
                 "No valid bindings for `{key}`; keeping its default shortcuts"
             ));

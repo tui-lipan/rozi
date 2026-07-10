@@ -63,13 +63,26 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
 
 - Highlight an existing session and press `Enter` to attach to it.
 - Type a new name and press `Ctrl+N` to create and attach to a brand-new named session.
-- Press `Ctrl+D` to detach the current session and drop onto a fresh ephemeral one.
-- Press `Ctrl+K` twice to kill the highlighted session.
+- Press `Ctrl+D` to detach the current named session and exit the client, leaving its server running
+  for later reattach.
+- Press `Ctrl+K` twice to kill the highlighted named session or reset a highlighted ephemeral one.
 
 Switching away is a **release** of the current session: a named session's client detaches (leaving
 that server running for reattach — the server already holds the authoritative layout from live
 commits), while an ephemeral session is shut down (it is disposable, so it does not leak an orphan
 server).
+
+Because releasing an ephemeral session throws its panes away, leaving one *while you are on it* asks
+first, and the confirmation lives in the affected UI rather than a toast:
+
+- **Attaching** to another row (`Enter`): the first press turns the target row amber with an
+  *"again to confirm (ends ephemeral)"* hint; a second `Enter` commits. Moving the highlight, editing
+  the query, or `Esc` cancels the arming.
+- **Creating** a named session (`Ctrl+N`): the name prompt's border and title turn red with an
+  *"again to confirm (ends ephemeral session)"* caption; a second `Enter` commits, editing the name
+  re-arms, and `Esc` cancels.
+
+Switching between two named sessions parks the old one and needs no confirmation.
 
 Killing the **current** session is allowed: its server is shut down (its PTYs die) and the UI hops
 onto a fresh ephemeral session, so the client stays alive rather than quitting.
@@ -101,15 +114,17 @@ broadcasts it (see [Shared live layouts](#shared-live-layouts)).
   a named session's client detaches (server left running, still layout-authoritative), while an
   ephemeral session is shut down (it is disposable). Then the target is attached.
 - **Detach** (`prefix d`) leaves the TUI back to your shell, tmux-style, keeping the session server
-  running for later reattach. Because an *anonymous* ephemeral session has no name to reattach by,
-  detaching one first prompts you to **name** it:
+  running for later reattach. Detaching never tears panes down. Because an *anonymous* ephemeral
+  session has no name to reattach by, detaching one first prompts you to **name** it:
   - Type a name and confirm → the session is renamed in place (same server, same panes) and the UI
     detaches, leaving the now-named server running.
-  - Cancel (`Esc`) → the detach is treated as a **quit**: the ephemeral server is shut down and the
-    UI exits.
+  - Cancel (`Esc`) → the prompt closes and you return to the session; nothing is shut down. To tear
+    an ephemeral session down, quit instead (which asks for confirmation).
   - A session that is already named detaches immediately, leaving its server running.
 - **Quit** (`prefix q` / `Alt+q`) exits the client. It shuts down the current server only when it is
-  ephemeral; named servers keep running.
+  ephemeral; named servers keep running. Quitting an ephemeral session with a live pane asks for a
+  second press first (see `[confirm].quit_ephemeral`) — this is the destructive counterpart to
+  detach, which preserves the session.
 - If the server disconnects unexpectedly while attached, hyprmux marks panes errored and attempts a
   reconnect. Ephemeral sessions autostart a replacement server; a dead named session surfaces as an
   error rather than a silent empty resurrection.

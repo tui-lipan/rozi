@@ -20,10 +20,6 @@ pub fn rename_input_key() -> &'static str {
     "hyprmux-rename-input"
 }
 
-pub fn rename_workspace_input_key() -> &'static str {
-    "hyprmux-rename-workspace-input"
-}
-
 pub fn rename_session_input_key() -> &'static str {
     "hyprmux-rename-session-input"
 }

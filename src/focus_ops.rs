@@ -498,10 +498,6 @@ pub(crate) fn request_rename_focus(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(view::rename_input_key());
 }
 
-pub(crate) fn request_rename_workspace_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::rename_workspace_input_key());
-}
-
 pub(crate) fn request_rename_session_focus(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(view::rename_session_input_key());
 }

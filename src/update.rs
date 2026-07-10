@@ -4,11 +4,9 @@ use crate::actions::{execute_action, execute_palette_action};
 use crate::anim::GeometryAnimation;
 use crate::focus_ops::{
     focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
-    request_rename_workspace_focus, request_save_profile_focus, request_search_focus,
+    request_rename_session_focus, request_save_profile_focus, request_search_focus,
 };
-use crate::identity_ops::{
-    apply_rename_pane, apply_rename_workspace, close_rename_pane, close_rename_workspace,
-};
+use crate::identity_ops::{apply_rename_pane, close_rename_pane};
 use crate::input::Action;
 use crate::key_routing::handle_key_routing;
 use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed, pane_env};
@@ -86,7 +84,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             match action {
                 Action::OpenSearch => request_search_focus(ctx),
                 Action::RenamePane => request_rename_focus(ctx),
-                Action::RenameWorkspace => request_rename_workspace_focus(ctx),
+                Action::RenameWorkspace | Action::RenameSession => {
+                    request_rename_session_focus(ctx)
+                }
                 Action::OpenAppearance => {}
                 Action::OpenThemePicker => {}
                 Action::SaveProfile | Action::OpenProfilePicker | Action::OpenSessionPicker => {}
@@ -328,27 +328,13 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
-        Msg::CloseRenameWorkspace => {
-            let update = close_rename_workspace(ctx);
-            request_current_pane_focus(ctx);
-            update
-        }
-        Msg::RenameWorkspaceChanged(event) => {
-            if let Some(rename) = ctx.state.rename_workspace.as_mut() {
-                event.apply_to(&mut rename.input);
-            }
-            request_rename_workspace_focus(ctx);
-            Update::full()
-        }
-        Msg::SubmitRenameWorkspace => {
-            let update = apply_rename_workspace(ctx);
-            request_current_pane_focus(ctx);
-            update
-        }
         Msg::CloseRenameSession => crate::session_ops::close_rename_session(ctx),
         Msg::RenameSessionChanged(event) => {
             if let Some(rename) = ctx.state.rename_session.as_mut() {
                 event.apply_to(&mut rename.input);
+                // Editing the name reconsiders the create-from-ephemeral choice, so drop any armed
+                // confirmation; the next Enter re-arms it (see `apply_rename_session`).
+                rename.pending_confirm = false;
             }
             crate::focus_ops::request_rename_session_focus(ctx);
             Update::full()
@@ -393,31 +379,33 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.input.set_text(query);
             }
-            crate::session_ops::clear_pending_kill(ctx);
+            crate::session_ops::clear_pending_session_arms(ctx);
             Update::full()
         }
         Msg::SessionPickerSelect(index) => {
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.selected = index.min(picker.entries.len().saturating_sub(1));
             }
-            // Moving the highlight off the armed row cancels its kill confirmation (and dismisses
-            // the toast); staying on it keeps the arming alive for a confirming second press.
+            // Moving the highlight off an armed row cancels its confirmation (and dismisses the
+            // toast); staying on it keeps the arming alive for a confirming second press. Applies to
+            // both the kill and the open-discards-ephemeral guards.
             let moved_off_armed = ctx.state.session_picker.as_ref().is_some_and(|picker| {
-                picker
-                    .pending_kill
-                    .is_some_and(|pending| pending.index != picker.selected)
+                let selected = picker.selected;
+                picker.pending_kill.is_some_and(|index| index != selected)
+                    || picker.pending_open.is_some_and(|index| index != selected)
             });
             if moved_off_armed {
-                crate::session_ops::clear_pending_kill(ctx);
+                crate::session_ops::clear_pending_session_arms(ctx);
             }
             Update::full()
         }
         Msg::SessionPickerActivate(index) => {
             crate::session_ops::activate_selected_session(ctx, index)
         }
-        Msg::SessionPickerCreateFromQuery => crate::session_ops::create_from_query(ctx),
+        Msg::SessionPickerCreateFromQuery => crate::session_ops::open_create_session(ctx),
         Msg::SessionPickerDetachCurrent => crate::session_ops::detach_current_session(ctx),
         Msg::SessionPickerKillSelected => crate::session_ops::kill_selected_session(ctx),
+        Msg::SessionPickerNameCurrent => crate::session_ops::open_rename_session(ctx),
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {

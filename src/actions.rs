@@ -167,6 +167,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::TogglePaneSynchronization
         | Action::RenamePane
         | Action::RenameWorkspace
+        | Action::KillWorkspace
         | Action::ToggleScratchpad => true,
         // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
         Action::RunUserCommand(index) => matches!(
@@ -474,6 +475,7 @@ mod tests {
             Action::ToggleFloat,
             Action::EnterResizeMode,
             Action::MoveToWorkspace(1),
+            Action::KillWorkspace,
             Action::ToggleScratchpad,
         ] {
             assert!(
@@ -481,13 +483,14 @@ mod tests {
                 "{action:?} should be gated"
             );
         }
-        // Local view actions stay allowed for followers.
+        // Local view actions and whole-session teardown stay allowed for followers.
         for action in [
             Action::Focus(Direction::Left),
             Action::SwitchWorkspace(1),
             Action::EnterCopyMode,
             Action::TogglePalette,
             Action::Detach,
+            Action::KillSession,
         ] {
             assert!(
                 !is_layout_mutating(&state, action),

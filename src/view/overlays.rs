@@ -550,7 +550,7 @@ fn render_ephemeral_session_item(
     let label = item.label.as_ref();
     let suffix = label.strip_prefix("ephemeral").unwrap_or_default();
     let mut row = ListItem::from_spans(vec![
-        Span::new("ephemeral").style(label_style.clone()),
+        Span::new("ephemeral").style(*label_style),
         Span::new(suffix),
     ]);
     if let Some(description) = item
@@ -560,7 +560,7 @@ fn render_ephemeral_session_item(
     {
         row = row
             .description(description)
-            .description_style(description_style.clone());
+            .description_style(*description_style);
     }
     row
 }
@@ -719,11 +719,17 @@ fn session_picker_palette(
 fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
-        DiscoveredSessionStatus::Running { panes, .. } => {
-            let label = if *panes == 1 {
+        DiscoveredSessionStatus::Running { panes, clients, .. } => {
+            let panes_label = if *panes == 1 {
                 "1 pane".to_string()
             } else {
                 format!("{panes} panes")
+            };
+            // Surface how many clients share a live session so the picker previews shared attaches.
+            let label = if *clients > 1 {
+                format!("{panes_label} · {clients} clients")
+            } else {
+                panes_label
             };
             ItemDescription::new().right(label)
         }

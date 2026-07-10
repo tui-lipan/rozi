@@ -39,7 +39,10 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .replace(Some(viewport))
         .is_some_and(|previous| previous != viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-    let bounds = ctx.state.canvas_bounds(viewport);
+    // A follower renders the controller's canonical pane canvas centered in its own viewport
+    // (letterboxed); everyone else uses the full local canvas. Every downstream placement, float,
+    // and empty-state rect derives from `bounds`, so centering here centers the whole workspace.
+    let bounds = follower_letterbox_bounds(&ctx.state, viewport);
     let top_offset = ctx.state.content_top_offset();
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
@@ -99,14 +102,22 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
 
     for pane in ordered_panes(workspace, focused_pane) {
+        // Floating geometry is stored in canvas-origin coordinates; translate it by the (possibly
+        // negative) letterbox origin so a follower's floats sit inside the centered canvas. This is
+        // a no-op for the controller and local sessions, where `bounds` starts at the origin.
+        let floating_rect = FloatRect {
+            x: pane.floating_rect.x + bounds.x,
+            y: pane.floating_rect.y + bounds.y,
+            ..pane.floating_rect
+        };
         let base_rect = placement_for(&placements, pane.id)
-            .unwrap_or_else(|| clamp_float_rect(pane.floating_rect, bounds));
+            .unwrap_or_else(|| clamp_float_rect(floating_rect, bounds));
         let moving = ctx
             .state
             .moving_pane
             .filter(|session| session.id == pane.id);
         let canvas_target_rect = if pane.closing {
-            close_rect(pane.floating_rect)
+            close_rect(floating_rect)
         } else if pane.opening {
             close_rect(base_rect)
         } else if let Some(session) = moving
@@ -312,6 +323,25 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     ThemeProvider::new(ctx.state.theme.clone())
         .child(root)
         .into()
+}
+
+/// The canvas bounds to render the active workspace into. A follower returns the controller's
+/// canonical canvas centered in its own viewport (letterboxed; the origin may be negative when the
+/// canonical canvas is larger than the local one, clipping at the viewport edges). The controller
+/// and local/unattached sessions return their own full canvas.
+fn follower_letterbox_bounds(state: &crate::state::State, viewport: Rect) -> FloatRect {
+    let local = state.canvas_bounds(viewport);
+    let Some((cols, rows)) = state.follower_canonical_canvas() else {
+        return local;
+    };
+    let w = f32::from(cols.max(1));
+    let h = f32::from(rows.max(1));
+    FloatRect {
+        x: local.x + (local.w - w) / 2.0,
+        y: local.y + (local.h - h) / 2.0,
+        w,
+        h,
+    }
 }
 
 pub(crate) fn integrated_scrollbar_config() -> ScrollbarConfig {

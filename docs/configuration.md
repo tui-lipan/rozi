@@ -285,6 +285,11 @@ With `startup = "picker"` (or `--pick`), the session picker is shown at launch *
 one named session already exists**; otherwise the launch attaches to an ephemeral session as usual.
 Dismissing the picker with `Esc` attaches a fresh ephemeral session. See [Sessions](sessions.md).
 
+When several clients attach to one session they share a live, server-authoritative layout with a
+single controlling client and instant takeover (`take-control`, default `g`). This needs no
+configuration — the takeover cooldown and client heartbeat are fixed built-in constants — see
+[Shared live layouts](sessions.md#shared-live-layouts).
+
 ## `[scratchpad]`
 
 The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
@@ -367,7 +372,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `rename-session`, `detach`, `quit`, `kill-workspace`, `kill-session`,
+`save-profile`, `open-profile`, `sessions`, `rename-session`, `take-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-animations`, `toggle-focus-on-hover`,

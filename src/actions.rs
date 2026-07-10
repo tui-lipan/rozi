@@ -146,6 +146,37 @@ fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: boo
     }
 }
 
+/// Whether `action` changes the shared window-manager layout (pane membership/order, tiling,
+/// geometry, workspace/pane identity). Followers are blocked from these until they take control;
+/// focus/workspace-switch/copy/search/palette/theme and terminal input stay local and are allowed.
+pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) -> bool {
+    match action {
+        Action::Spawn
+        | Action::Close
+        | Action::Move(_)
+        | Action::Swap(_)
+        | Action::PromoteToMaster
+        | Action::ToggleFloat
+        | Action::ToggleFullscreen
+        | Action::FlipSplit
+        | Action::AdjustRatio(_)
+        | Action::EnterResizeMode
+        | Action::ToggleLayout
+        | Action::MoveToWorkspace(_)
+        | Action::RelocateWorkspace(_)
+        | Action::TogglePaneSynchronization
+        | Action::RenamePane
+        | Action::RenameWorkspace
+        | Action::ToggleScratchpad => true,
+        // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
+        Action::RunUserCommand(index) => matches!(
+            state.config.user_commands.get(index).map(|cmd| &cmd.action),
+            Some(UserCommandAction::Run(_))
+        ),
+        _ => false,
+    }
+}
+
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
     execute_action_inner(ctx, action, true)
 }
@@ -164,6 +195,12 @@ fn execute_action_inner(
     // `Msg::RunAction` path and control-socket `RunAction` requests
     // (`control_ops::run_action`), which call this directly.
     ctx.state.commands_dirty = true;
+    // Followers may not mutate the shared layout: intercept before dispatch and nudge toward
+    // taking control. Focus, workspace switching, copy/search/palette, and terminal input are all
+    // local and fall through.
+    if is_layout_mutating(&ctx.state, action) && crate::session_ops::nudge_if_follower(ctx) {
+        return Update::full();
+    }
     match action {
         Action::Spawn => spawn_pane(ctx),
         Action::Close => {
@@ -248,6 +285,7 @@ fn execute_action_inner(
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
         Action::RenameSession => crate::session_ops::open_rename_session(ctx),
+        Action::TakeControl => crate::session_ops::take_control(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
         Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),
         Action::KillWorkspace => {
@@ -423,6 +461,100 @@ fn execute_action_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_mutating_classification_gates_structure_not_navigation() {
+        let state =
+            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        // Structural / geometry actions are gated for followers.
+        for action in [
+            Action::Spawn,
+            Action::Close,
+            Action::Move(Direction::Left),
+            Action::ToggleFloat,
+            Action::EnterResizeMode,
+            Action::MoveToWorkspace(1),
+            Action::ToggleScratchpad,
+        ] {
+            assert!(
+                is_layout_mutating(&state, action),
+                "{action:?} should be gated"
+            );
+        }
+        // Local view actions stay allowed for followers.
+        for action in [
+            Action::Focus(Direction::Left),
+            Action::SwitchWorkspace(1),
+            Action::EnterCopyMode,
+            Action::TogglePalette,
+            Action::Detach,
+        ] {
+            assert!(
+                !is_layout_mutating(&state, action),
+                "{action:?} should not be gated"
+            );
+        }
+    }
+
+    #[test]
+    fn follower_layout_action_emits_no_frame_but_focus_still_works() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::state::SharedSessionState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(2); // follower
+                    state.shared = Some(shared);
+                }
+                backend.render();
+                let before = backend.state_mut().workspaces[0].panes.len();
+
+                backend
+                    .dispatch(Msg::RunAction(Action::Spawn))
+                    .expect("dispatch spawn");
+
+                assert_eq!(
+                    backend.state_mut().workspaces[0].panes.len(),
+                    before,
+                    "a follower's spawn is a no-op"
+                );
+                let spawns = rx
+                    .try_iter()
+                    .filter(|msg| {
+                        matches!(
+                            msg,
+                            ClientOutbound::Control(ClientMessage::SpawnPane { .. })
+                        )
+                    })
+                    .count();
+                assert_eq!(spawns, 0, "a gated action must not emit a frame");
+
+                // Focus is local and still works for a follower.
+                backend.dispatch(Msg::FocusPane(1)).expect("dispatch focus");
+                assert_eq!(backend.state_mut().focused_pane, Some(1));
+            })
+            .expect("spawn gate test thread")
+            .join()
+            .expect("gate test thread completes");
+    }
 
     #[test]
     fn navigation_key_maps_directions_to_ctrl_hjkl() {

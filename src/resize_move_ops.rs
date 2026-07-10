@@ -52,6 +52,9 @@ pub(crate) fn begin_move(
     if !modified {
         return Update::none();
     }
+    if crate::session_ops::nudge_if_follower(ctx) {
+        return Update::full();
+    }
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     let mut session = None;
@@ -143,6 +146,9 @@ pub(crate) fn begin_resize(
 ) -> Update {
     if !modified {
         return Update::none();
+    }
+    if crate::session_ops::nudge_if_follower(ctx) {
+        return Update::full();
     }
     ctx.state.animation = GeometryAnimation::None;
     focus_pane(&mut ctx.state, id);
@@ -724,6 +730,9 @@ pub(crate) fn begin_resize_split_junction_drag(
 }
 
 fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
+    if crate::session_ops::nudge_if_follower(ctx) {
+        return Update::full();
+    }
     let workspace_index = ctx.state.active_workspace;
     let workspace = &mut ctx.state.workspaces[workspace_index];
     ensure_tile_tree(workspace);

@@ -176,24 +176,79 @@ pub(crate) fn handle_pane_mouse(
     Update::none()
 }
 
+/// Trailing-edge debounce window for controller PTY resizes, coalescing a resize storm (drag,
+/// tiling reflow) into one `pty.resize`/SIGWINCH per pane.
+const RESIZE_DEBOUNCE_MS: u64 = 100;
+
 pub(crate) fn handle_pane_resize(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
     cols: u16,
     rows: u16,
 ) -> Update {
+    // Followers never drive PTY size: they letterbox to the controller's canonical canvas and their
+    // screens reshape only via the server's broadcast `Resized`. Suppress their local resize here.
+    if !ctx.state.is_controller() {
+        return Update::none();
+    }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
     // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
     let client = ctx.state.session_client.clone();
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if let Some(client) = client {
-            client.resize(id, pane.pty_generation, cols.max(1), rows.max(1));
-        } else {
-            pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-            return Update::full();
+    let generation = match find_pane_mut(&mut ctx.state, id) {
+        Some(pane) => {
+            if client.is_none() {
+                pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
+                return Update::full();
+            }
+            pane.pty_generation
         }
+        None => return Update::none(),
+    };
+    // Debounce through the shared bookkeeping when attached: record the latest size and arm a single
+    // trailing-edge flush. Without shared state (a brief unattached window), send immediately.
+    let epoch = ctx.state.runtime_epoch;
+    if let Some(shared) = ctx.state.shared.as_mut() {
+        shared
+            .pending_resizes
+            .insert(id, (cols.max(1), rows.max(1)));
+        if shared.resize_flush_scheduled {
+            return Update::none();
+        }
+        shared.resize_flush_scheduled = true;
+        return Update::with_command(schedule_pane_resize_flush(epoch));
+    }
+    if let Some(client) = client {
+        client.resize(id, generation, cols.max(1), rows.max(1));
     }
     Update::none()
+}
+
+fn schedule_pane_resize_flush(epoch: u64) -> Command {
+    Command::spawn(move |link: CommandLink<crate::Msg>| {
+        std::thread::sleep(std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS));
+        link.send(crate::Msg::FlushPaneResizes { epoch });
+    })
+}
+
+/// Send the latest debounced size for every pane that still exists (see the controller debounce in
+/// [`handle_pane_resize`]). Clears the pending set and re-arms scheduling.
+pub(crate) fn flush_pending_resizes(ctx: &mut Context<HyprmuxApp>) {
+    let client = ctx.state.session_client.clone();
+    let pending: Vec<(PaneId, (u16, u16))> = match ctx.state.shared.as_mut() {
+        Some(shared) => {
+            shared.resize_flush_scheduled = false;
+            shared.pending_resizes.drain().collect()
+        }
+        None => return,
+    };
+    let Some(client) = client else {
+        return;
+    };
+    for (id, (cols, rows)) in pending {
+        if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
+            client.resize(id, pane.pty_generation, cols.max(1), rows.max(1));
+        }
+    }
 }
 
 pub(crate) fn handle_pane_scroll(
@@ -296,6 +351,94 @@ mod tests {
         state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
 
         assert_eq!(synchronized_key_targets(&state, 1), vec![1]);
+    }
+
+    #[test]
+    fn follower_resize_is_suppressed_and_controller_resize_debounces() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::state::SharedSessionState;
+        use tui_lipan::TestBackend;
+
+        fn resizes(rx: &std::sync::mpsc::Receiver<ClientOutbound>) -> Vec<(u16, u16)> {
+            rx.try_iter()
+                .filter_map(|msg| match msg {
+                    ClientOutbound::Control(ClientMessage::Resize { cols, rows, .. }) => {
+                        Some((cols, rows))
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let viewport = Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                };
+
+                // Follower: a resize forwards nothing (it letterboxes to the canonical size).
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(viewport);
+                let (client, follower_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(2);
+                    state.shared = Some(shared);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::PaneResize(1, 40, 12))
+                    .expect("dispatch follower resize");
+                assert!(
+                    resizes(&follower_rx).is_empty(),
+                    "a follower must not forward pane resizes"
+                );
+
+                // Controller: rapid resizes coalesce; the flush sends only the latest size.
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(viewport);
+                let (client, controller_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(1);
+                    state.shared = Some(shared);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::PaneResize(1, 40, 12))
+                    .expect("dispatch first resize");
+                backend
+                    .dispatch(Msg::PaneResize(1, 50, 20))
+                    .expect("dispatch second resize");
+                assert!(
+                    resizes(&controller_rx).is_empty(),
+                    "debounced resizes are not sent until the flush"
+                );
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("dispatch flush");
+                assert_eq!(
+                    resizes(&controller_rx),
+                    vec![(50, 20)],
+                    "flush sends only the latest size per pane"
+                );
+            })
+            .expect("spawn resize test thread")
+            .join()
+            .expect("resize test thread completes");
     }
 
     #[test]

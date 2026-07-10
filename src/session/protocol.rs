@@ -3,9 +3,10 @@ use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
+use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -57,6 +58,12 @@ pub enum ClientMessage {
         session: String,
         protocol_version: u32,
     },
+    /// Picker probe: report session status without registering the connection as a client and
+    /// without any replay seeding. Cheap enough to run against many sockets concurrently.
+    Query {
+        session: String,
+        protocol_version: u32,
+    },
     SpawnPane {
         pane_id: PaneId,
         generation: u64,
@@ -90,14 +97,37 @@ pub enum ClientMessage {
         title: Option<String>,
         cwd: Option<String>,
     },
-    PushLayout {
-        blob: String,
+    /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
+    /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
+    CommitLayout {
+        base_rev: u64,
+        layout: SharedLayout,
+    },
+    /// Steal the layout-control lease (tmux-style instant takeover, subject to a cooldown).
+    TakeControl,
+    /// Heartbeat reply to a [`ServerMessage::Ping`].
+    Pong {
+        seq: u64,
     },
     Rename {
         name: String,
     },
     Detach,
     Shutdown,
+}
+
+/// Why the layout-control lease moved. Carried by [`ServerMessage::ControllerChanged`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControllerChangeReason {
+    /// A client stole control with `TakeControl`.
+    Taken,
+    /// The controller detached or dropped cleanly.
+    Released,
+    /// The controller missed heartbeats and was disconnected.
+    Expired,
+    /// The lease was auto-granted (first attacher, or promotion of the oldest survivor).
+    Granted,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -110,8 +140,19 @@ pub enum ServerMessage {
     Attached {
         protocol_version: u32,
         session: String,
+        client_id: ClientId,
         panes: Vec<PaneMeta>,
-        layout_blob: Option<String>,
+        layout_rev: u64,
+        layout: Option<SharedLayout>,
+        controller: Option<ClientId>,
+        clients: u32,
+    },
+    /// Reply to a [`ClientMessage::Query`] probe.
+    SessionInfo {
+        session: String,
+        panes: usize,
+        clients: u32,
+        has_layout: bool,
     },
     Resized {
         pane_id: PaneId,
@@ -133,6 +174,29 @@ pub enum ServerMessage {
     },
     Renamed {
         session: String,
+    },
+    /// A new layout revision was accepted; broadcast to every client including its author (so the
+    /// author confirms its own rev from the echo and all clients see one identical rev sequence).
+    LayoutCommitted {
+        rev: u64,
+        author: ClientId,
+        layout: SharedLayout,
+    },
+    /// A commit was rejected (stale base rev or non-controller). Sent to the committer only, with
+    /// the authoritative layout so the rejection self-heals.
+    LayoutRejected {
+        current_rev: u64,
+        layout: Option<SharedLayout>,
+    },
+    ControllerChanged {
+        controller: Option<ClientId>,
+        reason: ControllerChangeReason,
+    },
+    ClientsChanged {
+        attached: u32,
+    },
+    Ping {
+        seq: u64,
     },
 }
 
@@ -438,7 +502,66 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":2})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":3})
+        );
+    }
+
+    #[test]
+    fn golden_query_json_shape() {
+        let value = serde_json::to_value(ClientMessage::Query {
+            session: "dev".into(),
+            protocol_version: PROTOCOL_VERSION,
+        })
+        .unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"type":"query","session":"dev","protocol_version":3})
+        );
+    }
+
+    #[test]
+    fn golden_take_control_and_pong_json_shape() {
+        assert_eq!(
+            serde_json::to_value(ClientMessage::TakeControl).unwrap(),
+            serde_json::json!({"type":"take-control"})
+        );
+        assert_eq!(
+            serde_json::to_value(ClientMessage::Pong { seq: 5 }).unwrap(),
+            serde_json::json!({"type":"pong","seq":5})
+        );
+    }
+
+    #[test]
+    fn golden_controller_changed_and_clients_changed_json_shape() {
+        assert_eq!(
+            serde_json::to_value(ServerMessage::ControllerChanged {
+                controller: Some(3),
+                reason: ControllerChangeReason::Taken,
+            })
+            .unwrap(),
+            serde_json::json!({"type":"controller-changed","controller":3,"reason":"taken"})
+        );
+        assert_eq!(
+            serde_json::to_value(ServerMessage::ClientsChanged { attached: 2 }).unwrap(),
+            serde_json::json!({"type":"clients-changed","attached":2})
+        );
+        assert_eq!(
+            serde_json::to_value(ServerMessage::Ping { seq: 9 }).unwrap(),
+            serde_json::json!({"type":"ping","seq":9})
+        );
+    }
+
+    #[test]
+    fn golden_session_info_json_shape() {
+        assert_eq!(
+            serde_json::to_value(ServerMessage::SessionInfo {
+                session: "dev".into(),
+                panes: 2,
+                clients: 1,
+                has_layout: true,
+            })
+            .unwrap(),
+            serde_json::json!({"type":"session-info","session":"dev","panes":2,"clients":1,"has_layout":true})
         );
     }
 

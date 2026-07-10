@@ -66,9 +66,10 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
 - Press `Ctrl+D` to detach the current session and drop onto a fresh ephemeral one.
 - Press `Ctrl+K` twice to kill the highlighted session.
 
-Switching away is a **release** of the current session: a named session's layout is pushed and the
-client detaches (leaving that server running for reattach), while an ephemeral session is shut down
-(it is disposable, so it does not leak an orphan server).
+Switching away is a **release** of the current session: a named session's client detaches (leaving
+that server running for reattach — the server already holds the authoritative layout from live
+commits), while an ephemeral session is shut down (it is disposable, so it does not leak an orphan
+server).
 
 Killing the **current** session is allowed: its server is shut down (its PTYs die) and the UI hops
 onto a fresh ephemeral session, so the client stays alive rather than quitting.
@@ -88,12 +89,14 @@ terminal.
 ## Attach, detach, and quit
 
 All panes are server-backed. The UI receives raw pane output frames and sends input, resize,
-palette, layout, rename, and kill requests back through the session protocol. Resizes are applied to
-the client screen only when the server acknowledges them (`Resized`), so both parsers resize at the
-same byte position and wrap state stays identical.
+palette, layout-commit, rename, and kill requests back through the session protocol. Resizes are
+applied to the client screen only when the server acknowledges them (`Resized`), so both parsers
+resize at the same byte position and wrap state stays identical. The server is authoritative for the
+layout: the controlling client commits a revisioned `SharedLayout` on every change and the server
+broadcasts it (see [Shared live layouts](#shared-live-layouts)).
 
 - **Attach-elsewhere** (picking another session from the picker) releases the current session first:
-  a named session's layout is pushed and its client detaches (server left running), while an
+  a named session's client detaches (server left running, still layout-authoritative), while an
   ephemeral session is shut down (it is disposable). Then the target is attached.
 - **Detach** (`prefix d`) leaves the TUI back to your shell, tmux-style, keeping the session server
   running for later reattach. Because an *anonymous* ephemeral session has no name to reattach by,
@@ -109,11 +112,49 @@ same byte position and wrap state stays identical.
   reconnect. Ephemeral sessions autostart a replacement server; a dead named session surfaces as an
   error rather than a silent empty resurrection.
 
-## Crash recovery and multi-client
+## Shared live layouts
+
+Multiple clients can attach to one session at the same time and share a single, live window-manager
+layout — a jaw-dropping way to pair or mirror a session across terminals. The server owns the
+authoritative layout as a revisioned `SharedLayout` document (workspace membership and order, tiling
+trees and ratios, layout kind, floating/fullscreen geometry, workspace names, the synchronized flag,
+and pane identity). Purely local view state — focus, active workspace, overlays, copy/search mode,
+scrollback position, and theme — is **never** shared, so each client browses independently.
+
+- **Controller vs follower.** Exactly one attached client holds the layout-control **lease** (the
+  *controller*); the rest are *followers*. The first client to attach is granted control; when the
+  controller leaves, the oldest remaining client is promoted automatically.
+- **Live commits.** The controller commits a new layout revision on every change (split, move,
+  resize, float, workspace edit, …); the server bumps the revision and broadcasts it, and every
+  follower reconciles its local state toward it without disturbing live terminal screens or
+  scrollback.
+- **Followers are read-only for layout.** A follower that tries a layout-mutating action gets a
+  toast nudging it to take control; focus, workspace switching, copy/search, the palette, and
+  terminal input all still work locally.
+- **Instant takeover.** *Take layout control* (`prefix g`, or the command palette) steals the lease
+  immediately, tmux-style. A brief cooldown (3s) prevents two clients from fighting over it; a
+  steal inside the window is rejected with a toast. Both clients see a toast and the workbar chip
+  flips.
+- **Workbar chip.** While more than one client is attached, the workbar shows a `CTRL` badge (you
+  control the layout) or `VIEW` badge (you are following), and the session badge folds in the client
+  count (`dev ·2`). A solo session shows neither.
+- **Canonical size and letterboxing.** The controller owns the canonical PTY size. Followers do not
+  resize the PTYs; instead they render the controller's canonical canvas centered in their own
+  viewport (letterboxed), so a larger terminal shows a border of dead space and a smaller one clips
+  at its edges. On takeover the new controller's size becomes canonical in a single resize wave,
+  avoiding SIGWINCH thrash in the panes.
+- **Heartbeat.** The server pings each client and drops one that stops responding (≈15s), releasing
+  its lease. Because pongs are answered on the UI thread, a wedged client loses control (a merely
+  busy one has a generous timeout). Slow clients that fall too far behind are disconnected rather
+  than allowed to stall the broadcast to everyone else.
 
 A UI crash (e.g. `kill -9`) leaves the ephemeral server running with its panes intact, so you can
-reattach to it (shown as `ephemeral`) from the picker and recover the scrollback. Because clients parse
-raw bytes and the server broadcasts pane output, more than one client can attach to the same session.
+reattach to it (shown as `ephemeral`) from the picker and recover the scrollback.
+
+> Known limitation: the scratchpad is controller-only in this version (its pane id is shared and
+> would collide across clients).
+
+## Crash recovery and reaping
 
 An **ephemeral** server self-reaps once no client has been attached for a short grace period
 (~45s), regardless of pane state — this backstops crashes and abnormal exits so orphaned ephemeral
@@ -138,9 +179,11 @@ ATTACHED-NAMED:     quit/detach ⇒ server keeps running (never self-reaps)
 
 ## Layout persistence
 
-The session server stores a layout blob pushed by attached clients. Session layout serialization
-includes stable server pane ids, so reattaching preserves pane ids and dwindle tree shape even when
-ids are non-contiguous.
+The session server holds the authoritative layout as a revisioned `SharedLayout`, updated by the
+controller's live commits (there is no client-pushed layout blob). It uses stable server pane ids
+and direct tree references, so reattaching preserves pane ids and dwindle tree shape even when ids
+are non-contiguous. On detach, the layout is also mirrored to disk (via the profile format) so a
+fresh launch can restore it after the server is gone.
 
 Named profiles are separate startup layouts: `hyprmux dev` / `hyprmux --profile dev` load
 `~/.config/hyprmux/profiles/dev.toml` into a fresh ephemeral session. See

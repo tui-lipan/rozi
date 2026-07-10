@@ -11,6 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::session::protocol::Frame;
 use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
+use crate::shared_layout::SharedLayout;
 use crate::state::PaneId;
 
 #[derive(Clone)]
@@ -180,8 +181,18 @@ impl SessionClient {
             palette: WirePalette::from(palette),
         });
     }
-    pub fn push_layout(&self, blob: String) {
-        self.send_control(ClientMessage::PushLayout { blob });
+    /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only
+    /// while this client holds the lease and `base_rev` matches the current revision.
+    pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {
+        self.send_control(ClientMessage::CommitLayout { base_rev, layout });
+    }
+    /// Request the layout-control lease (instant takeover, subject to the server cooldown).
+    pub fn take_control(&self) {
+        self.send_control(ClientMessage::TakeControl);
+    }
+    /// Reply to a server heartbeat.
+    pub fn pong(&self, seq: u64) {
+        self.send_control(ClientMessage::Pong { seq });
     }
     pub fn rename(&self, name: String) {
         self.send_control(ClientMessage::Rename { name });

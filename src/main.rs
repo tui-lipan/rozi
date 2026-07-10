@@ -23,6 +23,7 @@ mod scratchpad;
 mod search_ops;
 mod session;
 mod session_ops;
+mod shared_layout;
 mod state;
 mod theme_ops;
 mod tiling;
@@ -196,8 +197,40 @@ pub enum Msg {
     SessionAttached {
         epoch: u64,
         session: String,
+        client_id: shared_layout::ClientId,
         panes: Vec<session::protocol::PaneMeta>,
-        layout_blob: Option<String>,
+        layout_rev: u64,
+        layout: Option<shared_layout::SharedLayout>,
+        controller: Option<shared_layout::ClientId>,
+        clients: u32,
+    },
+    SessionLayoutCommitted {
+        epoch: u64,
+        rev: u64,
+        author: shared_layout::ClientId,
+        layout: shared_layout::SharedLayout,
+    },
+    SessionLayoutRejected {
+        epoch: u64,
+        current_rev: u64,
+        layout: Option<shared_layout::SharedLayout>,
+    },
+    SessionControllerChanged {
+        epoch: u64,
+        controller: Option<shared_layout::ClientId>,
+        reason: session::protocol::ControllerChangeReason,
+    },
+    SessionClientsChanged {
+        epoch: u64,
+        attached: u32,
+    },
+    SessionPing {
+        epoch: u64,
+        seq: u64,
+    },
+    /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).
+    FlushPaneResizes {
+        epoch: u64,
     },
     SessionSpawnResult {
         epoch: u64,
@@ -365,6 +398,9 @@ impl Component for HyprmuxApp {
             ctx.state.commands_dirty = false;
             commands::sync(ctx);
         }
+        // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
+        // management), so run the same commit chokepoint here to publish those changes.
+        update::flush_layout_commit(ctx);
         if handled {
             KeyUpdate::handled(update)
         } else {
@@ -548,15 +584,60 @@ fn server_message_to_msg(
         Frame::Control(message) => match message {
             ServerMessage::Attached {
                 session,
+                client_id,
                 panes,
-                layout_blob,
+                layout_rev,
+                layout,
+                controller,
+                clients,
                 ..
             } => Msg::SessionAttached {
                 epoch,
                 session,
+                client_id,
                 panes,
-                layout_blob,
+                layout_rev,
+                layout,
+                controller,
+                clients,
             },
+            ServerMessage::SessionInfo { .. } => {
+                // Query-only probe reply; an attached client never sees this. Route to a harmless
+                // no-op error with an empty message that the update loop drops on epoch mismatch.
+                Msg::SessionError {
+                    epoch,
+                    message: String::new(),
+                }
+            }
+            ServerMessage::LayoutCommitted {
+                rev,
+                author,
+                layout,
+            } => Msg::SessionLayoutCommitted {
+                epoch,
+                rev,
+                author,
+                layout,
+            },
+            ServerMessage::LayoutRejected {
+                current_rev,
+                layout,
+            } => Msg::SessionLayoutRejected {
+                epoch,
+                current_rev,
+                layout,
+            },
+            ServerMessage::ControllerChanged { controller, reason } => {
+                Msg::SessionControllerChanged {
+                    epoch,
+                    controller,
+                    reason,
+                }
+            }
+            ServerMessage::ClientsChanged { attached } => {
+                Msg::SessionClientsChanged { epoch, attached }
+            }
+            ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             ServerMessage::Resized {
                 pane_id,
                 generation,
@@ -1213,17 +1294,22 @@ fn run_server_cli(name: &str) -> Result<()> {
 fn run_list_sessions_cli() -> Result<()> {
     for session in session::discovery::discover_sessions()? {
         match session.status {
-            session::discovery::DiscoveredSessionStatus::Running { panes, has_layout } => println!(
-                "{}\trunning\tpanes={}\tlayout={}",
+            session::discovery::DiscoveredSessionStatus::Running {
+                panes,
+                clients,
+                has_layout,
+            } => println!(
+                "{}\trunning\tpanes={}\tclients={}\tlayout={}",
                 session.name,
                 panes,
+                clients,
                 if has_layout { "yes" } else { "no" }
             ),
             session::discovery::DiscoveredSessionStatus::Busy => {
-                println!("{}\tbusy\tpanes=?\tlayout=?", session.name)
+                println!("{}\tbusy\tpanes=?\tclients=?\tlayout=?", session.name)
             }
             session::discovery::DiscoveredSessionStatus::Unknown => {
-                println!("{}\tunknown\tpanes=?\tlayout=?", session.name)
+                println!("{}\tunknown\tpanes=?\tclients=?\tlayout=?", session.name)
             }
         }
     }
@@ -1470,6 +1556,7 @@ mod tests {
                             ephemeral: true,
                             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                                 panes: 1,
+                                clients: 1,
                                 has_layout: true,
                             },
                         },

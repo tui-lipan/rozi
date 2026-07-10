@@ -904,7 +904,10 @@ pub struct State {
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
-    pub last_pushed_layout: Option<String>,
+    /// Shared-session bookkeeping for the attached named/ephemeral session: the layout lease,
+    /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
+    /// handshake completes (and while purely local, pre-attach).
+    pub shared: Option<SharedSessionState>,
     /// Cached first-line stdout for each configured `WorkbarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run
     /// completes.
@@ -927,6 +930,74 @@ pub struct PendingSessionAttach {
     /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
     /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
     pub autostart: bool,
+}
+
+/// Per-run maximum orphan bytes buffered per pane before oldest data is dropped (see
+/// [`SharedSessionState::orphan_output`]).
+pub const ORPHAN_OUTPUT_CAP: usize = 256 * 1024;
+
+/// Client-side state for an attached shared session: the layout-control lease, revision
+/// bookkeeping for optimistic commits, the controller's canonical canvas, and the buffers the
+/// reconciler needs. Present whenever [`State::session_attached`] is true under protocol v3.
+pub struct SharedSessionState {
+    /// This client's server-assigned id.
+    pub client_id: crate::shared_layout::ClientId,
+    /// The last layout revision this client has applied.
+    pub layout_rev: u64,
+    /// Optimistic base for the next commit: bumped locally on each commit so pipelined commits
+    /// carry increasing base revs without waiting for each echo.
+    pub assumed_rev: u64,
+    /// The current layout controller, or `None` between promotions.
+    pub controller: Option<crate::shared_layout::ClientId>,
+    /// How many clients are attached to the session (including this one).
+    pub attached_clients: u32,
+    /// The controller's canonical pane canvas in cells (excluding the workbar). Followers letterbox
+    /// to this; `None` until the first layout with a canvas is seen.
+    pub canonical_canvas: Option<(u16, u16)>,
+    /// The last layout this client committed/applied, used as the dirty detector for the commit
+    /// chokepoint (cheaper than re-serializing).
+    pub last_committed_layout: Option<crate::shared_layout::SharedLayout>,
+    /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
+    /// `(pane_id, generation)`; drained into the pane once the reconciler adds it. Capped per pane.
+    pub orphan_output: HashMap<(PaneId, u64), Vec<u8>>,
+    /// Latest pending resize per pane while the controller debounces resize storms.
+    pub pending_resizes: HashMap<PaneId, (u16, u16)>,
+    /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
+    /// schedules only one flush timer.
+    pub resize_flush_scheduled: bool,
+}
+
+impl SharedSessionState {
+    pub fn new(client_id: crate::shared_layout::ClientId) -> Self {
+        Self {
+            client_id,
+            layout_rev: 0,
+            assumed_rev: 0,
+            controller: None,
+            attached_clients: 1,
+            canonical_canvas: None,
+            last_committed_layout: None,
+            orphan_output: HashMap::new(),
+            pending_resizes: HashMap::new(),
+            resize_flush_scheduled: false,
+        }
+    }
+
+    /// True when this client currently holds the layout-control lease.
+    pub fn is_controller(&self) -> bool {
+        self.controller == Some(self.client_id)
+    }
+
+    /// Buffer pane output that arrived before its pane exists locally, enforcing the per-pane cap
+    /// by dropping the oldest bytes.
+    pub fn buffer_orphan_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        let buffer = self.orphan_output.entry((pane_id, generation)).or_default();
+        buffer.extend_from_slice(bytes);
+        if buffer.len() > ORPHAN_OUTPUT_CAP {
+            let overflow = buffer.len() - ORPHAN_OUTPUT_CAP;
+            buffer.drain(..overflow);
+        }
+    }
 }
 
 /// A pane spawn deferred until a session client is available (see [`State::pending_spawns`]).
@@ -1026,7 +1097,7 @@ impl State {
             pending_session_attach: None,
             pending_spawns: Vec::new(),
             pending_destructive: None,
-            last_pushed_layout: None,
+            shared: None,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),
             commands_dirty: false,
@@ -1046,6 +1117,32 @@ impl State {
         self.session_name
             .as_deref()
             .is_some_and(is_ephemeral_session_name)
+    }
+
+    /// Whether this client may mutate the shared layout: always true when purely local (no shared
+    /// session), otherwise true only while it holds the layout-control lease.
+    pub fn is_controller(&self) -> bool {
+        self.shared
+            .as_ref()
+            .is_none_or(SharedSessionState::is_controller)
+    }
+
+    /// The number of clients attached to the shared session (1 when local/unshared).
+    pub fn attached_client_count(&self) -> u32 {
+        self.shared
+            .as_ref()
+            .map_or(1, |shared| shared.attached_clients)
+    }
+
+    /// The canonical pane canvas the controller publishes, if this client is a follower that
+    /// should letterbox to it. `None` for the controller or a local session (renders to its own
+    /// viewport).
+    pub fn follower_canonical_canvas(&self) -> Option<(u16, u16)> {
+        let shared = self.shared.as_ref()?;
+        if shared.is_controller() {
+            return None;
+        }
+        shared.canonical_canvas
     }
 
     /// Vertical space (in rows) the workbar removes from the panes area. Independent of whether

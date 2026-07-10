@@ -454,6 +454,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             ctx.state.session_attached = false;
             ctx.state.session_client = None;
+            // Drop shared-lease bookkeeping: while disconnected we behave as a solo controller, and
+            // a successful reconnect rebuilds this from the fresh `Attached` frame.
+            ctx.state.shared = None;
             for pane in ctx
                 .state
                 .workspaces
@@ -499,8 +502,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SessionAttached {
             epoch,
             session,
+            client_id,
             panes,
-            layout_blob,
+            layout_rev,
+            layout,
+            controller,
+            clients,
         } => {
             let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
                 return Update::none();
@@ -520,56 +527,159 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ctx.state.session_client = Some(client);
             ctx.state.session_name = Some(session);
             ctx.state.session_attached = true;
-            let mut restore_layout = false;
-            if let Some(blob) = layout_blob
-                && let Ok(profile) = crate::profiles::HyprmuxProfile::from_toml_str(&blob)
-            {
-                restore_layout = true;
-                let client = ctx.state.session_client.clone();
-                let name = ctx.state.session_name.clone();
-                let control_socket_path = ctx.state.control_socket_path.clone();
-                let system_theme = ctx.state.system_theme.clone();
-                let mut restored =
-                    State::from_profile(ctx.state.config.clone(), ctx.state.theme.clone(), profile);
-                restored.session_client = client;
-                restored.session_name = name;
-                restored.session_attached = true;
-                restored.runtime_epoch = epoch;
-                restored.last_pushed_layout = None;
-                restored.control_socket_path = control_socket_path;
-                restored.system_theme = system_theme;
-                ctx.state = restored;
-            }
+
+            let mut shared = crate::state::SharedSessionState::new(client_id);
+            shared.layout_rev = layout_rev;
+            shared.assumed_rev = layout_rev;
+            shared.controller = controller;
+            shared.attached_clients = clients;
+            ctx.state.shared = Some(shared);
+
             // The session identity just changed (ephemeral vs named), which the "Name/Rename
-            // session" palette label reflects.
+            // session" palette label reflects; the lease state affects command labels too.
             ctx.state.commands_dirty = true;
+
+            let panes: Vec<_> = panes
+                .into_iter()
+                .filter(|pane| pane.exited.is_none())
+                .collect();
             let had_panes = !panes.is_empty();
-            let mut spawned: Vec<(crate::state::PaneId, u64)> = Vec::new();
-            if had_panes {
-                // The server already owns panes (reattach, or attach-elsewhere to a live session):
-                // adopt them, replacing whatever the client currently shows.
-                apply_attached_panes(ctx, panes, restore_layout);
-            } else {
-                // An empty server (fresh ephemeral, autostarted named session, or a session whose
-                // panes all exited): seed it with the panes the client already holds in state (the
-                // initial pane, or a restored profile/autosave layout).
-                spawned = spawn_state_panes_on_session(ctx);
-            }
-            flush_pending_spawns(ctx);
-            // Panes created directly in state start with `opening = true` (opacity 0); schedule the
-            // reveal timers so they become visible, mirroring interactive spawns.
-            if spawned.is_empty() {
+
+            if let Some(layout) = layout {
+                // Shared attach: seed the whole window-manager structure from the authoritative
+                // layout via the one reconciler code path, then bind server backends and sizes
+                // from the pane metadata before the replay seed frames arrive.
+                reset_state_for_shared_seed(&mut ctx.state);
+                crate::shared_layout::apply_shared_layout(ctx, &layout, layout_rev);
+                bind_attached_pane_backends(ctx, panes);
+                flush_pending_spawns(ctx);
+                Update::full()
+            } else if had_panes {
+                // Defensive: a live server holding panes but no committed layout (should not occur
+                // under protocol v3). Adopt the panes, then republish a layout if we control it.
+                apply_attached_panes(ctx, panes);
+                flush_pending_spawns(ctx);
                 Update::full()
             } else {
-                let open_delay = crate::anim::open_delay(ctx.state.config.animations);
-                let activate_delay = crate::anim::activation_delay(ctx.state.config.animations);
-                Update::with_command(crate::pane_lifecycle::open_timers_batch_command(
-                    epoch,
-                    spawned,
-                    open_delay,
-                    activate_delay,
-                ))
+                // An empty server (fresh ephemeral, autostarted named session, or one whose panes
+                // all exited): seed it with the panes the client already holds in state; the first
+                // attacher (controller) commits rev 1 on the tail chokepoint pass.
+                let spawned = spawn_state_panes_on_session(ctx);
+                flush_pending_spawns(ctx);
+                if spawned.is_empty() {
+                    Update::full()
+                } else {
+                    let open_delay = crate::anim::open_delay(ctx.state.config.animations);
+                    let activate_delay = crate::anim::activation_delay(ctx.state.config.animations);
+                    Update::with_command(crate::pane_lifecycle::open_timers_batch_command(
+                        epoch,
+                        spawned,
+                        open_delay,
+                        activate_delay,
+                    ))
+                }
             }
+        }
+        Msg::SessionLayoutCommitted {
+            epoch,
+            rev,
+            author,
+            layout,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            let my_id = ctx.state.shared.as_ref().map(|shared| shared.client_id);
+            if my_id == Some(author) {
+                // Echo of our own commit: confirm the revision, never re-apply our own layout.
+                if let Some(shared) = ctx.state.shared.as_mut() {
+                    shared.layout_rev = rev;
+                }
+                Update::none()
+            } else {
+                crate::shared_layout::apply_shared_layout(ctx, &layout, rev)
+            }
+        }
+        Msg::SessionLayoutRejected {
+            epoch,
+            current_rev,
+            layout,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            let update = if let Some(layout) = layout {
+                crate::shared_layout::apply_shared_layout(ctx, &layout, current_rev)
+            } else {
+                Update::full()
+            };
+            if let Some(shared) = ctx.state.shared.as_mut() {
+                shared.assumed_rev = current_rev;
+                // Clear the dirty detector so the tail chokepoint recommits from current state.
+                shared.last_committed_layout = None;
+            }
+            update
+        }
+        Msg::SessionControllerChanged {
+            epoch,
+            controller,
+            reason: _,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            let was_controller = ctx.state.is_controller();
+            if let Some(shared) = ctx.state.shared.as_mut() {
+                shared.controller = controller;
+                if shared.is_controller() {
+                    // Gaining control: rebase optimistic commits, and clear the dirty detector so
+                    // the tail chokepoint republishes the layout with our canonical canvas.
+                    shared.assumed_rev = shared.layout_rev;
+                    shared.last_committed_layout = None;
+                }
+            }
+            let now_controller = ctx.state.is_controller();
+            if was_controller && !now_controller {
+                let who = controller
+                    .map(|id| format!("client {id}"))
+                    .unwrap_or_else(|| "another client".to_string());
+                ctx.toast().push(crate::pty_events::info_toast(
+                    &ctx.state.theme,
+                    format!("Layout control taken by {who}"),
+                ));
+            } else if !was_controller && now_controller {
+                ctx.toast().push(crate::pty_events::info_toast(
+                    &ctx.state.theme,
+                    "You now control the layout",
+                ));
+            }
+            ctx.state.commands_dirty = true;
+            Update::full()
+        }
+        Msg::SessionClientsChanged { epoch, attached } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(shared) = ctx.state.shared.as_mut() {
+                shared.attached_clients = attached;
+            }
+            Update::full()
+        }
+        Msg::SessionPing { epoch, seq } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(client) = ctx.state.session_client.as_ref() {
+                client.pong(seq);
+            }
+            Update::none()
+        }
+        Msg::FlushPaneResizes { epoch } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            crate::pty_events::flush_pending_resizes(ctx);
+            Update::none()
         }
         Msg::SessionOutput {
             epoch,
@@ -581,13 +691,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::none();
             }
             let focused = ctx.state.focused_pane;
-            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
-                && pane.pty_generation == generation
-            {
-                pane.terminal.process_server_output(&bytes);
-                pane.activity.last_activity = Some(std::time::Instant::now());
-                if focused != Some(pane_id) {
-                    pane.activity.has_unseen_output = true;
+            let matched = match find_pane_mut(&mut ctx.state, pane_id) {
+                Some(pane) if pane.pty_generation == generation => {
+                    pane.terminal.process_server_output(&bytes);
+                    pane.activity.last_activity = Some(std::time::Instant::now());
+                    if focused != Some(pane_id) {
+                        pane.activity.has_unseen_output = true;
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if !matched {
+                // Output arrived before the layout commit that introduces this pane (or its new
+                // generation). Buffer it so the reconciler can replay it when the pane appears;
+                // dropping it would leave a follower's fresh pane blank until the next redraw.
+                if let Some(shared) = ctx.state.shared.as_mut() {
+                    shared.buffer_orphan_output(pane_id, generation, &bytes);
                 }
             }
             Update::full()
@@ -627,22 +747,28 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 pane.terminal.status = ManagedTerminalStatus::Exited(code);
                 should_close = !pane.closing;
             }
-            if should_close {
-                if crate::scratchpad::is_scratch(pane_id) {
-                    return crate::scratchpad::handle_scratch_exit(ctx);
-                }
-                maybe_notify_pane_exit(&ctx.state.config, pane_id, code);
-                // A clean exit closes the pane on its own; only a failure code is worth surfacing.
-                if code != 0 {
-                    ctx.toast().push(crate::pty_events::info_toast(
-                        &ctx.state.theme,
-                        format!("Pane {pane_id} exited ({code})"),
-                    ));
-                }
-                begin_close_pane(ctx, pane_id, ctx.state.config.animations)
-            } else {
-                Update::full()
+            if !should_close {
+                return Update::full();
             }
+            // The scratchpad is a local overlay (never in the shared layout), so every client that
+            // owns it closes it directly.
+            if crate::scratchpad::is_scratch(pane_id) {
+                return crate::scratchpad::handle_scratch_exit(ctx);
+            }
+            // Closing a tiled/floating pane is a structural layout change: only the controller acts
+            // on the exit and commits the new layout; followers close it when that commit arrives.
+            if !ctx.state.is_controller() {
+                return Update::full();
+            }
+            maybe_notify_pane_exit(&ctx.state.config, pane_id, code);
+            // A clean exit closes the pane on its own; only a failure code is worth surfacing.
+            if code != 0 {
+                ctx.toast().push(crate::pty_events::info_toast(
+                    &ctx.state.theme,
+                    format!("Pane {pane_id} exited ({code})"),
+                ));
+            }
+            begin_close_pane(ctx, pane_id, ctx.state.config.animations)
         }
         Msg::SessionSpawnResult {
             epoch,
@@ -655,13 +781,19 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();
             }
+            let is_controller = ctx.state.is_controller();
             let mut should_close = false;
             let mut toast_error = None;
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
                 if pane.pty_generation != generation {
                     return Update::none();
                 }
-                pane.terminal.bind_server_backend(pane_id, generation);
+                // A follower may already hold this pane (bound and Ready) from the reconciler; only
+                // (re)bind a fresh backend for a pane still waiting on its own spawn to complete,
+                // so we never destroy a live screen that is already replaying server output.
+                if !pane.terminal.is_ready() {
+                    pane.terminal.bind_server_backend(pane_id, generation);
+                }
                 pane.terminal.child_pid = pid;
                 if ok {
                     pane.terminal.status = ManagedTerminalStatus::Ready;
@@ -671,7 +803,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                         .unwrap_or_else(|| "session spawn failed".to_string());
                     pane.terminal.status = ManagedTerminalStatus::Error(message.clone().into());
                     toast_error = Some(message);
-                    should_close = !pane.closing;
+                    // Only the controller structurally removes the failed pane; followers wait for
+                    // the resulting layout commit.
+                    should_close = !pane.closing && is_controller;
                 }
             } else if let Some(error) = error {
                 toast_error = Some(error);
@@ -688,6 +822,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SessionError { epoch, message } => {
             if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if message.trim().is_empty() {
                 return Update::none();
             }
             ctx.toast()
@@ -719,16 +856,43 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         crate::commands::sync(ctx);
     }
 
-    if ctx.state.session_attached
-        && let Some(client) = ctx.state.session_client.clone()
-        && let Ok(blob) = crate::profiles::profile_from_state(&ctx.state).to_toml_string()
-        && ctx.state.last_pushed_layout.as_deref() != Some(blob.as_str())
-    {
-        client.push_layout(blob.clone());
-        ctx.state.last_pushed_layout = Some(blob);
-    }
+    // Layout commit chokepoint: after every message is handled, the controller diffs its current
+    // window-manager state against the last layout it committed and, if changed, publishes a new
+    // revision. Followers and unshared sessions no-op here.
+    flush_layout_commit(ctx);
 
     update
+}
+
+/// If this client controls a shared session and its layout differs from the last commit, publish a
+/// new [`SharedLayout`] at the optimistic base revision. The canonical canvas is this controller's
+/// own pane canvas (viewport minus workbar), which followers letterbox to.
+pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
+    if !ctx.state.session_attached || !ctx.state.is_controller() {
+        return;
+    }
+    let Some(client) = ctx.state.session_client.clone() else {
+        return;
+    };
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let canvas = (
+        bounds.w.round().max(1.0) as u16,
+        bounds.h.round().max(1.0) as u16,
+    );
+    let layout = crate::shared_layout::shared_layout_from_state(&ctx.state, canvas);
+    let Some(shared) = ctx.state.shared.as_mut() else {
+        return;
+    };
+    if shared.last_committed_layout.as_ref() == Some(&layout) {
+        return;
+    }
+    let base_rev = shared.assumed_rev;
+    client.commit_layout(base_rev, layout.clone());
+    // Optimistically advance so a rapid burst of edits pipelines onto sequential base revisions;
+    // the server's echo confirms `layout_rev`, and a reject resets `assumed_rev`.
+    shared.assumed_rev = shared.assumed_rev.saturating_add(1);
+    shared.last_committed_layout = Some(layout);
+    shared.canonical_canvas = Some(canvas);
 }
 
 fn logical_focus_pending_activation(state: &State) -> Option<crate::state::PaneId> {
@@ -740,44 +904,62 @@ fn logical_focus_pending_activation(state: &State) -> Option<crate::state::PaneI
         .then_some(id)
 }
 
+/// Clear all window-manager structure so the shared-layout reconciler can rebuild it from scratch
+/// as pure additions. Used only on attach to a session that already carries an authoritative
+/// layout (the client's throwaway local panes are discarded in favor of the server's).
+fn reset_state_for_shared_seed(state: &mut State) {
+    for workspace in &mut state.workspaces {
+        workspace.panes.clear();
+        workspace.tile_tree = None;
+        workspace.focused_pane = None;
+    }
+    state.focused_pane = None;
+    state.active_workspace = 0;
+    state.next_pane_id = 1;
+    state.next_pty_generation = 1;
+}
+
+/// After the reconciler has created panes from the shared layout, bind each one's server backend at
+/// the authoritative size and stamp its live metadata (title, cwd, pid) from the attach frame, so
+/// replay seed frames land on a correctly sized screen.
+fn bind_attached_pane_backends(
+    ctx: &mut Context<HyprmuxApp>,
+    panes: Vec<crate::session::protocol::PaneMeta>,
+) {
+    for meta in panes {
+        if let Some(pane) = find_pane_mut(&mut ctx.state, meta.pane_id) {
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.pty_generation = meta.generation;
+            pane.terminal.cols = meta.cols.max(1);
+            pane.terminal.rows = meta.rows.max(1);
+            pane.terminal
+                .bind_server_backend(meta.pane_id, meta.generation);
+            pane.terminal.title = meta.title.filter(|title| !title.trim().is_empty());
+            pane.terminal.cwd = meta.cwd;
+            pane.terminal.child_pid = meta.pid;
+            pane.terminal.status = ManagedTerminalStatus::Ready;
+        }
+        ctx.state.next_pane_id = ctx.state.next_pane_id.max(meta.pane_id.saturating_add(1));
+        ctx.state.next_pty_generation = ctx
+            .state
+            .next_pty_generation
+            .max(meta.generation.saturating_add(1));
+    }
+}
+
+/// Defensive fallback: adopt server panes when a live session reports panes but no committed layout
+/// (should not happen under protocol v3). Rebuilds a flat tiled workspace from the pane list.
 fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
     panes: Vec<crate::session::protocol::PaneMeta>,
-    restored_layout: bool,
 ) {
-    let panes: Vec<_> = panes
-        .into_iter()
-        .filter(|pane| pane.exited.is_none())
-        .collect();
-    let attached_ids: std::collections::HashSet<_> =
-        panes.iter().map(|pane| pane.pane_id).collect();
-    if restored_layout {
-        for workspace in &mut ctx.state.workspaces {
-            workspace
-                .panes
-                .retain(|pane| attached_ids.contains(&pane.id));
-            if workspace
-                .focused_pane
-                .is_some_and(|id| !attached_ids.contains(&id))
-            {
-                workspace.focused_pane = None;
-            }
-        }
-        if ctx
-            .state
-            .focused_pane
-            .is_some_and(|id| !attached_ids.contains(&id))
-        {
-            ctx.state.focused_pane = None;
-        }
-    } else if !panes.is_empty() {
-        for workspace in &mut ctx.state.workspaces {
-            workspace.panes.clear();
-            workspace.tile_tree = None;
-            workspace.focused_pane = None;
-        }
-        ctx.state.focused_pane = None;
+    for workspace in &mut ctx.state.workspaces {
+        workspace.panes.clear();
+        workspace.tile_tree = None;
+        workspace.focused_pane = None;
     }
+    ctx.state.focused_pane = None;
 
     for attached in panes {
         if find_pane_mut(&mut ctx.state, attached.pane_id).is_none() {

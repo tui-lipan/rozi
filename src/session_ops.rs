@@ -157,17 +157,61 @@ fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discovered
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
                 has_layout: true,
+                clients: ctx.state.attached_client_count(),
             },
         });
         rows.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
 
+/// If this client is a follower (attached but not the controller), push the take-control nudge and
+/// return `true` so the caller aborts a layout-mutating gesture. Controllers and local/unattached
+/// sessions return `false`.
+pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
+    if ctx.state.is_controller() {
+        return false;
+    }
+    let who = ctx
+        .state
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.controller)
+        .map(|id| format!("client {id}"))
+        .unwrap_or_else(|| "another client".to_string());
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Layout controlled by {who} — prefix g to take control"),
+    ));
+    true
+}
+
+/// Request the layout-control lease for this client (tmux-style instant steal). A no-op with a
+/// nudge when unattached or already in control; the server replies with `ControllerChanged` (grant)
+/// or a `takeover-cooldown` error toast.
+pub(crate) fn take_control(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.session_attached {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    }
+    if ctx.state.is_controller() {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            "You already control the layout",
+        ));
+        return Update::full();
+    }
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.take_control();
+    }
+    Update::full()
+}
+
 /// Release the currently attached session before switching away from it. The single rule used
 /// everywhere a transition leaves the current session: an ephemeral session is torn down
 /// (`shutdown`, its PTYs die with it — it is disposable and would otherwise leak an orphan
-/// server), while a named session is parked (its layout is pushed and the client detaches, so the
-/// server stays running for later reattach). A no-op when nothing is attached.
+/// server), while a named session is parked (the client detaches and the server, already
+/// layout-authoritative, stays running for later reattach). A no-op when nothing is attached.
 pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
     let Some(client) = ctx.state.session_client.clone() else {
         return;
@@ -175,11 +219,6 @@ pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
     if ctx.state.is_ephemeral_session() {
         client.shutdown();
     } else {
-        client.push_layout(
-            crate::profiles::profile_from_state(&ctx.state)
-                .to_toml_string()
-                .unwrap_or_default(),
-        );
         client.detach();
     }
 }
@@ -431,9 +470,10 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    // Name-on-detach: rename in place (so the server persists under a real name), push the layout,
-    // then detach and quit. The rename and detach travel the same ordered connection, so the server
-    // renames first (and thus never self-reaps as an ephemeral) and keeps running after the detach.
+    // Name-on-detach: rename in place (so the server persists under a real name), then detach and
+    // quit. The rename and detach travel the same ordered connection, so the server renames first
+    // (and thus never self-reaps as an ephemeral) and keeps running after the detach. No layout push
+    // is needed — the server is already layout-authoritative from live commits.
     if detach_after {
         let Some(client) = ctx.state.session_client.clone() else {
             // The session connection dropped (e.g. `SessionDisconnected` cleared the client) while
@@ -450,11 +490,6 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             return Update::full();
         };
         client.rename(name);
-        client.push_layout(
-            crate::profiles::profile_from_state(&ctx.state)
-                .to_toml_string()
-                .unwrap_or_default(),
-        );
         client.detach();
         crate::profiles::persist_session_on_detach(&ctx.state);
         ctx.state.rename_session = None;

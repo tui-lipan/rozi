@@ -7,7 +7,11 @@ const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiscoveredSessionStatus {
-    Running { panes: usize, has_layout: bool },
+    Running {
+        panes: usize,
+        clients: u32,
+        has_layout: bool,
+    },
     Busy,
     Unknown,
 }
@@ -85,7 +89,7 @@ pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession
             let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
             if crate::session::protocol::write_frame(
                 &mut stream,
-                &ClientMessage::Attach {
+                &ClientMessage::Query {
                     session: name.to_string(),
                     protocol_version: PROTOCOL_VERSION,
                 },
@@ -95,18 +99,16 @@ pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession
                 DiscoveredSessionStatus::Unknown
             } else {
                 match crate::session::protocol::read_frame::<_, ServerMessage>(&mut stream) {
-                    Ok(ServerMessage::Attached {
-                        panes, layout_blob, ..
-                    }) => {
-                        let _ = crate::session::protocol::write_frame(
-                            &mut stream,
-                            &ClientMessage::Detach,
-                        );
-                        DiscoveredSessionStatus::Running {
-                            panes: panes.iter().filter(|pane| pane.exited.is_none()).count(),
-                            has_layout: layout_blob.is_some(),
-                        }
-                    }
+                    Ok(ServerMessage::SessionInfo {
+                        panes,
+                        clients,
+                        has_layout,
+                        ..
+                    }) => DiscoveredSessionStatus::Running {
+                        panes,
+                        clients,
+                        has_layout,
+                    },
                     Err(err)
                         if matches!(
                             err.kind(),

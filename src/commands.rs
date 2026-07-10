@@ -324,6 +324,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::TakeControl,
+        label: "Take layout control",
+        category: "Session",
+        default_keys: &["g"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::Detach,
         label: "Detach",
         category: "Session",

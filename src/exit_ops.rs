@@ -45,7 +45,8 @@ fn confirm_second_press(
 }
 
 /// Leave the TUI while keeping the session server running for later reattach (tmux-style detach).
-/// The layout is pushed to the server and mirrored to disk so a fresh launch can restore it.
+/// The server already holds the authoritative layout from live commits; detach mirrors it to disk
+/// so a fresh launch can restore it even after the server is gone.
 ///
 /// Detaching an *anonymous* ephemeral session is contradictory (there is no name to reattach by),
 /// so an attached ephemeral session first prompts for a name; naming it turns the detach into a
@@ -60,11 +61,8 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
         return crate::session_ops::open_rename_for_detach(ctx);
     }
     if let Some(client) = ctx.state.session_client.clone() {
-        client.push_layout(
-            profiles::profile_from_state(&ctx.state)
-                .to_toml_string()
-                .unwrap_or_default(),
-        );
+        // The server is layout-authoritative from live commits, so there is nothing to push on
+        // detach; just release the connection. Disk autosave still mirrors the layout below.
         client.detach();
     }
     profiles::persist_session_on_detach(&ctx.state);

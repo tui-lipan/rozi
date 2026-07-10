@@ -67,6 +67,15 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     } else if state.mode == Mode::Copy {
         trailing.push(TrailingChip::badge(" COPY ", text_fg, theme.status.info));
     }
+    // Shared-session lease chip: only when more than one client is attached, so a solo session
+    // stays uncluttered. Controller = success-colored CTRL, follower = info-colored VIEW.
+    if state.session_attached && state.attached_client_count() > 1 {
+        if state.is_controller() {
+            trailing.push(TrailingChip::badge(" CTRL ", text_fg, theme.status.success));
+        } else {
+            trailing.push(TrailingChip::badge(" VIEW ", text_fg, theme.status.info));
+        }
+    }
     for segment in &workbar_cfg.right {
         if let Some(chip) = trailing_chip(ctx, segment) {
             trailing.push(chip);
@@ -128,8 +137,14 @@ fn trailing_chip(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
     match segment {
         WorkbarSegment::Session => {
             let name = attached_session_name(ctx)?;
+            let clients = ctx.state.attached_client_count();
+            let label = if clients > 1 {
+                format!(" 󰛤 {name} ·{clients} ")
+            } else {
+                format!(" 󰛤 {name} ")
+            };
             Some(TrailingChip::badge(
-                format!(" 󰛤 {name} "),
+                label,
                 theme.surface.backdrop,
                 theme.border_active,
             ))

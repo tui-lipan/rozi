@@ -182,6 +182,7 @@ second confirmation.
 | --- | --- | --- |
 | Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches (leaving you on a fresh ephemeral session); `Ctrl+K` (twice) kills the selected session — including the current one, which shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from *Detach*, which names if needed and then leaves. See [Sessions](sessions.md). |
+| Take layout control | `g` | Steal the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. Takes effect instantly; a brief cooldown blocks rapid tug-of-war. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.

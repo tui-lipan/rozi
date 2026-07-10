@@ -165,6 +165,13 @@ ephemeral session (`eph-<pid>`); `--attach` / `--session` connects to a persiste
 Detach leaves the server running for later reattach; a clean quit shuts an ephemeral server down.
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
+The server is multi-client and layout-authoritative: several clients can attach to one session and
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v3). One client holds the
+layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
+reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
+canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
+(focus, active workspace, overlays, copy/search, scrollback, theme) is never shared.
+
 Important data flow:
 
 1. Keys arrive via `Component::on_key` or focused terminal callbacks.
@@ -184,7 +191,10 @@ Major module map:
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `resize_move_ops.rs` / `anim.rs` - Window-manager
   layout, placement, movement, resizing, and animations.
-- `session/` / `session_ops.rs` - Named session protocol, server/client, discovery, attach/kill.
+- `session/` / `session_ops.rs` - Multi-client session protocol (v3), server/client, discovery,
+  attach/kill, and layout-control lease.
+- `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
+  reconciler (`apply_shared_layout`).
 - `profiles.rs` / `profile_ops.rs` - Named profile serialization, restore, picker, default profile.
 - `config.rs` / `config_ops.rs` / `theme_ops.rs` - Config loading/reload, themes, terminal colors.
 - `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.

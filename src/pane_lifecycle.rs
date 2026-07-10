@@ -185,6 +185,37 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
     generation
 }
 
+/// Mark a pane closing in response to a foreign layout commit that removed it. Mirrors
+/// [`close_pane_state`] but **never** sends `client.kill` — the server already dropped the pane at
+/// the controller's request, so re-killing would race a reused id and there is no kill-echo loop.
+/// Returns the pane's generation so the caller can schedule its delayed prune, or `None` when the
+/// pane is unknown or already closing.
+pub(crate) fn close_pane_remote(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
+    let tile_gap = ctx.state.tile_gap();
+    let placements = {
+        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+    };
+    let mut generation = None;
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
+        && !pane.closing
+    {
+        generation = Some(pane.pty_generation);
+        pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
+        pane.opening = false;
+        pane.closing = true;
+        pane.terminal.kill();
+    }
+    if generation.is_some() {
+        ctx.state.animation = GeometryAnimation::Close;
+        choose_fallback_focus(&mut ctx.state);
+        request_current_pane_focus(ctx);
+    }
+    generation
+}
+
 pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
     // The scratchpad lives outside the workspace lists; route its events here too.
     if let Some(pane) = state.scratch.as_ref().filter(|pane| pane.id == id) {

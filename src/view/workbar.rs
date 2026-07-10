@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::config::{InputConfig, WorkbarSegment};
+use crate::config::{BadgeColor, InputConfig, WorkbarItem, WorkbarSegment};
 use crate::input::Action;
 use crate::state::{Mode, WORKBAR_HEIGHT};
 use crate::{HyprmuxApp, Msg};
@@ -23,10 +23,10 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     let mut left_cap_color: Option<Color> = None;
     let mut right_cap_color = panel_bg;
 
-    for segment in &workbar_cfg.left {
-        if let Some(element) = workbar_segment_element(ctx, segment) {
+    for item in &workbar_cfg.left {
+        if let Some(element) = left_segment_element(ctx, item) {
             row = row.child(element);
-            let color = segment_edge_color(theme, segment);
+            let color = segment_edge_color(theme, item);
             left_cap_color.get_or_insert(color);
             right_cap_color = color;
         }
@@ -39,7 +39,7 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
         .left
         .iter()
         .chain(workbar_cfg.right.iter())
-        .any(|segment| matches!(segment, WorkbarSegment::Workspaces));
+        .any(|item| matches!(item.segment, WorkbarSegment::Workspaces));
     if !has_workspaces {
         row = row.child(Text::new("").width(Length::Flex(1)).height(Length::Px(1)));
         right_cap_color = panel_bg;
@@ -76,8 +76,8 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
             trailing.push(TrailingChip::badge(" VIEW ", text_fg, theme.status.info));
         }
     }
-    for segment in &workbar_cfg.right {
-        if let Some(chip) = trailing_chip(ctx, segment) {
+    for item in &workbar_cfg.right {
+        if let Some(chip) = trailing_chip(ctx, item) {
             trailing.push(chip);
         }
     }
@@ -86,7 +86,8 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
         right_cap_color = last.edge_color(panel_bg);
     }
     let badge_caps = ctx.state.config.pane.workbar_badge_style.caps();
-    if let Some(cluster) = trailing_cluster(trailing, badge_caps, panel_bg) {
+    let powerline = ctx.state.config.pane.workbar_powerline;
+    if let Some(cluster) = trailing_cluster(trailing, badge_caps, powerline, panel_bg) {
         row = row.child(cluster);
     }
 
@@ -130,42 +131,32 @@ impl TrailingChip {
 }
 
 /// The trailing chip for a configured right-region segment, or `None` when it renders nothing.
-/// Colored badges become `Badge` chips (so they can chain); every other segment reuses the shared
-/// `workbar_segment_element` and rides along as an opaque `Flex` chip.
-fn trailing_chip(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<TrailingChip> {
+/// Every segment that has a text label becomes a colored `Badge` chip (so it can chain into the
+/// powerline); the workspace tab strip is the one non-badge entry and rides along as a `Flex` chip.
+fn trailing_chip(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option<TrailingChip> {
     let theme = &ctx.state.theme;
-    match segment {
-        WorkbarSegment::Session => {
-            let name = attached_session_name(ctx)?;
-            let clients = ctx.state.attached_client_count();
-            let label = if clients > 1 {
-                format!(" 󰛤 {name} ·{clients} ")
-            } else {
-                format!(" 󰛤 {name} ")
-            };
-            Some(TrailingChip::badge(
-                label,
-                theme.surface.backdrop,
-                theme.border_active,
-            ))
+    match &item.segment {
+        WorkbarSegment::Workspaces => {
+            Some(TrailingChip::Flex(Box::new(workspace_tabs_element(ctx))))
         }
-        WorkbarSegment::Title => Some(TrailingChip::badge(
-            " hyprmux ",
-            theme.surface.backdrop,
-            theme.border_active,
-        )),
-        _ => workbar_segment_element(ctx, segment).map(|el| TrailingChip::Flex(Box::new(el))),
+        _ => {
+            let label = segment_label(ctx, &item.segment)?;
+            let (bg, fg) = item_colors(theme, item);
+            Some(TrailingChip::badge(label, fg, bg))
+        }
     }
 }
 
-/// Assemble the trailing cluster. With badge caps off it is a gap-separated run of plain chips
-/// (the historical look). With caps on the gap collapses to zero and each badge's left cap is
-/// drawn over its left neighbor's color, so the chips interlock into a powerline that flows out of
-/// the panel bar. Returns `None` when there is nothing trailing. Sizes to `Auto` so the cluster
-/// only occupies its own width and stays pinned to the trailing edge.
+/// Assemble the trailing cluster. `powerline` controls chaining independently of the cap shape:
+/// when off, chips stand apart with a 1-cell gap and each cap (if any) is drawn over the panel bar;
+/// when on, the gap collapses to zero and each badge's cap is drawn over its left neighbor's color,
+/// so the chips interlock into a powerline that flows out of the panel bar. `caps` still decides the
+/// pill shape (rounded/pointed vs flush). Returns `None` when there is nothing trailing. Sizes to
+/// `Auto` so the cluster only occupies its own width and stays pinned to the trailing edge.
 fn trailing_cluster(
     chips: Vec<TrailingChip>,
     caps: Option<(&'static str, &'static str)>,
+    powerline: bool,
     panel_bg: Color,
 ) -> Option<Element> {
     if chips.is_empty() {
@@ -175,8 +166,9 @@ fn trailing_cluster(
     let mut cluster = HStack::new()
         .width(Length::Auto)
         .height(Length::Px(WORKBAR_HEIGHT))
-        .gap(if caps.is_some() { 0 } else { 1 });
-    // A badge's cap blends from its left neighbor's color; the first chip starts from the panel bar.
+        .gap(if powerline { 0 } else { 1 });
+    // With powerline on, a badge's cap blends from its left neighbor's color; the first chip starts
+    // from the panel bar. With it off, every cap sits over the panel bar and chips keep a gap.
     let mut prev_bg = panel_bg;
     for chip in chips {
         match chip {
@@ -189,7 +181,7 @@ fn trailing_cluster(
                     left_cap,
                     BadgeCap::Left,
                 ));
-                prev_bg = bg;
+                prev_bg = if powerline { bg } else { panel_bg };
             }
             TrailingChip::Flex(element) => {
                 cluster = cluster.child(*element);
@@ -200,13 +192,56 @@ fn trailing_cluster(
     Some(cluster.into())
 }
 
-/// Background color a rendered workbar segment paints at the workbar's outer edge. The colored
-/// badges (`Title`, `Session`) use the active accent; every other segment renders on the panel
-/// surface. Only called for segments that actually rendered, so it need not re-check visibility.
-fn segment_edge_color(theme: &Theme, segment: &WorkbarSegment) -> Color {
+/// Background color a rendered workbar segment paints at the workbar's outer edge: its badge
+/// background, except the workspace tab strip, which renders on the panel surface. Only called for
+/// items that actually rendered, so it need not re-check visibility.
+fn segment_edge_color(theme: &Theme, item: &WorkbarItem) -> Color {
+    match item.segment {
+        WorkbarSegment::Workspaces => theme.surface.panel,
+        _ => item_colors(theme, item).0,
+    }
+}
+
+/// The curated default badge color for a segment when the user did not override it. `title` and
+/// `session` keep the active accent; the rest get distinct, theme-derived hues so they read as
+/// separate chips instead of one dim run.
+fn curated_color(segment: &WorkbarSegment) -> BadgeColor {
     match segment {
-        WorkbarSegment::Title | WorkbarSegment::Session => theme.border_active,
-        _ => theme.surface.panel,
+        WorkbarSegment::Title | WorkbarSegment::Session => BadgeColor::Accent,
+        WorkbarSegment::Clock => BadgeColor::Info,
+        WorkbarSegment::Activity => BadgeColor::Warning,
+        WorkbarSegment::Layout
+        | WorkbarSegment::Text(_)
+        | WorkbarSegment::Command { .. }
+        | WorkbarSegment::Workspaces => BadgeColor::Neutral,
+    }
+}
+
+/// Resolve a workbar item's `(bg, fg)` colors: its explicit override, else the segment's curated
+/// default, mapped through the active theme.
+fn item_colors(theme: &Theme, item: &WorkbarItem) -> (Color, Color) {
+    let color = item.color.unwrap_or_else(|| curated_color(&item.segment));
+    resolve_badge_color(theme, color)
+}
+
+/// Map a [`BadgeColor`] role to concrete `(bg, fg)` colors from the active theme. Saturated roles
+/// pair with the backdrop foreground for contrast; the muted `neutral`/`panel` roles use the
+/// primary text color so a low-contrast surface still reads as text.
+fn resolve_badge_color(theme: &Theme, color: BadgeColor) -> (Color, Color) {
+    let on_accent = theme.surface.backdrop;
+    let text = theme
+        .primary
+        .fg
+        .map(Paint::color)
+        .unwrap_or(theme.surface.backdrop);
+    match color {
+        BadgeColor::Accent => (theme.border_active, on_accent),
+        BadgeColor::Info => (theme.status.info, on_accent),
+        BadgeColor::Success => (theme.status.success, on_accent),
+        BadgeColor::Warning => (theme.status.warning, on_accent),
+        BadgeColor::Error => (theme.status.error, on_accent),
+        BadgeColor::Neutral => (theme.surface.menu, text),
+        BadgeColor::Panel => (theme.surface.panel, text),
     }
 }
 
@@ -314,39 +349,33 @@ fn workbar_badge(
     .into()
 }
 
-fn workbar_segment_element(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<Element> {
-    let theme = &ctx.state.theme;
+/// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
+/// segment renders nothing (`Workspaces` is the tab strip, not a badge; `Session`/`Activity` hide
+/// when there is nothing to show).
+fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<String> {
     match segment {
-        WorkbarSegment::Title => Some(workbar_badge(
-            " hyprmux ",
-            theme.surface.backdrop,
-            theme.border_active,
-            theme.surface.panel,
-            ctx.state
-                .config
-                .pane
-                .workbar_badge_style
-                .caps()
-                .map(|c| c.1),
-            BadgeCap::Right,
-        )),
-        WorkbarSegment::Workspaces => Some(workspace_tabs_element(ctx)),
-        WorkbarSegment::Session => session_indicator(ctx),
+        WorkbarSegment::Title => Some(" hyprmux ".to_string()),
+        WorkbarSegment::Session => {
+            let name = attached_session_name(ctx)?;
+            let clients = ctx.state.attached_client_count();
+            Some(if clients > 1 {
+                format!(" 󰛤 {name} ·{clients} ")
+            } else {
+                format!(" 󰛤 {name} ")
+            })
+        }
         WorkbarSegment::Clock => {
             let now = chrono::Local::now();
-            Some(workbar_text(
-                format!(" {} ", now.format(&ctx.state.config.workbar.clock_format)),
-                theme,
+            Some(format!(
+                " {} ",
+                now.format(&ctx.state.config.workbar.clock_format)
             ))
         }
-        WorkbarSegment::Layout => Some(workbar_text(
-            format!(
-                " {} ",
-                ctx.state.workspaces[ctx.state.active_workspace]
-                    .layout_kind
-                    .label()
-            ),
-            theme,
+        WorkbarSegment::Layout => Some(format!(
+            " {} ",
+            ctx.state.workspaces[ctx.state.active_workspace]
+                .layout_kind
+                .label()
         )),
         WorkbarSegment::Activity => {
             let count = ctx
@@ -356,11 +385,12 @@ fn workbar_segment_element(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) 
                 .flat_map(|ws| ws.panes.iter())
                 .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
                 .count();
-            (count > 0).then(|| workbar_text(format!(" ●{count} "), theme))
+            (count > 0).then(|| format!(" ●{count} "))
         }
-        WorkbarSegment::Text(literal) => {
-            Some(workbar_text(substitute_placeholders(ctx, literal), theme))
-        }
+        WorkbarSegment::Text(literal) => Some(format!(
+            " {} ",
+            substitute_placeholders(ctx, literal).trim()
+        )),
         WorkbarSegment::Command { command, .. } => {
             let output = ctx
                 .state
@@ -368,16 +398,34 @@ fn workbar_segment_element(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) 
                 .get(command)
                 .map(String::as_str)
                 .unwrap_or("");
-            Some(workbar_text(format!(" {output} "), theme))
+            Some(format!(" {output} "))
         }
+        WorkbarSegment::Workspaces => None,
     }
 }
 
-fn workbar_text(text: impl Into<String>, theme: &Theme) -> Element {
-    Text::new(text.into())
-        .style(Style::new().fg(theme.surface.menu))
-        .height(Length::Px(1))
-        .into()
+/// The element for a left-region workbar item: the workspace tab strip, or a colored badge. Left
+/// badges cap on their right (leading pills, like the title chip) and stay gap-separated by the row
+/// - powerline chaining is a trailing-cluster feature.
+fn left_segment_element(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option<Element> {
+    if matches!(item.segment, WorkbarSegment::Workspaces) {
+        return Some(workspace_tabs_element(ctx));
+    }
+    let label = segment_label(ctx, &item.segment)?;
+    let (bg, fg) = item_colors(&ctx.state.theme, item);
+    Some(workbar_badge(
+        &label,
+        fg,
+        bg,
+        ctx.state.theme.surface.panel,
+        ctx.state
+            .config
+            .pane
+            .workbar_badge_style
+            .caps()
+            .map(|c| c.1),
+        BadgeCap::Right,
+    ))
 }
 
 fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
@@ -400,27 +448,6 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
         Some(name) if !name.is_empty() => name.to_string(),
         _ => (index + 1).to_string(),
     }
-}
-
-/// The `Session` workbar segment: an accented badge naming the attached session server. Renders
-/// nothing while unattached, so in local mode the segment simply takes no space.
-fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
-    let theme = &ctx.state.theme;
-    let name = attached_session_name(ctx)?;
-    // A right-region chip, so it takes a left cap like the mode chips.
-    Some(workbar_badge(
-        &format!(" 󰛤 {name} "),
-        theme.surface.backdrop,
-        theme.border_active,
-        theme.surface.panel,
-        ctx.state
-            .config
-            .pane
-            .workbar_badge_style
-            .caps()
-            .map(|c| c.0),
-        BadgeCap::Left,
-    ))
 }
 
 /// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.
@@ -553,7 +580,60 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 
 #[cfg(test)]
 mod tests {
-    use super::{workspace_placeholder_label, workspace_tab_label};
+    use super::{
+        curated_color, resolve_badge_color, workspace_placeholder_label, workspace_tab_label,
+    };
+    use crate::config::{BadgeColor, WorkbarSegment};
+    use tui_lipan::prelude::Theme;
+
+    #[test]
+    fn curated_color_assigns_distinct_roles() {
+        assert_eq!(curated_color(&WorkbarSegment::Title), BadgeColor::Accent);
+        assert_eq!(curated_color(&WorkbarSegment::Session), BadgeColor::Accent);
+        assert_eq!(curated_color(&WorkbarSegment::Clock), BadgeColor::Info);
+        assert_eq!(
+            curated_color(&WorkbarSegment::Activity),
+            BadgeColor::Warning
+        );
+        assert_eq!(curated_color(&WorkbarSegment::Layout), BadgeColor::Neutral);
+        assert_eq!(
+            curated_color(&WorkbarSegment::Text("hi".to_string())),
+            BadgeColor::Neutral
+        );
+    }
+
+    #[test]
+    fn resolve_badge_color_maps_roles_to_theme() {
+        let theme = Theme::default();
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Accent),
+            (theme.border_active, theme.surface.backdrop)
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Info).0,
+            theme.status.info
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Success).0,
+            theme.status.success
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Warning).0,
+            theme.status.warning
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Error).0,
+            theme.status.error
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Neutral).0,
+            theme.surface.menu
+        );
+        assert_eq!(
+            resolve_badge_color(&theme, BadgeColor::Panel).0,
+            theme.surface.panel
+        );
+    }
 
     #[test]
     fn workspace_tab_label_falls_back_to_number_without_a_name() {

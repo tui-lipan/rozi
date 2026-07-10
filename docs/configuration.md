@@ -56,6 +56,7 @@ padding = 0                   # blank cells between border and terminal (default
                               # scalar = all sides; [v, h]; or [top, right, bottom, left]
 title_style = "padded"        # titlebar end caps: padded|half|round|arrow (default: padded)
 workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default: padded)
+workbar_powerline = true      # chain trailing badges into a powerline (default: true)
 workbar_tab_style = "padded" # workspace tab caps: padded|round|arrow (default: padded)
 workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
 
@@ -107,9 +108,11 @@ cwd = "~"                    # default: the configured cwd
 height = 0.4                 # fraction of the viewport height, 0.1–0.9 (default: 0.4)
 
 [workbar]
-left = ["title", "workspaces"]   # default
-right = ["session", "clock"]      # default: empty
-clock_format = "%H:%M"            # strftime, only used by a clock segment
+left = ["title", "workspaces"]              # default
+right = ["session"]                         # default
+# A segment can be a table to override its badge color by theme role:
+# right = [{ segment = "clock", color = "info" }, "session"]
+clock_format = "%H:%M"                       # strftime, only used by a clock segment
 
 [keys]
 # Rebind any action to one or more tui-lipan keybindings. Held chords
@@ -165,7 +168,8 @@ Pane focus and chrome behavior.
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. |
 | `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. When enabled, the trailing badges (mode chips + right-region badges such as `session`) also drop the gap between them and chain into a powerline, each cap blending into its left neighbor's color. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace tabs. The appearance cycle writes this back to config. |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace tabs. The appearance cycle writes this back to config. |
+| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace tabs in the workbar. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
 | `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
 
@@ -303,25 +307,37 @@ The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
 
 ## `[workbar]`
 
-Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge then the
-workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_workbar` is
-enabled, and sit to the left of the right-region segments so a `session` badge stays pinned to the
-trailing edge. With `workbar_badge_style` caps on, the mode chips and right-region badges lose the
-gap between them and interlock into a powerline: each chip's cap blends into its left neighbor's
-color. Workspace tab caps are controlled separately with `workbar_tab_style`.
+Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge and the
+workspace tabs on the left, the `session` badge on the right). Every configured segment renders as
+a colored badge; each kind has a curated default color that you can override by theme role (see
+below). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_workbar` is enabled, and sit
+to the left of the right-region segments so a `session` badge stays pinned to the trailing edge.
+With `workbar_powerline` on (the default) the mode chips and right-region badges lose the gap
+between them and interlock into a powerline: each chip's cap blends into its left neighbor's color.
+`workbar_badge_style` controls the pill shape (rounded/pointed vs flush) independently. Workspace
+tab caps are controlled separately with `workbar_tab_style`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `left` | `["title", "workspaces"]` | Ordered left-region segments. |
-| `right` | `[]` | Ordered right-region segments. |
+| `right` | `["session"]` | Ordered right-region segments. |
 | `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
 
 Segment kinds: `title` (the badge), `workspaces` (the tabs), `session` (the active profile/
-session name), `clock`, `layout` (active workspace layout name), `text:<literal>` with
-`{host}`, `{workspace}`, `{layout}`, `{session}` placeholders, and `command:<shell command>` /
-`command:<interval_secs>:<shell command>` to run a shell command on a timer and show the first
-line of its stdout. Unknown segment names emit a warning and are skipped. A `clock` segment
-enables a once-a-second repaint; without one the workbar never wakes an idle app.
+session name), `clock`, `layout` (active workspace layout name), `activity` (count of panes with
+unseen output), `text:<literal>` with `{host}`, `{workspace}`, `{layout}`, `{session}`
+placeholders, and `command:<shell command>` / `command:<interval_secs>:<shell command>` to run a
+shell command on a timer and show the first line of its stdout. Unknown segment names emit a warning
+and are skipped. A `clock` segment enables a once-a-second repaint; without one the workbar never
+wakes an idle app.
+
+Each segment can be written either as a bare name (`"clock"`) or as a table that overrides its
+badge color by theme role: `{ segment = "clock", color = "info" }`. Colors are named theme roles,
+not literal values, so a badge tracks the active theme. Valid roles: `accent`, `info`, `success`,
+`warning`, `error`, `neutral`, `panel` (`panel` blends into the bar, i.e. no visible pill). An
+unknown role name warns and falls back to the segment's curated default. Curated defaults:
+`title`/`session` = `accent`, `clock` = `info`, `activity` = `warning`, and `layout`/`text`/
+`command` = `neutral`.
 
 A `command` segment runs through `$SHELL -c` on a background thread (never the UI thread) and
 refreshes every `interval_secs` (default `60`, minimum `1`); a failing command or one with no
@@ -330,7 +346,10 @@ it appears in multiple segments.
 
 ```toml
 [workbar]
-right = ["command:30:uptime -p", "session"]
+right = [
+    { segment = "command:30:uptime -p", color = "success" },
+    "session",
+]
 ```
 
 Workspaces can be given a custom name with the *Rename workspace* command palette entry (action id
@@ -376,7 +395,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `take-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-animations`, `toggle-focus-on-hover`,
+`toggle-workbar-powerline`, `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket

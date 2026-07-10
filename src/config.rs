@@ -187,6 +187,10 @@ pub struct HyprmuxPaneConfig {
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
     pub workbar_badge_style: CapStyle,
+    /// Whether trailing workbar badges chain into a powerline (no gap between chips, each cap drawn
+    /// over its left neighbor's color) instead of standing apart with a gap. Independent of
+    /// `workbar_badge_style`, which only controls the pill shape.
+    pub workbar_powerline: bool,
     /// End-cap style for workspace tabs in the workbar.
     pub workbar_tab_style: CapStyle,
     /// End-cap style for the workbar itself: the whole panel bar reads as a pill/point over the
@@ -209,6 +213,7 @@ impl Default for HyprmuxPaneConfig {
             padding: (0, 0, 0, 0),
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
+            workbar_powerline: true,
             workbar_tab_style: CapStyle::Padded,
             workbar_style: CapStyle::Padded,
         }
@@ -504,10 +509,58 @@ impl WorkbarSegment {
     }
 }
 
+/// A workbar badge color chosen by theme role name (not a literal color) so a segment's badge
+/// tracks the active theme. Resolved to concrete `(bg, fg)` colors at render time by the view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadgeColor {
+    Accent,
+    Info,
+    Success,
+    Warning,
+    Error,
+    Neutral,
+    Panel,
+}
+
+impl BadgeColor {
+    /// Accepted role names for the `color` field of a `[workbar]` segment table.
+    pub const NAMES: &'static str = "accent, info, success, warning, error, neutral, panel";
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "accent" => Some(Self::Accent),
+            "info" => Some(Self::Info),
+            "success" => Some(Self::Success),
+            "warning" => Some(Self::Warning),
+            "error" => Some(Self::Error),
+            "neutral" => Some(Self::Neutral),
+            "panel" => Some(Self::Panel),
+            _ => None,
+        }
+    }
+}
+
+/// A configured workbar segment plus an optional badge color override. `color: None` uses the
+/// segment's curated default color (see the view's `curated_color`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkbarItem {
+    pub segment: WorkbarSegment,
+    pub color: Option<BadgeColor>,
+}
+
+impl WorkbarItem {
+    fn new(segment: WorkbarSegment) -> Self {
+        Self {
+            segment,
+            color: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkbarConfig {
-    pub left: Vec<WorkbarSegment>,
-    pub right: Vec<WorkbarSegment>,
+    pub left: Vec<WorkbarItem>,
+    pub right: Vec<WorkbarItem>,
     pub clock_format: String,
 }
 
@@ -516,8 +569,11 @@ impl Default for WorkbarConfig {
         // Badge + workspace tabs on the left; the session badge sits on the right but stays
         // invisible until an attach connection exists, so local mode looks unchanged.
         Self {
-            left: vec![WorkbarSegment::Title, WorkbarSegment::Workspaces],
-            right: vec![WorkbarSegment::Session],
+            left: vec![
+                WorkbarItem::new(WorkbarSegment::Title),
+                WorkbarItem::new(WorkbarSegment::Workspaces),
+            ],
+            right: vec![WorkbarItem::new(WorkbarSegment::Session)],
             clock_format: "%H:%M".to_string(),
         }
     }
@@ -528,7 +584,7 @@ impl WorkbarConfig {
         self.left
             .iter()
             .chain(self.right.iter())
-            .any(WorkbarSegment::is_clock)
+            .any(|item| item.segment.is_clock())
     }
 
     /// Unique `(command, interval_secs)` pairs across both workbar sides, one background poller
@@ -538,7 +594,7 @@ impl WorkbarConfig {
         self.left
             .iter()
             .chain(self.right.iter())
-            .filter_map(|segment| match segment {
+            .filter_map(|item| match &item.segment {
                 WorkbarSegment::Command {
                     command,
                     interval_secs,
@@ -626,9 +682,22 @@ struct ScratchpadFileConfig {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct WorkbarFileConfig {
-    left: Option<Vec<String>>,
-    right: Option<Vec<String>>,
+    left: Option<Vec<WorkbarSegmentSpec>>,
+    right: Option<Vec<WorkbarSegmentSpec>>,
     clock_format: Option<String>,
+}
+
+/// A `[workbar]` list entry: either a bare segment name (`"clock"`, `"text:.."`, `"command:.."`)
+/// or a table `{ segment = "..", color = "info" }` that overrides the badge color by theme role.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum WorkbarSegmentSpec {
+    Name(String),
+    Table {
+        segment: String,
+        #[serde(default)]
+        color: Option<String>,
+    },
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -669,6 +738,7 @@ struct PaneFileConfig {
     padding: Option<PaddingSpec>,
     title_style: Option<String>,
     workbar_badge_style: Option<String>,
+    workbar_powerline: Option<bool>,
     workbar_tab_style: Option<String>,
     workbar_style: Option<String>,
 }
@@ -1122,6 +1192,86 @@ mod tests {
     }
 
     #[test]
+    fn workbar_defaults_match_documented_values() {
+        let workbar = WorkbarConfig::default();
+        assert_eq!(
+            workbar.right,
+            vec![WorkbarItem {
+                segment: WorkbarSegment::Session,
+                color: None,
+            }]
+        );
+        assert!(HyprmuxPaneConfig::default().workbar_powerline);
+    }
+
+    #[test]
+    fn workbar_segment_table_form_overrides_color() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [workbar]
+            right = [{ segment = "clock", color = "info" }, "session"]
+            "#,
+        )
+        .expect("config parses");
+        let mut workbar = WorkbarConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_config(&mut workbar, parsed.workbar, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            workbar.right,
+            vec![
+                WorkbarItem {
+                    segment: WorkbarSegment::Clock,
+                    color: Some(BadgeColor::Info),
+                },
+                WorkbarItem {
+                    segment: WorkbarSegment::Session,
+                    color: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn workbar_unknown_color_warns_and_falls_back_to_default() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [workbar]
+            right = [{ segment = "clock", color = "chartreuse" }]
+            "#,
+        )
+        .expect("config parses");
+        let mut workbar = WorkbarConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_config(&mut workbar, parsed.workbar, &mut warnings);
+        assert_eq!(
+            workbar.right,
+            vec![WorkbarItem {
+                segment: WorkbarSegment::Clock,
+                color: None,
+            }]
+        );
+        assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn workbar_powerline_parses_and_applies() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [pane]
+            workbar_powerline = false
+            "#,
+        )
+        .expect("config parses");
+        assert_eq!(parsed.pane.workbar_powerline, Some(false));
+        let mut pane = HyprmuxPaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_style_config(&mut pane, &parsed.pane, &mut warnings);
+        assert!(warnings.is_empty());
+        assert!(!pane.workbar_powerline);
+    }
+
+    #[test]
     fn workbar_badge_style_backfills_workbar_tabs_when_tabs_are_unset() {
         let parsed: FileConfig = toml::from_str(
             r#"
@@ -1326,9 +1476,15 @@ mod tests {
         let workbar = WorkbarConfig::default();
         assert_eq!(
             workbar.left,
-            vec![WorkbarSegment::Title, WorkbarSegment::Workspaces]
+            vec![
+                WorkbarItem::new(WorkbarSegment::Title),
+                WorkbarItem::new(WorkbarSegment::Workspaces),
+            ]
         );
-        assert_eq!(workbar.right, vec![WorkbarSegment::Session]);
+        assert_eq!(
+            workbar.right,
+            vec![WorkbarItem::new(WorkbarSegment::Session)]
+        );
         assert!(!workbar.has_clock());
         assert_eq!(workbar.clock_format, "%H:%M");
         assert!(workbar.command_specs().is_empty());
@@ -1337,18 +1493,22 @@ mod tests {
     #[test]
     fn workbar_config_command_specs_dedups_by_command_string() {
         let mut workbar = WorkbarConfig::default();
-        workbar.left.push(WorkbarSegment::Command {
+        workbar.left.push(WorkbarItem::new(WorkbarSegment::Command {
             command: "uptime -p".to_string(),
             interval_secs: 10,
-        });
-        workbar.right.push(WorkbarSegment::Command {
-            command: "uptime -p".to_string(),
-            interval_secs: 30,
-        });
-        workbar.right.push(WorkbarSegment::Command {
-            command: "whoami".to_string(),
-            interval_secs: 5,
-        });
+        }));
+        workbar
+            .right
+            .push(WorkbarItem::new(WorkbarSegment::Command {
+                command: "uptime -p".to_string(),
+                interval_secs: 30,
+            }));
+        workbar
+            .right
+            .push(WorkbarItem::new(WorkbarSegment::Command {
+                command: "whoami".to_string(),
+                interval_secs: 5,
+            }));
         let specs = workbar.command_specs();
         assert_eq!(
             specs,
@@ -2154,19 +2314,41 @@ fn apply_workbar_config(
     warnings: &mut Vec<String>,
 ) {
     fn parse_segments(
-        raw: Vec<String>,
+        raw: Vec<WorkbarSegmentSpec>,
         region: &str,
         warnings: &mut Vec<String>,
-    ) -> Vec<WorkbarSegment> {
+    ) -> Vec<WorkbarItem> {
         raw.into_iter()
-            .filter_map(|name| match WorkbarSegment::parse(&name) {
-                Some(segment) => Some(segment),
-                None => {
-                    warnings.push(format!(
-                        "Unknown {region} workbar segment `{name}`; skipped"
-                    ));
-                    None
-                }
+            .filter_map(|spec| {
+                let (name, color_name) = match spec {
+                    WorkbarSegmentSpec::Name(name) => (name, None),
+                    WorkbarSegmentSpec::Table { segment, color } => (segment, color),
+                };
+                let segment = match WorkbarSegment::parse(&name) {
+                    Some(segment) => segment,
+                    None => {
+                        warnings.push(format!(
+                            "Unknown {region} workbar segment `{name}`; skipped"
+                        ));
+                        return None;
+                    }
+                };
+                // An unknown color role name falls back to the segment's curated default rather than
+                // dropping the whole segment.
+                let color = match color_name {
+                    Some(color_name) => match BadgeColor::parse(&color_name) {
+                        Some(color) => Some(color),
+                        None => {
+                            warnings.push(format!(
+                                "Unknown {region} workbar color `{color_name}` for `{name}` (expected one of: {}); using default",
+                                BadgeColor::NAMES
+                            ));
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                Some(WorkbarItem { segment, color })
             })
             .collect()
     }
@@ -2257,6 +2439,9 @@ fn apply_workbar_style_config(
                 "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
             )),
         }
+    }
+    if let Some(workbar_powerline) = parsed.workbar_powerline {
+        config.workbar_powerline = workbar_powerline;
     }
 }
 

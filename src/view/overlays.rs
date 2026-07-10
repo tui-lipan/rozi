@@ -866,6 +866,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             AppearanceAction::CycleWorkbarBadgeStyle,
         ),
         appearance_entry(
+            "Workbar powerline",
+            enabled_status(pane.workbar_powerline),
+            AppearanceAction::ToggleWorkbarPowerline,
+        ),
+        appearance_entry(
             "Workbar tab style",
             pane.workbar_tab_style.label().to_string(),
             AppearanceAction::CycleWorkbarTabStyle,

@@ -268,7 +268,9 @@ Then rerun the relevant `hyprmux` tests and lints.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
-- `[workbar]` supports built-in segments, text placeholders, and timed shell command segments.
+- `[workbar]` supports built-in segments, text placeholders, and timed shell command segments; each
+ segment renders as a themed badge whose color can be overridden by theme role via a segment table,
+ and `[pane].workbar_powerline` toggles trailing-badge chaining.
 - `[theme].name` selects built-in, `system`, or custom themes from `~/.config/hyprmux/themes/`.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.

@@ -97,6 +97,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                     crate::state::AppearanceAction::ToggleWorkbarPosition => {
                         execute_action(ctx, Action::ToggleWorkbarPosition);
                     }
+                    crate::state::AppearanceAction::ToggleWorkbarPowerline => {
+                        execute_action(ctx, Action::ToggleWorkbarPowerline);
+                    }
                     crate::state::AppearanceAction::ToggleAnimations => {
                         execute_action(ctx, Action::ToggleAnimations);
                     }

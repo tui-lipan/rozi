@@ -346,6 +346,15 @@ fn execute_action_inner(
             );
             Update::full()
         }
+        Action::ToggleWorkbarPowerline => {
+            ctx.state.config.pane.workbar_powerline = !ctx.state.config.pane.workbar_powerline;
+            persist_pane_toggle(
+                ctx,
+                "workbar_powerline",
+                ctx.state.config.pane.workbar_powerline,
+            );
+            Update::full()
+        }
         Action::ToggleAnimations => {
             ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
             persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);

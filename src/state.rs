@@ -313,6 +313,7 @@ pub enum AppearanceAction {
     ToggleWorkbar,
     ToggleWorkbarGap,
     ToggleWorkbarPosition,
+    ToggleWorkbarPowerline,
     ToggleAnimations,
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
@@ -333,6 +334,7 @@ impl AppearanceAction {
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarPosition
+            | Self::ToggleWorkbarPowerline
             | Self::CycleWorkbarBadgeStyle
             | Self::CycleWorkbarTabStyle
             | Self::CycleWorkbarStyle

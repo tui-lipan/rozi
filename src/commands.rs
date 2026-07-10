@@ -404,6 +404,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleWorkbarPowerline,
+        label: "Workbar powerline",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleAnimations,
         label: "Animations",
         category: "App",
@@ -799,6 +806,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
                 "bottom"
             };
             format!("Move workbar to {edge}")
+        }
+        Action::ToggleWorkbarPowerline => {
+            enable_disable_label("workbar powerline", state.config.pane.workbar_powerline)
         }
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)

@@ -304,6 +304,36 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
     to.name = from.name.take();
 }
 
+/// Apply the focus-follows-mouse policy for a pane the pointer is over. Returns a full repaint
+/// only when focus actually moved.
+///
+/// Shared by the widget-level `HoverPane` message and by forwarded pane mouse motion. The latter
+/// matters because a pane running mouse tracking (an `AnyEvent` TUI) consumes pointer motion in
+/// the framework before the per-pane hover callback can run, so without this path on-hover focus
+/// would never fire over a full-screen TUI. Only tiled/floating panes in the active workspace
+/// participate; the scratchpad keeps its own focus lifecycle and must not hijack `focused_pane`.
+pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+    if !ctx.state.config.pane.focus_on_hover {
+        return Update::none();
+    }
+    if ctx.state.focused_pane == Some(id) {
+        return Update::none();
+    }
+    let focusable = ctx.state.workspaces[ctx.state.active_workspace]
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.closing);
+    if !focusable {
+        return Update::none();
+    }
+    focus_pane(&mut ctx.state, id);
+    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id) {
+        pane.activity.has_unseen_output = false;
+    }
+    request_pane_focus(ctx, id);
+    Update::full()
+}
+
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
     if let Some(pane) = state.workspaces[state.active_workspace]
         .panes

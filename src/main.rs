@@ -171,6 +171,11 @@ pub enum Msg {
     /// Drag a tiled split junction: (left pane, top pane, from_x, from_y, x, y).
     ResizeSplitJunction(PaneId, PaneId, u16, u16, u16, u16),
     EndResizeSplit,
+    /// Grab the scratchpad's top edge to resize its height: drag origin y (root coordinates).
+    BeginScratchResize(u16),
+    /// Drag the scratchpad's top edge: (from_y, y) in root coordinates.
+    ScratchResize(u16, u16),
+    EndScratchResize,
     FinishOpen(u64, PaneId, u64),
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),

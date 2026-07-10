@@ -226,6 +226,8 @@ pub fn restore_state_from_profile(
         scratch: None,
         scratch_visible: false,
         scratch_return_focus: None,
+        scratch_height: None,
+        scratch_resize_start: None,
         control_socket_path: None,
         session_client: None,
         session_name: None,

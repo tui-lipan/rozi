@@ -77,12 +77,11 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.scratch_return_focus = ctx.state.focused_pane;
     ctx.state.scratch_visible = true;
     ctx.state.animation = GeometryAnimation::TileFloat;
-    request_pane_focus(ctx, SCRATCH_PANE_ID);
 
     if ctx.state.scratch.is_none() {
         let bounds = ctx.state.canvas_bounds(ctx.viewport());
         let top_gap = ctx.state.workspace_top_gap();
-        let rect = scratch_rect(bounds, ctx.state.config.scratchpad.height, top_gap);
+        let rect = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
         let generation = ctx.state.next_pty_generation;
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
@@ -121,10 +120,22 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
             env,
             None,
         );
-        return Update::full();
     }
 
+    // Focus only after the pane exists in state: `request_pane_focus` looks the pane up and no-ops
+    // when it is missing, so requesting before the first-open insert (as this used to) silently
+    // dropped focus on the initial toggle. `Context::request_focus` records the target key and the
+    // renderer applies it once the scratch terminal node mounts, so this is safe on a fresh spawn.
+    request_pane_focus(ctx, SCRATCH_PANE_ID);
     Update::full()
+}
+
+/// The scratchpad height as a fraction of the tile height: the drag-adjusted runtime override
+/// when present, otherwise the configured default.
+pub(crate) fn scratch_height_fraction(state: &crate::state::State) -> f32 {
+    state
+        .scratch_height
+        .unwrap_or(state.config.scratchpad.height)
 }
 
 /// The scratch shell exited: drop it so the next toggle re-spawns a fresh one, and hide it.
@@ -142,6 +153,38 @@ pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(crate) fn is_scratch(id: crate::state::PaneId) -> bool {
     id == SCRATCH_PANE_ID
+}
+
+/// Grab the scratchpad's top edge: remember the current height fraction so the drag recomputes
+/// from this origin rather than accumulating per-move deltas.
+pub(crate) fn begin_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.scratch_resize_start = Some(scratch_height_fraction(&ctx.state));
+    Update::none()
+}
+
+/// Drag the scratchpad's top edge to a new height. `from_y`/`y` are root-space rows; dragging up
+/// (smaller `y`) grows the bottom-anchored dropdown. The new height is stored as a runtime
+/// override and clamped to the configured bounds.
+pub(crate) fn resize(ctx: &mut Context<HyprmuxApp>, from_y: u16, y: u16) -> Update {
+    let start = match ctx.state.scratch_resize_start {
+        Some(start) => start,
+        None => scratch_height_fraction(&ctx.state),
+    };
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let tile_h = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap()).h;
+    if tile_h <= 0.0 {
+        return Update::none();
+    }
+    let grow_px = f32::from(from_y) - f32::from(y);
+    let fraction =
+        ((start * tile_h + grow_px) / tile_h).clamp(SCRATCHPAD_MIN_HEIGHT, SCRATCHPAD_MAX_HEIGHT);
+    ctx.state.scratch_height = Some(fraction);
+    Update::full()
+}
+
+pub(crate) fn end_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.scratch_resize_start = None;
+    Update::none()
 }
 
 /// A dimming scrim covering the whole canvas, drawn behind the dropdown so the scratchpad
@@ -195,7 +238,7 @@ pub(crate) fn scratch_placement(
     let top_gap = ctx.state.workspace_top_gap();
     let rect = scratch_slide_rect(
         bounds,
-        ctx.state.config.scratchpad.height,
+        scratch_height_fraction(&ctx.state),
         progress,
         top_gap,
     );
@@ -209,6 +252,52 @@ pub(crate) fn scratch_placement(
         view::PaneMerge::default(),
     );
     Some((rect, element))
+}
+
+/// A thin drag handle sitting over the scratchpad's top chrome (title row and top border) that
+/// resizes its height, mirroring the tiled split-drag strips. Only shown once fully deployed so
+/// it never floats detached from the sliding pane. Returns its placement in canvas coordinates.
+pub(crate) fn scratch_resize_strip(
+    ctx: &Context<HyprmuxApp>,
+    progress: f32,
+) -> Option<(FloatRect, Element)> {
+    if progress < 1.0 - SCRATCH_ANIM_EPSILON || !ctx.state.scratch_visible {
+        return None;
+    }
+    ctx.state.scratch.as_ref()?;
+    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
+    let deployed = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
+    // Title row (when shown) plus the frame's top border row.
+    let strip_h: f32 = if ctx.state.config.pane.show_titles {
+        2.0
+    } else {
+        1.0
+    };
+    let strip = FloatRect {
+        h: strip_h.min(deployed.h),
+        ..deployed
+    };
+    // Capture clicks so a plain click on the handle keeps the scratchpad focused instead of
+    // falling through to the dismiss-scrim beneath it; drags resize.
+    let region: Element = MouseRegion::new()
+        .capture_click(true)
+        .on_mouse_down(
+            ctx.link()
+                .callback(|_| crate::Msg::FocusPane(SCRATCH_PANE_ID)),
+        )
+        .on_drag_start(
+            ctx.link()
+                .callback(|event: MouseDragEvent| crate::Msg::BeginScratchResize(event.from_y)),
+        )
+        .on_drag(
+            ctx.link()
+                .callback(|event: MouseDragEvent| crate::Msg::ScratchResize(event.from_y, event.y)),
+        )
+        .on_drag_end(ctx.link().callback(|_| crate::Msg::EndScratchResize))
+        .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
+        .into();
+    Some((strip, region.key("hyprmux-scratch-resize-strip")))
 }
 
 #[cfg(test)]

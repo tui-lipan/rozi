@@ -51,7 +51,7 @@ disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); b
 | Rename pane | `n` |
 | Paste from clipboard | `v` |
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
-| Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `Ctrl+←/↓/↑/→` |
+| Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `modifier`+`Ctrl`+`←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
 | Promote pane to master | `.` (also palette) |
 
 **Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the

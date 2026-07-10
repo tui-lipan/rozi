@@ -164,6 +164,11 @@ pub(crate) fn handle_pane_mouse(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> Update {
+    // A pane running mouse tracking swallows pointer motion in the framework before our per-pane
+    // hover callback runs, so on-hover focus would otherwise never fire over a full-screen TUI.
+    // Forwarded mouse activity means the pointer is over this pane, so re-apply the hover policy.
+    let hover = crate::focus_ops::hover_focus_pane(ctx, id);
+
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
@@ -173,7 +178,7 @@ pub(crate) fn handle_pane_mouse(
             return Update::full();
         }
     }
-    Update::none()
+    hover
 }
 
 /// Trailing-edge debounce window for controller PTY resizes, coalescing a resize storm (drag,
@@ -311,6 +316,11 @@ mod tests {
             (key(KeyCode::End, KeyMods::NONE), b"\x1b[F".to_vec()),
             (key(KeyCode::PageUp, KeyMods::NONE), b"\x1b[5~".to_vec()),
             (key(KeyCode::F(12), KeyMods::NONE), b"\x1b[24~".to_vec()),
+            // Modified cursor keys must carry the xterm parameter so word-wise motion
+            // (Ctrl+Left/Right) and shifted selection reach TUIs instead of a bare arrow.
+            (key(KeyCode::Left, KeyMods::CTRL), b"\x1b[1;5D".to_vec()),
+            (key(KeyCode::Right, KeyMods::CTRL), b"\x1b[1;5C".to_vec()),
+            (key(KeyCode::End, KeyMods::SHIFT), b"\x1b[1;2F".to_vec()),
         ];
 
         for (key, expected) in cases {

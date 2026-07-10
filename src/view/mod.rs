@@ -268,9 +268,15 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     // progress alone (its own progress dims only the workspace beneath it).
     let scratch_scrim = crate::scratchpad::scratch_backdrop(ctx, scratch_progress);
     let scratch_pane = crate::scratchpad::scratch_placement(app, ctx, scratch_progress);
+    // Drawn last so the drag handle sits above the pane's top chrome and captures the resize drag.
+    let scratch_resize = crate::scratchpad::scratch_resize_strip(ctx, scratch_progress);
     if scratch_scrim.is_some() || scratch_pane.is_some() {
         let mut scratch_canvas = Canvas::new().height(Length::Flex(1));
-        for (rect, element) in scratch_scrim.into_iter().chain(scratch_pane) {
+        for (rect, element) in scratch_scrim
+            .into_iter()
+            .chain(scratch_pane)
+            .chain(scratch_resize)
+        {
             scratch_canvas =
                 scratch_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }

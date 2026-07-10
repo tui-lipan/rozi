@@ -301,21 +301,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_pane_focus(ctx, id);
             Update::full()
         }
-        Msg::HoverPane(id) => {
-            if !ctx.state.config.pane.focus_on_hover {
-                return Update::none();
-            }
-            if ctx.state.focused_pane != Some(id) {
-                focus_pane(&mut ctx.state, id);
-                if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-                    pane.activity.has_unseen_output = false;
-                }
-                request_pane_focus(ctx, id);
-                Update::full()
-            } else {
-                Update::none()
-            }
-        }
+        Msg::HoverPane(id) => crate::focus_ops::hover_focus_pane(ctx, id),
         Msg::BeginMove(
             id,
             current_rect,
@@ -376,6 +362,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ctx.state.split_drag = None;
             Update::full()
         }
+        Msg::BeginScratchResize(_from_y) => crate::scratchpad::begin_resize(ctx),
+        Msg::ScratchResize(from_y, y) => crate::scratchpad::resize(ctx, from_y, y),
+        Msg::EndScratchResize => crate::scratchpad::end_resize(ctx),
         Msg::FinishOpen(epoch, id, generation) => {
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();

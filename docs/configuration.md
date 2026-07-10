@@ -303,7 +303,11 @@ The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.
 | --- | --- | --- |
 | `command` | the normal shell | Program to run in the scratchpad (e.g. `btop`). |
 | `cwd` | the configured `cwd` | Working directory for the scratchpad shell. |
-| `height` | `0.4` | Fraction of the viewport height; clamped to `0.1`–`0.9`. |
+| `height` | `0.4` | Fraction of the viewport height it opens at; clamped to `0.1`–`0.9`. |
+
+Drag the scratchpad's top edge (its title/top-border row) up or down to resize it while it is
+open. The dragged height overrides `height` for the rest of the session; it resets to `height` on
+restart.
 
 ## `[workbar]`
 

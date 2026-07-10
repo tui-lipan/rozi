@@ -894,6 +894,12 @@ pub struct State {
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
     pub scratch_return_focus: Option<PaneId>,
+    /// Runtime height override for the scratchpad as a fraction of the tile height, set by
+    /// dragging its top edge. `None` falls back to `config.scratchpad.height`.
+    pub scratch_height: Option<f32>,
+    /// Height fraction captured at the start of a scratchpad top-edge resize drag, so each drag
+    /// move recomputes from the origin (drift-free) rather than accumulating deltas.
+    pub scratch_resize_start: Option<f32>,
     pub control_socket_path: Option<PathBuf>,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
@@ -1092,6 +1098,8 @@ impl State {
             scratch: None,
             scratch_visible: false,
             scratch_return_focus: None,
+            scratch_height: None,
+            scratch_resize_start: None,
             control_socket_path: None,
             session_client: None,
             session_name: None,

@@ -178,10 +178,11 @@ pub struct HyprmuxPaneConfig {
     pub merge_borders: bool,
     /// App-wide border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
-    /// Blank cells inserted between a pane's border and its terminal grid, on every side. Purely
-    /// cosmetic: each cell of padding costs a column/row of usable terminal space, so this stays
-    /// off by default. Painted with the pane's frame background.
-    pub padding: u16,
+    /// Blank cells inserted between a pane's border and its terminal grid, as
+    /// `(top, right, bottom, left)`. Purely cosmetic: each cell of padding costs a column/row of
+    /// usable terminal space, so this stays off by default. Painted with the pane's frame
+    /// background. Configured with CSS-style shorthand (see [`PaddingSpec`]).
+    pub padding: (u16, u16, u16, u16),
     /// App-wide end-cap style for pane titlebars.
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
@@ -205,7 +206,7 @@ impl Default for HyprmuxPaneConfig {
             show_titles: true,
             merge_borders: false,
             border_style: PaneBorderStyle::Rounded,
-            padding: 0,
+            padding: (0, 0, 0, 0),
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
             workbar_tab_style: CapStyle::Padded,
@@ -644,6 +645,15 @@ struct SessionFileConfig {
     startup: Option<String>,
 }
 
+/// `[pane] padding` value: a single number applies to all four sides, or a CSS-style array of
+/// `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values).
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+enum PaddingSpec {
+    All(u16),
+    Sides(Vec<u16>),
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct PaneFileConfig {
@@ -656,7 +666,7 @@ struct PaneFileConfig {
     show_titles: Option<bool>,
     merge_borders: Option<bool>,
     border_style: Option<String>,
-    padding: Option<u16>,
+    padding: Option<PaddingSpec>,
     title_style: Option<String>,
     workbar_badge_style: Option<String>,
     workbar_tab_style: Option<String>,
@@ -1048,11 +1058,67 @@ mod tests {
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
-        assert_eq!(parsed.pane.padding, Some(2));
+        assert_eq!(parsed.pane.padding, Some(PaddingSpec::All(2)));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn pane_padding_accepts_scalar_and_array_forms() {
+        let scalar: PaneFileConfig = toml::from_str("padding = 3").expect("scalar parses");
+        assert_eq!(scalar.padding, Some(PaddingSpec::All(3)));
+
+        let pair: PaneFileConfig = toml::from_str("padding = [0, 1]").expect("pair parses");
+        assert_eq!(pair.padding, Some(PaddingSpec::Sides(vec![0, 1])));
+
+        let quad: PaneFileConfig = toml::from_str("padding = [1, 2, 3, 4]").expect("quad parses");
+        assert_eq!(quad.padding, Some(PaddingSpec::Sides(vec![1, 2, 3, 4])));
+    }
+
+    #[test]
+    fn resolve_pane_padding_maps_css_shorthand() {
+        let mut warnings = Vec::new();
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::All(2), &mut warnings),
+            Some((2, 2, 2, 2))
+        );
+        // Two values are [vertical, horizontal].
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::Sides(vec![0, 1]), &mut warnings),
+            Some((0, 1, 0, 1))
+        );
+        // Four values are [top, right, bottom, left].
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::Sides(vec![1, 2, 3, 4]), &mut warnings),
+            Some((1, 2, 3, 4))
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_pane_padding_clamps_and_rejects_bad_lengths() {
+        let mut warnings = Vec::new();
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::All(99), &mut warnings),
+            Some((8, 8, 8, 8))
+        );
+        assert_eq!(warnings.len(), 1);
+
+        let mut warnings = Vec::new();
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::Sides(vec![1, 2, 3]), &mut warnings),
+            None
+        );
+        assert_eq!(warnings.len(), 1);
+
+        let mut warnings = Vec::new();
+        assert_eq!(
+            resolve_pane_padding(PaddingSpec::Sides(Vec::new()), &mut warnings),
+            None
+        );
+        assert_eq!(warnings.len(), 1);
     }
 
     #[test]
@@ -1455,17 +1521,9 @@ pub fn load_config() -> LoadedConfig {
             )),
         }
     }
-    if let Some(padding) = parsed.pane.padding {
-        // Cap defensively: padding eats terminal grid on every side, so a large value would leave
-        // no usable pane. 8 cells is already generous for a cosmetic inset.
-        const MAX_PANE_PADDING: u16 = 8;
-        if padding > MAX_PANE_PADDING {
-            warnings.push(format!(
-                "Clamped pane.padding {padding} to the maximum of {MAX_PANE_PADDING}"
-            ));
-            config.pane.padding = MAX_PANE_PADDING;
-        } else {
-            config.pane.padding = padding;
+    if let Some(padding) = parsed.pane.padding.clone() {
+        if let Some(resolved) = resolve_pane_padding(padding, &mut warnings) {
+            config.pane.padding = resolved;
         }
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {
@@ -2206,6 +2264,58 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// Cap defensively: padding eats terminal grid on every side, so a large value would leave no
+/// usable pane. 8 cells is already generous for a cosmetic inset.
+const MAX_PANE_PADDING: u16 = 8;
+
+fn clamp_pane_padding(value: u16, warnings: &mut Vec<String>) -> u16 {
+    if value > MAX_PANE_PADDING {
+        warnings.push(format!(
+            "Clamped pane.padding {value} to the maximum of {MAX_PANE_PADDING}"
+        ));
+        MAX_PANE_PADDING
+    } else {
+        value
+    }
+}
+
+/// Resolve a `[pane] padding` spec into `(top, right, bottom, left)` cells using CSS shorthand: one
+/// value applies to all sides, two are `[vertical, horizontal]`, four are `[top, right, bottom,
+/// left]`. Other array lengths are rejected with a warning and leave the default untouched.
+fn resolve_pane_padding(
+    spec: PaddingSpec,
+    warnings: &mut Vec<String>,
+) -> Option<(u16, u16, u16, u16)> {
+    let sides = match spec {
+        PaddingSpec::All(value) => vec![value],
+        PaddingSpec::Sides(values) => values,
+    };
+    match sides.as_slice() {
+        [all] => {
+            let all = clamp_pane_padding(*all, warnings);
+            Some((all, all, all, all))
+        }
+        [vertical, horizontal] => {
+            let vertical = clamp_pane_padding(*vertical, warnings);
+            let horizontal = clamp_pane_padding(*horizontal, warnings);
+            Some((vertical, horizontal, vertical, horizontal))
+        }
+        [top, right, bottom, left] => Some((
+            clamp_pane_padding(*top, warnings),
+            clamp_pane_padding(*right, warnings),
+            clamp_pane_padding(*bottom, warnings),
+            clamp_pane_padding(*left, warnings),
+        )),
+        other => {
+            warnings.push(format!(
+                "Ignored pane.padding with {} value(s) (expected 1, 2, or 4)",
+                other.len()
+            ));
+            None
+        }
+    }
 }
 
 fn parse_modifier(value: &str) -> Option<WmModifier> {

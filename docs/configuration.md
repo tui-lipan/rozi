@@ -52,7 +52,8 @@ show_workbar = true           # workbar with workspace tabs and mode chips (defa
 workbar_gap = true            # 1-line gap between workbar and panes (default: true)
 workbar_at_bottom = false     # draw the workbar below the panes (default: false)
 show_titles = true            # pane titlebars (default: true)
-padding = 0                   # blank cells between border and terminal, per side (default: 0)
+padding = 0                   # blank cells between border and terminal (default: 0)
+                              # scalar = all sides; [v, h]; or [top, right, bottom, left]
 title_style = "padded"        # titlebar end caps: padded|half|round|arrow (default: padded)
 workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default: padded)
 workbar_tab_style = "padded" # workspace tab caps: padded|round|arrow (default: padded)
@@ -162,7 +163,7 @@ Pane focus and chrome behavior.
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
 | `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The palette/appearance toggle writes this back to config. |
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
-| `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, on every side, painted with the pane's frame background. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Clamped to `8`. |
+| `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. |
 | `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. When enabled, the trailing badges (mode chips + right-region badges such as `session`) also drop the gap between them and chain into a powerline, each cap blending into its left neighbor's color. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace tabs. The appearance cycle writes this back to config. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace tabs in the workbar. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |

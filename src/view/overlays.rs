@@ -815,9 +815,14 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             AppearanceAction::CycleWorkbarStyle,
         ),
         appearance_entry(
-            "Workbar badges",
+            "Workbar badge style",
             pane.workbar_badge_style.label().to_string(),
             AppearanceAction::CycleWorkbarBadgeStyle,
+        ),
+        appearance_entry(
+            "Workbar tab style",
+            pane.workbar_tab_style.label().to_string(),
+            AppearanceAction::CycleWorkbarTabStyle,
         ),
         appearance_entry(
             "Animations",

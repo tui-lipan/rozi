@@ -180,7 +180,8 @@ impl PaneBorderStyle {
 }
 
 /// End-cap glyphs for a colored chip drawn over a background (pane titlebars via
-/// `Action::CycleTitleStyle`, workbar badges via `Action::CycleWorkbarBadgeStyle`). `Padded`
+/// `Action::CycleTitleStyle`, workbar badges via `Action::CycleWorkbarBadgeStyle`, workspace tabs
+/// via `Action::CycleWorkbarTabStyle`). `Padded`
 /// keeps a flush bar with blank side padding; the others draw the chip's ends in the chip color
 /// over whatever is behind it, so it reads as a rounded/pointed pill. The cap glyphs (except
 /// `Half`) are powerline separators and need a patched/Nerd font, like the titlebar's mode icons.
@@ -238,7 +239,7 @@ impl CapStyle {
         all[(index + 1) % all.len()]
     }
 
-    /// Cycle order for `Action::CycleWorkbarBadgeStyle`—same as [`all`] except `Half` is excluded.
+    /// Cycle order for workbar badge/tab style actions—same as [`all`] except `Half` is excluded.
     pub fn badge_styles() -> &'static [CapStyle] {
         &[Self::Padded, Self::Round, Self::Arrow]
     }
@@ -319,6 +320,7 @@ pub enum AppearanceAction {
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
+    CycleWorkbarTabStyle,
     CycleWorkbarStyle,
 }
 
@@ -332,6 +334,7 @@ impl AppearanceAction {
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarPosition
             | Self::CycleWorkbarBadgeStyle
+            | Self::CycleWorkbarTabStyle
             | Self::CycleWorkbarStyle
                 if !pane.show_workbar =>
             {

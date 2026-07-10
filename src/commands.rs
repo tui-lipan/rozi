@@ -447,7 +447,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::CycleWorkbarBadgeStyle,
-        label: "Workbar badges",
+        label: "Workbar badge style",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CycleWorkbarTabStyle,
+        label: "Workbar tab style",
         category: "App",
         default_keys: &[],
         palette: false,
@@ -811,8 +818,14 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         }
         Action::CycleWorkbarBadgeStyle => {
             format!(
-                "Workbar badges: {}",
+                "Workbar badge style: {}",
                 state.config.pane.workbar_badge_style.label()
+            )
+        }
+        Action::CycleWorkbarTabStyle => {
+            format!(
+                "Workbar tab style: {}",
+                state.config.pane.workbar_tab_style.label()
             )
         }
         Action::CycleWorkbarStyle => {

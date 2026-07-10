@@ -379,6 +379,18 @@ fn execute_action_inner(
             }
             Update::full()
         }
+        Action::CycleWorkbarTabStyle => {
+            let next = ctx.state.config.pane.workbar_tab_style.next_badge();
+            ctx.state.config.pane.workbar_tab_style = next;
+            if let Err(err) = crate::config::persist_pane_string("workbar_tab_style", next.id()) {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Preference not saved",
+                    err,
+                ));
+            }
+            Update::full()
+        }
         Action::CycleWorkbarStyle => {
             let next = ctx.state.config.pane.workbar_style.next();
             ctx.state.config.pane.workbar_style = next;

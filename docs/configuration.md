@@ -55,6 +55,7 @@ show_titles = true            # pane titlebars (default: true)
 padding = 0                   # blank cells between border and terminal, per side (default: 0)
 title_style = "padded"        # titlebar end caps: padded|half|round|arrow (default: padded)
 workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default: padded)
+workbar_tab_style = "padded" # workspace tab caps: padded|round|arrow (default: padded)
 workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
 
 [animations]
@@ -163,7 +164,8 @@ Pane focus and chrome behavior.
 | `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, on every side, painted with the pane's frame background. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Clamped to `8`. |
 | `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. When enabled, the trailing badges (mode chips + right-region badges such as `session`) also drop the gap between them and chain into a powerline, each cap blending into its left neighbor's color. The same caps also wrap the workspace tabs, but only the active and hovered tab (they are peers, so they do not chain). Same values and font requirements as `title_style`, except `half` is not available for badges. The appearance cycle writes this back to config. |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. When enabled, the trailing badges (mode chips + right-region badges such as `session`) also drop the gap between them and chain into a powerline, each cap blending into its left neighbor's color. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace tabs. The appearance cycle writes this back to config. |
+| `workbar_tab_style` | `padded` | End-cap style for workspace tabs in the workbar. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
 | `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
 
 ## `[animations]`
@@ -300,7 +302,7 @@ workspace tabs). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show
 enabled, and sit to the left of the right-region segments so a `session` badge stays pinned to the
 trailing edge. With `workbar_badge_style` caps on, the mode chips and right-region badges lose the
 gap between them and interlock into a powerline: each chip's cap blends into its left neighbor's
-color.
+color. Workspace tab caps are controlled separately with `workbar_tab_style`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -370,7 +372,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/rig
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
-`cycle-workbar-badge-style`, `cycle-workbar-style`,
+`cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).
 

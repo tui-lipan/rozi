@@ -444,13 +444,13 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         })
         .collect();
 
-    // Reuse the workbar badge cap style for the tab pills, but the framework only caps
-    // the active/hovered tab (no powerline chaining between tabs) since they are peers.
+    // The framework only caps the active/hovered tab (no powerline chaining between tabs) since
+    // they are peers.
     let tab_caps = ctx
         .state
         .config
         .pane
-        .workbar_badge_style
+        .workbar_tab_style
         .caps()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
 

@@ -186,6 +186,8 @@ pub struct HyprmuxPaneConfig {
     pub title_style: CapStyle,
     /// End-cap style for the workbar's colored badges (the title chip and mode chips).
     pub workbar_badge_style: CapStyle,
+    /// End-cap style for workspace tabs in the workbar.
+    pub workbar_tab_style: CapStyle,
     /// End-cap style for the workbar itself: the whole panel bar reads as a pill/point over the
     /// backdrop rather than a flush edge-to-edge bar.
     pub workbar_style: CapStyle,
@@ -206,6 +208,7 @@ impl Default for HyprmuxPaneConfig {
             padding: 0,
             title_style: CapStyle::Padded,
             workbar_badge_style: CapStyle::Padded,
+            workbar_tab_style: CapStyle::Padded,
             workbar_style: CapStyle::Padded,
         }
     }
@@ -656,6 +659,7 @@ struct PaneFileConfig {
     padding: Option<u16>,
     title_style: Option<String>,
     workbar_badge_style: Option<String>,
+    workbar_tab_style: Option<String>,
     workbar_style: Option<String>,
 }
 
@@ -1031,6 +1035,7 @@ mod tests {
             padding = 2
             title_style = "round"
             workbar_badge_style = "arrow"
+            workbar_tab_style = "round"
             workbar_style = "half"
             "#,
         )
@@ -1046,7 +1051,47 @@ mod tests {
         assert_eq!(parsed.pane.padding, Some(2));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
+        assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn workbar_badge_style_backfills_workbar_tabs_when_tabs_are_unset() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [pane]
+            workbar_badge_style = "arrow"
+            "#,
+        )
+        .expect("config parses");
+        let mut pane = HyprmuxPaneConfig::default();
+        let mut warnings = Vec::new();
+
+        apply_workbar_style_config(&mut pane, &parsed.pane, &mut warnings);
+
+        assert!(warnings.is_empty());
+        assert_eq!(pane.workbar_badge_style, CapStyle::Arrow);
+        assert_eq!(pane.workbar_tab_style, CapStyle::Arrow);
+    }
+
+    #[test]
+    fn explicit_workbar_tab_style_overrides_only_tabs() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [pane]
+            workbar_badge_style = "arrow"
+            workbar_tab_style = "round"
+            "#,
+        )
+        .expect("config parses");
+        let mut pane = HyprmuxPaneConfig::default();
+        let mut warnings = Vec::new();
+
+        apply_workbar_style_config(&mut pane, &parsed.pane, &mut warnings);
+
+        assert!(warnings.is_empty());
+        assert_eq!(pane.workbar_badge_style, CapStyle::Arrow);
+        assert_eq!(pane.workbar_tab_style, CapStyle::Round);
     }
 
     #[test]
@@ -1431,25 +1476,7 @@ pub fn load_config() -> LoadedConfig {
             )),
         }
     }
-    if let Some(workbar_badge_style) = parsed.pane.workbar_badge_style.as_deref() {
-        match CapStyle::parse(workbar_badge_style) {
-            Some(CapStyle::Half) => warnings.push(format!(
-                "Ignored pane.workbar_badge_style \"{workbar_badge_style}\" (half block is not available for workbar badges)"
-            )),
-            Some(style) => config.pane.workbar_badge_style = style,
-            None => warnings.push(format!(
-                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow)"
-            )),
-        }
-    }
-    if let Some(workbar_style) = parsed.pane.workbar_style.as_deref() {
-        match CapStyle::parse(workbar_style) {
-            Some(style) => config.pane.workbar_style = style,
-            None => warnings.push(format!(
-                "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
-            )),
-        }
-    }
+    apply_workbar_style_config(&mut config.pane, &parsed.pane, &mut warnings);
     if let Some(enable_osc52) = parsed.clipboard.enable_osc52 {
         config.clipboard.enable_osc52 = enable_osc52;
     }
@@ -2131,6 +2158,48 @@ pub(crate) fn expand_path(path: impl AsRef<Path>) -> PathBuf {
             .unwrap_or_else(|| PathBuf::from(text.as_ref()));
     }
     PathBuf::from(text.as_ref())
+}
+
+fn apply_workbar_style_config(
+    config: &mut HyprmuxPaneConfig,
+    parsed: &PaneFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    if let Some(workbar_badge_style) = parsed.workbar_badge_style.as_deref() {
+        match CapStyle::parse(workbar_badge_style) {
+            Some(CapStyle::Half) => warnings.push(format!(
+                "Ignored pane.workbar_badge_style \"{workbar_badge_style}\" (half block is not available for workbar badges)"
+            )),
+            Some(style) => {
+                config.workbar_badge_style = style;
+                if parsed.workbar_tab_style.is_none() {
+                    config.workbar_tab_style = style;
+                }
+            }
+            None => warnings.push(format!(
+                "Ignored unknown pane.workbar_badge_style \"{workbar_badge_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
+    if let Some(workbar_tab_style) = parsed.workbar_tab_style.as_deref() {
+        match CapStyle::parse(workbar_tab_style) {
+            Some(CapStyle::Half) => warnings.push(format!(
+                "Ignored pane.workbar_tab_style \"{workbar_tab_style}\" (half block is not available for workspace tabs)"
+            )),
+            Some(style) => config.workbar_tab_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.workbar_tab_style \"{workbar_tab_style}\" (expected one of: padded, round, arrow)"
+            )),
+        }
+    }
+    if let Some(workbar_style) = parsed.workbar_style.as_deref() {
+        match CapStyle::parse(workbar_style) {
+            Some(style) => config.workbar_style = style,
+            None => warnings.push(format!(
+                "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
+            )),
+        }
+    }
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {

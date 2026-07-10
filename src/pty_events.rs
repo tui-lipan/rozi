@@ -7,6 +7,8 @@ use crate::state::PaneId;
 pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
+        .wrap(true)
+        .max_width(Length::Px(55))
         .frame_style(toast_frame_style(theme.status.info))
         .title_style(toast_text_style(theme).bold())
         .message_style(toast_text_style(theme))
@@ -20,6 +22,8 @@ pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
 pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(crate::exit_ops::CONFIRM_WINDOW_SECS)
+        .wrap(true)
+        .max_width(Length::Px(55))
         .frame_style(toast_frame_style(theme.status.error))
         .message_style(toast_text_style(theme))
         .padding((0, 0, 0, 0))
@@ -33,6 +37,8 @@ pub(crate) fn error_toast(
     Toast::new(message.into())
         .title(Some(title.into()))
         .duration(6.0)
+        .wrap(true)
+        .max_width(Length::Px(55))
         .border(true)
         .frame_style(toast_frame_style(theme.status.error))
         .title_style(toast_text_style(theme).bold())

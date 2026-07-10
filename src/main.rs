@@ -1447,6 +1447,55 @@ mod tests {
     }
 
     #[test]
+    fn session_picker_right_aligns_ephemeral_pane_count() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 30,
+                });
+
+                let session_name = "eph-test".to_string();
+                backend.state_mut().session_name = Some(session_name.clone());
+                backend.state_mut().session_attached = true;
+                backend.state_mut().show_session_picker = true;
+                backend.state_mut().session_picker =
+                    Some(crate::state::SessionPickerState::new(vec![
+                        crate::session::discovery::DiscoveredSession {
+                            name: session_name,
+                            ephemeral: true,
+                            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                                panes: 1,
+                                has_layout: true,
+                            },
+                        },
+                    ]));
+                backend.render();
+
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                let row = lines
+                    .iter()
+                    .find(|line| line.contains("ephemeral") && line.contains("1 pane"))
+                    .unwrap_or_else(|| {
+                        panic!("session row missing pane count\n{}", lines.join("\n"))
+                    });
+                let current_col = row.find("current").expect("current marker");
+                let pane_col = row.find("1 pane").expect("right pane count");
+                assert!(
+                    pane_col > current_col + 12,
+                    "pane count should be right-aligned, not inline\n{row}"
+                );
+            })
+            .expect("spawn snapshot test thread")
+            .join()
+            .expect("snapshot test thread completes");
+    }
+
+    #[test]
     fn cli_help_and_version_are_early_exit_variants() {
         assert!(matches!(
             parse_cli_args(vec!["--help".into()]).expect("parses"),

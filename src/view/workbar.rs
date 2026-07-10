@@ -409,7 +409,7 @@ fn session_indicator(ctx: &Context<HyprmuxApp>) -> Option<Element> {
 }
 
 /// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.
-/// Unnamed (ephemeral) sessions return `None`: a bare launch is a disposable per-process session, so
+/// Ephemeral sessions return `None`: a bare launch is a disposable per-process session, so
 /// the badge/placeholder stays empty until the session is given a real name.
 fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
     if !ctx.state.session_attached || ctx.state.is_ephemeral_session() {

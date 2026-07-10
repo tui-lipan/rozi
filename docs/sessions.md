@@ -7,7 +7,7 @@ its own terminal screens. There is no in-process ("local") PTY mode.
 - **Bare launch** (`hyprmux`, `hyprmux dev`, `hyprmux --profile dev`) attaches to a per-process
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
   disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail —
-  the workbar shows no session badge for it, and the picker lists it as `unnamed`.
+  the workbar shows no session badge for it, and the picker lists it as `ephemeral`.
 - **Named session** (`hyprmux --attach dev` or `hyprmux --session dev`) attaches to a persistent,
   user-named session, starting `hyprmux --session dev --server` if it is not already running.
 
@@ -17,7 +17,7 @@ movement): the running shells and their scrollback are untouched. See
 
 ## Ephemeral vs named
 
-| | Ephemeral (unnamed) | Named (`dev`) |
+| | Ephemeral | Named (`dev`) |
 |---|---|---|
 | Created by | bare `hyprmux` launch | `--attach`/`--session`, or *Rename session* on the current one |
 | Clean quit (`prefix q` / `Alt+q`) | server shuts down | server keeps running |
@@ -26,7 +26,7 @@ movement): the running shells and their scrollback are untouched. See
 | UI crash | server left running (reattachable) | server left running |
 | Self-reap when no client is attached | after a short grace period | never (durable until killed) |
 | Session badge (workbar) | hidden | shows the name |
-| Discoverable in the picker | yes (shown as `unnamed`) | yes |
+| Discoverable in the picker | yes (shown as `ephemeral`) | yes |
 | User-typable name | no — the `eph-` prefix is reserved | yes |
 
 ## Named sessions
@@ -112,7 +112,7 @@ same byte position and wrap state stays identical.
 ## Crash recovery and multi-client
 
 A UI crash (e.g. `kill -9`) leaves the ephemeral server running with its panes intact, so you can
-reattach to it (shown as `unnamed`) from the picker and recover the scrollback. Because clients parse
+reattach to it (shown as `ephemeral`) from the picker and recover the scrollback. Because clients parse
 raw bytes and the server broadcasts pane output, more than one client can attach to the same session.
 
 An **ephemeral** server self-reaps once no client has been attached for a short grace period

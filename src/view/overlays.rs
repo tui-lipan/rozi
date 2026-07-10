@@ -542,6 +542,29 @@ fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> List
     .style(Style::new().bg(error_bg).fg(fg))
 }
 
+fn render_ephemeral_session_item(
+    item: &SearchItem<usize>,
+    label_style: &Style,
+    description_style: &Style,
+) -> ListItem {
+    let label = item.label.as_ref();
+    let suffix = label.strip_prefix("ephemeral").unwrap_or_default();
+    let mut row = ListItem::from_spans(vec![
+        Span::new("ephemeral").style(label_style.clone()),
+        Span::new(suffix),
+    ]);
+    if let Some(description) = item
+        .description
+        .as_ref()
+        .and_then(|desc| desc.right.clone())
+    {
+        row = row
+            .description(description)
+            .description_style(description_style.clone());
+    }
+    row
+}
+
 pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
@@ -610,16 +633,22 @@ fn session_picker_palette(
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
     let current = ctx.state.session_name.as_deref();
+    let ephemeral_entries = picker
+        .entries
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| entry.ephemeral.then_some(index))
+        .collect::<Vec<_>>();
     let entries = picker
         .entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
-            // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "unnamed" (they
+            // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
             // stay reattachable — activation is by row index, not this label).
             let mut label = if entry.ephemeral {
-                "unnamed".to_string()
+                "ephemeral".to_string()
             } else {
                 entry.name.clone()
             };
@@ -641,9 +670,12 @@ fn session_picker_palette(
 
     let pending_kill = picker.pending_kill.map(|pending| pending.index);
     let error_bg = theme.status.error;
+    let ephemeral_style = fg_only(&theme.primary).italic();
+    let description_style = fg_only(&theme.muted);
     let selection_style = picker_selection_style(theme, pending_kill.is_some());
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .width(Length::Flex(1))
         .entries(entries)
         .placeholder("Search or name session...")
         .initial_query(picker.input.text().to_string())
@@ -666,10 +698,16 @@ fn session_picker_palette(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
         );
-    if pending_kill.is_some() {
+    if pending_kill.is_some() || !ephemeral_entries.is_empty() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             if pending_kill == Some(item.value) {
                 Some(render_pending_delete_item(item, error_bg))
+            } else if ephemeral_entries.contains(&item.value) {
+                Some(render_ephemeral_session_item(
+                    item,
+                    &ephemeral_style,
+                    &description_style,
+                ))
             } else {
                 None
             }
@@ -681,14 +719,16 @@ fn session_picker_palette(
 fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
-        DiscoveredSessionStatus::Running { panes, has_layout } => {
-            ItemDescription::new().right(format!(
-                "running · panes={panes} · layout={}",
-                if *has_layout { "yes" } else { "no" }
-            ))
+        DiscoveredSessionStatus::Running { panes, .. } => {
+            let label = if *panes == 1 {
+                "1 pane".to_string()
+            } else {
+                format!("{panes} panes")
+            };
+            ItemDescription::new().right(label)
         }
         DiscoveredSessionStatus::Busy => ItemDescription::new().right("busy"),
-        DiscoveredSessionStatus::Unknown => ItemDescription::new().right("unknown"),
+        DiscoveredSessionStatus::Unknown => ItemDescription::new().right("unavailable"),
     }
 }
 

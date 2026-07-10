@@ -186,7 +186,7 @@ pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
 
 /// Detach the current session and switch the UI to a fresh ephemeral session, so the user keeps a
 /// working terminal. A named session stays parked for reattach; an ephemeral one is shut down (it
-/// is disposable), which is equivalent to starting a brand-new unnamed session.
+/// is disposable), which is equivalent to starting a brand-new ephemeral session.
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_kill(ctx);
     if !ctx.state.session_attached {
@@ -200,7 +200,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let message = if was_named {
         "Detached (session still running)"
     } else {
-        "Started a fresh unnamed session"
+        "Started a fresh ephemeral session"
     };
     ctx.toast().push(info_toast(&ctx.state.theme, message));
     update
@@ -502,9 +502,9 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let armed = picker
         .pending_kill
         .is_some_and(|pending| pending.index == index);
-    // The current session may be ephemeral (shown as "unnamed"); keep the toast label in sync.
+    // The current session may be ephemeral; keep the toast label in sync.
     let display = if entry.ephemeral {
-        "unnamed".to_string()
+        "ephemeral".to_string()
     } else {
         entry.name.clone()
     };

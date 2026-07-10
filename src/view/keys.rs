@@ -52,6 +52,13 @@ pub fn appearance_palette_key() -> &'static str {
     "hyprmux-appearance-palette"
 }
 
+pub fn pane_padding_vertical_key() -> &'static str {
+    "hyprmux-pane-padding-vertical"
+}
+pub fn pane_padding_horizontal_key() -> &'static str {
+    "hyprmux-pane-padding-horizontal"
+}
+
 pub fn help_scroll_key() -> &'static str {
     "hyprmux-help-scroll"
 }

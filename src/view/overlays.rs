@@ -11,9 +11,10 @@ use crate::state::{
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    appearance_palette_key, help_scroll_key, palette_key, profile_picker_key, rename_input_key,
-    rename_session_input_key, rename_workspace_input_key, save_profile_key, search_input_key,
-    session_picker_key, theme_picker_key,
+    appearance_palette_key, help_scroll_key, palette_key, pane_padding_horizontal_key,
+    pane_padding_vertical_key, profile_picker_key, rename_input_key, rename_session_input_key,
+    rename_workspace_input_key, save_profile_key, search_input_key, session_picker_key,
+    theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, fg_only, modal_scrollbar_config,
@@ -655,9 +656,10 @@ fn session_picker_palette(
             if current == Some(entry.name.as_str()) {
                 label.push_str("  • current");
             }
-            SearchEntry::item(label, index)
-                .description(session_description(entry))
-                .active(index == picker.selected)
+            SearchEntry::item(label, index).description(session_description(
+                entry,
+                current == Some(entry.name.as_str()),
+            ))
         })
         .collect::<Vec<_>>();
     let empty_text = if picker.entries.is_empty() {
@@ -716,7 +718,10 @@ fn session_picker_palette(
     palette
 }
 
-fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> ItemDescription {
+fn session_description(
+    entry: &crate::session::discovery::DiscoveredSession,
+    is_current: bool,
+) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
         DiscoveredSessionStatus::Running { panes, clients, .. } => {
@@ -725,11 +730,14 @@ fn session_description(entry: &crate::session::discovery::DiscoveredSession) -> 
             } else {
                 format!("{panes} panes")
             };
-            // Surface how many clients share a live session so the picker previews shared attaches.
-            let label = if *clients > 1 {
-                format!("{panes_label} · {clients} clients")
-            } else {
-                panes_label
+            // A discovery probe is not attached, so every reported client on another session is
+            // already there and a new attach will join as a follower. The current row is built
+            // locally and includes this UI in its count, so only surface clients besides us.
+            let other_clients = clients.saturating_sub(u32::from(is_current));
+            let label = match other_clients {
+                0 => panes_label,
+                1 => format!("{panes_label} · 1 other client"),
+                count => format!("{panes_label} · {count} other clients"),
             };
             ItemDescription::new().right(label)
         }
@@ -825,6 +833,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // toggle it depends on.
     let entries = vec![
         appearance_entry("Theme", current_theme_label(ctx), AppearanceAction::Theme),
+        appearance_entry(
+            "Terminal padding",
+            padding_summary(pane.padding),
+            AppearanceAction::EditPadding,
+        ),
         appearance_entry(
             "Titlebar",
             enabled_status(pane.show_titles),
@@ -928,6 +941,100 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::CloseAppearance,
         palette,
     )
+}
+
+fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
+    if top == bottom && right == left {
+        format!("V{top} · H{right}")
+    } else {
+        format!("T{top} R{right} B{bottom} L{left}")
+    }
+}
+
+pub(crate) fn pane_padding_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+        return Text::new("").into();
+    };
+    let theme = &ctx.state.theme;
+    // A labeled, fixed-width numeric field: "Label [ 0 ]". Kept narrow so both axes sit on one row.
+    let field =
+        |label: &str, state: &TextInput, key, changed: fn(InputEvent) -> Msg, submit: Msg| {
+            let input = Input::bound(state)
+                .style(theme.primary.patch(Style::new().bg(theme.surface.element)))
+                .focus_style(
+                    Style::new()
+                        .fg(theme.border_active)
+                        .bg(theme.surface.element),
+                )
+                .selection_style(theme.text_selection)
+                .width(Length::Px(6))
+                .border(false)
+                .padding((0, 1))
+                .on_change(ctx.link().callback(changed))
+                .on_key(ctx.link().key_handler(move |event| {
+                    if event.is(KeyCode::Esc) {
+                        Some(Msg::ClosePanePaddingEditor)
+                    } else if event.code == KeyCode::Enter
+                        && !event.mods.ctrl
+                        && !event.mods.alt
+                        && !event.mods.super_key
+                    {
+                        Some(submit.clone())
+                    } else {
+                        None
+                    }
+                }))
+                .key(key);
+            HStack::new()
+                .width(Length::Auto)
+                .height(Length::Auto)
+                .gap(1)
+                .child(Text::new(label.to_string()).style(fg_only(&theme.muted)))
+                .child(input)
+        };
+    let fields = HStack::new()
+        .height(Length::Auto)
+        .padding((0, 1))
+        .justify(Justify::SpaceBetween)
+        .child(field(
+            "Vertical",
+            &editor.vertical,
+            pane_padding_vertical_key(),
+            Msg::PanePaddingVerticalChanged,
+            Msg::AdvancePanePadding,
+        ))
+        .child(field(
+            "Horizontal",
+            &editor.horizontal,
+            pane_padding_horizontal_key(),
+            Msg::PanePaddingHorizontalChanged,
+            Msg::SubmitPanePadding,
+        ));
+    // gap(0): the fields sit under the modal's own top padding, and `hint_row` carries its own
+    // leading blank line, so an extra VStack gap would double the spacing.
+    let mut body = VStack::new()
+        .height(Length::Auto)
+        .padding((1, 0, 0, 0))
+        .gap(0)
+        .child(fields);
+    if editor.normalizes_asymmetric {
+        // Only worth a line when the current padding is uneven and applying will flatten it.
+        body = body.child(
+            Text::new("Sides differ; applying writes symmetric padding.")
+                .style(fg_only(&theme.muted))
+                .overflow(Overflow::Wrap),
+        );
+    }
+    let body = body.child(
+        hint_row()
+            .child(hint_pill(theme, "next / apply", "enter"))
+            .child(hint_pill(theme, "cancel", "esc")),
+    );
+    action_palette_modal(ctx, "Terminal padding")
+        .width(Length::Auto)
+        .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
+        .child(action_palette_frame(body))
+        .into()
 }
 
 fn appearance_entry(

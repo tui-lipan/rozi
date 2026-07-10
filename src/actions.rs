@@ -39,7 +39,10 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     if text.is_empty() {
         return Update::full();
     }
-    if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, wrap_bracketed_paste(&text)) {
+    let modes = find_pane(&ctx.state, id).map_or(TerminalKeyModes::default(), |pane| {
+        pane.terminal.snapshot.key_modes
+    });
+    if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes)) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
             "Paste failed",
@@ -297,6 +300,7 @@ fn execute_action_inner(
         }
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenAppearance => {
+            ctx.state.pane_padding_editor = None;
             ctx.state.show_appearance = true;
             ctx.state.show_palette = false;
             ctx.state.show_help = false;
@@ -306,6 +310,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::TogglePalette => {
+            ctx.state.pane_padding_editor = None;
             ctx.state.show_palette = !ctx.state.show_palette;
             if ctx.state.show_palette {
                 ctx.state.show_help = false;
@@ -315,6 +320,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::ToggleHelp => {
+            ctx.state.pane_padding_editor = None;
             ctx.state.show_help = !ctx.state.show_help;
             if ctx.state.show_help {
                 ctx.state.show_palette = false;
@@ -581,5 +587,43 @@ mod tests {
         assert_eq!(navigation_key(Direction::Down), ctrl('j'));
         assert_eq!(navigation_key(Direction::Up), ctrl('k'));
         assert_eq!(navigation_key(Direction::Right), ctrl('l'));
+    }
+
+    #[test]
+    fn control_run_action_clears_stale_padding_editor() {
+        use crate::Msg;
+        use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
+        use crate::state::PanePaddingEditorState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.state_mut().show_appearance = true;
+                backend.state_mut().pane_padding_editor =
+                    Some(PanePaddingEditorState::new((1, 1, 1, 1)));
+                let (reply, replies) = std::sync::mpsc::channel();
+
+                // Control requests call `execute_action` directly, bypassing `Msg::RunAction`.
+                backend
+                    .dispatch(Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::RunAction {
+                                action: "command-palette".into(),
+                            },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch control action");
+
+                assert!(replies.recv().expect("control response").ok);
+                assert!(backend.state().show_palette);
+                assert!(backend.state().pane_padding_editor.is_none());
+            })
+            .expect("spawn direct action test thread")
+            .join()
+            .expect("direct action test thread completes");
     }
 }

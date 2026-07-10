@@ -131,9 +131,7 @@ fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
         std::thread::sleep(SESSION_PICKER_REFRESH_INTERVAL);
         // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
         // the loop stop rather than clobbering the last good list.
-        if let Ok(rows) =
-            crate::session::discovery::discover_sessions_excluding(current_name.as_deref())
-        {
+        if let Ok(rows) = discover_picker_sessions(current_name.as_deref()) {
             link.send(Msg::SessionsDiscovered { epoch, rows });
         }
     })
@@ -143,8 +141,19 @@ fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
 /// one, sorted by name.
 fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
     let current_name = ctx.state.session_name.as_deref();
-    let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
+    let mut rows = discover_picker_sessions(current_name)?;
     push_current_session_row(ctx, &mut rows);
+    Ok(rows)
+}
+
+/// Discover sessions for the picker: exclude the currently attached one (re-added separately by
+/// [`push_current_session_row`]) and drop *foreign* ephemeral sessions. Ephemeral sessions are
+/// per-process, disposable, and self-reaping, and their `eph-…` names are reserved; another
+/// process's ephemeral has no business being a selectable row (attaching would fight its owner over
+/// teardown), so it is filtered out here. Our own ephemeral still appears via the current row.
+fn discover_picker_sessions(current_name: Option<&str>) -> std::io::Result<Vec<DiscoveredSession>> {
+    let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
+    rows.retain(|entry| !entry.ephemeral);
     Ok(rows)
 }
 
@@ -297,7 +306,7 @@ pub(crate) fn attach_session_by_name(
     name: String,
     autostart: bool,
 ) -> Update {
-    if !crate::session::discovery::valid_session_name(&name) {
+    if !crate::session::discovery::valid_attach_target(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
             "Sessions",
@@ -345,6 +354,24 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
     else {
         return Update::full();
     };
+    // Discovery already probed this session; an `Unknown` status means the handshake was refused
+    // (an incompatible older server is the usual cause). Attaching would only fail after the connect
+    // retry deadline, so reject it up front, keep the picker open, and point at the fix — killing
+    // the row (Ctrl+K) still works even against a server we can't speak to.
+    if matches!(
+        entry.status,
+        crate::session::discovery::DiscoveredSessionStatus::Unknown
+    ) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Sessions",
+            format!(
+                "Session `{}` is unavailable (incompatible version)\npress Ctrl+K to remove it",
+                entry.name
+            ),
+        ));
+        return Update::full();
+    }
     // A session shown in the picker is already running, so don't autostart a replacement if it
     // died between discovery and attach.
     attach_session_by_name(ctx, entry.name, false)
@@ -583,24 +610,75 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 fn shutdown_session(name: &str) -> std::io::Result<()> {
-    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION};
     let path = crate::session::server::session_socket_path(name)?;
-    let mut stream = std::os::unix::net::UnixStream::connect(&path)?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(1)))?;
+    if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
+        // Grab the server's pid up front (protocol-independent) so an older, incompatible server —
+        // one that rejects our attach handshake and can't be told to `Shutdown` — can still be
+        // reaped instead of leaking as an unkillable orphan.
+        let server_pid = peer_pid(&stream);
+        if graceful_shutdown(&mut stream, name).is_err() {
+            if let Some(pid) = server_pid {
+                // SIGTERM asks the orphaned server to exit and reap its PTYs on its own.
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
+                }
+            }
+        }
+    }
+    // The server unlinks its socket only once it finishes tearing down, which races the refresh
+    // that follows a kill (and a SIGTERMed or already-dead server may never unlink at all). Drop the
+    // path now so the killed session leaves the list immediately.
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
+/// Attempt the in-protocol graceful shutdown: attach, then send `Shutdown`. Returns an error if the
+/// server refuses the handshake (e.g. a version mismatch replies with `Error`) or the connection
+/// breaks, signalling [`shutdown_session`] to fall back to a signal-based kill rather than pushing a
+/// `Shutdown` into a half-closed pipe (which surfaced as a bogus "Broken pipe" delete failure).
+fn graceful_shutdown(
+    stream: &mut std::os::unix::net::UnixStream,
+    name: &str,
+) -> std::io::Result<()> {
+    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
     crate::session::protocol::write_frame(
-        &mut stream,
+        stream,
         &ClientMessage::Attach {
             session: name.to_string(),
             protocol_version: PROTOCOL_VERSION,
         },
     )?;
-    let _ = crate::session::protocol::read_frame::<_, crate::session::protocol::ServerMessage>(
-        &mut stream,
-    )?;
-    crate::session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)?;
-    // The server unlinks its socket only once it finishes tearing down, which races the refresh
-    // that follows a kill. Drop the path now so the dead session leaves the list immediately.
-    let _ = std::fs::remove_file(&path);
-    Ok(())
+    match crate::session::protocol::read_frame::<_, ServerMessage>(stream)? {
+        ServerMessage::Attached { .. } => {
+            crate::session::protocol::write_frame(stream, &ClientMessage::Shutdown)
+        }
+        other => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("server refused shutdown handshake: {other:?}"),
+        )),
+    }
+}
+
+/// Read the peer (server) process id from a connected Unix socket via `SO_PEERCRED`. Works
+/// regardless of the wire protocol version, so it can target servers we cannot handshake with.
+fn peer_pid(stream: &std::os::unix::net::UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+            &mut len,
+        )
+    };
+    (ret == 0 && cred.pid > 0).then_some(cred.pid as u32)
 }

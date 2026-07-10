@@ -108,6 +108,11 @@ pub enum Msg {
     CloseHelp,
     CloseAppearance,
     AppearanceActivate(crate::state::AppearanceAction),
+    ClosePanePaddingEditor,
+    PanePaddingVerticalChanged(InputEvent),
+    PanePaddingHorizontalChanged(InputEvent),
+    AdvancePanePadding,
+    SubmitPanePadding,
     CloseThemePicker,
     /// Index into [`config::theme_choices`]: preview the highlighted theme.
     PreviewTheme(usize),
@@ -446,7 +451,7 @@ pub(crate) fn attach_session_client(
     let Ok(path) = session::server::session_socket_path(&name) else {
         link.send(Msg::SessionAttachFailed {
             epoch,
-            message: format!("invalid session name {name:?}"),
+            message: format!("Invalid session name `{name}`"),
         });
         return;
     };
@@ -476,9 +481,17 @@ pub(crate) fn attach_session_client(
                 if is_busy_attach_error(&err) {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!(
-                            "session {name:?} is busy or not accepting clients: {err}"
-                        ),
+                        message: format!("Session `{name}` is busy or not accepting clients"),
+                    });
+                    return;
+                }
+                if is_handshake_rejected(&err) {
+                    // The server answered but refused the attach (version mismatch, unknown
+                    // session). Retrying to the deadline would only stall; the error is already a
+                    // complete, actionable sentence, so surface it now.
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("Session `{name}`: {err}"),
                     });
                     return;
                 }
@@ -487,7 +500,7 @@ pub(crate) fn attach_session_client(
                     // empty resurrection. Only ephemeral/initial attaches autostart a server.
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("session {name:?} is not running"),
+                        message: format!("Session `{name}` is not running"),
                     });
                     return;
                 }
@@ -504,7 +517,7 @@ pub(crate) fn attach_session_client(
                             link.send(Msg::SessionAttachFailed {
                                 epoch,
                                 message: format!(
-                                    "could not start session server for {name:?}: unable to locate hyprmux executable: {exe_err}"
+                                    "Could not start server for `{name}`: unable to locate hyprmux executable: {exe_err}"
                                 ),
                             });
                             return;
@@ -524,7 +537,7 @@ pub(crate) fn attach_session_client(
                             link.send(Msg::SessionAttachFailed {
                                 epoch,
                                 message: format!(
-                                    "could not start session server for {name:?} ({}): {spawn_err}",
+                                    "Could not start server for `{name}` ({}): {spawn_err}",
                                     exe.display()
                                 ),
                             });
@@ -546,7 +559,7 @@ pub(crate) fn attach_session_client(
                     };
                     link.send(Msg::SessionAttachFailed {
                         epoch,
-                        message: format!("could not attach to session {name:?}: {detail}"),
+                        message: format!("Could not attach to `{name}`: {detail}"),
                     });
                     return;
                 }
@@ -568,6 +581,14 @@ fn is_busy_attach_error(err: &std::io::Error) -> bool {
         err.kind(),
         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
     )
+}
+
+/// A server that answered the connection but refused our attach handshake — a version mismatch or
+/// an unknown session (both surface as [`std::io::ErrorKind::InvalidData`] from the client). Such a
+/// server will never accept us, so the attach loop reports it immediately instead of retrying to the
+/// connect deadline.
+fn is_handshake_rejected(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::InvalidData
 }
 
 fn server_message_to_msg(
@@ -1475,6 +1496,146 @@ mod tests {
     }
 
     #[test]
+    fn terminal_padding_editor_test_backend_flow_and_bounds() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 40,
+                });
+                backend.state_mut().show_appearance = true;
+                backend
+                    .dispatch(Msg::AppearanceActivate(
+                        crate::state::AppearanceAction::EditPadding,
+                    ))
+                    .expect("open padding editor");
+
+                assert_eq!(
+                    backend.focused_key().map(|key| key.as_ref()),
+                    Some(crate::view::pane_padding_vertical_key())
+                );
+                let editor = backend
+                    .state()
+                    .pane_padding_editor
+                    .as_ref()
+                    .expect("editor state");
+                assert_eq!(editor.vertical.selection(), Some((0, 1)));
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("advance to horizontal");
+                assert_eq!(
+                    backend.focused_key().map(|key| key.as_ref()),
+                    Some(crate::view::pane_padding_horizontal_key())
+                );
+                assert_eq!(
+                    backend
+                        .state()
+                        .pane_padding_editor
+                        .as_ref()
+                        .unwrap()
+                        .horizontal
+                        .selection(),
+                    Some((0, 1))
+                );
+
+                // A pasted multi-character value is rejected without replacing the selected value.
+                backend.send_paste("12").expect("paste reaches input");
+                assert_eq!(
+                    backend
+                        .state()
+                        .pane_padding_editor
+                        .as_ref()
+                        .unwrap()
+                        .horizontal
+                        .text(),
+                    "0"
+                );
+
+                let snapshot =
+                    backend.capture_ui_snapshot_with_options(&UiSnapshotOptions::default());
+                let frames: Vec<_> = snapshot
+                    .widgets
+                    .iter()
+                    .filter(|w| w.kind == UiWidgetKind::Frame)
+                    .collect();
+                let appearance = frames
+                    .iter()
+                    .position(|w| w.title.as_deref() == Some("Change appearance"))
+                    .expect("appearance frame");
+                let padding = frames
+                    .iter()
+                    .position(|w| w.title.as_deref() == Some("Terminal padding"))
+                    .expect("padding frame");
+                assert!(
+                    padding > appearance,
+                    "padding editor must be the topmost modal"
+                );
+                let rect = frames[padding].rect;
+                assert!(
+                    rect.w <= 46 && rect.x + rect.w as i16 <= 96 && rect.y + rect.h as i16 <= 40,
+                    "editor must fit wide viewport"
+                );
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Esc,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("cancel editor");
+                assert_eq!(backend.state().config.pane.padding, (0, 0, 0, 0));
+                assert!(backend.state().pane_padding_editor.is_none());
+
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 28,
+                    h: 14,
+                });
+                backend
+                    .dispatch(Msg::AppearanceActivate(
+                        crate::state::AppearanceAction::EditPadding,
+                    ))
+                    .expect("reopen editor");
+                let snapshot =
+                    backend.capture_ui_snapshot_with_options(&UiSnapshotOptions::default());
+                let rect = snapshot
+                    .widgets
+                    .iter()
+                    .find(|w| {
+                        w.kind == UiWidgetKind::Frame
+                            && w.title.as_deref() == Some("Terminal padding")
+                    })
+                    .expect("narrow editor frame")
+                    .rect;
+                assert!(
+                    rect.x + rect.w as i16 <= 28 && rect.y + rect.h as i16 <= 14,
+                    "editor must fit narrow viewport"
+                );
+
+                backend.state_mut().config.pane.padding = (1, 2, 3, 4);
+                backend
+                    .dispatch(Msg::AppearanceActivate(
+                        crate::state::AppearanceAction::EditPadding,
+                    ))
+                    .expect("open asymmetric editor");
+                let editor = backend.state().pane_padding_editor.as_ref().unwrap();
+                assert!(editor.vertical.text().is_empty() && editor.horizontal.text().is_empty());
+                assert!(editor.normalizes_asymmetric);
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread completes");
+    }
+
+    #[test]
     fn command_palette_shrinks_to_filtered_matches_without_moving_its_top() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1538,7 +1699,7 @@ mod tests {
     }
 
     #[test]
-    fn session_picker_right_aligns_ephemeral_pane_count() {
+    fn session_picker_shows_clients_on_other_sessions_and_aligns_descriptions() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1565,10 +1726,21 @@ mod tests {
                                 has_layout: true,
                             },
                         },
+                        crate::session::discovery::DiscoveredSession {
+                            name: "shared-dev".to_string(),
+                            ephemeral: false,
+                            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                                panes: 2,
+                                clients: 1,
+                                has_layout: true,
+                            },
+                        },
                     ]));
                 backend.render();
 
-                let lines = backend.capture_frame().to_fixed_grid_lines();
+                let selection_bg = backend.state().theme.border_active;
+                let frame = backend.capture_frame();
+                let lines = frame.to_fixed_grid_lines();
                 let row = lines
                     .iter()
                     .find(|line| line.contains("ephemeral") && line.contains("1 pane"))
@@ -1580,6 +1752,53 @@ mod tests {
                 assert!(
                     pane_col > current_col + 12,
                     "pane count should be right-aligned, not inline\n{row}"
+                );
+                let shared_row = lines
+                    .iter()
+                    .find(|line| line.contains("shared-dev"))
+                    .unwrap_or_else(|| panic!("shared session row missing\n{}", lines.join("\n")));
+                assert!(
+                    shared_row.contains("2 panes · 1 other client"),
+                    "occupied session should identify its attached client\n{shared_row}"
+                );
+
+                let ephemeral_y = lines
+                    .iter()
+                    .position(|line| line.contains("ephemeral"))
+                    .expect("ephemeral row") as u16;
+                let ephemeral_byte_x = lines[ephemeral_y as usize]
+                    .find("ephemeral")
+                    .expect("ephemeral column");
+                let ephemeral_x = lines[ephemeral_y as usize][..ephemeral_byte_x]
+                    .chars()
+                    .count() as u16;
+                assert_eq!(
+                    frame.cell(ephemeral_x, ephemeral_y).bg,
+                    selection_bg,
+                    "selected custom-rendered row should use the picker selection background"
+                );
+
+                backend
+                    .state_mut()
+                    .session_picker
+                    .as_mut()
+                    .expect("session picker")
+                    .selected = 1;
+                backend.render();
+                let frame = backend.capture_frame();
+                let lines = frame.to_fixed_grid_lines();
+                let shared_y = lines
+                    .iter()
+                    .position(|line| line.contains("shared-dev"))
+                    .expect("shared session row") as u16;
+                let shared_byte_x = lines[shared_y as usize]
+                    .find("shared-dev")
+                    .expect("shared session column");
+                let shared_x = lines[shared_y as usize][..shared_byte_x].chars().count() as u16;
+                assert_eq!(
+                    frame.cell(shared_x, shared_y).bg,
+                    selection_bg,
+                    "selected default-rendered row should match the custom-rendered row"
                 );
             })
             .expect("spawn snapshot test thread")

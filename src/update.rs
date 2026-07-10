@@ -28,9 +28,50 @@ use crate::theme_ops::{cancel_theme_picker, preview_theme, select_theme, theme_t
 use crate::tiling::append_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
+fn valid_padding_text(value: &str) -> bool {
+    value.is_empty()
+        || (value.len() == 1
+            && value.as_bytes()[0].is_ascii_digit()
+            && u16::from(value.as_bytes()[0] - b'0') <= crate::config::MAX_PANE_PADDING)
+}
+
+fn padding_value(value: &str) -> Option<u16> {
+    valid_padding_text(value)
+        .then(|| value.parse().ok())
+        .flatten()
+}
+
+fn padding_error(ctx: &mut Context<HyprmuxApp>) {
+    ctx.toast().push(error_toast(
+        &ctx.state.theme,
+        "Padding needs a value",
+        "Enter one digit.",
+    ));
+}
+
+#[cfg(test)]
+mod padding_input_tests {
+    use super::*;
+
+    #[test]
+    fn padding_input_accepts_empty_or_one_ascii_digit_in_range() {
+        assert!(valid_padding_text(""));
+        assert!(valid_padding_text("8"));
+        assert!(!valid_padding_text("9"));
+        assert!(!valid_padding_text("12"));
+        assert!(!valid_padding_text("８"));
+    }
+}
+
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
     let mut update = match msg {
         Msg::RunAction(action) => {
+            if matches!(
+                action,
+                Action::OpenAppearance | Action::TogglePalette | Action::ToggleHelp
+            ) {
+                ctx.state.pane_padding_editor = None;
+            }
             let cycle_layout_in_palette =
                 matches!(action, Action::ToggleLayout) && ctx.state.show_palette;
             let from_palette = ctx.state.show_palette;
@@ -71,6 +112,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::CloseAppearance => {
             ctx.state.show_appearance = false;
+            ctx.state.pane_padding_editor = None;
             ctx.state.commands_dirty = true;
             request_current_pane_focus(ctx);
             Update::full()
@@ -84,6 +126,13 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 match action {
                     crate::state::AppearanceAction::Theme => {
                         execute_action(ctx, Action::OpenThemePicker);
+                    }
+                    crate::state::AppearanceAction::EditPadding => {
+                        ctx.state.pane_padding_editor =
+                            Some(crate::state::PanePaddingEditorState::new(
+                                ctx.state.config.pane.padding,
+                            ));
+                        ctx.request_focus(crate::view::pane_padding_vertical_key());
                     }
                     crate::state::AppearanceAction::ToggleTitles => {
                         execute_action(ctx, Action::ToggleTitles);
@@ -128,10 +177,86 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                         execute_action(ctx, Action::CycleWorkbarStyle);
                     }
                 }
-                if !matches!(action, crate::state::AppearanceAction::Theme) {
+                if !matches!(
+                    action,
+                    crate::state::AppearanceAction::Theme
+                        | crate::state::AppearanceAction::EditPadding
+                ) {
                     ctx.state.show_appearance = true;
                     ctx.request_focus(crate::view::appearance_palette_key());
                 }
+            }
+            Update::full()
+        }
+        Msg::ClosePanePaddingEditor => {
+            if ctx.state.pane_padding_editor.is_none() {
+                return Update::none();
+            }
+            ctx.state.pane_padding_editor = None;
+            if ctx.state.show_appearance {
+                ctx.request_focus(crate::view::appearance_palette_key());
+            }
+            Update::full()
+        }
+        Msg::PanePaddingVerticalChanged(event) => {
+            let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+                return Update::none();
+            };
+            if valid_padding_text(&event.value) {
+                event.apply_to(&mut editor.vertical);
+            }
+            ctx.request_focus(crate::view::pane_padding_vertical_key());
+            Update::full()
+        }
+        Msg::PanePaddingHorizontalChanged(event) => {
+            let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
+                return Update::none();
+            };
+            if valid_padding_text(&event.value) {
+                event.apply_to(&mut editor.horizontal);
+            }
+            ctx.request_focus(crate::view::pane_padding_horizontal_key());
+            Update::full()
+        }
+        Msg::AdvancePanePadding => {
+            let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+                return Update::none();
+            };
+            if padding_value(editor.vertical.text()).is_some() {
+                ctx.request_focus(crate::view::pane_padding_horizontal_key());
+            } else {
+                padding_error(ctx);
+                ctx.request_focus(crate::view::pane_padding_vertical_key());
+            }
+            Update::full()
+        }
+        Msg::SubmitPanePadding => {
+            let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
+                return Update::none();
+            };
+            let vertical = padding_value(editor.vertical.text());
+            let horizontal = padding_value(editor.horizontal.text());
+            let Some(vertical) = vertical else {
+                padding_error(ctx);
+                ctx.request_focus(crate::view::pane_padding_vertical_key());
+                return Update::full();
+            };
+            let Some(horizontal) = horizontal else {
+                padding_error(ctx);
+                ctx.request_focus(crate::view::pane_padding_horizontal_key());
+                return Update::full();
+            };
+            ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
+            if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
+                ctx.toast().push(error_toast(
+                    &ctx.state.theme,
+                    "Could not save padding",
+                    error,
+                ));
+            }
+            ctx.state.pane_padding_editor = None;
+            if ctx.state.show_appearance {
+                ctx.request_focus(crate::view::appearance_palette_key());
             }
             Update::full()
         }
@@ -488,7 +613,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             ctx.state.pending_session_attach = None;
             ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Session Attach", message));
+                .push(error_toast(&ctx.state.theme, "Sessions", message));
             Update::full()
         }
         Msg::SessionAttached {

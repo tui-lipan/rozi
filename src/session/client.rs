@@ -78,6 +78,18 @@ impl SessionClient {
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
         reader.set_read_timeout(None)?;
+        if let ServerMessage::Error { code, message } = &attached {
+            // A version skew (an older server still running an earlier wire protocol) is the common
+            // cause here; give the user something actionable instead of a debug dump.
+            let detail = if code == "protocol-mismatch" {
+                format!(
+                    "runs an incompatible hyprmux version ({message}); kill it and start a new one"
+                )
+            } else {
+                message.clone()
+            };
+            return Err(io::Error::new(io::ErrorKind::InvalidData, detail));
+        }
         if !matches!(attached, ServerMessage::Attached { .. }) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

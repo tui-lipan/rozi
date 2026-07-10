@@ -309,6 +309,7 @@ pub enum SplitDragKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppearanceAction {
     Theme,
+    EditPadding,
     ToggleTitles,
     ToggleWorkbar,
     ToggleWorkbarGap,
@@ -323,6 +324,57 @@ pub enum AppearanceAction {
     CycleWorkbarBadgeStyle,
     CycleWorkbarTabStyle,
     CycleWorkbarStyle,
+}
+
+/// Temporary values for the Appearance terminal-padding editor. Focus, rather than a second
+/// stage flag, determines whether Enter advances or applies.
+pub struct PanePaddingEditorState {
+    pub vertical: TextInput,
+    pub horizontal: TextInput,
+    pub normalizes_asymmetric: bool,
+}
+
+impl PanePaddingEditorState {
+    pub fn new(padding: (u16, u16, u16, u16)) -> Self {
+        let symmetric = padding.0 == padding.2 && padding.1 == padding.3;
+        let mut vertical = TextInput::new(if symmetric {
+            padding.0.to_string()
+        } else {
+            String::new()
+        });
+        let mut horizontal = TextInput::new(if symmetric {
+            padding.1.to_string()
+        } else {
+            String::new()
+        });
+        if symmetric {
+            vertical.set_anchor(Some(0));
+            horizontal.set_anchor(Some(0));
+        }
+        Self {
+            vertical,
+            horizontal,
+            normalizes_asymmetric: !symmetric,
+        }
+    }
+}
+
+#[cfg(test)]
+mod pane_padding_editor_tests {
+    use super::*;
+
+    #[test]
+    fn symmetric_padding_prefills_and_asymmetric_padding_requires_explicit_normalization() {
+        let symmetric = PanePaddingEditorState::new((2, 1, 2, 1));
+        assert_eq!(symmetric.vertical.text(), "2");
+        assert_eq!(symmetric.horizontal.text(), "1");
+        assert!(!symmetric.normalizes_asymmetric);
+
+        let asymmetric = PanePaddingEditorState::new((1, 2, 3, 4));
+        assert!(asymmetric.vertical.text().is_empty());
+        assert!(asymmetric.horizontal.text().is_empty());
+        assert!(asymmetric.normalizes_asymmetric);
+    }
 }
 
 impl AppearanceAction {
@@ -870,6 +922,7 @@ pub struct State {
     pub show_palette: bool,
     pub show_help: bool,
     pub show_appearance: bool,
+    pub pane_padding_editor: Option<PanePaddingEditorState>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
     pub theme: Theme,
@@ -1077,6 +1130,7 @@ impl State {
             show_palette: false,
             show_help: false,
             show_appearance: false,
+            pane_padding_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,
             theme,

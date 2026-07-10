@@ -1950,6 +1950,33 @@ pub fn persist_pane_flag(key: &str, value: bool) -> std::result::Result<PathBuf,
     Ok(path)
 }
 
+/// Persist the compact CSS-style vertical/horizontal pane padding form.
+pub fn persist_pane_padding(
+    vertical: u16,
+    horizontal: u16,
+) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated = upsert_pane_padding(&text, vertical, horizontal);
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+/// Serialize the Appearance editor's explicit vertical/horizontal form. Kept separate from I/O
+/// so all accepted source forms are covered by a deterministic persistence test.
+fn upsert_pane_padding(text: &str, vertical: u16, horizontal: u16) -> String {
+    upsert_value_in_section(
+        text,
+        "pane",
+        "padding",
+        &format!("[{vertical}, {horizontal}]"),
+    )
+}
+
 pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -2030,6 +2057,29 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
     }
 
     output
+}
+
+#[cfg(test)]
+mod padding_persistence_tests {
+    use super::*;
+
+    #[test]
+    fn pane_padding_upsert_replaces_every_source_form_and_creates_pane_section() {
+        for source in [
+            "[pane]\npadding = 2\n",
+            "[pane]\npadding = [1, 2]\n",
+            "[pane]\npadding = [1, 2, 3, 4]\n",
+        ] {
+            assert_eq!(
+                upsert_pane_padding(source, 3, 4),
+                "[pane]\npadding = [3, 4]\n"
+            );
+        }
+        assert_eq!(
+            upsert_pane_padding("[theme]\nname = \"dark\"\n", 3, 4),
+            "[theme]\nname = \"dark\"\n\n[pane]\npadding = [3, 4]\n"
+        );
+    }
 }
 
 pub fn profiles_dir() -> PathBuf {
@@ -2453,7 +2503,7 @@ fn non_empty(value: Option<String>) -> Option<String> {
 
 /// Cap defensively: padding eats terminal grid on every side, so a large value would leave no
 /// usable pane. 8 cells is already generous for a cosmetic inset.
-const MAX_PANE_PADDING: u16 = 8;
+pub const MAX_PANE_PADDING: u16 = 8;
 
 fn clamp_pane_padding(value: u16, warnings: &mut Vec<String>) -> u16 {
     if value > MAX_PANE_PADDING {

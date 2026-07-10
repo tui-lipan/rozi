@@ -75,7 +75,9 @@ Killing the **current** session is allowed: its server is shut down (its PTYs di
 onto a fresh ephemeral session, so the client stays alive rather than quitting.
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
-disappear on their own), so there is no manual refresh key.
+disappear on their own), so there is no manual refresh key. A session row also reports attached
+clients besides the current UI (for example, `2 panes · 1 other client`), making it clear before
+you attach that you will initially join that session as a follower.
 
 ### Opening the picker at startup
 

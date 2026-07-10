@@ -24,12 +24,20 @@ pub struct DiscoveredSession {
     pub ephemeral: bool,
 }
 
-pub fn valid_session_name(name: &str) -> bool {
+/// Whether `name` is a well-formed *attach target*. Like [`valid_session_name`] but permits the
+/// reserved `eph-` prefix: attaching to an already-running ephemeral session (our own, shown as the
+/// current row) is legitimate even though users may not *create* ephemeral names.
+pub fn valid_attach_target(name: &str) -> bool {
     !name.is_empty()
-        && !crate::state::is_ephemeral_session_name(name)
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+/// Whether `name` is a valid *user-created* session name. Rejects the reserved ephemeral prefix so
+/// create/rename never mints an `eph-…` name that would collide with an auto-managed session.
+pub fn valid_session_name(name: &str) -> bool {
+    valid_attach_target(name) && !crate::state::is_ephemeral_session_name(name)
 }
 
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
@@ -152,5 +160,16 @@ mod tests {
         assert!(!valid_session_name("bad name"));
         // The `eph-` prefix is reserved for auto-managed ephemeral sessions.
         assert!(!valid_session_name("eph-1234"));
+    }
+
+    #[test]
+    fn attach_target_permits_ephemeral_but_not_junk() {
+        // Attaching to an already-running ephemeral (our own current row) is legitimate even though
+        // it can never be *created* by the user.
+        assert!(valid_attach_target("eph-1234"));
+        assert!(valid_attach_target("dev_1-prod"));
+        assert!(!valid_attach_target(""));
+        assert!(!valid_attach_target("bad/name"));
+        assert!(!valid_attach_target("bad name"));
     }
 }

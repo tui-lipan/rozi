@@ -77,7 +77,13 @@ fn forward_key_to_targets(
             continue;
         };
         if let Some(client) = client.clone() {
-            let _ = send_key_to_session_client(&client, *id, pane.pty_generation, key);
+            let _ = send_key_to_session_client(
+                &client,
+                *id,
+                pane.pty_generation,
+                key,
+                pane.terminal.snapshot.key_modes,
+            );
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             repaint = true;
@@ -275,8 +281,8 @@ pub(crate) fn handle_pane_scroll(
     Update::none()
 }
 
-pub(crate) fn terminal_key_event_bytes(key: KeyEvent) -> Option<Vec<u8>> {
-    key_event_to_bytes(key)
+pub(crate) fn terminal_key_event_bytes(key: KeyEvent, modes: TerminalKeyModes) -> Option<Vec<u8>> {
+    key_event_to_bytes(key, modes)
 }
 
 pub(crate) fn send_key_to_session_client(
@@ -284,8 +290,9 @@ pub(crate) fn send_key_to_session_client(
     pane_id: PaneId,
     generation: u64,
     key: KeyEvent,
+    modes: TerminalKeyModes,
 ) -> std::result::Result<(), String> {
-    let bytes = terminal_key_event_bytes(key)
+    let bytes = terminal_key_event_bytes(key, modes)
         .ok_or_else(|| "key is not representable for session forwarding yet".to_string())?;
     client.send_input(pane_id, generation, bytes);
     Ok(())
@@ -330,7 +337,10 @@ mod tests {
         ];
 
         for (key, expected) in cases {
-            assert_eq!(terminal_key_event_bytes(key), Some(expected));
+            assert_eq!(
+                terminal_key_event_bytes(key, TerminalKeyModes::default()),
+                Some(expected)
+            );
         }
     }
 
@@ -338,10 +348,22 @@ mod tests {
     fn server_key_forwarding_enqueues_session_input_bytes() {
         let (client, rx) = crate::session::client::SessionClient::test_channel();
 
-        send_key_to_session_client(&client, 7, 9, key(KeyCode::F(5), KeyMods::ALT))
-            .expect("modified navigation key forwards");
-        send_key_to_session_client(&client, 7, 9, key(KeyCode::Char('c'), KeyMods::CTRL))
-            .expect("control key forwards");
+        send_key_to_session_client(
+            &client,
+            7,
+            9,
+            key(KeyCode::F(5), KeyMods::ALT),
+            TerminalKeyModes::default(),
+        )
+        .expect("modified navigation key forwards");
+        send_key_to_session_client(
+            &client,
+            7,
+            9,
+            key(KeyCode::Char('c'), KeyMods::CTRL),
+            TerminalKeyModes::default(),
+        )
+        .expect("control key forwards");
 
         assert_eq!(
             rx.recv().expect("first message"),

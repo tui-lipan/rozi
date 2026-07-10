@@ -205,6 +205,7 @@ pub fn restore_state_from_profile(
         show_palette: false,
         show_help: false,
         show_appearance: false,
+        pane_padding_editor: None,
         show_theme_picker: false,
         theme_picker_preview: None,
         theme,

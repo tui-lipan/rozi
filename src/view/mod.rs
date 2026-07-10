@@ -4,9 +4,10 @@ mod pane;
 mod workbar;
 
 pub use keys::{
-    appearance_palette_key, palette_key, pane_terminal_key, pane_window_key, profile_picker_key,
-    rename_input_key, rename_session_input_key, rename_workspace_input_key, save_profile_key,
-    search_input_key, session_picker_key, theme_picker_key,
+    appearance_palette_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
+    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
+    rename_session_input_key, rename_workspace_input_key, save_profile_key, search_input_key,
+    session_picker_key, theme_picker_key,
 };
 pub(crate) use pane::{PaneMerge, pane_element};
 
@@ -23,9 +24,9 @@ use crate::tiling::PanePlacement;
 use pane::pane_title_bg;
 
 use overlays::{
-    appearance_overlay, help_overlay, palette_overlay, profile_picker_overlay, rename_overlay,
-    rename_session_overlay, rename_workspace_overlay, save_profile_overlay, search_overlay,
-    session_picker_overlay, theme_picker_overlay,
+    appearance_overlay, help_overlay, palette_overlay, pane_padding_overlay,
+    profile_picker_overlay, rename_overlay, rename_session_overlay, rename_workspace_overlay,
+    save_profile_overlay, search_overlay, session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{empty_workspace_panel, workbar};
@@ -297,6 +298,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.show_appearance {
         root = root.child(appearance_overlay(ctx));
+    }
+    if ctx.state.show_appearance && ctx.state.pane_padding_editor.is_some() {
+        root = root.child(pane_padding_overlay(ctx));
     }
     if ctx.state.show_help {
         root = root.child(help_overlay(ctx));

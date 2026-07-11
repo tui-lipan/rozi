@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
-use crate::state::{CapStyle, PaneBorderStyle, ThemePreset};
+use crate::state::{CapStyle, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, ThemePreset};
 
 // === Config schema ===
 
@@ -142,6 +142,20 @@ impl ThemeChoice {
 pub struct HyprmuxProfileConfig {
     /// Name of a profile in [`profiles_dir`] to load on startup when no CLI profile is given.
     pub default: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct HyprmuxLayoutConfig {
+    /// Terminal cell height divided by cell width, used to compare tile dimensions visually.
+    pub split_width_multiplier: f32,
+}
+
+impl Default for HyprmuxLayoutConfig {
+    fn default() -> Self {
+        Self {
+            split_width_multiplier: DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -388,6 +402,7 @@ pub struct HyprmuxConfig {
     pub theme: HyprmuxThemeConfig,
     pub profile: HyprmuxProfileConfig,
     pub session: HyprmuxSessionConfig,
+    pub layout: HyprmuxLayoutConfig,
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
     pub notifications: HyprmuxNotificationsConfig,
@@ -468,6 +483,7 @@ impl Default for HyprmuxConfig {
             theme: HyprmuxThemeConfig::default(),
             profile: HyprmuxProfileConfig::default(),
             session: HyprmuxSessionConfig::default(),
+            layout: HyprmuxLayoutConfig::default(),
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
             notifications: HyprmuxNotificationsConfig::default(),
@@ -657,6 +673,7 @@ struct FileConfig {
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
     session: SessionFileConfig,
+    layout: LayoutFileConfig,
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
     notifications: NotificationsFileConfig,
@@ -759,6 +776,12 @@ struct SessionFileConfig {
     startup: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct LayoutFileConfig {
+    split_width_multiplier: Option<f32>,
+}
+
 /// `[pane] padding` value: a single number applies to all four sides, or a CSS-style array of
 /// `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values).
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -792,6 +815,23 @@ struct PaneFileConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_split_width_multiplier_is_configurable() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [layout]
+            split_width_multiplier = 2.28
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.layout.split_width_multiplier, Some(2.28));
+        assert_eq!(
+            HyprmuxLayoutConfig::default().split_width_multiplier,
+            DEFAULT_SPLIT_WIDTH_MULTIPLIER
+        );
+    }
 
     #[test]
     fn confirm_section_overrides_defaults() {
@@ -1946,6 +1986,15 @@ pub fn load_config() -> LoadedConfig {
             None => warnings.push(format!(
                 "Ignored unknown session.startup \"{startup}\" (expected `ephemeral` or `picker`)"
             )),
+        }
+    }
+    if let Some(multiplier) = parsed.layout.split_width_multiplier {
+        if multiplier.is_finite() && multiplier > 0.0 {
+            config.layout.split_width_multiplier = multiplier;
+        } else {
+            warnings.push(format!(
+                "Ignored layout.split_width_multiplier {multiplier} (expected a positive finite number)"
+            ));
         }
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {

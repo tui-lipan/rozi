@@ -544,6 +544,7 @@ mod tests {
             bounds,
             0.0,
             crate::state::TileGap::DEFAULT,
+            state.config.layout.split_width_multiplier,
         );
         state.next_pane_id = 3;
         state.next_pty_generation = 8;

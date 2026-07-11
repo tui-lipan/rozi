@@ -39,6 +39,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
+    let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
     let id = ctx.state.next_pane_id;
     ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
     let generation = ctx.state.next_pty_generation;
@@ -68,7 +69,15 @@ pub(crate) fn spawn_pane_in_workspace(
 
     let workspace = &mut ctx.state.workspaces[workspace_index];
     workspace.panes.push(pane);
-    place_spawned_pane(workspace, id, previous_focused, bounds, top_gap, tile_gap);
+    place_spawned_pane(
+        workspace,
+        id,
+        previous_focused,
+        bounds,
+        top_gap,
+        tile_gap,
+        split_width_multiplier,
+    );
     workspace.focused_pane = Some(id);
     ctx.state.active_workspace = workspace_index;
     ctx.state.focused_pane = Some(id);

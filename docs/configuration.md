@@ -41,6 +41,9 @@ modifier = "alt"             # held WM modifier: "alt" (default) or "super"
 prefix = "ctrl-a"            # prefix key (default: ctrl-a)
 modifier_shortcuts = true     # mirror each built-in default onto Alt+<key> (default: true)
 
+[layout]
+split_width_multiplier = 2.3  # terminal cell height / width for dwindle splits (default: 2.3)
+
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
@@ -149,6 +152,12 @@ Prefix strings use tui-lipan keybinding syntax. Modifiers include `ctrl`/`contro
 `esc`/`escape`, `space`, `tab`, `backspace`, arrows, navigation keys, and function keys.
 Examples: `ctrl-a`, `ctrl-b`, `alt-space`, `f12`. The prefix must be one key; an unparseable
 prefix is reported as a warning and the default is kept.
+
+## `[layout]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to compare a focused pane's visual width and height when choosing the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
 
 ## `[pane]`
 

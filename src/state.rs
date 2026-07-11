@@ -25,9 +25,8 @@ pub const DEFAULT_RATIO: f32 = 0.58;
 pub const MIN_SPLIT_RATIO: f32 = 0.20;
 pub const MAX_SPLIT_RATIO: f32 = 0.80;
 pub const RATIO_STEP: f32 = 0.04;
-/// Weights tile width against height when choosing a dwindle split direction (Hyprland's
-/// `split_width_multiplier`). 2.0 corrects for terminal cells being ~twice as tall as wide.
-pub const SPLIT_WIDTH_MULTIPLIER: f32 = 2.0;
+/// Default weight for tile width against height when choosing a dwindle split direction.
+pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplitAxis {

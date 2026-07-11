@@ -15,9 +15,9 @@ Panes form a binary split tree. A **new pane always splits the _focused_ pane**,
 split axis is chosen from the focused tile's aspect ratio - wide tiles split vertically,
 tall tiles split horizontally (Hyprland's dwindle behavior, never the cursor position).
 
-Because terminal cells are roughly twice as tall as they are wide, the axis decision applies
-a `split_width_multiplier` (2.0) so the visual aspect ratio - not the cell count - drives the
-choice.
+Because terminal cells are taller than they are wide, the axis decision applies the configurable
+`[layout].split_width_multiplier` (default `2.3`) so the visual aspect ratio - not the cell count -
+drives the choice. Set it to your terminal cell height divided by cell width.
 
 - **Flip the focused split axis** with `Space`.
 - **Grow / shrink** the focused split with `]`/`+` and `[`/`-`.

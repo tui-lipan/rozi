@@ -1,9 +1,7 @@
 use tui_lipan::prelude::FloatRect;
 
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
-use crate::state::{
-    LayoutKind, Pane, PaneId, SPLIT_WIDTH_MULTIPLIER, SplitAxis, TileGap, Workspace,
-};
+use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
     append_tiled_window, build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids,
@@ -143,10 +141,10 @@ fn pane_z_group(pane: &Pane) -> u8 {
 
 /// Dwindle split direction for the focused tile: split the longer side so the two halves
 /// stay roughly square (Hyprland compares the node's width vs height). Width is weighted by
-/// [`SPLIT_WIDTH_MULTIPLIER`] for terminal cell aspect. The new pane takes the second
+/// `split_width_multiplier` for terminal cell aspect. The new pane takes the second
 /// (right/bottom) slot - a fixed side, not the cursor (Hyprland's `force_split = 2`).
-pub fn spawn_split_for_rect(rect: FloatRect) -> (SplitAxis, bool) {
-    let axis = if rect.w >= rect.h * SPLIT_WIDTH_MULTIPLIER {
+pub fn spawn_split_for_rect(rect: FloatRect, split_width_multiplier: f32) -> (SplitAxis, bool) {
+    let axis = if rect.w >= rect.h * split_width_multiplier {
         SplitAxis::Horizontal
     } else {
         SplitAxis::Vertical
@@ -246,6 +244,7 @@ pub fn place_spawned_pane(
     bounds: FloatRect,
     top_gap: f32,
     tile_gap: TileGap,
+    split_width_multiplier: f32,
 ) -> SpawnPlacement {
     // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
     // new pane simply appends to the end. Dwindle splits the focused tile.
@@ -261,7 +260,7 @@ pub fn place_spawned_pane(
         let placements =
             workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         if let Some(rect) = placement_for(&placements, target) {
-            let axis = spawn_split_for_rect(rect).0;
+            let axis = spawn_split_for_rect(rect, split_width_multiplier).0;
             let moving_first = false;
             if insert_tiled_pane_around_target(workspace, id, target, axis, moving_first) {
                 return SpawnPlacement::Split(target);
@@ -286,7 +285,7 @@ mod tests {
             w: 80.0,
             h: 20.0,
         };
-        assert_eq!(spawn_split_for_rect(wide).0, SplitAxis::Horizontal);
+        assert_eq!(spawn_split_for_rect(wide, 2.3).0, SplitAxis::Horizontal);
 
         // Taller/narrow → split top/bottom.
         let tall = FloatRect {
@@ -295,10 +294,21 @@ mod tests {
             w: 20.0,
             h: 30.0,
         };
-        assert_eq!(spawn_split_for_rect(tall).0, SplitAxis::Vertical);
+        assert_eq!(spawn_split_for_rect(tall, 2.3).0, SplitAxis::Vertical);
+
+        let user_terminal = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 120.0,
+            h: 56.0,
+        };
+        assert_eq!(
+            spawn_split_for_rect(user_terminal, 2.3).0,
+            SplitAxis::Vertical
+        );
 
         // The new pane always takes the second (right/bottom) slot - fixed, not cursor.
-        assert!(!spawn_split_for_rect(wide).1);
+        assert!(!spawn_split_for_rect(wide, 2.3).1);
     }
 
     #[test]
@@ -322,6 +332,7 @@ mod tests {
                     bounds,
                     0.0,
                     crate::state::TileGap::DEFAULT,
+                    crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
                 );
                 workspace.focused_pane = Some(id);
             }
@@ -352,6 +363,7 @@ mod tests {
                 bounds,
                 0.0,
                 crate::state::TileGap::DEFAULT,
+                crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
             );
             workspace.focused_pane = Some(id);
         }

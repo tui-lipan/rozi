@@ -130,7 +130,8 @@ cargo run
 - Lifecycle/event/data modules use plain names, such as `pane_lifecycle`, `pty_events`, and
   `profiles`.
 - Keep `input.rs` as the source of truth for command/action metadata used by help and palettes.
-- Keep split direction based on the focused tile aspect ratio and `SPLIT_WIDTH_MULTIPLIER`.
+- Keep split direction based on the focused tile aspect ratio and the configured
+  `layout.split_width_multiplier`.
 - Keep geometry animations app-driven; position/opacity may animate, but terminal size changes
   should snap to avoid repeated `pty.resize` / SIGWINCH reflow.
 - Commit-message style in the repo is concise conventional prefixes, for example

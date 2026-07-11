@@ -180,7 +180,7 @@ name. Names are saved with profiles and session autosave.
 | Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching never shuts panes down. An anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel returns to the session — use *Quit* to tear an ephemeral session down). A named session detaches immediately. |
 | Quit client | `q` | Exit this UI. The current server keeps running unless the session is ephemeral, in which case it shuts down. Quitting an ephemeral session that still has a live pane asks for a second press first (press `q` again within the confirm window); disable via `[confirm] quit_ephemeral = false`. |
 | Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound — reach it via the command palette or bind `kill-workspace` under `[keys]`. |
-| Kill session | *(palette only)* | Shut down the attached named session and exit. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
+| Kill session | *(palette only)* | Shut down the attached session and switch the UI to a fresh ephemeral session. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
 
 Configured `[confirm]` prompts apply to key/chord and control-socket action triggers. Commands
 chosen from the command palette are treated as explicit selections and run without an extra

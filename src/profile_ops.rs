@@ -245,6 +245,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();
     let control_socket_path = ctx.state.control_socket_path.clone();
+    let command_link = ctx.state.command_link.clone();
     let old_epoch = ctx.state.runtime_epoch;
     let epoch = old_epoch.saturating_add(1);
     let name = crate::state::fresh_ephemeral_session_name(epoch);
@@ -255,6 +256,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     new_state.theme_watcher = theme_watcher;
     new_state.system_theme = system_theme;
     new_state.control_socket_path = control_socket_path;
+    new_state.command_link = command_link;
     new_state.runtime_epoch = old_epoch;
     new_state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,

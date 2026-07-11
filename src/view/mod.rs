@@ -255,6 +255,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if workspace_dim < 1.0 {
         workspace_layer = Animated::new(workspace_layer)
             .opacity(workspace_dim)
+            .opacity_target(theme.surface.backdrop)
             .transition(crate::anim::instant_transition())
             .into();
     }
@@ -285,6 +286,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         if scratch_dim < 1.0 {
             scratch_layer = Animated::new(scratch_layer)
                 .opacity(scratch_dim)
+                .opacity_target(theme.surface.backdrop)
                 .transition(crate::anim::instant_transition())
                 .into();
         }

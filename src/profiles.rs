@@ -196,6 +196,7 @@ pub fn restore_state_from_profile(
         next_pane_id,
         next_pty_generation: 1,
         runtime_epoch: 0,
+        command_link: None,
         mode: Mode::Normal,
         moving_pane: None,
         resizing_pane: None,

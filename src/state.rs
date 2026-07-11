@@ -271,10 +271,16 @@ pub enum ResizeCorner {
     LowerRight,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResizeSession {
     pub id: PaneId,
     pub corner: ResizeCorner,
+    pub workspace: usize,
+    pub start_x: u16,
+    pub start_y: u16,
+    pub start_tile_tree: Option<DwindleTree>,
+    pub start_split_ratios: Vec<f32>,
+    pub start_floating_rect: Option<FloatRect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -929,6 +935,7 @@ pub struct State {
     pub next_pane_id: PaneId,
     pub next_pty_generation: u64,
     pub runtime_epoch: u64,
+    pub command_link: Option<tui_lipan::CommandLink<crate::Msg>>,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
     pub resizing_pane: Option<ResizeSession>,
@@ -1041,6 +1048,8 @@ pub struct SharedSessionState {
     /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
     /// schedules only one flush timer.
     pub resize_flush_scheduled: bool,
+    /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
+    pub layout_commit_scheduled: bool,
 }
 
 impl SharedSessionState {
@@ -1056,6 +1065,7 @@ impl SharedSessionState {
             orphan_output: HashMap::new(),
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
+            layout_commit_scheduled: false,
         }
     }
 
@@ -1136,6 +1146,7 @@ impl State {
             next_pane_id: initial_id + 1,
             next_pty_generation: 1,
             runtime_epoch: 0,
+            command_link: None,
             mode: Mode::Normal,
             moving_pane: None,
             resizing_pane: None,

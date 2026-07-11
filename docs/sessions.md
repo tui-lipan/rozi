@@ -84,8 +84,9 @@ first, and the confirmation lives in the affected UI rather than a toast:
 
 Switching between two named sessions parks the old one and needs no confirmation.
 
-Killing the **current** session is allowed: its server is shut down (its PTYs die) and the UI hops
-onto a fresh ephemeral session, so the client stays alive rather than quitting.
+Killing the **current** session is allowed, either with `Ctrl+K` in the picker or with *Kill
+session* in the command palette: its server is shut down (its PTYs die) and the UI hops onto a fresh
+ephemeral session, so the client stays alive rather than quitting.
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
 disappear on their own), so there is no manual refresh key. A session row also reports attached

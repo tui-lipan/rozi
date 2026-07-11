@@ -26,6 +26,8 @@ use crate::theme_ops::{cancel_theme_picker, preview_theme, select_theme, theme_t
 use crate::tiling::append_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
+const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
+
 fn valid_padding_text(value: &str) -> bool {
     value.is_empty()
         || (value.len() == 1
@@ -62,7 +64,12 @@ mod padding_input_tests {
 }
 
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
+    let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
     let mut update = match msg {
+        Msg::CommandLinkReady(link) => {
+            ctx.state.command_link = Some(link);
+            Update::none()
+        }
         Msg::RunAction(action) => {
             if matches!(
                 action,
@@ -435,14 +442,17 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         ),
         Msg::MovePane(id, dx, dy, modified) => move_pane(ctx, id, dx, dy, modified),
         Msg::EndMove(id, x, y) => end_move(ctx, id, x, y),
-        Msg::BeginResize(id, corner, modified) => begin_resize(ctx, id, corner, modified),
-        Msg::ResizePane(id, corner, dx, dy, modified) => {
-            resize_pane(ctx, id, corner, dx, dy, modified)
+        Msg::BeginResize(id, corner, x, y, modified) => {
+            begin_resize(ctx, id, corner, x, y, modified)
+        }
+        Msg::ResizePane(id, corner, from_x, from_y, x, y, modified) => {
+            resize_pane(ctx, id, corner, (from_x, from_y), (x, y), modified)
         }
         Msg::EndResize(id) => {
             if ctx
                 .state
                 .resizing_pane
+                .as_ref()
                 .is_some_and(|session| session.id == id)
             {
                 ctx.state.resizing_pane = None;
@@ -720,7 +730,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             };
             if let Some(shared) = ctx.state.shared.as_mut() {
                 shared.assumed_rev = current_rev;
-                // Clear the dirty detector so the tail chokepoint recommits from current state.
+                // Clear the dirty detector so the debounced chokepoint recommits from current state.
                 shared.last_committed_layout = None;
             }
             update
@@ -784,6 +794,16 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::none();
             }
             crate::pty_events::flush_pending_resizes(ctx);
+            Update::none()
+        }
+        Msg::FlushLayoutCommit { epoch } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(shared) = ctx.state.shared.as_mut() {
+                shared.layout_commit_scheduled = false;
+            }
+            flush_layout_commit(ctx);
             Update::none()
         }
         Msg::SessionOutput {
@@ -961,12 +981,40 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         crate::commands::sync(ctx);
     }
 
-    // Layout commit chokepoint: after every message is handled, the controller diffs its current
-    // window-manager state against the last layout it committed and, if changed, publishes a new
-    // revision. Followers and unshared sessions no-op here.
-    flush_layout_commit(ctx);
+    // Layout commit chokepoint: after every message, schedule a bounded trailing-edge diff. The
+    // flush message itself is excluded so an idle client does not perpetually re-arm the timer.
+    if !is_layout_flush {
+        schedule_layout_commit(ctx);
+    }
 
     update
+}
+
+pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
+    if !ctx.state.session_attached || !ctx.state.is_controller() {
+        return;
+    }
+    let epoch = ctx.state.runtime_epoch;
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        flush_layout_commit(ctx);
+        return;
+    };
+    if shared.layout_commit_scheduled {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        flush_layout_commit(ctx);
+        return;
+    };
+    ctx.state
+        .shared
+        .as_mut()
+        .expect("shared session checked above")
+        .layout_commit_scheduled = true;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(LAYOUT_COMMIT_DEBOUNCE_MS));
+        link.send(Msg::FlushLayoutCommit { epoch });
+    });
 }
 
 /// If this client controls a shared session and its layout differs from the last commit, publish a

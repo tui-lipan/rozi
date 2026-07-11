@@ -195,7 +195,7 @@ pub(crate) fn handle_pane_mouse(
 
 /// Trailing-edge debounce window for controller PTY resizes, coalescing a resize storm (drag,
 /// tiling reflow) into one `pty.resize`/SIGWINCH per pane.
-const RESIZE_DEBOUNCE_MS: u64 = 100;
+const RESIZE_DEBOUNCE_MS: u64 = 16;
 
 pub(crate) fn handle_pane_resize(
     ctx: &mut Context<HyprmuxApp>,

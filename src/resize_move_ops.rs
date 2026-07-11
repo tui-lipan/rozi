@@ -142,6 +142,8 @@ pub(crate) fn begin_resize(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
     corner: ResizeCorner,
+    x: u16,
+    y: u16,
     modified: bool,
 ) -> Update {
     if !modified {
@@ -153,7 +155,21 @@ pub(crate) fn begin_resize(
     ctx.state.animation = GeometryAnimation::None;
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
-    ctx.state.resizing_pane = Some(ResizeSession { id, corner });
+    let workspace = ctx.state.active_workspace;
+    ensure_tile_tree(&mut ctx.state.workspaces[workspace]);
+    let start_floating_rect = active_pane_mut(&mut ctx.state, id)
+        .filter(|pane| pane.floating)
+        .map(|pane| pane.floating_rect);
+    ctx.state.resizing_pane = Some(ResizeSession {
+        id,
+        corner,
+        workspace,
+        start_x: x,
+        start_y: y,
+        start_tile_tree: ctx.state.workspaces[workspace].tile_tree.clone(),
+        start_split_ratios: ctx.state.workspaces[workspace].split_ratios.clone(),
+        start_floating_rect,
+    });
     Update::full()
 }
 
@@ -161,20 +177,30 @@ pub(crate) fn resize_pane(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
     corner: ResizeCorner,
-    dx: i16,
-    dy: i16,
+    from: (u16, u16),
+    current: (u16, u16),
     modified: bool,
 ) -> Update {
     if !modified {
         return Update::none();
     }
     ctx.state.animation = GeometryAnimation::None;
-    let corner = ctx
-        .state
-        .resizing_pane
-        .filter(|session| session.id == id)
-        .map(|session| session.corner)
-        .unwrap_or(corner);
+    let session = ctx.state.resizing_pane.as_ref().filter(|session| {
+        session.id == id && session.start_x == from.0 && session.start_y == from.1
+    });
+    let corner = session.map(|session| session.corner).unwrap_or(corner);
+    if let Some(session) = session {
+        let workspace = &mut ctx.state.workspaces[session.workspace];
+        workspace.tile_tree = session.start_tile_tree.clone();
+        workspace.split_ratios = session.start_split_ratios.clone();
+        if let Some(rect) = session.start_floating_rect
+            && let Some(pane) = active_pane_mut(&mut ctx.state, id)
+        {
+            pane.floating_rect = rect;
+        }
+    }
+    let dx = (current.0 as i32 - from.0 as i32) as i16;
+    let dy = (current.1 as i32 - from.1 as i32) as i16;
     let viewport = ctx.viewport();
     resize_pane_state(&mut ctx.state, id, corner, dx, dy, viewport);
     Update::full()

@@ -771,10 +771,24 @@ impl SessionServer {
                 }
             }
             Target::Broadcast => {
-                for client in self.clients.iter_mut().filter(|client| client.attached) {
-                    client.push(bytes.clone());
-                }
+                self.push_to_attached(bytes);
             }
+        }
+    }
+
+    /// Queue `bytes` on every attached client, cloning for all but the last recipient.
+    fn push_to_attached(&mut self, bytes: Vec<u8>) {
+        let last = self.clients.iter().rposition(|client| client.attached);
+        let Some(last) = last else { return };
+        for (index, client) in self.clients.iter_mut().enumerate() {
+            if !client.attached {
+                continue;
+            }
+            if index == last {
+                client.push(bytes);
+                return;
+            }
+            client.push(bytes.clone());
         }
     }
 
@@ -782,9 +796,7 @@ impl SessionServer {
         let Some(bytes) = encode_control(message) else {
             return;
         };
-        for client in self.clients.iter_mut().filter(|client| client.attached) {
-            client.push(bytes.clone());
-        }
+        self.push_to_attached(bytes);
     }
 
     fn broadcast_outbound(&mut self, outbound: &ServerOutbound) {
@@ -799,9 +811,7 @@ impl SessionServer {
         let Some(bytes) = bytes else {
             return;
         };
-        for client in self.clients.iter_mut().filter(|client| client.attached) {
-            client.push(bytes.clone());
-        }
+        self.push_to_attached(bytes);
     }
 
     /// Queue the initial replay seed for a freshly attached client: the exported screen of every

@@ -270,7 +270,12 @@ fn workbar_with_caps(
     let backdrop = ctx.state.theme.surface.backdrop;
     let cap = |glyph: &'static str, color: Color| {
         Text::new(glyph)
-            .style(Style::new().fg(color).bg(backdrop))
+            .style(
+                Style::new()
+                    .fg(color)
+                    .bg(backdrop)
+                    .contrast_policy(ContrastPolicy::Off),
+            )
             .width(Length::Px(1))
             .height(Length::Px(WORKBAR_HEIGHT))
     };
@@ -338,7 +343,12 @@ fn workbar_badge(
         .width(Length::Auto)
         .height(Length::Px(1));
     let cap_el = Text::new(glyph)
-        .style(Style::new().fg(badge_bg).bg(panel_bg))
+        .style(
+            Style::new()
+                .fg(badge_bg)
+                .bg(panel_bg)
+                .contrast_policy(ContrastPolicy::Off),
+        )
         .width(Length::Px(1))
         .height(Length::Px(1));
     let row = HStack::new().width(Length::Auto).height(Length::Px(1));

@@ -103,6 +103,7 @@ impl HyprmuxApp {
 
 #[derive(Clone)]
 pub enum Msg {
+    CommandLinkReady(CommandLink<Msg>),
     RunAction(Action),
     ClosePalette,
     CloseHelp,
@@ -164,8 +165,8 @@ pub enum Msg {
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),
     EndMove(PaneId, u16, u16),
-    BeginResize(PaneId, ResizeCorner, bool),
-    ResizePane(PaneId, ResizeCorner, i16, i16, bool),
+    BeginResize(PaneId, ResizeCorner, u16, u16, bool),
+    ResizePane(PaneId, ResizeCorner, u16, u16, u16, u16, bool),
     EndResize(PaneId),
     BeginResizeSplit(PaneId, bool, u16, u16),
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, from_x, from_y, x, y).
@@ -238,6 +239,10 @@ pub enum Msg {
     },
     /// Trailing-edge flush of debounced controller pane resizes (see `pty_events::handle_pane_resize`).
     FlushPaneResizes {
+        epoch: u64,
+    },
+    /// Trailing-edge flush of the controller's shared layout.
+    FlushLayoutCommit {
         epoch: u64,
     },
     SessionSpawnResult {
@@ -354,6 +359,7 @@ impl Component for HyprmuxApp {
         };
 
         Some(Command::spawn(move |link: CommandLink<Msg>| {
+            link.send(Msg::CommandLinkReady(link.clone()));
             config_ops::spawn_config_watcher(&link);
             if let Some(listener) = control_listener {
                 let listener_link = link.clone();
@@ -407,8 +413,8 @@ impl Component for HyprmuxApp {
             commands::sync(ctx);
         }
         // Key routing can mutate the layout without going through `handle_msg` (prefix-mode window
-        // management), so run the same commit chokepoint here to publish those changes.
-        update::flush_layout_commit(ctx);
+        // management), so schedule the same commit chokepoint here to publish those changes.
+        update::schedule_layout_commit(ctx);
         if handled {
             KeyUpdate::handled(update)
         } else {
@@ -719,6 +725,7 @@ impl HyprmuxApp {
             || ctx
                 .state
                 .resizing_pane
+                .as_ref()
                 .is_some_and(|session| session.id == pane.id)
         {
             return anim::instant_transition();

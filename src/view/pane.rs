@@ -194,14 +194,24 @@ pub(crate) fn pane_element(
                     .height(Length::Px(1))
                     .child(
                         Text::new(left)
-                            .style(Style::new().fg(title_bar_bg).bg(left_cap_bg))
+                            .style(
+                                Style::new()
+                                    .fg(title_bar_bg)
+                                    .bg(left_cap_bg)
+                                    .contrast_policy(ContrastPolicy::Off),
+                            )
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
                     .child(middle)
                     .child(
                         Text::new(right)
-                            .style(Style::new().fg(title_bar_bg).bg(right_cap_bg))
+                            .style(
+                                Style::new()
+                                    .fg(title_bar_bg)
+                                    .bg(right_cap_bg)
+                                    .contrast_policy(ContrastPolicy::Off),
+                            )
                             .width(Length::Px(1))
                             .height(Length::Px(1)),
                     )
@@ -326,6 +336,8 @@ pub(crate) fn pane_element(
             Msg::BeginResize(
                 id,
                 crate::geometry::nearest_resize_corner(event),
+                event.from_x,
+                event.from_y,
                 event.mods.alt || event.mods.super_key,
             )
         }))
@@ -333,8 +345,10 @@ pub(crate) fn pane_element(
             Msg::ResizePane(
                 id,
                 crate::geometry::nearest_resize_corner(event),
-                event.delta_x,
-                event.delta_y,
+                event.from_x,
+                event.from_y,
+                event.x,
+                event.y,
                 event.mods.alt || event.mods.super_key,
             )
         }))

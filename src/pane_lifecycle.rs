@@ -244,7 +244,11 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
     if state.moving_pane.is_some_and(|session| session.id == id) {
         state.moving_pane = None;
     }
-    if state.resizing_pane.is_some_and(|session| session.id == id) {
+    if state
+        .resizing_pane
+        .as_ref()
+        .is_some_and(|session| session.id == id)
+    {
         state.resizing_pane = None;
     }
 

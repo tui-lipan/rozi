@@ -241,7 +241,8 @@ pub(crate) fn take_control(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// (`shutdown`, its PTYs die with it — it is disposable and would otherwise leak an orphan
 /// server), while a named session is parked (the client detaches and the server, already
 /// layout-authoritative, stays running for later reattach). A no-op when nothing is attached.
-pub(crate) fn release_current_session(ctx: &Context<HyprmuxApp>) {
+pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
+    crate::update::flush_layout_commit(ctx);
     let Some(client) = ctx.state.session_client.clone() else {
         return;
     };
@@ -264,8 +265,8 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive by switching to a
-/// fresh ephemeral session — the picker equivalent of "kill session" without quitting the client.
-fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
+/// fresh ephemeral session.
+pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
     if let Some(client) = ctx.state.session_client.clone() {
         client.shutdown();
     }
@@ -285,6 +286,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();
     let control_socket_path = ctx.state.control_socket_path.clone();
+    let command_link = ctx.state.command_link.clone();
     let old_epoch = ctx.state.runtime_epoch;
     let epoch = old_epoch.saturating_add(1);
     let name = crate::state::fresh_ephemeral_session_name(epoch);
@@ -292,6 +294,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     fresh.theme_watcher = theme_watcher;
     fresh.system_theme = system_theme;
     fresh.control_socket_path = control_socket_path;
+    fresh.command_link = command_link;
     // Keep the pre-attach epoch so stale messages from the just-closed connection are filtered
     // out; `Msg::SessionAttached` advances it to `epoch` once the fresh ephemeral is live.
     fresh.runtime_epoch = old_epoch;

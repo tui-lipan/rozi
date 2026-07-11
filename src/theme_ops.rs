@@ -8,6 +8,81 @@ pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme
     Theme::from_host_colors(colors).with_extension(colors)
 }
 
+/// The host terminal's probed default background, if hyprmux queried it at startup. Carried on the
+/// derived `system_theme` as a [`HostTerminalColors`] extension so it stays available regardless of
+/// which theme is active.
+pub(crate) fn host_background(state: &State) -> Option<Color> {
+    state
+        .system_theme
+        .as_ref()
+        .and_then(|theme| theme.extension::<HostTerminalColors>())
+        .map(|colors| colors.bg)
+}
+
+/// Resolve a transparency-sentinel `surface.backdrop` to a concrete color.
+///
+/// A custom theme that extends a preset with `backdrop = "backdrop"` (or `"transparent"`/`"reset"`)
+/// lands a sentinel [`Color`] with no RGB. That leaks into every consumer that needs a real color -
+/// the terminal default background reported to OSC 11 background queries, embedded-pane default-bg
+/// cells, workbar badge text and end caps - each of which then falls back to pitch black. Pin the
+/// backdrop to the host terminal's own background so those surfaces track the real terminal bg
+/// instead of collapsing to black; fall back to the theme's panel surface when the host bg is
+/// unknown (e.g. the startup color query failed).
+///
+/// This deliberately snapshots the sentinel to a *concrete* color rather than preserving literal
+/// pass-through transparency: a queried color keeps every consumer (including OSC 11 replies and
+/// contrast math, which cannot be transparent) on the terminal's background, and leaves no unset
+/// channel that a future consumer could accidentally leak black through again. The cost is that a
+/// live wallpaper/blur behind the terminal is matched by color, not shown through the panes. If
+/// real pass-through is ever wanted, add it as a *separate* token (e.g. `backdrop = "transparent"`)
+/// that this resolver skips - keep `"backdrop"` meaning "the terminal's background color". Do not
+/// "fix" this back into leaving the channel unset; that reintroduces the black-surface bug.
+pub(crate) fn concretize_backdrop(mut theme: Theme, host_bg: Option<Color>) -> Theme {
+    if theme.surface.backdrop.to_rgb().is_none() {
+        theme.surface.backdrop = host_bg
+            .filter(|color| color.to_rgb().is_some())
+            .unwrap_or(theme.surface.panel);
+    }
+    theme
+}
+
+/// Apply the `pane.background_follows_terminal` preference on top of a freshly resolved theme,
+/// then run it through [`concretize_backdrop`].
+///
+/// When `follow_terminal` is set, `surface.backdrop` is pinned to the transparency sentinel
+/// regardless of what the active theme authored - including a preset or custom file that already
+/// set a concrete color - so it always resolves to the host terminal's background. When unset,
+/// the theme's own `backdrop` is left as authored (concrete, or a sentinel from a custom file);
+/// `concretize_backdrop` still resolves any sentinel so nothing collapses to black.
+pub(crate) fn apply_backdrop_policy(
+    mut theme: Theme,
+    host_bg: Option<Color>,
+    follow_terminal: bool,
+) -> Theme {
+    if follow_terminal {
+        theme.surface.backdrop = Color::Backdrop;
+    }
+    concretize_backdrop(theme, host_bg)
+}
+
+/// Re-resolve the active theme from `config.theme.name` and reapply the current backdrop
+/// policy. Used when flipping `pane.background_follows_terminal`, since the already-resolved
+/// `state.theme` may have had its `surface.backdrop` overwritten by a previous policy pass and
+/// can no longer tell us what the theme itself authored.
+pub(crate) fn reapply_active_theme(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let system_theme = ctx.state.system_theme.clone();
+    let resolved =
+        crate::config::resolve_theme(&ctx.state.config.theme.name, system_theme.as_ref());
+    let host_bg = host_background(&ctx.state);
+    ctx.state.theme = apply_backdrop_policy(
+        resolved.theme,
+        host_bg,
+        ctx.state.config.pane.background_follows_terminal,
+    );
+    apply_terminal_palette_to_state(&mut ctx.state);
+    Update::full()
+}
+
 pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
         return Update::none();
@@ -27,7 +102,12 @@ pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 
     if let Some(theme) = newest_theme {
-        ctx.state.theme = theme;
+        let host_bg = host_background(&ctx.state);
+        ctx.state.theme = apply_backdrop_policy(
+            theme,
+            host_bg,
+            ctx.state.config.pane.background_follows_terminal,
+        );
         apply_terminal_palette_to_state(&mut ctx.state);
         return Update::with_command(schedule_theme_tick());
     }
@@ -65,7 +145,13 @@ pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
         });
     }
     let system_theme = ctx.state.system_theme.clone();
-    ctx.state.theme = crate::config::resolve_theme(&choice.id(), system_theme.as_ref()).theme;
+    let resolved = crate::config::resolve_theme(&choice.id(), system_theme.as_ref()).theme;
+    let host_bg = host_background(&ctx.state);
+    ctx.state.theme = apply_backdrop_policy(
+        resolved,
+        host_bg,
+        ctx.state.config.pane.background_follows_terminal,
+    );
     apply_terminal_palette_to_state(&mut ctx.state);
     Update::full()
 }
@@ -119,7 +205,12 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     }
 
     ctx.state.config.theme.name = name.clone();
-    ctx.state.theme = resolved.theme;
+    let host_bg = host_background(&ctx.state);
+    ctx.state.theme = apply_backdrop_policy(
+        resolved.theme,
+        host_bg,
+        ctx.state.config.pane.background_follows_terminal,
+    );
     ctx.state.theme_picker_preview = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
@@ -431,6 +522,95 @@ mod tests {
             pane_frame_foreground(&theme, true, true),
             theme.border_active
         );
+    }
+
+    #[test]
+    fn transparent_backdrop_theme_never_paints_panes_black() {
+        // Regression: extending nord with `backdrop = "backdrop"` used to force unfocused (and, in
+        // spawn animations, freshly created) pane backgrounds to pitch black. After concretizing to
+        // the host bg, an unfocused pane must render on that concrete surface, never black.
+        let host_bg = Color::rgb(10, 11, 12);
+        let mut theme = ThemePreset::Nord.theme();
+        theme.surface.backdrop = Color::Backdrop;
+        let theme = concretize_backdrop(theme, Some(host_bg));
+
+        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        state.focused_pane = Some(1);
+        state.workspaces[0].focused_pane = Some(1);
+
+        assert!(apply_terminal_palette_to_state(&mut state));
+        assert_eq!(pane_palette_background(&state, 1), Some(host_bg));
+        assert_ne!(pane_palette_background(&state, 1), Some(Color::Black));
+    }
+
+    #[test]
+    fn concretize_backdrop_pins_transparent_backdrop_to_host_background() {
+        // A custom theme that extends a preset with `backdrop = "backdrop"` lands a sentinel with
+        // no RGB; it must resolve to the real host terminal bg so terminal palettes, OSC 11 bg
+        // queries, and the workbar stop collapsing to pitch black.
+        let mut theme = ThemePreset::Nord.theme();
+        theme.surface.backdrop = Color::Backdrop;
+        let host_bg = Color::rgb(10, 11, 12);
+
+        let resolved = concretize_backdrop(theme, Some(host_bg));
+
+        assert_eq!(resolved.surface.backdrop, host_bg);
+        assert!(resolved.surface.backdrop.to_rgb().is_some());
+    }
+
+    #[test]
+    fn concretize_backdrop_falls_back_to_panel_without_host_colors() {
+        let mut theme = ThemePreset::Nord.theme();
+        theme.surface.backdrop = Color::Transparent;
+        let panel = theme.surface.panel;
+
+        let resolved = concretize_backdrop(theme, None);
+
+        assert_eq!(resolved.surface.backdrop, panel);
+    }
+
+    #[test]
+    fn concretize_backdrop_leaves_concrete_backdrops_untouched() {
+        let theme = ThemePreset::Nord.theme();
+        let original = theme.surface.backdrop;
+
+        let resolved = concretize_backdrop(theme, Some(Color::rgb(1, 2, 3)));
+
+        assert_eq!(resolved.surface.backdrop, original);
+    }
+
+    #[test]
+    fn backdrop_policy_follow_terminal_overrides_a_concrete_preset_backdrop() {
+        // `pane.background_follows_terminal` must win even over a preset's own concrete
+        // backdrop, not just an unresolved sentinel from a custom theme file.
+        let theme = ThemePreset::Nord.theme();
+        let preset_backdrop = theme.surface.backdrop;
+        let host_bg = Color::rgb(10, 11, 12);
+
+        let resolved = apply_backdrop_policy(theme, Some(host_bg), true);
+
+        assert_eq!(resolved.surface.backdrop, host_bg);
+        assert_ne!(resolved.surface.backdrop, preset_backdrop);
+    }
+
+    #[test]
+    fn backdrop_policy_leaves_theme_backdrop_alone_when_not_following() {
+        let theme = ThemePreset::Nord.theme();
+        let preset_backdrop = theme.surface.backdrop;
+
+        let resolved = apply_backdrop_policy(theme, Some(Color::rgb(10, 11, 12)), false);
+
+        assert_eq!(resolved.surface.backdrop, preset_backdrop);
+    }
+
+    #[test]
+    fn backdrop_policy_falls_back_to_panel_when_following_without_host_colors() {
+        let theme = ThemePreset::Nord.theme();
+        let panel = theme.surface.panel;
+
+        let resolved = apply_backdrop_policy(theme, None, true);
+
+        assert_eq!(resolved.surface.backdrop, panel);
     }
 
     #[test]

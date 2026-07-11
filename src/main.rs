@@ -167,6 +167,7 @@ pub enum Msg {
     CloseClientList,
     ClientListSelect(usize),
     ClientListGrant(usize),
+    ClientListDecline(usize),
     FocusPane(PaneId),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -242,6 +243,15 @@ pub enum Msg {
         epoch: u64,
         clients: Vec<session::protocol::ClientInfo>,
         input_locked: bool,
+    },
+    /// Another client asked this (controller) client for the layout-control lease.
+    SessionControlRequested {
+        epoch: u64,
+        from: shared_layout::ClientId,
+    },
+    /// This client's pending control request was declined by the controller.
+    SessionControlDeclined {
+        epoch: u64,
     },
     SessionPing {
         epoch: u64,
@@ -600,7 +610,7 @@ fn is_busy_attach_error(err: &std::io::Error) -> bool {
     )
 }
 
-/// A server that answered the connection but refused our attach handshake — a version mismatch or
+/// A server that answered the connection but refused our attach handshake - a version mismatch or
 /// an unknown session (both surface as [`std::io::ErrorKind::InvalidData`] from the client). Such a
 /// server will never accept us, so the attach loop reports it immediately instead of retrying to the
 /// connect deadline.
@@ -691,6 +701,10 @@ fn server_message_to_msg(
                 clients,
                 input_locked,
             },
+            ServerMessage::ControlRequested { from } => {
+                Msg::SessionControlRequested { epoch, from }
+            }
+            ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             ServerMessage::Resized {
                 pane_id,
@@ -961,7 +975,11 @@ fn main() -> Result<()> {
     let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
     let resolved_theme = config::resolve_theme(&config.theme.name, startup_system_theme.as_ref());
     startup_messages.extend(resolved_theme.warnings);
-    let theme = resolved_theme.theme;
+    let theme = theme_ops::apply_backdrop_policy(
+        resolved_theme.theme,
+        terminal_bg,
+        config.pane.background_follows_terminal,
+    );
 
     let (control_listener, control_guard) = match control::bind_control_socket() {
         Ok((listener, guard)) => (Some(listener), Some(guard)),

@@ -269,7 +269,10 @@ fn trailing_badges_are_standalone_pills_when_powerline_is_off() {
         + LEFT_CAP.len();
     let first_right_col = line[..first_right].chars().count();
     let right_cap = frame.cell(first_right_col as u16, 0);
-    assert_eq!(right_cap.symbol, RIGHT_CAP, "prefix chip rounds off on the right");
+    assert_eq!(
+        right_cap.symbol, RIGHT_CAP,
+        "prefix chip rounds off on the right"
+    );
     assert_eq!(right_cap.fg, WARNING, "right cap uses the badge color");
     assert_eq!(right_cap.bg, PANEL, "right cap sits over the panel bar");
 }

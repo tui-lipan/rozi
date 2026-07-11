@@ -6,7 +6,7 @@ its own terminal screens. There is no in-process ("local") PTY mode.
 
 - **Bare launch** (`hyprmux`, `hyprmux dev`, `hyprmux --profile dev`) attaches to a per-process
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
-  disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail —
+  disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail -
   the workbar shows no session badge for it, and the picker lists it as `ephemeral`.
 - **Named session** (`hyprmux --attach dev` or `hyprmux --session dev`) attaches to a persistent,
   user-named session, starting `hyprmux --session dev --server` if it is not already running.
@@ -27,7 +27,7 @@ movement): the running shells and their scrollback are untouched. See
 | Self-reap when no client is attached | after a short grace period | never (durable until killed) |
 | Session badge (workbar) | hidden | shows the name |
 | Discoverable in the picker | yes (shown as `ephemeral`) | yes |
-| User-typable name | no — the `eph-` prefix is reserved | yes |
+| User-typable name | no - the `eph-` prefix is reserved | yes |
 
 ## Named sessions
 
@@ -49,7 +49,7 @@ does not kill arbitrary processes or remove unrelated files.
 ## Naming and renaming the current session
 
 *Rename session* (in the command palette; no default key) renames the **current** session in place.
-The server keeps its live panes and simply becomes discoverable under the new name — this is the
+The server keeps its live panes and simply becomes discoverable under the new name - this is the
 headline continuity win (colors, scrollback, alt-screen, and titles all stay intact, with zero pane
 movement). It works both to give an ephemeral session its first real name and to change an
 already-named session's name.
@@ -60,7 +60,7 @@ rejected with an error toast.
 ## Switching sessions in-app (the picker)
 
 Open the session picker (*Sessions…* in the command palette). The picker always switches you to a
-**separate** session — it never renames the one you're in:
+**separate** session - it never renames the one you're in:
 
 - Highlight an existing session and press `Enter` to attach to it.
 - Type a new name and press `Ctrl+N` to create and attach to a brand-new named session.
@@ -69,7 +69,7 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
 - Press `Ctrl+K` twice to kill the highlighted named session or reset a highlighted ephemeral one.
 
 Switching away is a **release** of the current session: a named session's client detaches (leaving
-that server running for reattach — the server already holds the authoritative layout from live
+that server running for reattach - the server already holds the authoritative layout from live
 commits), while an ephemeral session is shut down (it is disposable, so it does not leak an orphan
 server).
 
@@ -125,7 +125,7 @@ broadcasts it (see [Shared live layouts](#shared-live-layouts)).
   - A session that is already named detaches immediately, leaving its server running.
 - **Quit** (`prefix q` / `Alt+q`) exits the client. It shuts down the current server only when it is
   ephemeral; named servers keep running. Quitting an ephemeral session with a live pane asks for a
-  second press first (see `[confirm].quit_ephemeral`) — this is the destructive counterpart to
+  second press first (see `[confirm].quit_ephemeral`) - this is the destructive counterpart to
   detach, which preserves the session.
 - If the server disconnects unexpectedly while attached, hyprmux marks panes errored and attempts a
   reconnect. Ephemeral sessions autostart a replacement server; a dead named session surfaces as an
@@ -134,11 +134,11 @@ broadcasts it (see [Shared live layouts](#shared-live-layouts)).
 ## Shared live layouts
 
 Multiple clients can attach to one session at the same time and share a single, live window-manager
-layout — a jaw-dropping way to pair or mirror a session across terminals. The server owns the
+layout - a jaw-dropping way to pair or mirror a session across terminals. The server owns the
 authoritative layout as a revisioned `SharedLayout` document (workspace membership and order, tiling
 trees and ratios, layout kind, floating/fullscreen geometry, workspace names, the synchronized flag,
-and pane identity). Purely local view state — focus, active workspace, overlays, copy/search mode,
-scrollback position, and theme — is **never** shared, so each client browses independently.
+and pane identity). Purely local view state - focus, active workspace, overlays, copy/search mode,
+scrollback position, and theme - is **never** shared, so each client browses independently.
 
 - **Controller vs follower.** Exactly one attached client holds the layout-control **lease** (the
   *controller*); the rest are *followers*. The first client to attach is granted control; when the
@@ -148,20 +148,27 @@ scrollback position, and theme — is **never** shared, so each client browses i
   follower reconciles its local state toward it without disturbing live terminal screens or
   scrollback.
 - **Followers are read-only for layout.** A follower that tries a layout-mutating action gets a
-  toast nudging it to take control; focus, workspace switching, copy/search, the palette, and
+  toast nudging it to request control; focus, workspace switching, copy/search, the palette, and
   terminal input all still work locally.
-- **Instant takeover.** *Take layout control* (`prefix g`, or the command palette) steals the lease
-  immediately, tmux-style. A brief cooldown (3s) prevents two clients from fighting over it; a
-  steal inside the window is rejected with a toast. Both clients see a toast and the workbar chip
-  flips.
+- **Cooperative control requests.** *Request layout control* (`prefix g`, or the command palette)
+  asks the current controller for the lease - it never steals. The requester is flagged in the
+  client roster (a `wants control` badge) and the controller gets a single non-intrusive toast
+  (repeated presses are debounced, so a held key cannot spam it). The request toast shows the live
+  *Grant layout control* binding (`prefix e` by default, following any `[keys]` override), which
+  hands the lease to the requester in one keystroke; the controller can also **grant** or
+  **decline** a specific client from the *Session clients* view, and a decline notifies the
+  requester. When *no* client holds the lease (e.g. right after the controller left), a request is
+  auto-granted so control is never stuck. A truly wedged controller still auto-releases via the
+  heartbeat timeout below.
 - **Workbar chip.** While more than one client is attached, the workbar shows a `CTRL` badge (you
   control the layout) or `VIEW` badge (you are following), and the session badge folds in the client
-  count (`dev ·2`). A solo session shows neither.
+  count (`dev ·2`). A solo session shows neither. When you control the layout and another client has
+  a pending control request, the badge turns to the warning color and gains a `●` dot.
 - **Canonical size and letterboxing.** The controller owns the canonical PTY size. Followers do not
   resize the PTYs; instead they render the controller's canonical canvas centered in their own
   viewport (letterboxed), so a larger terminal shows a border of dead space and a smaller one clips
-  at its edges. On takeover the new controller's size becomes canonical in a single resize wave,
-  avoiding SIGWINCH thrash in the panes.
+  at its edges. When control moves, the new controller's size becomes canonical in a single resize
+  wave, avoiding SIGWINCH thrash in the panes.
 - **Heartbeat.** The server pings each client and drops one that stops responding (≈15s), releasing
   its lease. Because pongs are answered on the UI thread, a wedged client loses control (a merely
   busy one has a generous timeout). Slow clients that fall too far behind are disconnected rather
@@ -176,17 +183,18 @@ reattach to it (shown as `ephemeral`) from the picker and recover the scrollback
 ### Client roster and input control
 
 Open **Session clients** from the command palette (`session-clients`) to see every attached client,
-including its label, id, and `you`, `controller`, or `read-only` markers. The controller can select
-a writable client and press Enter or `g` to grant it layout control.
+including its label, id, and `you`, `controller`, `read-only`, or `wants control` markers. The
+controller can select a writable client and press Enter or `g` to grant it layout control, or press
+`d` to decline a pending request from the selected client.
 
 The `toggle-input-lock` command restricts terminal input to the current controller. The lock follows
-the control lease automatically. Clients attached with `--read-only` cannot type, take control,
+the control lease automatically. Clients attached with `--read-only` cannot type, request control,
 commit layouts, or receive a grant. These policies are enforced by the session server.
 
 ## Crash recovery and reaping
 
 An **ephemeral** server self-reaps once no client has been attached for a short grace period
-(~45s), regardless of pane state — this backstops crashes and abnormal exits so orphaned ephemeral
+(~45s), regardless of pane state - this backstops crashes and abnormal exits so orphaned ephemeral
 servers do not accumulate. Normal transitions already tear the ephemeral server down client-side, so
 the grace timer rarely fires. The picker's kill action also cleans one up on demand. A **named**
 server never self-reaps from client absence: it stays alive until explicitly killed

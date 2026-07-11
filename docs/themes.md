@@ -57,6 +57,89 @@ Custom themes appear in the *Choose theme* picker alongside the built-ins. If a 
 read or parsed, `hyprmux` falls back to `lipan` and reports a warning (the file is still
 watched, so fixing it hot-reloads without a restart).
 
+### Inheriting from a preset with `extends`
+
+A custom theme file does not need to define every color. Add `extends` at the top of the file
+to start from one of the built-in presets, then override only the fields you care about -
+everything else is inherited from that preset:
+
+```toml
+# ~/.config/hyprmux/themes/my-nord.toml
+extends = "nord"
+
+[accent]
+fg = "#ff79c6"
+```
+
+`extends` accepts any built-in preset id (see [Built-in presets](#built-in-presets)), plus
+`lipan`. It is optional; a file with no `extends` inherits from `lipan` instead.
+
+Every top-level `Theme` field can be overridden the same way, by name, and only the sub-fields
+you set are applied on top of the base - the rest of that field's value is inherited:
+
+- Style fields: `primary`, `accent`, `selection`, `text_selection`, `focus`, `hover`, `border`,
+  `muted`. Each is a table of `fg`, `bg`, `bold`, `dim`, `italic`, `underline`, `reverse`,
+  `strikethrough`, `underline_color`, `dim_amount`, and `tint`.
+- Palette fields: `surface`, `status`, `file_icons`, `git_status`, `diff`, `document`, `syntax`,
+  `input`, `text_area`, `document_view`, `hex_area`, `terminal`, `scrollbar`, `splitter`.
+- The single color `border_active`.
+
+Colors accept hex (`"#RRGGBB"`), ANSI names (`"cyan"`, `"darkgray"`, ...), `indexed(<0-255>)`,
+or `rgb(r,g,b)`. Style-table `fg`/`bg`/`underline_color` fields additionally accept alpha via
+`"#RRGGBBAA"` or `rgba(r,g,b,a)` (alpha as `0.0..=1.0` or `0..=255`); bare palette fields such as
+`status` and `surface` are opaque-only.
+
+For example, a theme that keeps Dracula everywhere but swaps only the success/error status
+colors and brightens the active border:
+
+```toml
+extends = "dracula"
+border_active = "#f8f8f2"
+
+[status]
+success = "#50fa7b"
+error = "#ff5555"
+```
+
+### Matching the host terminal's background
+
+The easiest way to get this is the *Background follows terminal* toggle in the Appearance
+picker (`[pane] background_follows_terminal` in config, off by default). It pins
+`surface.backdrop` to the host terminal's background for whichever theme is active, without
+needing a custom theme file at all - see [`[pane]`](configuration.md#pane) in the configuration
+reference.
+
+The rest of this section covers doing the same thing by hand in a custom theme file, which is
+useful if you only want it for one specific theme rather than every theme you switch to.
+
+The app's main background (the canvas behind panes and gaps, plus the fill behind unfocused
+pane frames) is `surface.backdrop`. Set it to the special value `"backdrop"` to make it inherit
+your terminal emulator's own background live, instead of a fixed color:
+
+```toml
+extends = "nord"
+
+[surface]
+backdrop = "backdrop"
+```
+
+`"backdrop"` is a sentinel, not a color. `hyprmux` resolves it once, at startup, to the actual
+background color it queries from your terminal emulator (the same probe the `system` theme uses),
+so every surface that reads `surface.backdrop` tracks your terminal's real background instead of a
+fixed theme color. When the query is unavailable (some terminals or headless runs), it falls back
+to the theme's `surface.panel`.
+
+Resolving to a concrete color - rather than leaving the channel unset - is deliberate: the
+backdrop also feeds the terminal default background reported to `OSC 11` background queries,
+embedded panes' default-background cells, and workbar badge text and end caps. A bare unset
+sentinel has no RGB, so those consumers used to collapse to pitch black (black pane spawns,
+black-based transitions in nested apps, unreadable workbar text). A queried color keeps all of
+them on your terminal's own background.
+
+Because the value is a color snapshot taken at startup, a live wallpaper or blur behind your
+terminal is matched by color, not shown through the panes themselves. Switching your terminal
+theme at runtime does not re-probe; reload or restart `hyprmux` to pick up the new background.
+
 ### Hot reload
 
 While a custom theme is active, `hyprmux` watches its file and **hot-reloads** it on every

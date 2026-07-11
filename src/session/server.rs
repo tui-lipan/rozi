@@ -23,15 +23,17 @@ const DEFAULT_SCROLLBACK: usize = 5000;
 /// How long an *ephemeral* session server survives with no client attached before it self-reaps,
 /// regardless of pane state. This is only a crash/abnormal-exit backstop: a clean quit or normal
 /// transition tears an ephemeral server down client-side (`ClientMessage::Shutdown`). A *named*
-/// session never self-reaps from client absence — it is durable until explicitly killed.
+/// session never self-reaps from client absence - it is durable until explicitly killed.
 const EPHEMERAL_NO_CLIENT_GRACE: Duration = Duration::from_secs(45);
 /// How often the server pings each attached client.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long a client may go without a pong before it is disconnected (and its lease released). A
 /// wedged UI loses control deliberately; a merely busy one has ample slack.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
-/// Minimum spacing between successful layout-control takeovers, to stop rapid steal ping-pong.
-const TAKEOVER_COOLDOWN: Duration = Duration::from_secs(3);
+/// Minimum spacing between control-request notifications to the controller from the same requester,
+/// so a held `request-control` key raises one toast rather than a stream (the roster badge is sticky
+/// regardless).
+const REQUEST_NOTIFY_COOLDOWN: Duration = Duration::from_secs(4);
 /// Default per-client outbox cap; a client backed up past this is disconnected so it can never
 /// stall the broadcast to everyone else.
 const DEFAULT_MAX_BACKLOG: usize = 8 * 1024 * 1024;
@@ -46,7 +48,6 @@ pub struct SessionServer {
     layout_rev: u64,
     controller: Option<ClientId>,
     input_locked: bool,
-    last_takeover: Option<Instant>,
     clients: Vec<ClientConn>,
     next_client_id: ClientId,
     max_backlog: usize,
@@ -91,6 +92,10 @@ struct ClientConn {
     last_pong: Instant,
     last_ping: Instant,
     ping_seq: u64,
+    /// True while this client has an unanswered request for the control lease.
+    requesting_control: bool,
+    /// When the controller was last notified of this client's request, for per-requester debounce.
+    last_request_notify: Option<Instant>,
 }
 
 impl ClientConn {
@@ -111,6 +116,8 @@ impl ClientConn {
             last_pong: now,
             last_ping: now,
             ping_seq: 0,
+            requesting_control: false,
+            last_request_notify: None,
         }
     }
 
@@ -146,6 +153,8 @@ enum ServerOutbound {
 enum Target {
     /// Just the client that sent the triggering message.
     Sender,
+    /// A specific client by id (e.g. the controller, or a request's originator).
+    Client(ClientId),
     /// Every attached client.
     Broadcast,
 }
@@ -160,7 +169,6 @@ impl SessionServer {
             layout_rev: 0,
             controller: None,
             input_locked: false,
-            last_takeover: None,
             clients: Vec::new(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
@@ -442,8 +450,9 @@ impl SessionServer {
             ClientMessage::CommitLayout { base_rev, layout } => {
                 self.handle_commit_layout(client_id, base_rev, layout)
             }
-            ClientMessage::TakeControl => self.handle_take_control(client_id),
+            ClientMessage::RequestControl => self.handle_request_control(client_id),
             ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
+            ClientMessage::DeclineControl { to } => self.handle_decline_control(client_id, to),
             ClientMessage::SetInputLock { locked } => {
                 if !self.is_controller(client_id) || self.client_read_only(client_id) {
                     return Vec::new();
@@ -625,33 +634,42 @@ impl SessionServer {
         )]
     }
 
-    fn handle_take_control(&mut self, client_id: ClientId) -> Vec<(Target, ServerMessage)> {
-        if self.client_read_only(client_id) {
+    /// A request for the lease. Auto-grants when there is no controller (nobody to ask); otherwise
+    /// flags the requester in the roster and notifies the controller, debounced per requester so a
+    /// held key cannot spam the controller with toasts. Never steals from a present controller.
+    fn handle_request_control(&mut self, client_id: ClientId) -> Vec<(Target, ServerMessage)> {
+        if self.client_read_only(client_id) || !self.client_attached(client_id) {
             return Vec::new();
         }
         if self.controller == Some(client_id) {
             return Vec::new();
         }
-        if let Some(last) = self.last_takeover
-            && last.elapsed() < TAKEOVER_COOLDOWN
-        {
-            return vec![(
-                Target::Sender,
-                ServerMessage::Error {
-                    code: "takeover-cooldown".to_string(),
-                    message: "layout control was just taken; try again in a moment".to_string(),
-                },
-            )];
+        if self.controller.is_none() {
+            return self.assign_controller(client_id, ControllerChangeReason::Granted);
         }
-        self.controller = Some(client_id);
-        self.last_takeover = Some(Instant::now());
-        vec![(
-            Target::Broadcast,
-            ServerMessage::ControllerChanged {
-                controller: self.controller,
-                reason: ControllerChangeReason::Taken,
-            },
-        )]
+        let controller = self.controller;
+        let mut responses = Vec::new();
+        let Some(client) = self.client_mut(client_id) else {
+            return responses;
+        };
+        let already = client.requesting_control;
+        client.requesting_control = true;
+        let notify = client
+            .last_request_notify
+            .is_none_or(|last| last.elapsed() >= REQUEST_NOTIFY_COOLDOWN);
+        if notify {
+            client.last_request_notify = Some(Instant::now());
+        }
+        if !already {
+            responses.push((Target::Broadcast, self.clients_changed()));
+        }
+        if notify && let Some(controller) = controller {
+            responses.push((
+                Target::Client(controller),
+                ServerMessage::ControlRequested { from: client_id },
+            ));
+        }
+        responses
     }
 
     fn handle_grant_control(
@@ -663,14 +681,54 @@ impl SessionServer {
         {
             return Vec::new();
         }
+        self.assign_controller(to, ControllerChangeReason::Granted)
+    }
+
+    /// Controller declines `to`'s pending request: clear its flag, refresh the roster, and tell it.
+    fn handle_decline_control(
+        &mut self,
+        client_id: ClientId,
+        to: ClientId,
+    ) -> Vec<(Target, ServerMessage)> {
+        if !self.is_controller(client_id) {
+            return Vec::new();
+        }
+        let Some(client) = self
+            .client_mut(to)
+            .filter(|client| client.requesting_control)
+        else {
+            return Vec::new();
+        };
+        client.requesting_control = false;
+        client.last_request_notify = None;
+        vec![
+            (Target::Broadcast, self.clients_changed()),
+            (Target::Client(to), ServerMessage::ControlDeclined),
+        ]
+    }
+
+    /// Move the lease to `to`, clearing its pending request, and broadcast the controller change plus
+    /// the refreshed roster (so any request badge on the new controller clears everywhere).
+    fn assign_controller(
+        &mut self,
+        to: ClientId,
+        reason: ControllerChangeReason,
+    ) -> Vec<(Target, ServerMessage)> {
         self.controller = Some(to);
-        vec![(
-            Target::Broadcast,
-            ServerMessage::ControllerChanged {
-                controller: self.controller,
-                reason: ControllerChangeReason::Granted,
-            },
-        )]
+        if let Some(client) = self.client_mut(to) {
+            client.requesting_control = false;
+            client.last_request_notify = None;
+        }
+        vec![
+            (
+                Target::Broadcast,
+                ServerMessage::ControllerChanged {
+                    controller: self.controller,
+                    reason,
+                },
+            ),
+            (Target::Broadcast, self.clients_changed()),
+        ]
     }
 
     fn is_controller(&self, client_id: ClientId) -> bool {
@@ -708,6 +766,7 @@ impl SessionServer {
                 id: client.id,
                 label: client.label.clone().unwrap_or_else(|| "client".to_string()),
                 read_only: client.read_only,
+                requesting_control: client.requesting_control,
             })
             .collect()
     }
@@ -748,6 +807,13 @@ impl SessionServer {
                 .filter(|client| client.attached && !client.read_only)
                 .map(|client| client.id)
                 .min();
+            // A promoted client no longer needs its own pending request.
+            if let Some(new_controller) = self.controller
+                && let Some(client) = self.client_mut(new_controller)
+            {
+                client.requesting_control = false;
+                client.last_request_notify = None;
+            }
             messages.push(ServerMessage::ControllerChanged {
                 controller: self.controller,
                 reason: if self.controller.is_some() {
@@ -848,6 +914,11 @@ impl SessionServer {
         match target {
             Target::Sender => {
                 if let Some(client) = self.client_mut(sender_id) {
+                    client.push(bytes);
+                }
+            }
+            Target::Client(id) => {
+                if let Some(client) = self.client_mut(id).filter(|client| client.attached) {
                     client.push(bytes);
                 }
             }
@@ -1459,36 +1530,78 @@ mod tests {
     }
 
     #[test]
-    fn take_control_grants_and_broadcasts() {
+    fn request_control_flags_requester_and_notifies_controller_without_stealing() {
         let mut server = SessionServer::new_named("dev");
-        let (_first, _s1) = attach_client(&mut server);
+        let (first, _s1) = attach_client(&mut server);
         let (second, _s2) = attach_client(&mut server);
-        let responses = server.handle_message(second, ClientMessage::TakeControl);
-        assert_eq!(server.controller, Some(second));
-        assert!(matches!(
-            responses.as_slice(),
-            [(
-                Target::Broadcast,
-                ServerMessage::ControllerChanged {
-                    reason: ControllerChangeReason::Taken,
-                    ..
-                }
-            )]
-        ));
+        let responses = server.handle_message(second, ClientMessage::RequestControl);
+        // A present controller is never stolen from; control stays put.
+        assert_eq!(server.controller, Some(first));
+        // The requester is flagged in the broadcast roster...
+        assert!(responses.iter().any(|(target, message)| matches!(
+            (target, message),
+            (Target::Broadcast, ServerMessage::ClientsChanged { clients, .. })
+                if clients.iter().any(|c| c.id == second && c.requesting_control)
+        )));
+        // ...and only the controller is notified.
+        assert!(responses.iter().any(|(target, message)| matches!(
+            (target, message),
+            (Target::Client(id), ServerMessage::ControlRequested { from })
+                if *id == first && *from == second
+        )));
     }
 
     #[test]
-    fn take_control_respects_cooldown() {
+    fn repeated_requests_are_debounced_to_one_controller_notification() {
         let mut server = SessionServer::new_named("dev");
         let (_first, _s1) = attach_client(&mut server);
         let (second, _s2) = attach_client(&mut server);
-        let (third, _s3) = attach_client(&mut server);
-        server.handle_message(second, ClientMessage::TakeControl);
-        let responses = server.handle_message(third, ClientMessage::TakeControl);
-        assert!(
-            matches!(responses.as_slice(), [(Target::Sender, ServerMessage::Error { code, .. })] if code == "takeover-cooldown")
-        );
+        server.handle_message(second, ClientMessage::RequestControl);
+        // Already flagged and inside the notify cooldown: no roster churn, no repeat toast.
+        let responses = server.handle_message(second, ClientMessage::RequestControl);
+        assert!(responses.is_empty(), "got {responses:?}");
+    }
+
+    #[test]
+    fn granting_a_requested_control_clears_the_flag() {
+        let mut server = SessionServer::new_named("dev");
+        let (first, _s1) = attach_client(&mut server);
+        let (second, _s2) = attach_client(&mut server);
+        server.handle_message(second, ClientMessage::RequestControl);
+        let responses = server.handle_message(first, ClientMessage::GrantControl { to: second });
         assert_eq!(server.controller, Some(second));
+        assert!(responses.iter().any(|(_, message)| matches!(
+            message,
+            ServerMessage::ClientsChanged { clients, .. }
+                if clients.iter().all(|c| !c.requesting_control)
+        )));
+    }
+
+    #[test]
+    fn declining_control_clears_flag_and_notifies_requester() {
+        let mut server = SessionServer::new_named("dev");
+        let (first, _s1) = attach_client(&mut server);
+        let (second, _s2) = attach_client(&mut server);
+        server.handle_message(second, ClientMessage::RequestControl);
+        let responses = server.handle_message(first, ClientMessage::DeclineControl { to: second });
+        // Control unchanged; the requester is un-flagged and told.
+        assert_eq!(server.controller, Some(first));
+        assert!(responses.iter().any(|(target, message)| matches!(
+            (target, message),
+            (Target::Client(id), ServerMessage::ControlDeclined) if *id == second
+        )));
+        assert!(responses.iter().any(|(_, message)| matches!(
+            message,
+            ServerMessage::ClientsChanged { clients, .. }
+                if clients.iter().all(|c| !c.requesting_control)
+        )));
+        // A non-controller cannot decline.
+        server.handle_message(second, ClientMessage::RequestControl);
+        assert!(
+            server
+                .handle_message(second, ClientMessage::DeclineControl { to: second })
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1566,16 +1679,16 @@ mod tests {
         let responses =
             server.handle_message(controller, ClientMessage::GrantControl { to: follower });
         assert_eq!(server.controller, Some(follower));
-        assert!(matches!(
-            responses.as_slice(),
-            [(
+        assert!(responses.iter().any(|(target, message)| matches!(
+            (target, message),
+            (
                 Target::Broadcast,
                 ServerMessage::ControllerChanged {
                     reason: ControllerChangeReason::Granted,
                     ..
                 }
-            )]
-        ));
+            )
+        )));
     }
 
     #[test]

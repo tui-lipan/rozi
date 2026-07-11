@@ -5,6 +5,8 @@ pub enum Action {
     Spawn,
     Close,
     Focus(Direction),
+    /// Directional focus that stays on the current pane when no spatial candidate exists.
+    FocusNoWrap(Direction),
     /// Move focus in `Direction`, unless the focused pane runs a split-aware program (see
     /// `[navigation] editors`), in which case forward the matching `Ctrl-h/j/k/l` to it. Lets a
     /// single `Ctrl-h/j/k/l` binding navigate hyprmux panes and vim/neovim splits seamlessly
@@ -37,7 +39,8 @@ pub enum Action {
     OpenClientList,
     RenameSession,
     NewTemporarySession,
-    TakeControl,
+    RequestControl,
+    GrantControl,
     ToggleInputLock,
     Detach,
     Quit,
@@ -57,6 +60,7 @@ pub enum Action {
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleBorderMerge,
+    ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
@@ -83,6 +87,10 @@ impl Action {
             Action::Focus(Down) => "focus-down",
             Action::Focus(Up) => "focus-up",
             Action::Focus(Right) => "focus-right",
+            Action::FocusNoWrap(Left) => "focus-left-no-wrap",
+            Action::FocusNoWrap(Down) => "focus-down-no-wrap",
+            Action::FocusNoWrap(Up) => "focus-up-no-wrap",
+            Action::FocusNoWrap(Right) => "focus-right-no-wrap",
             Action::SmartFocus(Left) => "smart-focus-left",
             Action::SmartFocus(Down) => "smart-focus-down",
             Action::SmartFocus(Up) => "smart-focus-up",
@@ -117,7 +125,8 @@ impl Action {
             Action::OpenClientList => "session-clients",
             Action::RenameSession => "rename-session",
             Action::NewTemporarySession => "new-temporary-session",
-            Action::TakeControl => "take-control",
+            Action::RequestControl => "request-control",
+            Action::GrantControl => "grant-control",
             Action::ToggleInputLock => "toggle-input-lock",
             Action::Detach => "detach",
             Action::Quit => "quit",
@@ -137,6 +146,7 @@ impl Action {
             Action::ToggleHighlightFocusedBackground => "toggle-highlight-focused-background",
             Action::ToggleHighlightFocusedBorder => "toggle-highlight-focused-border",
             Action::ToggleBorderMerge => "toggle-border-merge",
+            Action::ToggleBackgroundFollowsTerminal => "toggle-background-follows-terminal",
             Action::CycleBorderStyle => "cycle-border-style",
             Action::CycleTitleStyle => "cycle-title-style",
             Action::CycleWorkbarBadgeStyle => "cycle-workbar-badge-style",
@@ -164,6 +174,10 @@ impl Action {
             "focus-down" => Action::Focus(Down),
             "focus-up" => Action::Focus(Up),
             "focus-right" => Action::Focus(Right),
+            "focus-left-no-wrap" => Action::FocusNoWrap(Left),
+            "focus-down-no-wrap" => Action::FocusNoWrap(Down),
+            "focus-up-no-wrap" => Action::FocusNoWrap(Up),
+            "focus-right-no-wrap" => Action::FocusNoWrap(Right),
             "smart-focus-left" => Action::SmartFocus(Left),
             "smart-focus-down" => Action::SmartFocus(Down),
             "smart-focus-up" => Action::SmartFocus(Up),
@@ -198,7 +212,8 @@ impl Action {
             "session-clients" => Action::OpenClientList,
             "rename-session" => Action::RenameSession,
             "new-temporary-session" => Action::NewTemporarySession,
-            "take-control" => Action::TakeControl,
+            "request-control" => Action::RequestControl,
+            "grant-control" => Action::GrantControl,
             "toggle-input-lock" => Action::ToggleInputLock,
             "detach" => Action::Detach,
             "quit" => Action::Quit,
@@ -218,6 +233,7 @@ impl Action {
             "toggle-highlight-focused-background" => Action::ToggleHighlightFocusedBackground,
             "toggle-highlight-focused-border" => Action::ToggleHighlightFocusedBorder,
             "toggle-border-merge" => Action::ToggleBorderMerge,
+            "toggle-background-follows-terminal" => Action::ToggleBackgroundFollowsTerminal,
             "cycle-border-style" => Action::CycleBorderStyle,
             "cycle-title-style" => Action::CycleTitleStyle,
             "cycle-workbar-badge-style" => Action::CycleWorkbarBadgeStyle,
@@ -246,6 +262,19 @@ mod tests {
                 Some(command.action),
                 "id `{id}` should round-trip"
             );
+        }
+    }
+
+    #[test]
+    fn non_wrapping_focus_action_ids_round_trip() {
+        for action in [
+            Action::FocusNoWrap(Direction::Left),
+            Action::FocusNoWrap(Direction::Down),
+            Action::FocusNoWrap(Direction::Up),
+            Action::FocusNoWrap(Direction::Right),
+        ] {
+            let id = action.id().expect("non-wrapping focus has a stable id");
+            assert_eq!(Action::from_id(id), Some(action));
         }
     }
 }

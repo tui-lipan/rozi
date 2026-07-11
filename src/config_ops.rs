@@ -115,7 +115,12 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             }
         }
     }
-    ctx.state.theme = resolved.theme;
+    let host_bg = crate::theme_ops::host_background(&ctx.state);
+    ctx.state.theme = crate::theme_ops::apply_backdrop_policy(
+        resolved.theme,
+        host_bg,
+        new_config.pane.background_follows_terminal,
+    );
 
     // The workbar-command poller loop never stops itself, so only spawn one for commands that
     // aren't already running rather than restarting everything on every reload.

@@ -186,7 +186,7 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
 }
 
 /// Mark a pane closing in response to a foreign layout commit that removed it. Mirrors
-/// [`close_pane_state`] but **never** sends `client.kill` — the server already dropped the pane at
+/// [`close_pane_state`] but **never** sends `client.kill` - the server already dropped the pane at
 /// the controller's request, so re-killing would race a reused id and there is no kill-echo loop.
 /// Returns the pane's generation so the caller can schedule its delayed prune, or `None` when the
 /// pane is unknown or already closing.

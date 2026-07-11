@@ -108,7 +108,7 @@ rendered terminal lines rather than relying on an in-terminal highlight search.
 - **Attach seeding replays real VT bytes.** When a client attaches, the server serializes each live
   pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
   byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it
-  through the same parser it uses for live output — one code path, exact reconstruction.
+  through the same parser it uses for live output - one code path, exact reconstruction.
 - **Named sessions persist across detach.** `hyprmux --attach <name>` connects to a named server
   whose PTYs survive client detach/quit and can be reattached later.
 - **Profiles restore layout and launch intent, not live state.** Restoring a

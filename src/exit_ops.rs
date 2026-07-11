@@ -49,7 +49,7 @@ fn confirm_second_press(
 /// so a fresh launch can restore it even after the server is gone.
 ///
 /// Detaching an *anonymous* ephemeral session is contradictory: it has no name to reattach by, so a
-/// literal detach could only shut it down — indistinguishable from a quit, minus the confirmation.
+/// literal detach could only shut it down - indistinguishable from a quit, minus the confirmation.
 /// Instead an ephemeral session first prompts for a name; naming it turns the detach into a durable
 /// named detach that keeps the server running (see [`crate::session_ops::open_detach_rename`] and
 /// [`crate::session_ops::apply_rename_session`]), while cancelling returns to the session. Tearing an
@@ -238,7 +238,7 @@ pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bo
     let pending = PendingDestructive::NewTemporarySession;
     let toast = confirm_toast(
         &ctx.state.theme,
-        "Again to start new temporary session (current will be discarded)",
+        "Again to start new temporary session\n(current will be discarded)",
     );
     confirm_second_press(ctx, pending, toast)
 }

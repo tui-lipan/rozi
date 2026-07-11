@@ -34,6 +34,11 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // user-defined commands (registered under category "Custom").
     let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for entry in ctx.command_registry().entries() {
+        // tui-lipan registers its own `app.*` commands even when their bindings are disabled.
+        // Hyprmux owns these behaviors, so only show its corresponding commands here.
+        if entry.id.as_str().starts_with("app.") {
+            continue;
+        }
         // Workspace digit switches are described generically below rather than as 27 rows.
         if entry.id.as_str().starts_with("workspace.") {
             continue;
@@ -105,6 +110,7 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ("Esc / q".to_string(), "Exit copy mode".to_string()),
         ],
     ));
+    groups.sort_by_key(|(category, _)| help_category_priority(category));
 
     let mut list = VStack::new();
     for (index, (category, rows)) in groups.iter().enumerate() {
@@ -135,12 +141,29 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .key(help_scroll_key()),
         );
 
-    styled_modal(ctx, "Keybindings", 50)
+    styled_modal(ctx, "Keybindings", 60)
         .height(Length::Percent(70))
         .padding((1, 1, 1, 2))
         .on_close(ctx.link().callback(|_| Msg::CloseHelp))
         .child(body)
         .into()
+}
+
+fn help_category_priority(category: &str) -> usize {
+    match category {
+        "App" => 0,
+        "Session" => 1,
+        "Panes" => 2,
+        "Focus" => 3,
+        "Layout" => 4,
+        "Workspaces" => 5,
+        "Copy mode" => 6,
+        "Profile" => 7,
+        "Theme" => 8,
+        "Mouse" => 9,
+        "Custom" => 10,
+        _ => 11,
+    }
 }
 
 pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -591,8 +614,8 @@ fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> List
 }
 
 /// The target row while an open awaits its confirming second Enter. Unlike a pending kill (which
-/// strikes the row through, since the row itself is going away), the target survives — the cost is
-/// to the *current* ephemeral session — so it reads as a warning-colored highlight whose hint spells
+/// strikes the row through, since the row itself is going away), the target survives - the cost is
+/// to the *current* ephemeral session - so it reads as a warning-colored highlight whose hint spells
 /// out the trade rather than a deletion.
 fn render_pending_open_item(item: &SearchItem<usize>, warn_bg: Color) -> ListItem {
     let fg = readable_text_color(None, warn_bg);
@@ -660,13 +683,16 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .map(|(index, client)| {
             let mut markers = Vec::new();
             if client.id == shared.client_id {
-                markers.push("you");
+                markers.push("you".to_string());
             }
             if Some(client.id) == shared.controller {
-                markers.push("controller");
+                markers.push("controller".to_string());
             }
             if client.read_only {
-                markers.push("read-only");
+                markers.push("read-only".to_string());
+            }
+            if client.requesting_control && Some(client.id) != shared.controller {
+                markers.push("wants control".to_string());
             }
             SearchEntry::item(format!("{}  #{}", client.label, client.id), index)
                 .description(ItemDescription::new().right(markers.join(" · ")))
@@ -676,6 +702,11 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let selected = list.selected;
     let client_count = shared.clients.len();
     let can_grant = !shared.read_only && shared.is_controller();
+    // Declining only applies to a controller acting on a client with a pending request.
+    let selected_requesting = can_grant
+        && shared.clients.get(selected).is_some_and(|client| {
+            client.requesting_control && Some(client.id) != shared.controller
+        });
     let interceptor = ctx.link().key_handler(move |key_event| {
         if key_event.is(KeyCode::Esc) {
             Some(Msg::CloseClientList)
@@ -687,6 +718,10 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             Some(Msg::ClientListSelect(selected.saturating_sub(1)))
         } else if can_grant && matches!(key_event.code, KeyCode::Char('g') | KeyCode::Char('G')) {
             Some(Msg::ClientListGrant(selected))
+        } else if selected_requesting
+            && matches!(key_event.code, KeyCode::Char('d') | KeyCode::Char('D'))
+        {
+            Some(Msg::ClientListDecline(selected))
         } else {
             None
         }
@@ -711,8 +746,11 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     }
     let mut body = VStack::new().height(Length::Auto).child(palette);
     if can_grant {
-        body =
-            body.child(hint_row().child(hint_pill(&ctx.state.theme, "grant control", "enter / g")));
+        let mut hints = hint_row().child(hint_pill(&ctx.state.theme, "grant control", "enter / g"));
+        if selected_requesting {
+            hints = hints.child(hint_pill(&ctx.state.theme, "decline", "d"));
+        }
+        body = body.child(hints);
     }
     action_palette(ctx, "Session clients", key, Msg::CloseClientList, body, 64)
 }
@@ -736,8 +774,8 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         .get(picker.selected)
         .filter(|entry| visible(entry));
     // Opening (attaching to) the session you are already on is a no-op, so only offer it for some
-    // other session. Killing the current session is allowed — it shuts the server down and hops the
-    // UI onto a fresh ephemeral — so its hint follows any selection.
+    // other session. Killing the current session is allowed - it shuts the server down and hops the
+    // UI onto a fresh ephemeral - so its hint follows any selection.
     let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
 
     let mut row = hint_row();
@@ -778,7 +816,7 @@ fn session_picker_palette(
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
-            // stay reattachable — activation is by row index, not this label).
+            // stay reattachable - activation is by row index, not this label).
             let mut label = if entry.ephemeral {
                 "ephemeral".to_string()
             } else {
@@ -1002,22 +1040,10 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
 fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
     match action {
         AppearanceAction::Theme => alias_list(&[
-            "theme",
-            "themes",
-            "color",
-            "colors",
-            "colour",
-            "colours",
-            "scheme",
+            "theme", "themes", "color", "colors", "colour", "colours", "scheme",
         ]),
         AppearanceAction::EditPadding => alias_list(&[
-            "padding",
-            "margin",
-            "margins",
-            "inset",
-            "insets",
-            "terminal",
-            "pane",
+            "padding", "margin", "margins", "inset", "insets", "terminal", "pane",
         ]),
         AppearanceAction::ToggleTitles => alias_list(&[
             "titlebar",
@@ -1039,20 +1065,12 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "padded",
             "cap style",
         ]),
-        AppearanceAction::ToggleWorkbar => alias_list(&[
-            "workbar",
-            "top bar",
-            "status bar",
-            "bar",
-            "show workbar",
-        ]),
-        AppearanceAction::ToggleWorkbarGap => alias_list(&[
-            "workbar gap",
-            "gap",
-            "spacing",
-            "gutter",
-            "separator",
-        ]),
+        AppearanceAction::ToggleWorkbar => {
+            alias_list(&["workbar", "top bar", "status bar", "bar", "show workbar"])
+        }
+        AppearanceAction::ToggleWorkbarGap => {
+            alias_list(&["workbar gap", "gap", "spacing", "gutter", "separator"])
+        }
         AppearanceAction::ToggleWorkbarPosition => alias_list(&[
             "workbar position",
             "position",
@@ -1061,12 +1079,9 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "bottom",
             "relocate",
         ]),
-        AppearanceAction::CycleWorkbarStyle => alias_list(&[
-            "workbar style",
-            "workbar caps",
-            "bar style",
-            "bar caps",
-        ]),
+        AppearanceAction::CycleWorkbarStyle => {
+            alias_list(&["workbar style", "workbar caps", "bar style", "bar caps"])
+        }
         AppearanceAction::CycleWorkbarBadgeStyle => alias_list(&[
             "badge",
             "badges",
@@ -1077,20 +1092,12 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "mode chip",
             "powerline badge",
         ]),
-        AppearanceAction::ToggleWorkbarPowerline => alias_list(&[
-            "powerline",
-            "chain",
-            "chained",
-            "interlock",
-            "badge chain",
-        ]),
-        AppearanceAction::CycleWorkbarTabStyle => alias_list(&[
-            "tab",
-            "tabs",
-            "workspace tabs",
-            "tab style",
-            "workbar tabs",
-        ]),
+        AppearanceAction::ToggleWorkbarPowerline => {
+            alias_list(&["powerline", "chain", "chained", "interlock", "badge chain"])
+        }
+        AppearanceAction::CycleWorkbarTabStyle => {
+            alias_list(&["tab", "tabs", "workspace tabs", "tab style", "workbar tabs"])
+        }
         AppearanceAction::ToggleAnimations => alias_list(&[
             "animation",
             "animations",
@@ -1118,12 +1125,16 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "seam",
             "border seam",
         ]),
-        AppearanceAction::CycleBorderStyle => alias_list(&[
-            "border style",
-            "rounded",
-            "square",
-            "border caps",
+        AppearanceAction::ToggleBackgroundFollowsTerminal => alias_list(&[
+            "background follows terminal",
+            "terminal background",
+            "match terminal",
+            "transparent background",
+            "backdrop",
         ]),
+        AppearanceAction::CycleBorderStyle => {
+            alias_list(&["border style", "rounded", "square", "border caps"])
+        }
     }
 }
 
@@ -1218,6 +1229,11 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             "Border style",
             pane.border_style.label().to_string(),
             AppearanceAction::CycleBorderStyle,
+        ),
+        appearance_entry(
+            "Background follows terminal",
+            enabled_status(pane.background_follows_terminal),
+            AppearanceAction::ToggleBackgroundFollowsTerminal,
         ),
     ];
 
@@ -1349,10 +1365,8 @@ fn appearance_entry(
     status: String,
     action: AppearanceAction,
 ) -> SearchEntry<AppearanceAction> {
-    SearchEntry::Item(
-        SearchItem::new(label, action).aliases(appearance_palette_aliases(action)),
-    )
-    .description(ItemDescription::new().right(status))
+    SearchEntry::Item(SearchItem::new(label, action).aliases(appearance_palette_aliases(action)))
+        .description(ItemDescription::new().right(status))
 }
 
 fn enabled_status(enabled: bool) -> String {
@@ -1376,7 +1390,8 @@ fn action_search_palette(
     shared_search_palette::<Callback<()>>(ctx, Length::Auto, true)
         .entries(entries)
         .placeholder(placeholder)
-        .preserve_groups(true)
+        // Score-order matches once the user types; category headers only show for an empty query.
+        .preserve_groups(false)
         // Run the command's own handler directly rather than looking it up by id through
         // `CommandRegistry::execute`, since that call also enforces the `commands_active`
         // gate - which is false while this very palette is open (see `commands::sync`).
@@ -1481,7 +1496,7 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
 
 #[cfg(test)]
 mod palette_alias_tests {
-    use super::{appearance_palette_aliases, command_palette_aliases};
+    use super::{appearance_palette_aliases, command_palette_aliases, help_category_priority};
     use crate::state::AppearanceAction;
 
     #[test]
@@ -1503,6 +1518,7 @@ mod palette_alias_tests {
             AppearanceAction::ToggleHighlightFocusedBorder,
             AppearanceAction::ToggleBorderMerge,
             AppearanceAction::CycleBorderStyle,
+            AppearanceAction::ToggleBackgroundFollowsTerminal,
         ];
         for action in actions {
             assert!(
@@ -1528,5 +1544,16 @@ mod palette_alias_tests {
                 "missing change-appearance alias: {term}"
             );
         }
+    }
+
+    #[test]
+    fn help_categories_put_session_immediately_after_app() {
+        let categories = ["Theme", "Layout", "Session", "App", "Panes", "Custom"];
+        let mut sorted = categories;
+        sorted.sort_by_key(|category| help_category_priority(category));
+        assert_eq!(
+            sorted,
+            ["App", "Session", "Panes", "Layout", "Theme", "Custom"]
+        );
     }
 }

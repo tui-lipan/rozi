@@ -171,6 +171,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                     crate::state::AppearanceAction::ToggleBorderMerge => {
                         execute_action(ctx, Action::ToggleBorderMerge);
                     }
+                    crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
+                        execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
+                    }
                     crate::state::AppearanceAction::CycleBorderStyle => {
                         execute_action(ctx, Action::CycleBorderStyle);
                     }
@@ -434,6 +437,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::ClientListGrant(index) => crate::session_ops::grant_control(ctx, index),
+        Msg::ClientListDecline(index) => crate::session_ops::decline_control(ctx, index),
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -829,6 +833,44 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 }
             }
             ctx.state.commands_dirty = true;
+            Update::full()
+        }
+        Msg::SessionControlRequested { epoch, from } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            // Only the controller can act on a request; ignore a stale one that arrived after we lost
+            // the lease. The requester's badge lives in the roster (via ClientsChanged) regardless.
+            if !ctx.state.is_controller() {
+                return Update::none();
+            }
+            let who = ctx
+                .state
+                .shared
+                .as_ref()
+                .and_then(|shared| shared.clients.iter().find(|client| client.id == from))
+                .map(|client| format!("{} #{}", client.label, client.id))
+                .unwrap_or_else(|| format!("client {from}"));
+            // Advertise the *live* grant binding so the hint tracks any `[keys]` override instead of a
+            // hardcoded key; fall back to the session-clients view when the action is unbound.
+            let how = crate::commands::command_prefix_chord(ctx, "grant-control")
+                .map(|chord| format!("{chord} to grant"))
+                .unwrap_or_else(|| "grant from Session clients".to_string());
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                format!("{who} requests layout control\n{how}"),
+            ));
+            ctx.state.commands_dirty = true;
+            Update::full()
+        }
+        Msg::SessionControlDeclined { epoch } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                "Your control request was declined",
+            ));
             Update::full()
         }
         Msg::SessionPing { epoch, seq } => {

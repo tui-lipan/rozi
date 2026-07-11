@@ -30,7 +30,7 @@ pub(crate) fn clear_pending_open(ctx: &mut Context<HyprmuxApp>) {
 }
 
 /// Clear both session-picker confirmations (kill and open). Called from every path that abandons or
-/// resolves an arming without itself re-arming one — closing, navigating away, editing the query, or
+/// resolves an arming without itself re-arming one - closing, navigating away, editing the query, or
 /// moving the highlight off the armed row.
 pub(crate) fn clear_pending_session_arms(ctx: &mut Context<HyprmuxApp>) {
     clear_pending_kill(ctx);
@@ -209,15 +209,17 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
         .unwrap_or_else(|| "another client".to_string());
     ctx.toast().push(info_toast(
         &ctx.state.theme,
-        format!("Layout controlled by {who} — prefix g to take control"),
+        format!("Layout controlled by {who}\nTry requesting control"),
     ));
     true
 }
 
-/// Request the layout-control lease for this client (tmux-style instant steal). A no-op with a
-/// nudge when unattached or already in control; the server replies with `ControllerChanged` (grant)
-/// or a `takeover-cooldown` error toast.
-pub(crate) fn take_control(ctx: &mut Context<HyprmuxApp>) -> Update {
+/// Ask the current controller for the layout-control lease (cooperative - never steals). A no-op
+/// with a toast when unattached, read-only, or already in control. The server auto-grants only when
+/// no controller holds the lease; otherwise it flags the request and notifies the controller, who
+/// grants or declines from the session-clients view. Repeated presses re-send harmlessly (the server
+/// debounces the controller's toast) but keep the local status message informative.
+pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
     if !ctx.state.session_attached {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Not attached to a session"));
@@ -230,19 +232,34 @@ pub(crate) fn take_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    if ctx
-        .state
-        .shared
-        .as_ref()
-        .is_some_and(|shared| shared.read_only)
-    {
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    };
+    if shared.read_only {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Attached read-only"));
         return Update::full();
     }
+    let already_requested = shared
+        .clients
+        .iter()
+        .any(|client| client.id == shared.client_id && client.requesting_control);
+    let controller_label = shared
+        .controller
+        .and_then(|id| shared.clients.iter().find(|client| client.id == id))
+        .map(|client| format!("{} #{}", client.label, client.id));
     if let Some(client) = ctx.state.session_client.clone() {
-        client.take_control();
+        client.request_control();
     }
+    let message = match (already_requested, controller_label) {
+        (true, Some(who)) => format!("Still waiting on {who} for layout control"),
+        (true, None) => "Control request already pending".to_string(),
+        (false, Some(who)) => format!("Requested layout control from {who}"),
+        (false, None) => "Requested layout control".to_string(),
+    };
+    ctx.toast().push(info_toast(&ctx.state.theme, message));
     Update::full()
 }
 
@@ -299,6 +316,61 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
     {
         client.grant_control(target.id);
         ctx.state.client_list = None;
+    }
+    Update::full()
+}
+
+/// Controller-only quick action: grant the lease to the client that requested it (the earliest
+/// pending requester when several are waiting). Nudges a follower, and toasts when nothing is
+/// pending, so the bound key always gives feedback.
+pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        return Update::none();
+    };
+    if !ctx.state.is_controller() {
+        nudge_if_follower(ctx);
+        return Update::full();
+    }
+    let target = shared
+        .clients
+        .iter()
+        .filter(|client| {
+            client.requesting_control && !client.read_only && client.id != shared.client_id
+        })
+        .min_by_key(|client| client.id)
+        .map(|client| client.id);
+    match target {
+        Some(id) => {
+            if let Some(client) = ctx.state.session_client.as_ref() {
+                client.grant_control(id);
+            }
+            ctx.state.client_list = None;
+        }
+        None => {
+            ctx.toast()
+                .push(info_toast(&ctx.state.theme, "No pending control requests"));
+        }
+    }
+    Update::full()
+}
+
+/// Controller-only: decline the pending control request from the client at `index` in the roster.
+/// A no-op (with a follower nudge) when this client is not the controller, or when the target has no
+/// pending request.
+pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        return Update::none();
+    };
+    let Some(target) = shared.clients.get(index) else {
+        return Update::none();
+    };
+    if !ctx.state.is_controller() {
+        nudge_if_follower(ctx);
+    } else if target.requesting_control
+        && target.id != shared.client_id
+        && let Some(client) = ctx.state.session_client.as_ref()
+    {
+        client.decline_control(target.id);
     }
     Update::full()
 }
@@ -446,7 +518,7 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
     };
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
-    // retry deadline, so reject it up front, keep the picker open, and point at the fix — killing
+    // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
     // the row (Ctrl+K) still works even against a server we can't speak to.
     if matches!(
         entry.status,
@@ -457,7 +529,7 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
             &ctx.state.theme,
             "Sessions",
             format!(
-                "Session `{}` is unavailable (incompatible version)\npress Ctrl+K to remove it",
+                "Session `{}` is unavailable (incompatible version)\nPress Ctrl+K to remove it",
                 entry.name
             ),
         ));
@@ -477,7 +549,7 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
             .as_ref()
             .is_some_and(|picker| picker.pending_open == Some(index));
         if !armed {
-            // Arm the confirmation: the target row renders the warning-colored "⏎ again — ends temp
+            // Arm the confirmation: the target row renders the warning-colored "⏎ again - ends temp
             // session" cue, so a second Enter is required and no toast is needed.
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.pending_open = Some(index);
@@ -554,7 +626,7 @@ pub(crate) fn open_create_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// session has no reattachable name, so naming it (Enter) is what makes a detach meaningful: the
 /// server is renamed, kept running, and the client leaves (see `apply_rename_session`,
 /// `NameEphemeralSession` + `detach_after`). Cancelling (`Esc`) returns to the session without
-/// tearing anything down — quitting is the destructive path.
+/// tearing anything down - quitting is the destructive path.
 pub(crate) fn open_detach_rename(ctx: &mut Context<HyprmuxApp>) -> Update {
     enter_session_rename(ctx, SessionRenameState::for_detach())
 }
@@ -700,7 +772,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
-    // Cancelling any session naming prompt — including the detach-and-name one — just returns to the
+    // Cancelling any session naming prompt - including the detach-and-name one - just returns to the
     // session. A detach never tears panes down: quitting (with its own confirmation) is the only
     // path that shuts an ephemeral server down.
     ctx.state.rename_session = None;
@@ -764,8 +836,8 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
     if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
-        // Grab the server's pid up front (protocol-independent) so an older, incompatible server —
-        // one that rejects our attach handshake and can't be told to `Shutdown` — can still be
+        // Grab the server's pid up front (protocol-independent) so an older, incompatible server -
+        // one that rejects our attach handshake and can't be told to `Shutdown` - can still be
         // reaped instead of leaking as an unkillable orphan.
         let server_pid = peer_pid(&stream);
         if graceful_shutdown(&mut stream, name).is_err() {
@@ -854,11 +926,134 @@ mod tests {
     }
 
     #[test]
+    fn follower_request_control_asks_the_controller_without_stealing() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::input::Action;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    // A follower: client 2 holds the lease.
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(2);
+                    shared.clients = vec![
+                        ClientInfo {
+                            id: 1,
+                            label: "me".into(),
+                            read_only: false,
+                            requesting_control: false,
+                        },
+                        ClientInfo {
+                            id: 2,
+                            label: "them".into(),
+                            read_only: false,
+                            requesting_control: false,
+                        },
+                    ];
+                    state.shared = Some(shared);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::RunAction(Action::RequestControl))
+                    .expect("dispatch request-control");
+
+                let sent: Vec<ClientOutbound> = rx.try_iter().collect();
+                assert!(
+                    sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::RequestControl)
+                    )),
+                    "a follower must ask for control, got {sent:?}"
+                );
+                assert!(
+                    !sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::GrantControl { .. })
+                    )),
+                    "requesting must never steal the lease"
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn controller_grant_control_key_grants_to_the_earliest_requester() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::input::Action;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    // We (client 1) are the controller; clients 2 and 3 both want control.
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(1);
+                    let requester = |id| ClientInfo {
+                        id,
+                        label: format!("c{id}"),
+                        read_only: false,
+                        requesting_control: true,
+                    };
+                    shared.clients = vec![
+                        ClientInfo {
+                            id: 1,
+                            label: "me".into(),
+                            read_only: false,
+                            requesting_control: false,
+                        },
+                        requester(3),
+                        requester(2),
+                    ];
+                    state.shared = Some(shared);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::RunAction(Action::GrantControl))
+                    .expect("dispatch grant-control");
+
+                let sent: Vec<ClientOutbound> = rx.try_iter().collect();
+                // The earliest requester (smallest id = 2) is granted, not the roster's first entry.
+                assert!(
+                    sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::GrantControl { to: 2 })
+                    )),
+                    "expected a grant to client 2, got {sent:?}"
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
     fn only_solo_ephemeral_controller_may_shutdown_on_release() {
         let client = |id| ClientInfo {
             id,
             label: format!("client-{id}"),
             read_only: false,
+            requesting_control: false,
         };
         assert!(may_shutdown_ephemeral(&ephemeral_state(
             1,

@@ -22,6 +22,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; `
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
 | [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
+| [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) | Seamless navigation between editor splits and hyprmux panes. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
 
 ## At a glance

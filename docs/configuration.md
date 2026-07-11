@@ -55,6 +55,7 @@ workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default
 workbar_powerline = true      # chain trailing badges into a powerline (default: true)
 workbar_tab_style = "padded" # workspace tab caps: padded|round|arrow (default: padded)
 workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
+background_follows_terminal = false  # pin surface.backdrop to the host terminal bg (default: false)
 
 [animations]
 enabled = true               # master switch (default: true)
@@ -164,9 +165,10 @@ Pane focus and chrome behavior.
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
 | `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace tabs. The appearance cycle writes this back to config. |
-| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
+| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace tabs in the workbar. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
 | `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
+| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The appearance toggle writes this back to config. |
 
 ## `[animations]`
 
@@ -251,11 +253,11 @@ always moves pane focus.
 
 ## `[confirm]`
 
-`[confirm]` governs **one** confirmation layer: the destructive *shortcuts* — the actions that
+`[confirm]` governs **one** confirmation layer: the destructive *shortcuts* - the actions that
 happen the instant you press a key, hold a modifier chord, or send a control-socket `run-action`.
 Each key below toggles whether that shortcut asks first. An armed confirmation shows a red-bordered
 toast and expires with it (3 seconds); the next press within that window fires, otherwise it arms
-again. Running the same command from the **command palette** always skips the confirmation — picking
+again. Running the same command from the **command palette** always skips the confirmation - picking
 it from a searchable list is already a deliberate choice.
 
 | Key | Default | Confirms before… |
@@ -295,8 +297,9 @@ one named session already exists**; otherwise the launch attaches to an ephemera
 Dismissing the picker with `Esc` attaches a fresh ephemeral session. See [Sessions](sessions.md).
 
 When several clients attach to one session they share a live, server-authoritative layout with a
-single controlling client and instant takeover (`take-control`, default `g`). This needs no
-configuration — the takeover cooldown and client heartbeat are fixed built-in constants — see
+single controlling client and cooperative control requests (`request-control`, default `g`, which
+asks the controller to grant rather than stealing). This needs no configuration - the request
+notification debounce and client heartbeat are fixed built-in constants - see
 [Shared live layouts](sessions.md#shared-live-layouts).
 
 ## `[scratchpad]`
@@ -432,11 +435,12 @@ scratchpad = []
 The parser is tui-lipan's `KeyBinding` parser. Use names like `shift-=`, not a bare `+`, for
 the plus shortcut because `+` is a modifier separator.
 
-Action ids: `spawn`, `close`, `focus-left/down/up/right`, `move-left/down/up/right`,
+Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
+`focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,
 `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `rename-session`, `take-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
+`save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-animations`, `toggle-focus-on-hover`,

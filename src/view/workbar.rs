@@ -107,6 +107,15 @@ fn collaboration_status(
     if shared.clients.len() <= 1 {
         return None;
     }
+    // A pending control request pulls the controller's badge to the warning color and appends a dot
+    // so the controller notices without an intrusive prompt (the request also toasts once).
+    if shared.is_controller() && shared.has_pending_control_requests() {
+        return Some(if shared.input_locked {
+            (" CTRL LOCK ● ", theme.status.warning)
+        } else {
+            (" CTRL ● ", theme.status.warning)
+        });
+    }
     Some(match (shared.is_controller(), shared.input_locked) {
         (true, true) => (" CTRL LOCK ", theme.status.warning),
         (true, false) => (" CTRL ", theme.status.success),
@@ -186,28 +195,27 @@ fn trailing_cluster(
     // from the panel bar. With it off, every cap sits over the panel bar, each badge is a full pill
     // (caps on both sides), and chips keep a gap.
     let mut prev_bg = panel_bg;
+    let mut prev_was_badge = false;
     for chip in chips {
         match chip {
             TrailingChip::Badge { label, text_fg, bg } => {
-                let side = if powerline {
+                let side = if powerline && prev_was_badge && prev_bg == bg {
+                    BadgeCap::LeftSameColor
+                } else if powerline {
                     BadgeCap::Left
                 } else {
                     BadgeCap::Both
                 };
                 cluster = cluster.child(workbar_badge(
-                    &label,
-                    text_fg,
-                    bg,
-                    prev_bg,
-                    panel_bg,
-                    caps,
-                    side,
+                    &label, text_fg, bg, prev_bg, panel_bg, caps, side,
                 ));
                 prev_bg = if powerline { bg } else { panel_bg };
+                prev_was_badge = true;
             }
             TrailingChip::Flex(element) => {
                 cluster = cluster.child(*element);
                 prev_bg = panel_bg;
+                prev_was_badge = false;
             }
         }
     }
@@ -330,6 +338,7 @@ fn workbar_with_caps(
 #[derive(Clone, Copy)]
 enum BadgeCap {
     Left,
+    LeftSameColor,
     Right,
     Both,
 }
@@ -351,6 +360,30 @@ fn workbar_badge(
 ) -> Element {
     let body_style = Style::new().fg(text_fg).bg(badge_bg).bold();
     let Some((left_glyph, right_glyph)) = caps else {
+        if matches!(side, BadgeCap::LeftSameColor) {
+            let label = label.strip_prefix(' ').unwrap_or(label);
+            return HStack::new()
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .child(
+                    Text::new("▏")
+                        .style(
+                            Style::new()
+                                .fg(badge_bg)
+                                .bg(left_neighbor_bg)
+                                .contrast_policy(ContrastPolicy::BlackOrWhite),
+                        )
+                        .width(Length::Px(1))
+                        .height(Length::Px(1)),
+                )
+                .child(
+                    Text::new(label.to_string())
+                        .style(body_style)
+                        .width(Length::Auto)
+                        .height(Length::Px(1)),
+                )
+                .into();
+        }
         // Padded: a plain flush block that keeps the label's blank side padding.
         return Text::new(label.to_string())
             .style(body_style)
@@ -360,7 +393,7 @@ fn workbar_badge(
     };
     // Capped: each cap stands in for the padding on its side, so drop that padding space.
     let label = match side {
-        BadgeCap::Left => label.strip_prefix(' ').unwrap_or(label),
+        BadgeCap::Left | BadgeCap::LeftSameColor => label.strip_prefix(' ').unwrap_or(label),
         BadgeCap::Right => label.strip_suffix(' ').unwrap_or(label),
         BadgeCap::Both => label
             .strip_prefix(' ')
@@ -372,27 +405,49 @@ fn workbar_badge(
         .style(body_style)
         .width(Length::Auto)
         .height(Length::Px(1));
-    let cap_el = |glyph: &'static str, under_bg: Color| {
+    let cap_el = |glyph: &'static str, under_bg: Color, same_color: bool| {
+        let (glyph, policy) = if same_color {
+            (same_color_separator(glyph), ContrastPolicy::BlackOrWhite)
+        } else {
+            (glyph, ContrastPolicy::Off)
+        };
         Text::new(glyph)
             .style(
                 Style::new()
                     .fg(badge_bg)
                     .bg(under_bg)
-                    .contrast_policy(ContrastPolicy::Off),
+                    .contrast_policy(policy),
             )
             .width(Length::Px(1))
             .height(Length::Px(1))
     };
     let row = HStack::new().width(Length::Auto).height(Length::Px(1));
     match side {
-        BadgeCap::Left => row.child(cap_el(left_glyph, left_neighbor_bg)).child(body),
-        BadgeCap::Right => row.child(body).child(cap_el(right_glyph, right_neighbor_bg)),
-        BadgeCap::Both => row
-            .child(cap_el(left_glyph, left_neighbor_bg))
+        BadgeCap::Left | BadgeCap::LeftSameColor => row
+            .child(cap_el(
+                left_glyph,
+                left_neighbor_bg,
+                matches!(side, BadgeCap::LeftSameColor),
+            ))
+            .child(body),
+        BadgeCap::Right => row
             .child(body)
-            .child(cap_el(right_glyph, right_neighbor_bg)),
+            .child(cap_el(right_glyph, right_neighbor_bg, false)),
+        BadgeCap::Both => row
+            .child(cap_el(left_glyph, left_neighbor_bg, false))
+            .child(body)
+            .child(cap_el(right_glyph, right_neighbor_bg, false)),
     }
     .into()
+}
+
+/// Keep adjacent equal-color powerline badges distinct without changing their width.
+fn same_color_separator(left_cap: &'static str) -> &'static str {
+    if left_cap == "\u{e0b2}" {
+        "\u{e0b3}"
+    } else {
+        "▏"
+    }
 }
 
 /// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
@@ -623,8 +678,8 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 #[cfg(test)]
 mod tests {
     use super::{
-        collaboration_status, curated_color, resolve_badge_color, workspace_placeholder_label,
-        workspace_tab_label,
+        collaboration_status, curated_color, resolve_badge_color, same_color_separator,
+        workspace_placeholder_label, workspace_tab_label,
     };
     use crate::config::{BadgeColor, WorkbarSegment};
     use tui_lipan::prelude::Theme;
@@ -643,6 +698,12 @@ mod tests {
             curated_color(&WorkbarSegment::Text("hi".to_string())),
             BadgeColor::Neutral
         );
+    }
+
+    #[test]
+    fn equal_color_powerline_separators_follow_the_cap_shape() {
+        assert_eq!(same_color_separator("\u{e0b2}"), "\u{e0b3}");
+        assert_eq!(same_color_separator("\u{e0b6}"), "▏");
     }
 
     #[test]
@@ -709,6 +770,7 @@ mod tests {
             id: 1,
             label: "one".into(),
             read_only: false,
+            requesting_control: false,
         }];
         state.shared = Some(shared);
         assert!(collaboration_status(&state, &theme).is_none());
@@ -718,6 +780,7 @@ mod tests {
             id: 2,
             label: "two".into(),
             read_only: false,
+            requesting_control: false,
         });
         assert_eq!(collaboration_status(&state, &theme).unwrap().0, " CTRL ");
         state.shared.as_mut().unwrap().input_locked = true;

@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -56,6 +56,11 @@ pub struct ClientInfo {
     pub id: ClientId,
     pub label: String,
     pub read_only: bool,
+    /// True while this client has an outstanding request for the layout-control lease that the
+    /// controller has not yet granted or declined. Broadcast in the roster so every client can badge
+    /// the pending request; cleared when control moves to it or the controller declines.
+    #[serde(default)]
+    pub requesting_control: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -112,9 +117,17 @@ pub enum ClientMessage {
         base_rev: u64,
         layout: SharedLayout,
     },
-    /// Steal the layout-control lease (tmux-style instant takeover, subject to a cooldown).
-    TakeControl,
+    /// Ask the current controller for the layout-control lease. The server auto-grants when there is
+    /// no controller; otherwise it flags this client as requesting and notifies the controller (see
+    /// [`ServerMessage::ControlRequested`]). Never steals from a present controller.
+    RequestControl,
+    /// Controller-only: grant the lease to `to`, which also clears `to`'s pending request.
     GrantControl {
+        to: ClientId,
+    },
+    /// Controller-only: reject `to`'s pending control request, clearing its flag and notifying it
+    /// (see [`ServerMessage::ControlDeclined`]).
+    DeclineControl {
         to: ClientId,
     },
     SetInputLock {
@@ -135,13 +148,12 @@ pub enum ClientMessage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ControllerChangeReason {
-    /// A client stole control with `TakeControl`.
-    Taken,
     /// The controller detached or dropped cleanly.
     Released,
     /// The controller missed heartbeats and was disconnected.
     Expired,
-    /// The lease was auto-granted (first attacher, or promotion of the oldest survivor).
+    /// The lease was granted: the first attacher, promotion of the oldest survivor, a controller's
+    /// explicit grant, or an auto-grant to a requester when no controller held the lease.
     Granted,
 }
 
@@ -208,6 +220,13 @@ pub enum ServerMessage {
         controller: Option<ClientId>,
         reason: ControllerChangeReason,
     },
+    /// Sent only to the current controller when `from` requests the lease. Debounced per requester so
+    /// repeated requests cannot spam the controller; the sticky badge lives in the roster instead.
+    ControlRequested {
+        from: ClientId,
+    },
+    /// Sent only to a requester whose pending control request the controller declined.
+    ControlDeclined,
     ClientsChanged {
         clients: Vec<ClientInfo>,
         input_locked: bool,
@@ -525,7 +544,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":4,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":5,"label":"alice","read_only":true})
         );
     }
 
@@ -538,15 +557,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":4})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":5})
         );
     }
 
     #[test]
-    fn golden_take_control_and_pong_json_shape() {
+    fn golden_request_control_and_pong_json_shape() {
         assert_eq!(
-            serde_json::to_value(ClientMessage::TakeControl).unwrap(),
-            serde_json::json!({"type":"take-control"})
+            serde_json::to_value(ClientMessage::RequestControl).unwrap(),
+            serde_json::json!({"type":"request-control"})
         );
         assert_eq!(
             serde_json::to_value(ClientMessage::Pong { seq: 5 }).unwrap(),
@@ -558,6 +577,8 @@ mod tests {
     fn grant_control_and_input_lock_round_trip() {
         for message in [
             ClientMessage::GrantControl { to: 7 },
+            ClientMessage::DeclineControl { to: 7 },
+            ClientMessage::RequestControl,
             ClientMessage::SetInputLock { locked: true },
         ] {
             let mut bytes = Vec::new();
@@ -574,22 +595,23 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ServerMessage::ControllerChanged {
                 controller: Some(3),
-                reason: ControllerChangeReason::Taken,
+                reason: ControllerChangeReason::Granted,
             })
             .unwrap(),
-            serde_json::json!({"type":"controller-changed","controller":3,"reason":"taken"})
+            serde_json::json!({"type":"controller-changed","controller":3,"reason":"granted"})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::ClientsChanged {
                 clients: vec![ClientInfo {
                     id: 1,
                     label: "alice".into(),
-                    read_only: false
+                    read_only: false,
+                    requesting_control: true,
                 }],
                 input_locked: true,
             })
             .unwrap(),
-            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false}],"input_locked":true})
+            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false,"requesting_control":true}],"input_locked":true})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Ping { seq: 9 }).unwrap(),

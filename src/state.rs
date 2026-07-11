@@ -239,7 +239,7 @@ impl CapStyle {
         all[(index + 1) % all.len()]
     }
 
-    /// Cycle order for workbar badge/tab style actions—same as [`all`] except `Half` is excluded.
+    /// Cycle order for workbar badge/tab style actions-same as [`all`] except `Half` is excluded.
     pub fn badge_styles() -> &'static [CapStyle] {
         &[Self::Padded, Self::Round, Self::Arrow]
     }
@@ -325,6 +325,7 @@ pub enum AppearanceAction {
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleBorderMerge,
+    ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
@@ -711,7 +712,7 @@ pub struct SessionPickerState {
     /// the row itself (struck through in the error color), so no separate confirm toast is needed.
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Enter to confirm attaching to it while the current session is a
-    /// disposable ephemeral one — opening the target shuts that ephemeral server down and kills its
+    /// disposable ephemeral one - opening the target shuts that ephemeral server down and kills its
     /// panes, so it warrants the same two-press guard as a kill. Signalled inline on the row (a
     /// warning-colored highlight), so it needs no confirm toast either.
     pub pending_open: Option<usize>,
@@ -1083,6 +1084,14 @@ impl SharedSessionState {
     /// True when this client currently holds the layout-control lease.
     pub fn is_controller(&self) -> bool {
         self.controller == Some(self.client_id)
+    }
+
+    /// Whether any other client has an outstanding request for the control lease (badge fodder for
+    /// the controller's workbar and the session-clients view).
+    pub fn has_pending_control_requests(&self) -> bool {
+        self.clients
+            .iter()
+            .any(|client| client.requesting_control && Some(client.id) != self.controller)
     }
 
     /// Buffer pane output that arrived before its pane exists locally, enforcing the per-pane cap

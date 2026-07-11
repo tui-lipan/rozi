@@ -202,12 +202,16 @@ impl SessionClient {
     pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {
         self.send_control(ClientMessage::CommitLayout { base_rev, layout });
     }
-    /// Request the layout-control lease (instant takeover, subject to the server cooldown).
-    pub fn take_control(&self) {
-        self.send_control(ClientMessage::TakeControl);
+    /// Ask the current controller for the layout-control lease. The server auto-grants only when no
+    /// controller holds it; otherwise it flags the request for the controller to grant or decline.
+    pub fn request_control(&self) {
+        self.send_control(ClientMessage::RequestControl);
     }
     pub fn grant_control(&self, to: ClientId) {
         self.send_control(ClientMessage::GrantControl { to });
+    }
+    pub fn decline_control(&self, to: ClientId) {
+        self.send_control(ClientMessage::DeclineControl { to });
     }
     pub fn set_input_lock(&self, locked: bool) {
         self.send_control(ClientMessage::SetInputLock { locked });

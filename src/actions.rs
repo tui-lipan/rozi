@@ -3,9 +3,9 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::config::UserCommandAction;
 use crate::focus_ops::{
-    cycle_focus_in_tiled_order, focus_in_direction, move_focused_to_workspace,
-    promote_focused_to_master, relocate_active_workspace, request_current_pane_focus,
-    request_palette_focus, request_pane_focus, switch_workspace,
+    cycle_focus_in_tiled_order, focus_in_direction, focus_in_direction_no_wrap,
+    move_focused_to_workspace, promote_focused_to_master, relocate_active_workspace,
+    request_current_pane_focus, request_palette_focus, request_pane_focus, switch_workspace,
 };
 use crate::identity_ops::open_rename_pane;
 use crate::input::Action;
@@ -220,6 +220,13 @@ fn execute_action_inner(
             }
             Update::full()
         }
+        Action::FocusNoWrap(direction) => {
+            let viewport = ctx.viewport();
+            if let Some(id) = focus_in_direction_no_wrap(&mut ctx.state, direction, viewport) {
+                request_pane_focus(ctx, id);
+            }
+            Update::full()
+        }
         Action::SmartFocus(direction) => smart_focus(ctx, direction),
         Action::Move(direction) => {
             move_focused_in_direction(ctx, direction);
@@ -310,7 +317,8 @@ fn execute_action_inner(
             ));
             update
         }
-        Action::TakeControl => crate::session_ops::take_control(ctx),
+        Action::RequestControl => crate::session_ops::request_control(ctx),
+        Action::GrantControl => crate::session_ops::grant_control_to_requester(ctx),
         Action::ToggleInputLock => crate::session_ops::toggle_input_lock(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
         Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),
@@ -418,6 +426,16 @@ fn execute_action_inner(
             ctx.state.config.pane.merge_borders = !ctx.state.config.pane.merge_borders;
             persist_pane_toggle(ctx, "merge_borders", ctx.state.config.pane.merge_borders);
             Update::full()
+        }
+        Action::ToggleBackgroundFollowsTerminal => {
+            ctx.state.config.pane.background_follows_terminal =
+                !ctx.state.config.pane.background_follows_terminal;
+            persist_pane_toggle(
+                ctx,
+                "background_follows_terminal",
+                ctx.state.config.pane.background_follows_terminal,
+            );
+            crate::theme_ops::reapply_active_theme(ctx)
         }
         Action::CycleBorderStyle => {
             let next = ctx.state.config.pane.border_style.next();

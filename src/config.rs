@@ -201,6 +201,10 @@ pub struct HyprmuxPaneConfig {
     /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
     /// instead of drawing a gap between separate boxes.
     pub merge_borders: bool,
+    /// Whether `surface.backdrop` (canvas gaps, unfocused pane frames) always tracks the host
+    /// terminal's own background instead of the active theme's authored value. Overrides any
+    /// theme, including a custom file that already sets a concrete `backdrop`.
+    pub background_follows_terminal: bool,
     /// App-wide border glyphs for tiled panes.
     pub border_style: PaneBorderStyle,
     /// Blank cells inserted between a pane's border and its terminal grid, as
@@ -234,6 +238,7 @@ impl Default for HyprmuxPaneConfig {
             workbar_at_bottom: false,
             show_titles: true,
             merge_borders: false,
+            background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
             padding: (0, 0, 0, 0),
             title_style: CapStyle::Padded,
@@ -774,6 +779,7 @@ struct PaneFileConfig {
     workbar_at_bottom: Option<bool>,
     show_titles: Option<bool>,
     merge_borders: Option<bool>,
+    background_follows_terminal: Option<bool>,
     border_style: Option<String>,
     padding: Option<PaddingSpec>,
     title_style: Option<String>,
@@ -1965,6 +1971,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(merge_borders) = parsed.pane.merge_borders {
         config.pane.merge_borders = merge_borders;
+    }
+    if let Some(background_follows_terminal) = parsed.pane.background_follows_terminal {
+        config.pane.background_follows_terminal = background_follows_terminal;
     }
     if let Some(border_style) = parsed.pane.border_style.as_deref() {
         match PaneBorderStyle::parse(border_style) {

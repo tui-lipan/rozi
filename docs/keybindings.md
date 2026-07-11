@@ -82,9 +82,10 @@ Spatial focus moves to the nearest pane in a direction (not just the next in a l
 
 #### Seamless vim / neovim navigation
 
-hyprmux ships vim-aware focus actions that make a single `Ctrl-h/j/k/l` cross both hyprmux panes
-and editor splits, the way [vim-tmux-navigator](https://github.com/christoomey/vim-tmux-navigator)
-does for tmux. They are **unbound by default** — you opt in and wire the editor side yourself.
+hyprmux ships vim-aware focus actions and its own
+[`vim-hyprmux-navigator`](../integrations/vim-hyprmux-navigator/) plugin. Together they make a
+single `Ctrl-h/j/k/l` cross both hyprmux panes and editor splits. The hyprmux actions are **unbound
+by default**, so you opt in explicitly.
 
 | Action id | Behavior |
 | --- | --- |
@@ -95,8 +96,9 @@ The pieces that make this work:
 - **hyprmux → editor:** bind the smart-focus actions to `Ctrl-h/j/k/l`. When the focused pane runs
   vim/neovim, the key is forwarded so the editor moves its own split; otherwise hyprmux moves focus.
 - **editor → hyprmux:** when the editor is at its split edge it hands focus back by calling
-  `hyprmux run-action focus-<dir>` over the [control socket](control.md) (every pane already has
-  `HYPRMUX`/`HYPRMUX_SOCKET`/`HYPRMUX_PANE` in its environment).
+  `hyprmux run-action focus-<dir>-no-wrap` over the [control socket](control.md) (every pane already
+  has `HYPRMUX`/`HYPRMUX_SOCKET`/`HYPRMUX_PANE` in its environment). The plugin can opt back into
+  wrapping with `g:hyprmux_navigator_wrap = 1`.
 
 Detection uses the pane's foreground process (Linux `/proc`), so it is accurate regardless of
 shell/process depth and works for any program you list in `[navigation] editors`, not just vim.
@@ -105,32 +107,25 @@ Wire the hyprmux side in `[keys]`:
 
 ```toml
 [keys]
-"ctrl-h" = "smart-focus-left"
-"ctrl-j" = "smart-focus-down"
-"ctrl-k" = "smart-focus-up"
-"ctrl-l" = "smart-focus-right"
+smart-focus-left = "ctrl-h"
+smart-focus-down = "ctrl-j"
+smart-focus-up = "ctrl-k"
+smart-focus-right = "ctrl-l"
 ```
 
-Then wire the editor side. With the upstream plugin installed, point its "at the edge" fallback at
-hyprmux, e.g. in Neovim:
+Then install the bundled editor plugin. With lazy.nvim:
 
 ```lua
-vim.g.tmux_navigator_no_mappings = 1
-local function nav(dir)
-  return function()
-    local ok = pcall(vim.cmd, "TmuxNavigate" .. dir) -- moves within vim when possible
-    if not ok then vim.fn.system({ "hyprmux", "run-action", "focus-" .. dir:lower() }) end
-  end
-end
-vim.keymap.set("n", "<C-h>", nav("Left"))
-vim.keymap.set("n", "<C-j>", nav("Down"))
-vim.keymap.set("n", "<C-k>", nav("Up"))
-vim.keymap.set("n", "<C-l>", nav("Right"))
+{
+  dir = "/path/to/hyprmux/integrations/vim-hyprmux-navigator",
+  name = "vim-hyprmux-navigator",
+}
 ```
 
-Or skip the plugin entirely and map `<C-h/j/k/l>` to `:wincmd h/j/k/l` when a neighboring window
-exists and `hyprmux run-action focus-<dir>` when it does not. The snippet above is only an example;
-hyprmux provides the multiplexer half, not the editor plugin.
+The plugin provides `:HyprmuxNavigateLeft/Down/Up/Right/Previous`, normal and terminal-mode
+mappings, optional save-on-switch behavior, and no-op fallback outside hyprmux. See its
+[README](../integrations/vim-hyprmux-navigator/README.md) for Vim package installation and custom
+mappings.
 
 ### Layout
 
@@ -177,9 +172,9 @@ name. Names are saved with profiles and session autosave.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching never shuts panes down. An anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel returns to the session — use *Quit* to tear an ephemeral session down). A named session detaches immediately. |
+| Detach | `d` | Leave the TUI back to your shell (tmux-style) while the session server keeps running for later reattach. Detaching never shuts panes down. An anonymous ephemeral session first prompts you to name it (confirm to detach durably; cancel returns to the session - use *Quit* to tear an ephemeral session down). A named session detaches immediately. |
 | Quit client | `q` | Exit this UI. The current server keeps running unless the session is ephemeral, in which case it shuts down. Quitting an ephemeral session that still has a live pane asks for a second press first (press `q` again within the confirm window); disable via `[confirm] quit_ephemeral = false`. |
-| Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound — reach it via the command palette or bind `kill-workspace` under `[keys]`. |
+| Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound - reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached session and switch the UI to a fresh ephemeral session. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
 
 Configured `[confirm]` prompts apply to key/chord and control-socket action triggers. Commands
@@ -193,7 +188,8 @@ second confirmation.
 | Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches the current named session and exits the client; `Ctrl+K` (twice) kills the selected named session or resets a selected ephemeral session. Killing or resetting the current session shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from *Detach*, which names if needed and then leaves. See [Sessions](sessions.md). |
 | New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded and its panes are killed. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls confirmation before discarding an ephemeral session. |
-| Take layout control | `g` | Steal the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. Takes effect instantly; a brief cooldown blocks rapid tug-of-war. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
+| Request layout control | `g` | Ask the current controller for the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. It **requests** rather than steals: the controller sees a toast and a `wants control` badge in *Session clients* and grants (or declines) it there; if no client currently holds the lease the request is auto-granted. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
+| Grant layout control | `e` | As the controller, hand the lease to the client that requested it (the earliest requester when several are waiting). Only active while a request is pending; when it arrives the request toast shows this key (following any rebind). You can also grant a specific client from *Session clients* (`Enter`/`g`). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.

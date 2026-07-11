@@ -1,7 +1,7 @@
 //! Server-authoritative shared layout: the structured document that describes a named session's
 //! window-manager state (workspace membership + order, tiling trees + ratios, layout kind, start
 //! axis, floating/fullscreen geometry, workspace names, sync flag, and pane identity). It is the
-//! only layout representation on the wire — profile TOML remains the on-disk format for
+//! only layout representation on the wire - profile TOML remains the on-disk format for
 //! profiles/autosave, but nothing in the session protocol uses TOML.
 //!
 //! A controller client commits a [`SharedLayout`] on every layout change; the server bumps a
@@ -141,7 +141,7 @@ impl From<SharedSplitAxis> for SplitAxis {
 }
 
 /// Build the shared document from the client's live `State` for the given canonical canvas size
-/// (in cells, excluding the workbar). Closing panes and the scratchpad are excluded — they are
+/// (in cells, excluding the workbar). Closing panes and the scratchpad are excluded - they are
 /// local-only lifecycle, never shared.
 pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayout {
     let canvas_cols = canvas.0.max(1);
@@ -268,7 +268,7 @@ pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: 
 ///
 /// This is the follower's read path (and the seed path on attach). It moves, adds, removes, and
 /// reorders `Pane` structs and rewrites workspace metadata, but never touches a surviving pane's
-/// terminal screen, scrollback, or snapshot — only brand-new panes get a fresh backend, and only
+/// terminal screen, scrollback, or snapshot - only brand-new panes get a fresh backend, and only
 /// their buffered orphan output is replayed. Local-only state (focus, active workspace, overlays,
 /// mode, theme) is preserved. Returns an `Update` carrying the batched prune command for any panes
 /// the commit removed.
@@ -665,11 +665,13 @@ mod reconciler_tests {
                 id: 1,
                 label: "a".into(),
                 read_only: false,
+                requesting_control: false,
             },
             crate::session::protocol::ClientInfo {
                 id: 2,
                 label: "b".into(),
                 read_only: false,
+                requesting_control: false,
             },
         ];
         state.shared = Some(shared);
@@ -745,11 +747,13 @@ mod reconciler_tests {
                         id: 1,
                         label: "a".into(),
                         read_only: false,
+                        requesting_control: false,
                     },
                     crate::session::protocol::ClientInfo {
                         id: 2,
                         label: "b".into(),
                         read_only: false,
+                        requesting_control: false,
                     },
                 ];
                 state.shared = Some(shared);

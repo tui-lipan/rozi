@@ -228,7 +228,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::SmartFocus(Left),
         label: "Smart focus left (vim-aware)",
         category: "Focus",
-        // Unbound by default: opt in with e.g. `[keys] "ctrl-h" = "smart-focus-left"` to wire
+        // Unbound by default: opt in with e.g. `[keys] smart-focus-left = "ctrl-h"` to wire
         // seamless vim/neovim split navigation. See docs/keybindings.md.
         default_keys: &[],
         palette: false,
@@ -339,10 +339,17 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
-        action: Action::TakeControl,
-        label: "Take layout control",
+        action: Action::RequestControl,
+        label: "Request layout control",
         category: "Session",
         default_keys: &["g"],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::GrantControl,
+        label: "Grant layout control to requester",
+        category: "Session",
+        default_keys: &["e"],
         palette: true,
     },
     BuiltinCommand {
@@ -463,6 +470,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::ToggleBorderMerge,
         label: "Merge pane borders",
+        category: "App",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::ToggleBackgroundFollowsTerminal,
+        label: "Background follows terminal",
         category: "App",
         default_keys: &[],
         palette: false,
@@ -724,11 +738,31 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
         Action::ToggleInputLock => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
         }),
-        Action::TakeControl => shared.is_some_and(|shared| {
+        Action::RequestControl => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && !shared.is_controller()
         }),
+        Action::GrantControl => shared
+            .is_some_and(|shared| shared.is_controller() && shared.has_pending_control_requests()),
         _ => true,
     }
+}
+
+/// The display chord for a built-in command's current binding — the configured leader prefix plus
+/// the command's first key step (e.g. `ctrl+a e`) — read live from the registry so `[keys]`
+/// overrides are honored. `None` when the command is unbound. Prefer this over hardcoding keys in
+/// toasts/hints, since every binding is user-configurable.
+pub(crate) fn command_prefix_chord(ctx: &Context<HyprmuxApp>, id: &str) -> Option<String> {
+    let hint = ctx
+        .command_registry()
+        .entries()
+        .into_iter()
+        .find(|entry| entry.id.as_str() == id)?
+        .keybinding_hint
+        .as_deref()
+        .map(str::to_string)
+        .filter(|hint| !hint.is_empty())?;
+    let prefix = ctx.state.config.input.prefix.to_string();
+    Some(format!("{prefix} {hint}"))
 }
 
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
@@ -869,6 +903,10 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleBorderMerge => {
             enable_disable_label("border merging", state.config.pane.merge_borders)
         }
+        Action::ToggleBackgroundFollowsTerminal => enable_disable_label(
+            "background follows terminal",
+            state.config.pane.background_follows_terminal,
+        ),
         Action::CycleBorderStyle => {
             format!("Border style: {}", state.config.pane.border_style.label())
         }
@@ -1180,6 +1218,7 @@ mod tests {
                 id,
                 label: format!("client-{id}"),
                 read_only: read_only && id == client_id,
+                requesting_control: false,
             })
             .collect();
         state.shared = Some(shared);
@@ -1190,22 +1229,33 @@ mod tests {
     fn collaboration_commands_follow_roster_and_permissions() {
         let solo = shared_state(1, 1, false, 1);
         assert!(!command_available(Action::OpenClientList, &solo));
-        assert!(!command_available(Action::TakeControl, &solo));
+        assert!(!command_available(Action::RequestControl, &solo));
         assert!(!command_available(Action::ToggleInputLock, &solo));
 
         let controller = shared_state(1, 1, false, 2);
         assert!(command_available(Action::OpenClientList, &controller));
-        assert!(!command_available(Action::TakeControl, &controller));
+        assert!(!command_available(Action::RequestControl, &controller));
         assert!(command_available(Action::ToggleInputLock, &controller));
+        // Grant is offered only once a follower is actually requesting.
+        assert!(!command_available(Action::GrantControl, &controller));
 
         let follower = shared_state(2, 1, false, 2);
         assert!(command_available(Action::OpenClientList, &follower));
-        assert!(command_available(Action::TakeControl, &follower));
+        assert!(command_available(Action::RequestControl, &follower));
         assert!(!command_available(Action::ToggleInputLock, &follower));
+        assert!(!command_available(Action::GrantControl, &follower));
+
+        // Controller with a pending request from client 2 can grant; the follower still cannot.
+        let mut controller_with_request = shared_state(1, 1, false, 2);
+        controller_with_request.shared.as_mut().unwrap().clients[1].requesting_control = true;
+        assert!(command_available(
+            Action::GrantControl,
+            &controller_with_request
+        ));
 
         let viewer = shared_state(2, 1, true, 2);
         assert!(command_available(Action::OpenClientList, &viewer));
-        assert!(!command_available(Action::TakeControl, &viewer));
+        assert!(!command_available(Action::RequestControl, &viewer));
         assert!(!command_available(Action::ToggleInputLock, &viewer));
     }
 

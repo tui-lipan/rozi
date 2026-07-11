@@ -27,6 +27,23 @@ pub(crate) fn focus_in_direction(
     direction: Direction,
     viewport: Rect,
 ) -> Option<PaneId> {
+    focus_in_direction_with_wrap(state, direction, viewport, true)
+}
+
+pub(crate) fn focus_in_direction_no_wrap(
+    state: &mut State,
+    direction: Direction,
+    viewport: Rect,
+) -> Option<PaneId> {
+    focus_in_direction_with_wrap(state, direction, viewport, false)
+}
+
+fn focus_in_direction_with_wrap(
+    state: &mut State,
+    direction: Direction,
+    viewport: Rect,
+    wrap: bool,
+) -> Option<PaneId> {
     let bounds = state.canvas_bounds(viewport);
     let workspace = &state.workspaces[state.active_workspace];
     let placements = workspace_target_rects(
@@ -65,7 +82,10 @@ pub(crate) fn focus_in_direction(
         })
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(id, _)| id)
-        .or_else(|| cycle_focus_id(&candidates, focused, direction));
+        .or_else(|| {
+            wrap.then(|| cycle_focus_id(&candidates, focused, direction))
+                .flatten()
+        });
 
     if let Some(next_id) = next {
         focus_pane(state, next_id);
@@ -564,6 +584,30 @@ mod tests {
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    #[test]
+    fn directional_focus_can_disable_edge_wrapping() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2]);
+        state.focused_pane = Some(2);
+
+        assert_eq!(
+            focus_in_direction_no_wrap(&mut state, Direction::Right, viewport),
+            None
+        );
+        assert_eq!(state.focused_pane, Some(2));
+
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Right, viewport),
+            Some(1)
+        );
+        assert_eq!(state.focused_pane, Some(1));
     }
 
     #[test]

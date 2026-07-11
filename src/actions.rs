@@ -139,6 +139,14 @@ fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     }
 }
 
+macro_rules! toggle_pane_flag {
+    ($ctx:ident, $field:ident) => {{
+        $ctx.state.config.pane.$field = !$ctx.state.config.pane.$field;
+        persist_pane_toggle($ctx, stringify!($field), $ctx.state.config.pane.$field);
+        Update::full()
+    }};
+}
+
 fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_animation_flag(key, value) {
         ctx.toast().push(crate::pty_events::error_toast(
@@ -358,83 +366,28 @@ fn execute_action_inner(
             }
             Update::full()
         }
-        Action::ToggleTitles => {
-            ctx.state.config.pane.show_titles = !ctx.state.config.pane.show_titles;
-            persist_pane_toggle(ctx, "show_titles", ctx.state.config.pane.show_titles);
-            Update::full()
-        }
-        Action::ToggleWorkbar => {
-            ctx.state.config.pane.show_workbar = !ctx.state.config.pane.show_workbar;
-            persist_pane_toggle(ctx, "show_workbar", ctx.state.config.pane.show_workbar);
-            Update::full()
-        }
-        Action::ToggleWorkbarGap => {
-            ctx.state.config.pane.workbar_gap = !ctx.state.config.pane.workbar_gap;
-            persist_pane_toggle(ctx, "workbar_gap", ctx.state.config.pane.workbar_gap);
-            Update::full()
-        }
-        Action::ToggleWorkbarPosition => {
-            ctx.state.config.pane.workbar_at_bottom = !ctx.state.config.pane.workbar_at_bottom;
-            persist_pane_toggle(
-                ctx,
-                "workbar_at_bottom",
-                ctx.state.config.pane.workbar_at_bottom,
-            );
-            Update::full()
-        }
-        Action::ToggleWorkbarPowerline => {
-            ctx.state.config.pane.workbar_powerline = !ctx.state.config.pane.workbar_powerline;
-            persist_pane_toggle(
-                ctx,
-                "workbar_powerline",
-                ctx.state.config.pane.workbar_powerline,
-            );
-            Update::full()
-        }
+        Action::ToggleTitles => toggle_pane_flag!(ctx, show_titles),
+        Action::ToggleWorkbar => toggle_pane_flag!(ctx, show_workbar),
+        Action::ToggleWorkbarGap => toggle_pane_flag!(ctx, workbar_gap),
+        Action::ToggleWorkbarPosition => toggle_pane_flag!(ctx, workbar_at_bottom),
+        Action::ToggleWorkbarPowerline => toggle_pane_flag!(ctx, workbar_powerline),
         Action::ToggleAnimations => {
             ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
             persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
             Update::full()
         }
-        Action::ToggleFocusOnHover => {
-            ctx.state.config.pane.focus_on_hover = !ctx.state.config.pane.focus_on_hover;
-            persist_pane_toggle(ctx, "focus_on_hover", ctx.state.config.pane.focus_on_hover);
-            Update::full()
-        }
+        Action::ToggleFocusOnHover => toggle_pane_flag!(ctx, focus_on_hover),
         Action::ToggleHighlightFocusedBackground => {
-            ctx.state.config.pane.highlight_focused_background =
-                !ctx.state.config.pane.highlight_focused_background;
-            persist_pane_toggle(
-                ctx,
-                "highlight_focused_background",
-                ctx.state.config.pane.highlight_focused_background,
-            );
+            toggle_pane_flag!(ctx, highlight_focused_background);
             apply_terminal_palette_to_state(&mut ctx.state);
             Update::full()
         }
         Action::ToggleHighlightFocusedBorder => {
-            ctx.state.config.pane.highlight_focused_border =
-                !ctx.state.config.pane.highlight_focused_border;
-            persist_pane_toggle(
-                ctx,
-                "highlight_focused_border",
-                ctx.state.config.pane.highlight_focused_border,
-            );
-            Update::full()
+            toggle_pane_flag!(ctx, highlight_focused_border)
         }
-        Action::ToggleBorderMerge => {
-            ctx.state.config.pane.merge_borders = !ctx.state.config.pane.merge_borders;
-            persist_pane_toggle(ctx, "merge_borders", ctx.state.config.pane.merge_borders);
-            Update::full()
-        }
+        Action::ToggleBorderMerge => toggle_pane_flag!(ctx, merge_borders),
         Action::ToggleBackgroundFollowsTerminal => {
-            ctx.state.config.pane.background_follows_terminal =
-                !ctx.state.config.pane.background_follows_terminal;
-            persist_pane_toggle(
-                ctx,
-                "background_follows_terminal",
-                ctx.state.config.pane.background_follows_terminal,
-            );
+            toggle_pane_flag!(ctx, background_follows_terminal);
             crate::theme_ops::reapply_active_theme(ctx)
         }
         Action::CycleBorderStyle => {

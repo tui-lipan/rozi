@@ -193,6 +193,31 @@ fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discovered
     }
 }
 
+fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
+    if ctx.state.session_attached {
+        Some(())
+    } else {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        None
+    }
+}
+
+fn require_writable(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
+    require_attached(ctx)?;
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return None;
+    };
+    if shared.read_only {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Attached read-only"));
+        return None;
+    }
+    Some(())
+}
+
 /// If this client is a follower (attached but not the controller), push the take-control nudge and
 /// return `true` so the caller aborts a layout-mutating gesture. Controllers and local/unattached
 /// sessions return `false`.
@@ -220,11 +245,9 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
 /// grants or declines from the session-clients view. Repeated presses re-send harmlessly (the server
 /// debounces the controller's toast) but keep the local status message informative.
 pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.session_attached {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_attached(ctx) else {
         return Update::full();
-    }
+    };
     if ctx.state.is_controller() {
         ctx.toast().push(info_toast(
             &ctx.state.theme,
@@ -232,16 +255,10 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    let Some(shared) = ctx.state.shared.as_ref() else {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_writable(ctx) else {
         return Update::full();
     };
-    if shared.read_only {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Attached read-only"));
-        return Update::full();
-    }
+    let shared = ctx.state.shared.as_ref().expect("writable session checked");
     let already_requested = shared
         .clients
         .iter()
@@ -264,11 +281,9 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn open_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.session_attached {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_attached(ctx) else {
         return Update::full();
-    }
+    };
     ctx.state.show_palette = false;
     ctx.state.show_session_picker = false;
     ctx.state.client_list = Some(crate::state::ClientListState { selected: 0 });
@@ -281,16 +296,10 @@ pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
     if nudge_if_follower(ctx) {
         return Update::full();
     }
-    let Some(shared) = ctx.state.shared.as_ref() else {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_writable(ctx) else {
         return Update::full();
     };
-    if shared.read_only {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Attached read-only"));
-        return Update::full();
-    }
+    let shared = ctx.state.shared.as_ref().expect("writable session checked");
     if let Some(client) = ctx.state.session_client.as_ref() {
         client.set_input_lock(!shared.input_locked);
     }
@@ -401,11 +410,9 @@ pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
 /// Detach the current named session and exit the client, leaving the server running for reattach.
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_session_arms(ctx);
-    if !ctx.state.session_attached {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_attached(ctx) else {
         return Update::full();
-    }
+    };
     crate::exit_ops::detach(ctx)
 }
 
@@ -636,11 +643,9 @@ pub(crate) fn open_detach_rename(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// discoverable under. Works for both ephemeral (naming it for the first time) and already-named
 /// sessions.
 pub(crate) fn open_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.session_attached {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+    let Some(()) = require_attached(ctx) else {
         return Update::full();
-    }
+    };
     let ephemeral = ctx.state.is_ephemeral_session();
     let initial = if ephemeral {
         String::new()

@@ -461,6 +461,91 @@ fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_layout::{
+        SHARED_LAYOUT_VERSION, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
+        SharedWorkspace,
+    };
+
+    #[test]
+    fn golden_layout_commit_json_shape() {
+        let layout = SharedLayout {
+            version: SHARED_LAYOUT_VERSION,
+            canvas_cols: 120,
+            canvas_rows: 40,
+            workspaces: vec![SharedWorkspace {
+                index: 0,
+                name: Some("dev".to_string()),
+                synchronized: true,
+                layout: SharedLayoutKind::Master,
+                start_axis: SharedSplitAxis::Vertical,
+                split_ratios: vec![0.4],
+                tree: Some(SharedTree::Split {
+                    axis: SharedSplitAxis::Vertical,
+                    ratio: 0.375,
+                    first: Box::new(SharedTree::Leaf { pane: 2 }),
+                    second: Box::new(SharedTree::Leaf { pane: 9 }),
+                }),
+                panes: vec![SharedPane {
+                    pane_id: 2,
+                    generation: 7,
+                    title: Some("editor".to_string()),
+                    profile_name: None,
+                    cwd: Some("/repo".to_string()),
+                    command: Some("nvim".to_string()),
+                    keep_open: false,
+                    floating: false,
+                    fullscreen: false,
+                    rect: None,
+                }],
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(ServerMessage::LayoutCommitted {
+                rev: 4,
+                author: 3,
+                layout,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "type": "layout-committed",
+                "rev": 4,
+                "author": 3,
+                "layout": {
+                    "version": 1,
+                    "canvas_cols": 120,
+                    "canvas_rows": 40,
+                    "workspaces": [{
+                        "index": 0,
+                        "name": "dev",
+                        "synchronized": true,
+                        "layout": "master",
+                        "start_axis": "vertical",
+                        "split_ratios": [0.4],
+                        "tree": {
+                            "kind": "split",
+                            "axis": "vertical",
+                            "ratio": 0.375,
+                            "first": {"kind": "leaf", "pane": 2},
+                            "second": {"kind": "leaf", "pane": 9}
+                        },
+                        "panes": [{
+                            "pane_id": 2,
+                            "generation": 7,
+                            "title": "editor",
+                            "profile_name": null,
+                            "cwd": "/repo",
+                            "command": "nvim",
+                            "keep_open": false,
+                            "floating": false,
+                            "fullscreen": false,
+                            "rect": null
+                        }]
+                    }]
+                }
+            })
+        );
+    }
 
     #[test]
     fn protocol_frame_round_trips() {

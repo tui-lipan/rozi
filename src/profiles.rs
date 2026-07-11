@@ -526,6 +526,59 @@ mod tests {
     use crate::state::{Pane, State};
     use tui_lipan::prelude::Theme;
 
+    #[test]
+    fn profile_tree_toml_shape_is_stable() {
+        let profile = HyprmuxProfile {
+            version: 1,
+            active_workspace: 0,
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                name: Some("dev".to_string()),
+                synchronized: true,
+                layout: ProfileLayoutKind::Master,
+                split_ratios: vec![0.4],
+                focused_pane: Some(2),
+                tree: Some(ProfileTree::Split {
+                    axis: ProfileSplitAxis::Vertical,
+                    ratio: 0.375,
+                    first: Box::new(ProfileTree::Leaf { pane: 2 }),
+                    second: Box::new(ProfileTree::Leaf { pane: 9 }),
+                }),
+                panes: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            profile.to_toml_string().unwrap(),
+            concat!(
+                "version = 1\n",
+                "active_workspace = 0\n",
+                "\n",
+                "[[workspaces]]\n",
+                "index = 0\n",
+                "name = \"dev\"\n",
+                "synchronized = true\n",
+                "layout = \"master\"\n",
+                "split_ratios = [0.4000000059604645]\n",
+                "focused_pane = 2\n",
+                "panes = []\n",
+                "\n",
+                "[workspaces.tree]\n",
+                "kind = \"split\"\n",
+                "axis = \"vertical\"\n",
+                "ratio = 0.375\n",
+                "\n",
+                "[workspaces.tree.first]\n",
+                "kind = \"leaf\"\n",
+                "pane = 2\n",
+                "\n",
+                "[workspaces.tree.second]\n",
+                "kind = \"leaf\"\n",
+                "pane = 9\n",
+            )
+        );
+    }
+
     fn assert_rect_eq(actual: ProfileRect, expected: ProfileRect) {
         assert_eq!(actual, expected);
     }

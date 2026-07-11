@@ -318,6 +318,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenClientList,
+        label: "Session clients…",
+        category: "Session",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::RenameSession,
         label: "Rename session",
         category: "Session",
@@ -336,6 +343,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Take layout control",
         category: "Session",
         default_keys: &["g"],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::ToggleInputLock,
+        label: "Toggle input lock",
+        category: "Session",
+        default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
@@ -529,6 +543,7 @@ pub(crate) fn commands_active(state: &State) -> bool {
         && state.save_profile_prompt.is_none()
         && !state.show_profile_picker
         && !state.show_session_picker
+        && state.client_list.is_none()
 }
 
 /// Same as [`commands_active`], except the help overlay doesn't block: it is a static,
@@ -570,11 +585,12 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
         let hint = builtin_keybinding_hint(config, id, command.default_keys);
         let label = resolved_label(command.action, command.label, state);
         let action = command.action;
-        let enabled = if is_exit_command(action) {
-            exit_active
-        } else {
-            active
-        };
+        let enabled = command_available(action, state)
+            && if is_exit_command(action) {
+                exit_active
+            } else {
+                active
+            };
         let link = ctx.link().clone();
         ctx.register_command(
             CommandEntry::builder(id)
@@ -701,6 +717,20 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
         .unwrap_or(true)
 }
 
+pub(crate) fn command_available(action: Action, state: &State) -> bool {
+    let shared = state.shared.as_ref();
+    match action {
+        Action::OpenClientList => shared.is_some_and(|shared| shared.clients.len() > 1),
+        Action::ToggleInputLock => shared.is_some_and(|shared| {
+            shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
+        }),
+        Action::TakeControl => shared.is_some_and(|shared| {
+            shared.clients.len() > 1 && !shared.read_only && !shared.is_controller()
+        }),
+        _ => true,
+    }
+}
+
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
 /// explicit empty override that unbinds it) if configured, otherwise the leader-prefix chord and
 /// WM-modifier chord mirrored from its default key steps.
@@ -818,6 +848,13 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }
+        Action::ToggleInputLock => enable_disable_label(
+            "input lock",
+            state
+                .shared
+                .as_ref()
+                .is_some_and(|shared| shared.input_locked),
+        ),
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)
         }
@@ -1130,6 +1167,59 @@ mod tests {
         assert_eq!(
             builtin_keybinding_hint(&config, "close", &["w", "shift-w"]),
             Some(Arc::<str>::from("ctrl+b k"))
+        );
+    }
+
+    fn shared_state(client_id: u64, controller: u64, read_only: bool, count: u64) -> State {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut shared = crate::state::SharedSessionState::new(client_id);
+        shared.controller = Some(controller);
+        shared.read_only = read_only;
+        shared.clients = (1..=count)
+            .map(|id| crate::session::protocol::ClientInfo {
+                id,
+                label: format!("client-{id}"),
+                read_only: read_only && id == client_id,
+            })
+            .collect();
+        state.shared = Some(shared);
+        state
+    }
+
+    #[test]
+    fn collaboration_commands_follow_roster_and_permissions() {
+        let solo = shared_state(1, 1, false, 1);
+        assert!(!command_available(Action::OpenClientList, &solo));
+        assert!(!command_available(Action::TakeControl, &solo));
+        assert!(!command_available(Action::ToggleInputLock, &solo));
+
+        let controller = shared_state(1, 1, false, 2);
+        assert!(command_available(Action::OpenClientList, &controller));
+        assert!(!command_available(Action::TakeControl, &controller));
+        assert!(command_available(Action::ToggleInputLock, &controller));
+
+        let follower = shared_state(2, 1, false, 2);
+        assert!(command_available(Action::OpenClientList, &follower));
+        assert!(command_available(Action::TakeControl, &follower));
+        assert!(!command_available(Action::ToggleInputLock, &follower));
+
+        let viewer = shared_state(2, 1, true, 2);
+        assert!(command_available(Action::OpenClientList, &viewer));
+        assert!(!command_available(Action::TakeControl, &viewer));
+        assert!(!command_available(Action::ToggleInputLock, &viewer));
+    }
+
+    #[test]
+    fn input_lock_label_reflects_server_state() {
+        let mut state = shared_state(1, 1, false, 2);
+        assert_eq!(
+            resolved_label(Action::ToggleInputLock, "Toggle input lock", &state),
+            "Enable input lock"
+        );
+        state.shared.as_mut().unwrap().input_locked = true;
+        assert_eq!(
+            resolved_label(Action::ToggleInputLock, "Toggle input lock", &state),
+            "Disable input lock"
         );
     }
 }

@@ -220,6 +220,8 @@ pub fn restore_state_from_profile(
         profile_picker: None,
         show_session_picker: false,
         session_picker: None,
+        client_list: None,
+        last_blocked_input_toast: None,
         session_picker_epoch: 0,
         copy_mode: None,
         copy_flash: None,

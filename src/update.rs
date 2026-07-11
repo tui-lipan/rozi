@@ -96,7 +96,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 }
                 Action::OpenAppearance => {}
                 Action::OpenThemePicker => {}
-                Action::SaveProfile | Action::OpenProfilePicker | Action::OpenSessionPicker => {}
+                Action::SaveProfile
+                | Action::OpenProfilePicker
+                | Action::OpenSessionPicker
+                | Action::OpenClientList => {}
                 // The scratchpad manages its own focus (the scratch terminal on show, the
                 // previously focused pane on hide); don't override it.
                 Action::ToggleScratchpad => {}
@@ -413,6 +416,24 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SessionPickerDetachCurrent => crate::session_ops::detach_current_session(ctx),
         Msg::SessionPickerKillSelected => crate::session_ops::kill_selected_session(ctx),
         Msg::SessionPickerNameCurrent => crate::session_ops::open_rename_session(ctx),
+        Msg::CloseClientList => {
+            ctx.state.client_list = None;
+            ctx.state.commands_dirty = true;
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        Msg::ClientListSelect(index) => {
+            if let Some(list) = ctx.state.client_list.as_mut() {
+                let len = ctx
+                    .state
+                    .shared
+                    .as_ref()
+                    .map_or(0, |shared| shared.clients.len());
+                list.selected = index.min(len.saturating_sub(1));
+            }
+            Update::full()
+        }
+        Msg::ClientListGrant(index) => crate::session_ops::grant_control(ctx, index),
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -569,6 +590,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             ctx.state.session_attached = false;
             ctx.state.session_client = None;
+            let read_only = ctx
+                .state
+                .shared
+                .as_ref()
+                .is_some_and(|shared| shared.read_only);
             // Drop shared-lease bookkeeping: while disconnected we behave as a solo controller, and
             // a successful reconnect rebuilds this from the fresh `Attached` frame.
             ctx.state.shared = None;
@@ -589,6 +615,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 name: name.clone(),
                 client: None,
                 autostart,
+                read_only,
             });
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
@@ -596,7 +623,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ));
             Update::with_command(Command::spawn(move |link| {
                 std::thread::spawn(move || {
-                    crate::attach_session_client(new_epoch, name, autostart, link)
+                    crate::attach_session_client(new_epoch, name, autostart, read_only, link)
                 });
             }))
         }
@@ -623,6 +650,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             layout,
             controller,
             clients,
+            input_locked,
+            read_only,
         } => {
             let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
                 return Update::none();
@@ -647,7 +676,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             shared.layout_rev = layout_rev;
             shared.assumed_rev = layout_rev;
             shared.controller = controller;
-            shared.attached_clients = clients;
+            shared.clients = clients;
+            shared.input_locked = input_locked;
+            shared.read_only = read_only;
             ctx.state.shared = Some(shared);
 
             // The session identity just changed (ephemeral vs named), which the "Name/Rename
@@ -755,6 +786,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             let now_controller = ctx.state.is_controller();
             if was_controller && !now_controller {
+                ctx.state.moving_pane = None;
+                ctx.state.resizing_pane = None;
+                ctx.state.split_drag = None;
                 let who = controller
                     .map(|id| format!("client {id}"))
                     .unwrap_or_else(|| "another client".to_string());
@@ -771,13 +805,30 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ctx.state.commands_dirty = true;
             Update::full()
         }
-        Msg::SessionClientsChanged { epoch, attached } => {
+        Msg::SessionClientsChanged {
+            epoch,
+            clients,
+            input_locked,
+        } => {
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();
             }
             if let Some(shared) = ctx.state.shared.as_mut() {
-                shared.attached_clients = attached;
+                let changed = shared.input_locked != input_locked;
+                shared.clients = clients;
+                shared.input_locked = input_locked;
+                if changed {
+                    ctx.toast().push(crate::pty_events::info_toast(
+                        &ctx.state.theme,
+                        if input_locked {
+                            "Input locked to controller"
+                        } else {
+                            "Input unlocked"
+                        },
+                    ));
+                }
             }
+            ctx.state.commands_dirty = true;
             Update::full()
         }
         Msg::SessionPing { epoch, seq } => {

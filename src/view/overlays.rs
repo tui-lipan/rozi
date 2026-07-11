@@ -4,6 +4,7 @@ use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
 use tui_lipan::utils::color_contrast::readable_text_color;
 
+use crate::input::Action;
 use crate::state::{
     AppearanceAction, ProfilePickerState, ScrollbackMatch, ScrollbackSearchState,
     SessionPickerState,
@@ -11,9 +12,10 @@ use crate::state::{
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    appearance_palette_key, help_scroll_key, palette_key, pane_padding_horizontal_key,
-    pane_padding_vertical_key, profile_picker_key, rename_input_key, rename_session_input_key,
-    save_profile_key, search_input_key, session_picker_key, theme_picker_key,
+    appearance_palette_key, client_list_key, help_scroll_key, palette_key,
+    pane_padding_horizontal_key, pane_padding_vertical_key, profile_picker_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    theme_picker_key,
 };
 use super::{
     action_palette_frame, action_palette_modal, action_palette_modal_with_width, fg_only,
@@ -644,6 +646,77 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
+pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(list) = ctx.state.client_list.as_ref() else {
+        return Text::new("").into();
+    };
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        return Text::new("").into();
+    };
+    let entries = shared
+        .clients
+        .iter()
+        .enumerate()
+        .map(|(index, client)| {
+            let mut markers = Vec::new();
+            if client.id == shared.client_id {
+                markers.push("you");
+            }
+            if Some(client.id) == shared.controller {
+                markers.push("controller");
+            }
+            if client.read_only {
+                markers.push("read-only");
+            }
+            SearchEntry::item(format!("{}  #{}", client.label, client.id), index)
+                .description(ItemDescription::new().right(markers.join(" · ")))
+        })
+        .collect::<Vec<_>>();
+    let key = client_list_key();
+    let selected = list.selected;
+    let client_count = shared.clients.len();
+    let can_grant = !shared.read_only && shared.is_controller();
+    let interceptor = ctx.link().key_handler(move |key_event| {
+        if key_event.is(KeyCode::Esc) {
+            Some(Msg::CloseClientList)
+        } else if key_event.is(KeyCode::Char('j')) {
+            Some(Msg::ClientListSelect(
+                (selected + 1).min(client_count.saturating_sub(1)),
+            ))
+        } else if key_event.is(KeyCode::Char('k')) {
+            Some(Msg::ClientListSelect(selected.saturating_sub(1)))
+        } else if can_grant && matches!(key_event.code, KeyCode::Char('g') | KeyCode::Char('G')) {
+            Some(Msg::ClientListGrant(selected))
+        } else {
+            None
+        }
+    });
+    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .width(Length::Flex(1))
+        .entries(entries)
+        .placeholder("")
+        .initial_selected_item_index(Some(list.selected))
+        .sync_selection(true)
+        .description_placement(DescriptionPlacement::Right)
+        .input_key_interceptor(interceptor)
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::ClientListSelect(event.item.value)),
+        );
+    if can_grant {
+        palette = palette.on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::ClientListGrant(event.item.value)),
+        );
+    }
+    let mut body = VStack::new().height(Length::Auto).child(palette);
+    if can_grant {
+        body =
+            body.child(hint_row().child(hint_pill(&ctx.state.theme, "grant control", "enter / g")));
+    }
+    action_palette(ctx, "Session clients", key, Msg::CloseClientList, body, 64)
+}
+
 /// The footer hint row only advertises keys that would actually act on the current state, so a
 /// hint never lies: `detach` appears only for an attached named session, `kill`/`reset` for a
 /// selectable session, and `open` only for a selectable non-current session.
@@ -850,7 +923,10 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // category aren't registered contiguously.
     let mut groups: Vec<(String, Vec<SearchEntry<Callback<()>>>)> = Vec::new();
     for entry in ctx.command_registry().entries() {
-        if !crate::commands::is_palette_eligible(entry.id.as_str()) {
+        if !crate::commands::is_palette_eligible(entry.id.as_str())
+            || Action::from_id(entry.id.as_str())
+                .is_some_and(|action| !crate::commands::command_available(action, &ctx.state))
+        {
             continue;
         }
         let category = entry.category.as_deref().unwrap_or("Other").to_string();
@@ -887,28 +963,172 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
 fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
     match id {
-        "change-appearance" => [
+        "change-appearance" => alias_list(&[
             "theme",
             "themes",
             "appearance",
             "style",
             "chrome",
+            "padding",
+            "terminal padding",
             "border",
             "borders",
+            "border merge",
             "titlebar",
             "titlebars",
+            "titlebar style",
             "workbar",
+            "top bar",
+            "workbar gap",
+            "workbar position",
+            "workbar style",
+            "badge",
+            "badges",
+            "workbar badge",
+            "powerline",
+            "tab",
+            "tabs",
+            "workbar tab",
             "animations",
             "motion",
             "transitions",
             "focused border",
             "focused background",
-        ]
-        .into_iter()
-        .map(Arc::from)
-        .collect(),
+        ]),
         _ => Vec::new(),
     }
+}
+
+fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
+    match action {
+        AppearanceAction::Theme => alias_list(&[
+            "theme",
+            "themes",
+            "color",
+            "colors",
+            "colour",
+            "colours",
+            "scheme",
+        ]),
+        AppearanceAction::EditPadding => alias_list(&[
+            "padding",
+            "margin",
+            "margins",
+            "inset",
+            "insets",
+            "terminal",
+            "pane",
+        ]),
+        AppearanceAction::ToggleTitles => alias_list(&[
+            "titlebar",
+            "titlebars",
+            "title",
+            "titles",
+            "title bar",
+            "show titles",
+        ]),
+        AppearanceAction::CycleTitleStyle => alias_list(&[
+            "titlebar style",
+            "title style",
+            "titlebar caps",
+            "title caps",
+            "pill",
+            "round",
+            "arrow",
+            "half",
+            "padded",
+            "cap style",
+        ]),
+        AppearanceAction::ToggleWorkbar => alias_list(&[
+            "workbar",
+            "top bar",
+            "status bar",
+            "bar",
+            "show workbar",
+        ]),
+        AppearanceAction::ToggleWorkbarGap => alias_list(&[
+            "workbar gap",
+            "gap",
+            "spacing",
+            "gutter",
+            "separator",
+        ]),
+        AppearanceAction::ToggleWorkbarPosition => alias_list(&[
+            "workbar position",
+            "position",
+            "placement",
+            "top",
+            "bottom",
+            "relocate",
+        ]),
+        AppearanceAction::CycleWorkbarStyle => alias_list(&[
+            "workbar style",
+            "workbar caps",
+            "bar style",
+            "bar caps",
+        ]),
+        AppearanceAction::CycleWorkbarBadgeStyle => alias_list(&[
+            "badge",
+            "badges",
+            "badge style",
+            "workbar badge",
+            "chip",
+            "chips",
+            "mode chip",
+            "powerline badge",
+        ]),
+        AppearanceAction::ToggleWorkbarPowerline => alias_list(&[
+            "powerline",
+            "chain",
+            "chained",
+            "interlock",
+            "badge chain",
+        ]),
+        AppearanceAction::CycleWorkbarTabStyle => alias_list(&[
+            "tab",
+            "tabs",
+            "workspace tabs",
+            "tab style",
+            "workbar tabs",
+        ]),
+        AppearanceAction::ToggleAnimations => alias_list(&[
+            "animation",
+            "animations",
+            "motion",
+            "transitions",
+            "animate",
+        ]),
+        AppearanceAction::ToggleHighlightFocusedBackground => alias_list(&[
+            "focused background",
+            "focus background",
+            "highlight background",
+            "active background",
+            "focused pane",
+        ]),
+        AppearanceAction::ToggleHighlightFocusedBorder => alias_list(&[
+            "focused border",
+            "focus border",
+            "highlight border",
+            "active border",
+        ]),
+        AppearanceAction::ToggleBorderMerge => alias_list(&[
+            "border merge",
+            "merge borders",
+            "merging",
+            "seam",
+            "border seam",
+        ]),
+        AppearanceAction::CycleBorderStyle => alias_list(&[
+            "border style",
+            "rounded",
+            "square",
+            "border caps",
+        ]),
+    }
+}
+
+fn alias_list(values: &[&str]) -> Vec<Arc<str>> {
+    values.iter().copied().map(Arc::from).collect()
 }
 
 pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
@@ -1129,7 +1349,10 @@ fn appearance_entry(
     status: String,
     action: AppearanceAction,
 ) -> SearchEntry<AppearanceAction> {
-    SearchEntry::item(label, action).description(ItemDescription::new().right(status))
+    SearchEntry::Item(
+        SearchItem::new(label, action).aliases(appearance_palette_aliases(action)),
+    )
+    .description(ItemDescription::new().right(status))
 }
 
 fn enabled_status(enabled: bool) -> String {
@@ -1254,4 +1477,56 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
                 .overflow(Overflow::Ellipsis),
         )
         .into()
+}
+
+#[cfg(test)]
+mod palette_alias_tests {
+    use super::{appearance_palette_aliases, command_palette_aliases};
+    use crate::state::AppearanceAction;
+
+    #[test]
+    fn every_appearance_action_has_search_aliases() {
+        let actions = [
+            AppearanceAction::Theme,
+            AppearanceAction::EditPadding,
+            AppearanceAction::ToggleTitles,
+            AppearanceAction::CycleTitleStyle,
+            AppearanceAction::ToggleWorkbar,
+            AppearanceAction::ToggleWorkbarGap,
+            AppearanceAction::ToggleWorkbarPosition,
+            AppearanceAction::CycleWorkbarStyle,
+            AppearanceAction::CycleWorkbarBadgeStyle,
+            AppearanceAction::ToggleWorkbarPowerline,
+            AppearanceAction::CycleWorkbarTabStyle,
+            AppearanceAction::ToggleAnimations,
+            AppearanceAction::ToggleHighlightFocusedBackground,
+            AppearanceAction::ToggleHighlightFocusedBorder,
+            AppearanceAction::ToggleBorderMerge,
+            AppearanceAction::CycleBorderStyle,
+        ];
+        for action in actions {
+            assert!(
+                !appearance_palette_aliases(action).is_empty(),
+                "missing aliases for {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn change_appearance_command_aliases_cover_recent_controls() {
+        let aliases = command_palette_aliases("change-appearance");
+        for term in [
+            "padding",
+            "powerline",
+            "workbar badge",
+            "workbar tab",
+            "workbar style",
+            "titlebar style",
+        ] {
+            assert!(
+                aliases.iter().any(|alias| alias.as_ref() == term),
+                "missing change-appearance alias: {term}"
+            );
+        }
+    }
 }

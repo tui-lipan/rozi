@@ -36,6 +36,10 @@ pub fn session_picker_key() -> &'static str {
     "hyprmux-session-picker"
 }
 
+pub fn client_list_key() -> &'static str {
+    "hyprmux-client-list"
+}
+
 pub fn theme_picker_key() -> &'static str {
     "hyprmux-theme-picker"
 }

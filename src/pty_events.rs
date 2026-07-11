@@ -4,6 +4,20 @@ use crate::HyprmuxApp;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::PaneId;
 
+fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
+    let reason = ctx.state.pane_input_block_reason()?.to_string();
+    let notify = ctx
+        .state
+        .last_blocked_input_toast
+        .is_none_or(|last| last.elapsed() >= std::time::Duration::from_secs(2));
+    if notify {
+        ctx.state.last_blocked_input_toast = Some(std::time::Instant::now());
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, reason.clone()));
+    }
+    Some(reason)
+}
+
 pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
@@ -61,6 +75,9 @@ pub(crate) fn forward_key_to_pane(
     id: PaneId,
     key: KeyEvent,
 ) -> Update {
+    if input_blocked(ctx).is_some() {
+        return Update::full();
+    }
     let targets = synchronized_key_targets(&ctx.state, id);
     forward_key_to_targets(ctx, &targets, key)
 }
@@ -103,6 +120,9 @@ pub(crate) fn send_pane_bytes(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> std::result::Result<(), String> {
+    if let Some(reason) = input_blocked(ctx) {
+        return Err(reason);
+    }
     let client = ctx.state.session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Ok(());
@@ -158,6 +178,9 @@ pub(crate) fn handle_pane_input(
         // installed still enables bracketed paste and focus reports.
         return Update::none();
     }
+    if input_blocked(ctx).is_some() {
+        return Update::full();
+    }
 
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -180,6 +203,9 @@ pub(crate) fn handle_pane_mouse(
     // hover callback runs, so on-hover focus would otherwise never fire over a full-screen TUI.
     // Forwarded mouse activity means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::focus_ops::hover_focus_pane(ctx, id);
+    if input_blocked(ctx).is_some() {
+        return Update::full();
+    }
 
     let client = ctx.state.session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {

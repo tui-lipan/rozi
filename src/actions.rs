@@ -205,6 +205,9 @@ fn execute_action_inner(
     if is_layout_mutating(&ctx.state, action) && crate::session_ops::nudge_if_follower(ctx) {
         return Update::full();
     }
+    if !crate::commands::command_available(action, &ctx.state) {
+        return Update::full();
+    }
     match action {
         Action::Spawn => spawn_pane(ctx),
         Action::Close => {
@@ -288,10 +291,11 @@ fn execute_action_inner(
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
+        Action::OpenClientList => crate::session_ops::open_client_list(ctx),
         Action::RenameSession => crate::session_ops::open_rename_session(ctx),
         Action::NewTemporarySession => {
             if ctx.state.session_attached
-                && ctx.state.is_ephemeral_session()
+                && crate::session_ops::may_shutdown_ephemeral(&ctx.state)
                 && confirmations_enabled
                 && ctx.state.config.confirm.new_temporary_session
                 && !crate::exit_ops::confirm_new_temporary_session(ctx)
@@ -307,6 +311,7 @@ fn execute_action_inner(
             update
         }
         Action::TakeControl => crate::session_ops::take_control(ctx),
+        Action::ToggleInputLock => crate::session_ops::toggle_input_lock(ctx),
         Action::Detach => crate::exit_ops::detach(ctx),
         Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),
         Action::KillWorkspace => {

@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -51,12 +51,21 @@ pub struct PaneMeta {
     pub exited: Option<i32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientInfo {
+    pub id: ClientId,
+    pub label: String,
+    pub read_only: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ClientMessage {
     Attach {
         session: String,
         protocol_version: u32,
+        label: String,
+        read_only: bool,
     },
     /// Picker probe: report session status without registering the connection as a client and
     /// without any replay seeding. Cheap enough to run against many sockets concurrently.
@@ -105,6 +114,12 @@ pub enum ClientMessage {
     },
     /// Steal the layout-control lease (tmux-style instant takeover, subject to a cooldown).
     TakeControl,
+    GrantControl {
+        to: ClientId,
+    },
+    SetInputLock {
+        locked: bool,
+    },
     /// Heartbeat reply to a [`ServerMessage::Ping`].
     Pong {
         seq: u64,
@@ -145,7 +160,8 @@ pub enum ServerMessage {
         layout_rev: u64,
         layout: Option<SharedLayout>,
         controller: Option<ClientId>,
-        clients: u32,
+        clients: Vec<ClientInfo>,
+        input_locked: bool,
     },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
@@ -193,7 +209,8 @@ pub enum ServerMessage {
         reason: ControllerChangeReason,
     },
     ClientsChanged {
-        attached: u32,
+        clients: Vec<ClientInfo>,
+        input_locked: bool,
     },
     Ping {
         seq: u64,
@@ -426,6 +443,8 @@ mod tests {
         let msg = ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            label: "alice".into(),
+            read_only: false,
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &msg).unwrap();
@@ -438,6 +457,8 @@ mod tests {
         let msg = ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            label: "alice".into(),
+            read_only: true,
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &msg).unwrap();
@@ -498,11 +519,13 @@ mod tests {
         let value = serde_json::to_value(ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            label: "alice".into(),
+            read_only: true,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":3})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":4,"label":"alice","read_only":true})
         );
     }
 
@@ -515,7 +538,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":3})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":4})
         );
     }
 
@@ -532,6 +555,21 @@ mod tests {
     }
 
     #[test]
+    fn grant_control_and_input_lock_round_trip() {
+        for message in [
+            ClientMessage::GrantControl { to: 7 },
+            ClientMessage::SetInputLock { locked: true },
+        ] {
+            let mut bytes = Vec::new();
+            write_frame(&mut bytes, &message).unwrap();
+            assert_eq!(
+                read_frame::<_, ClientMessage>(&mut &bytes[..]).unwrap(),
+                message
+            );
+        }
+    }
+
+    #[test]
     fn golden_controller_changed_and_clients_changed_json_shape() {
         assert_eq!(
             serde_json::to_value(ServerMessage::ControllerChanged {
@@ -542,8 +580,16 @@ mod tests {
             serde_json::json!({"type":"controller-changed","controller":3,"reason":"taken"})
         );
         assert_eq!(
-            serde_json::to_value(ServerMessage::ClientsChanged { attached: 2 }).unwrap(),
-            serde_json::json!({"type":"clients-changed","attached":2})
+            serde_json::to_value(ServerMessage::ClientsChanged {
+                clients: vec![ClientInfo {
+                    id: 1,
+                    label: "alice".into(),
+                    read_only: false
+                }],
+                input_locked: true,
+            })
+            .unwrap(),
+            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false}],"input_locked":true})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Ping { seq: 9 }).unwrap(),
@@ -585,6 +631,8 @@ mod tests {
         let attach = ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            label: "alice".into(),
+            read_only: false,
         };
         let mut encoded = Vec::new();
         write_frame(&mut encoded, &attach).unwrap();

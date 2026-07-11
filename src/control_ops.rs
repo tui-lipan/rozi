@@ -125,6 +125,9 @@ fn send_text(
     target: Option<PaneId>,
     text: String,
 ) -> ControlResponse {
+    if let Some(reason) = ctx.state.pane_input_block_reason() {
+        return ControlResponse::error(reason);
+    }
     let id = target.or(ctx.state.focused_pane);
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
@@ -156,6 +159,10 @@ fn run_action(
         )));
         return Update::full();
     };
+    if crate::actions::is_layout_mutating(&ctx.state, action) && !ctx.state.is_controller() {
+        let _ = reply.send(ControlResponse::error("not controller"));
+        return Update::full();
+    }
     let update = execute_action(ctx, action);
     let _ = reply.send(ControlResponse::empty());
     update
@@ -184,6 +191,9 @@ fn switch_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Cont
 }
 
 fn move_to_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {
+    if !ctx.state.is_controller() {
+        return ControlResponse::error("not controller");
+    }
     let Some(response) = validate_workspace_index(index) else {
         move_focused_to_workspace(&mut ctx.state, index - 1);
         request_current_pane_focus(ctx);
@@ -213,6 +223,10 @@ fn new_pane(
     keep_open: bool,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
+    if !ctx.state.is_controller() {
+        let _ = reply.send(ControlResponse::error("not controller"));
+        return Update::full();
+    }
     let workspace_index = match workspace_for_source(&ctx.state, source) {
         Ok(index) => index,
         Err(message) => {

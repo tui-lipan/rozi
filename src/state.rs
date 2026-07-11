@@ -717,6 +717,10 @@ pub struct SessionPickerState {
     pub pending_open: Option<usize>,
 }
 
+pub struct ClientListState {
+    pub selected: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingDestructive {
     ClosePane(PaneId),
@@ -959,6 +963,8 @@ pub struct State {
     pub profile_picker: Option<ProfilePickerState>,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
+    pub client_list: Option<ClientListState>,
+    pub last_blocked_input_toast: Option<Instant>,
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
@@ -1013,6 +1019,7 @@ pub struct PendingSessionAttach {
     /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
     /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
     pub autostart: bool,
+    pub read_only: bool,
 }
 
 /// Per-run maximum orphan bytes buffered per pane before oldest data is dropped (see
@@ -1033,7 +1040,9 @@ pub struct SharedSessionState {
     /// The current layout controller, or `None` between promotions.
     pub controller: Option<crate::shared_layout::ClientId>,
     /// How many clients are attached to the session (including this one).
-    pub attached_clients: u32,
+    pub clients: Vec<crate::session::protocol::ClientInfo>,
+    pub input_locked: bool,
+    pub read_only: bool,
     /// The controller's canonical pane canvas in cells (excluding the workbar). Followers letterbox
     /// to this; `None` until the first layout with a canvas is seen.
     pub canonical_canvas: Option<(u16, u16)>,
@@ -1059,7 +1068,9 @@ impl SharedSessionState {
             layout_rev: 0,
             assumed_rev: 0,
             controller: None,
-            attached_clients: 1,
+            clients: Vec::new(),
+            input_locked: false,
+            read_only: false,
             canonical_canvas: None,
             last_committed_layout: None,
             orphan_output: HashMap::new(),
@@ -1170,6 +1181,8 @@ impl State {
             profile_picker: None,
             show_session_picker: false,
             session_picker: None,
+            client_list: None,
+            last_blocked_input_toast: None,
             session_picker_epoch: 0,
             copy_mode: None,
             copy_flash: None,
@@ -1220,7 +1233,18 @@ impl State {
     pub fn attached_client_count(&self) -> u32 {
         self.shared
             .as_ref()
-            .map_or(1, |shared| shared.attached_clients)
+            .map_or(1, |shared| shared.clients.len().max(1) as u32)
+    }
+
+    pub fn pane_input_block_reason(&self) -> Option<&'static str> {
+        let shared = self.shared.as_ref()?;
+        if shared.read_only {
+            Some("Attached read-only")
+        } else if shared.input_locked && !shared.is_controller() {
+            Some("Input is locked to the controller")
+        } else {
+            None
+        }
     }
 
     /// The canonical pane canvas the controller publishes, if this client is a follower that

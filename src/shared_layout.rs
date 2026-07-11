@@ -660,7 +660,18 @@ mod reconciler_tests {
         state.session_client = Some(client);
         let mut shared = SharedSessionState::new(1);
         shared.controller = Some(2); // another client controls the layout; we follow.
-        shared.attached_clients = 2;
+        shared.clients = vec![
+            crate::session::protocol::ClientInfo {
+                id: 1,
+                label: "a".into(),
+                read_only: false,
+            },
+            crate::session::protocol::ClientInfo {
+                id: 2,
+                label: "b".into(),
+                read_only: false,
+            },
+        ];
         state.shared = Some(shared);
     }
 
@@ -729,7 +740,18 @@ mod reconciler_tests {
                 state.session_client = Some(client);
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(1); // we are the controller: our own echoes must not apply.
-                shared.attached_clients = 2;
+                shared.clients = vec![
+                    crate::session::protocol::ClientInfo {
+                        id: 1,
+                        label: "a".into(),
+                        read_only: false,
+                    },
+                    crate::session::protocol::ClientInfo {
+                        id: 2,
+                        label: "b".into(),
+                        read_only: false,
+                    },
+                ];
                 state.shared = Some(shared);
             }
             backend.render();

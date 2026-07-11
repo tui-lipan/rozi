@@ -51,6 +51,7 @@ pub struct HyprmuxApp {
     control_listener: Option<std::os::unix::net::UnixListener>,
     control_guard: Option<control::ControlSocketGuard>,
     attach_session: Option<String>,
+    read_only: bool,
     /// Whether a bare launch should open the session picker before attaching (`--pick` or
     /// `[session] startup = "picker"`). Only honored when there is no `--attach`/`--session` and at
     /// least one named session exists at startup.
@@ -69,6 +70,7 @@ impl Default for HyprmuxApp {
             control_listener: None,
             control_guard: None,
             attach_session: None,
+            read_only: false,
             want_startup_picker: false,
         }
     }
@@ -85,6 +87,7 @@ impl HyprmuxApp {
         control_listener: Option<std::os::unix::net::UnixListener>,
         control_guard: Option<control::ControlSocketGuard>,
         attach_session: Option<String>,
+        read_only: bool,
         want_startup_picker: bool,
     ) -> Self {
         Self {
@@ -96,6 +99,7 @@ impl HyprmuxApp {
             control_listener,
             control_guard,
             attach_session,
+            read_only,
             want_startup_picker,
         }
     }
@@ -160,6 +164,9 @@ pub enum Msg {
     SessionPickerDetachCurrent,
     SessionPickerKillSelected,
     SessionPickerNameCurrent,
+    CloseClientList,
+    ClientListSelect(usize),
+    ClientListGrant(usize),
     FocusPane(PaneId),
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
@@ -211,7 +218,9 @@ pub enum Msg {
         layout_rev: u64,
         layout: Option<shared_layout::SharedLayout>,
         controller: Option<shared_layout::ClientId>,
-        clients: u32,
+        clients: Vec<session::protocol::ClientInfo>,
+        input_locked: bool,
+        read_only: bool,
     },
     SessionLayoutCommitted {
         epoch: u64,
@@ -231,7 +240,8 @@ pub enum Msg {
     },
     SessionClientsChanged {
         epoch: u64,
-        attached: u32,
+        clients: Vec<session::protocol::ClientInfo>,
+        input_locked: bool,
     },
     SessionPing {
         epoch: u64,
@@ -354,10 +364,12 @@ impl Component for HyprmuxApp {
                 name: name.clone(),
                 client: None,
                 autostart: true,
+                read_only: self.read_only,
             });
             SessionStart::Attach { epoch, name }
         };
 
+        let startup_read_only = self.read_only;
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             link.send(Msg::CommandLinkReady(link.clone()));
             config_ops::spawn_config_watcher(&link);
@@ -369,7 +381,7 @@ impl Component for HyprmuxApp {
                 SessionStart::Attach { epoch, name } => {
                     let session_link = link.clone();
                     std::thread::spawn(move || {
-                        attach_session_client(epoch, name, true, session_link)
+                        attach_session_client(epoch, name, true, startup_read_only, session_link)
                     });
                 }
                 SessionStart::Picker { epoch } => {
@@ -447,6 +459,7 @@ pub(crate) fn attach_session_client(
     epoch: u64,
     name: String,
     autostart: bool,
+    read_only: bool,
     link: CommandLink<Msg>,
 ) {
     use std::sync::mpsc;
@@ -464,7 +477,7 @@ pub(crate) fn attach_session_client(
     let mut server_child: Option<std::process::Child> = None;
     loop {
         let (tx, rx) = mpsc::channel();
-        match session::client::SessionClient::connect_attached(&path, name.clone(), tx) {
+        match session::client::SessionClient::connect_attached(&path, name.clone(), tx, read_only) {
             Ok((client, attached)) => {
                 link.send(Msg::SessionConnected {
                     epoch,
@@ -620,6 +633,7 @@ fn server_message_to_msg(
                 layout,
                 controller,
                 clients,
+                input_locked,
                 ..
             } => Msg::SessionAttached {
                 epoch,
@@ -629,7 +643,12 @@ fn server_message_to_msg(
                 layout_rev,
                 layout,
                 controller,
+                read_only: clients
+                    .iter()
+                    .find(|client| client.id == client_id)
+                    .is_some_and(|client| client.read_only),
                 clients,
+                input_locked,
             },
             ServerMessage::SessionInfo { .. } => {
                 // Query-only probe reply; an attached client never sees this. Route to a harmless
@@ -664,9 +683,14 @@ fn server_message_to_msg(
                     reason,
                 }
             }
-            ServerMessage::ClientsChanged { attached } => {
-                Msg::SessionClientsChanged { epoch, attached }
-            }
+            ServerMessage::ClientsChanged {
+                clients,
+                input_locked,
+            } => Msg::SessionClientsChanged {
+                epoch,
+                clients,
+                input_locked,
+            },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
             ServerMessage::Resized {
                 pane_id,
@@ -717,7 +741,8 @@ impl HyprmuxApp {
         pane: &Pane,
         viewport_changed: bool,
     ) -> TransitionConfig {
-        if viewport_changed
+        if !ctx.state.is_controller()
+            || viewport_changed
             || ctx
                 .state
                 .moving_pane
@@ -971,6 +996,7 @@ fn main() -> Result<()> {
         control_listener,
         control_guard,
         attach_session,
+        cli.read_only,
         want_startup_picker,
     ))
     .run()
@@ -985,6 +1011,7 @@ struct CliArgs {
     /// (also enabled by `[session] startup = "picker"`). Ignored when `--attach`/`--session` is
     /// given or no named session exists.
     pick: bool,
+    read_only: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1040,6 +1067,10 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
                         reject_trailing_control_args(&mut iter, "--server")?;
                         return Ok(ParsedCli::Server { name });
                     }
+                    Some("--read-only") => {
+                        cli.attach_session = Some(name);
+                        cli.read_only = true;
+                    }
                     Some(other) => {
                         return Err(format!(
                             "unexpected argument `{other}` after --session <NAME>"
@@ -1058,6 +1089,9 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
             }
             "--pick" => {
                 cli.pick = true;
+            }
+            "--read-only" => {
+                cli.read_only = true;
             }
             "--profile" | "-p" => {
                 let name = iter
@@ -1221,6 +1255,9 @@ fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
     if socket_flag_seen {
         return Err("--socket requires a control command".to_string());
     }
+    if cli.read_only && cli.attach_session.is_none() {
+        return Err("--read-only requires --attach or --session".to_string());
+    }
     Ok(ParsedCli::Run(cli))
 }
 
@@ -1363,6 +1400,8 @@ fn run_kill_session_cli(name: &str) -> Result<()> {
                 &ClientMessage::Attach {
                     session: name.to_string(),
                     protocol_version: PROTOCOL_VERSION,
+                    label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+                    read_only: false,
                 },
             )?;
             match session::protocol::read_frame::<_, ServerMessage>(&mut stream)? {
@@ -1402,8 +1441,8 @@ USAGE:
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
     hyprmux [--socket PATH] switch-workspace <1-9>
     hyprmux [--socket PATH] move-to-workspace <1-9>
-    hyprmux --attach <NAME>
-    hyprmux --session <NAME>
+    hyprmux --attach <NAME> [--read-only]
+    hyprmux --session <NAME> [--read-only]
     hyprmux --pick
     hyprmux list-sessions
     hyprmux kill-session <NAME>
@@ -1417,6 +1456,7 @@ OPTIONS:
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this socket
         --pick            Open the session picker at startup when a named session exists
+        --read-only       Attach as a viewer that cannot type or control the layout
 
 A bare PROFILE positional is equivalent to --profile PROFILE.
 Leave the running app with prefix d (detach) or a configured quit binding."
@@ -1947,6 +1987,17 @@ mod tests {
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
         assert_eq!(session.attach_session.as_deref(), Some("dev"));
         assert!(parse_cli_args(vec!["kill-session".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_read_only_requires_attach_target() {
+        assert!(parse_cli_args(vec!["--read-only".into()]).is_err());
+        let args = expect_run(
+            parse_cli_args(vec!["--attach".into(), "dev".into(), "--read-only".into()])
+                .expect("parses"),
+        );
+        assert_eq!(args.attach_session.as_deref(), Some("dev"));
+        assert!(args.read_only);
     }
 
     #[test]

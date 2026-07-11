@@ -67,14 +67,11 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     } else if state.mode == Mode::Copy {
         trailing.push(TrailingChip::badge(" COPY ", text_fg, theme.status.info));
     }
-    // Shared-session lease chip: only when more than one client is attached, so a solo session
-    // stays uncluttered. Controller = success-colored CTRL, follower = info-colored VIEW.
-    if state.session_attached && state.attached_client_count() > 1 {
-        if state.is_controller() {
-            trailing.push(TrailingChip::badge(" CTRL ", text_fg, theme.status.success));
-        } else {
-            trailing.push(TrailingChip::badge(" VIEW ", text_fg, theme.status.info));
-        }
+    // Keep session identity in the configured session badge and collaboration state in one chip.
+    // A normal solo client needs no status; read-only remains visible because it explains why
+    // typing is blocked.
+    if let Some((label, color)) = collaboration_status(state, theme) {
+        trailing.push(TrailingChip::badge(label, text_fg, color));
     }
     for item in &workbar_cfg.right {
         if let Some(chip) = trailing_chip(ctx, item) {
@@ -97,6 +94,25 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
         left_cap_color.unwrap_or(panel_bg),
         right_cap_color,
     )
+}
+
+fn collaboration_status(
+    state: &crate::state::State,
+    theme: &Theme,
+) -> Option<(&'static str, Color)> {
+    let shared = state.shared.as_ref()?;
+    if shared.read_only {
+        return Some((" READ ONLY ", theme.status.warning));
+    }
+    if shared.clients.len() <= 1 {
+        return None;
+    }
+    Some(match (shared.is_controller(), shared.input_locked) {
+        (true, true) => (" CTRL LOCK ", theme.status.warning),
+        (true, false) => (" CTRL ", theme.status.success),
+        (false, true) => (" FOLLOW LOCK ", theme.status.warning),
+        (false, false) => (" FOLLOW ", theme.status.info),
+    })
 }
 
 /// One element of the workbar's trailing (right-hand) cluster. `Badge` chips are colored pills
@@ -162,24 +178,30 @@ fn trailing_cluster(
     if chips.is_empty() {
         return None;
     }
-    let left_cap = caps.map(|c| c.0);
     let mut cluster = HStack::new()
         .width(Length::Auto)
         .height(Length::Px(WORKBAR_HEIGHT))
         .gap(if powerline { 0 } else { 1 });
     // With powerline on, a badge's cap blends from its left neighbor's color; the first chip starts
-    // from the panel bar. With it off, every cap sits over the panel bar and chips keep a gap.
+    // from the panel bar. With it off, every cap sits over the panel bar, each badge is a full pill
+    // (caps on both sides), and chips keep a gap.
     let mut prev_bg = panel_bg;
     for chip in chips {
         match chip {
             TrailingChip::Badge { label, text_fg, bg } => {
+                let side = if powerline {
+                    BadgeCap::Left
+                } else {
+                    BadgeCap::Both
+                };
                 cluster = cluster.child(workbar_badge(
                     &label,
                     text_fg,
                     bg,
                     prev_bg,
-                    left_cap,
-                    BadgeCap::Left,
+                    panel_bg,
+                    caps,
+                    side,
                 ));
                 prev_bg = if powerline { bg } else { panel_bg };
             }
@@ -302,12 +324,14 @@ fn workbar_with_caps(
         .into()
 }
 
-/// Which end a workbar badge's cap sits on. The title chip caps on the right (it starts flush at
-/// the leading edge); mode chips cap on the left (they end flush at the trailing edge).
+/// Which end(s) a workbar badge caps. The title chip caps on the right (it starts flush at the
+/// leading edge); powerline mode chips cap on the left (they end flush at the trailing edge); with
+/// powerline off each trailing badge is a standalone pill capped on both sides.
 #[derive(Clone, Copy)]
 enum BadgeCap {
     Left,
     Right,
+    Both,
 }
 
 /// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with an optional powerline
@@ -320,12 +344,13 @@ fn workbar_badge(
     label: &str,
     text_fg: Color,
     badge_bg: Color,
-    panel_bg: Color,
-    cap: Option<&'static str>,
+    left_neighbor_bg: Color,
+    right_neighbor_bg: Color,
+    caps: Option<(&'static str, &'static str)>,
     side: BadgeCap,
 ) -> Element {
     let body_style = Style::new().fg(text_fg).bg(badge_bg).bold();
-    let Some(glyph) = cap else {
+    let Some((left_glyph, right_glyph)) = caps else {
         // Padded: a plain flush block that keeps the label's blank side padding.
         return Text::new(label.to_string())
             .style(body_style)
@@ -333,28 +358,39 @@ fn workbar_badge(
             .height(Length::Px(1))
             .into();
     };
-    // Capped: the cap stands in for the padding on its side, so drop that padding space.
+    // Capped: each cap stands in for the padding on its side, so drop that padding space.
     let label = match side {
         BadgeCap::Left => label.strip_prefix(' ').unwrap_or(label),
         BadgeCap::Right => label.strip_suffix(' ').unwrap_or(label),
+        BadgeCap::Both => label
+            .strip_prefix(' ')
+            .unwrap_or(label)
+            .strip_suffix(' ')
+            .unwrap_or(label),
     };
     let body = Text::new(label.to_string())
         .style(body_style)
         .width(Length::Auto)
         .height(Length::Px(1));
-    let cap_el = Text::new(glyph)
-        .style(
-            Style::new()
-                .fg(badge_bg)
-                .bg(panel_bg)
-                .contrast_policy(ContrastPolicy::Off),
-        )
-        .width(Length::Px(1))
-        .height(Length::Px(1));
+    let cap_el = |glyph: &'static str, under_bg: Color| {
+        Text::new(glyph)
+            .style(
+                Style::new()
+                    .fg(badge_bg)
+                    .bg(under_bg)
+                    .contrast_policy(ContrastPolicy::Off),
+            )
+            .width(Length::Px(1))
+            .height(Length::Px(1))
+    };
     let row = HStack::new().width(Length::Auto).height(Length::Px(1));
     match side {
-        BadgeCap::Left => row.child(cap_el).child(body),
-        BadgeCap::Right => row.child(body).child(cap_el),
+        BadgeCap::Left => row.child(cap_el(left_glyph, left_neighbor_bg)).child(body),
+        BadgeCap::Right => row.child(body).child(cap_el(right_glyph, right_neighbor_bg)),
+        BadgeCap::Both => row
+            .child(cap_el(left_glyph, left_neighbor_bg))
+            .child(body)
+            .child(cap_el(right_glyph, right_neighbor_bg)),
     }
     .into()
 }
@@ -428,12 +464,8 @@ fn left_segment_element(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option
         fg,
         bg,
         ctx.state.theme.surface.panel,
-        ctx.state
-            .config
-            .pane
-            .workbar_badge_style
-            .caps()
-            .map(|c| c.1),
+        ctx.state.theme.surface.panel,
+        ctx.state.config.pane.workbar_badge_style.caps(),
         BadgeCap::Right,
     ))
 }
@@ -591,7 +623,8 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 #[cfg(test)]
 mod tests {
     use super::{
-        curated_color, resolve_badge_color, workspace_placeholder_label, workspace_tab_label,
+        collaboration_status, curated_color, resolve_badge_color, workspace_placeholder_label,
+        workspace_tab_label,
     };
     use crate::config::{BadgeColor, WorkbarSegment};
     use tui_lipan::prelude::Theme;
@@ -663,5 +696,41 @@ mod tests {
         assert_eq!(workspace_placeholder_label(None, 2), "3");
         assert_eq!(workspace_placeholder_label(Some(""), 2), "3");
         assert_eq!(workspace_placeholder_label(Some("code"), 2), "code");
+    }
+
+    #[test]
+    fn collaboration_status_is_single_contextual_chip() {
+        let theme = Theme::default();
+        let mut state =
+            crate::state::State::new(crate::config::HyprmuxConfig::default(), theme.clone());
+        let mut shared = crate::state::SharedSessionState::new(1);
+        shared.controller = Some(1);
+        shared.clients = vec![crate::session::protocol::ClientInfo {
+            id: 1,
+            label: "one".into(),
+            read_only: false,
+        }];
+        state.shared = Some(shared);
+        assert!(collaboration_status(&state, &theme).is_none());
+
+        let shared = state.shared.as_mut().unwrap();
+        shared.clients.push(crate::session::protocol::ClientInfo {
+            id: 2,
+            label: "two".into(),
+            read_only: false,
+        });
+        assert_eq!(collaboration_status(&state, &theme).unwrap().0, " CTRL ");
+        state.shared.as_mut().unwrap().input_locked = true;
+        assert_eq!(
+            collaboration_status(&state, &theme).unwrap().0,
+            " CTRL LOCK "
+        );
+        let shared = state.shared.as_mut().unwrap();
+        shared.client_id = 2;
+        shared.read_only = true;
+        assert_eq!(
+            collaboration_status(&state, &theme).unwrap().0,
+            " READ ONLY "
+        );
     }
 }

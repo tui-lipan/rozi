@@ -187,6 +187,93 @@ impl Component for ChainApp {
     }
 }
 
+/// Mirrors `view::workbar::trailing_cluster` when badge caps are on and powerline is off: each
+/// chip is a standalone pill with caps on both sides, separated by a 1-cell gap, and every cap
+/// sits over the panel bar.
+struct StandaloneApp;
+
+impl Component for StandaloneApp {
+    type State = ();
+    type Message = Msg;
+    type Properties = ();
+
+    fn create_state(&self, _props: &Self::Properties) -> Self::State {}
+
+    fn update(&mut self, _msg: Msg, _ctx: &mut Context<Self>) -> Update {
+        Update::none()
+    }
+
+    fn view(&self, _ctx: &Context<Self>) -> Element {
+        let badge = |label: &'static str, bg: Color| -> Element {
+            HStack::new()
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .child(
+                    Text::new(LEFT_CAP)
+                        .style(Style::new().fg(bg).bg(PANEL))
+                        .width(Length::Px(1))
+                        .height(Length::Px(1)),
+                )
+                .child(
+                    Text::new(label)
+                        .style(Style::new().fg(BACKDROP).bg(bg).bold())
+                        .height(Length::Px(1)),
+                )
+                .child(
+                    Text::new(RIGHT_CAP)
+                        .style(Style::new().fg(bg).bg(PANEL))
+                        .width(Length::Px(1))
+                        .height(Length::Px(1)),
+                )
+                .into()
+        };
+        let cluster = HStack::new()
+            .width(Length::Auto)
+            .height(Length::Px(1))
+            .gap(1)
+            .child(badge("PREFIX", WARNING))
+            .child(badge("session", SESSION));
+        VStack::new()
+            .align(Align::Stretch)
+            .style(Style::new().bg(BACKDROP))
+            .child(
+                HStack::new()
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .style(Style::new().bg(PANEL))
+                    .child(Spacer::new())
+                    .child(cluster),
+            )
+            .into()
+    }
+}
+
+#[test]
+fn trailing_badges_are_standalone_pills_when_powerline_is_off() {
+    let mut backend = TestBackend::new(StandaloneApp);
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 24,
+        h: 1,
+    });
+    backend.render();
+    let frame = backend.capture_frame();
+    let line = frame.to_fixed_grid_lines()[0].clone();
+    eprintln!("{line}");
+    let first_left = line.find(LEFT_CAP).expect("prefix chip has a left cap");
+    let first_right = line[first_left + LEFT_CAP.len()..]
+        .find(RIGHT_CAP)
+        .expect("prefix chip has a right cap")
+        + first_left
+        + LEFT_CAP.len();
+    let first_right_col = line[..first_right].chars().count();
+    let right_cap = frame.cell(first_right_col as u16, 0);
+    assert_eq!(right_cap.symbol, RIGHT_CAP, "prefix chip rounds off on the right");
+    assert_eq!(right_cap.fg, WARNING, "right cap uses the badge color");
+    assert_eq!(right_cap.bg, PANEL, "right cap sits over the panel bar");
+}
+
 #[test]
 fn trailing_badges_chain_into_a_powerline_when_capped() {
     let mut backend = TestBackend::new(ChainApp);

@@ -11,7 +11,7 @@ use tui_lipan::prelude::*;
 
 use crate::session::protocol::Frame;
 use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
-use crate::shared_layout::SharedLayout;
+use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 #[derive(Clone)]
@@ -49,9 +49,10 @@ impl SessionClient {
         path: &Path,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
+        read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
         let stream = UnixStream::connect(path)?;
-        Self::from_stream_attached(stream, session, inbound)
+        Self::from_stream_attached(stream, session, inbound, read_only)
     }
 
     pub fn from_stream(
@@ -59,13 +60,14 @@ impl SessionClient {
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<Self> {
-        Ok(Self::from_stream_attached(stream, session, inbound)?.0)
+        Ok(Self::from_stream_attached(stream, session, inbound, false)?.0)
     }
 
     pub fn from_stream_attached(
         mut stream: UnixStream,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
+        read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
         let mut reader = stream.try_clone()?;
         reader.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -74,6 +76,8 @@ impl SessionClient {
             &ClientMessage::Attach {
                 session: session.into(),
                 protocol_version: PROTOCOL_VERSION,
+                label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+                read_only,
             },
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
@@ -201,6 +205,12 @@ impl SessionClient {
     /// Request the layout-control lease (instant takeover, subject to the server cooldown).
     pub fn take_control(&self) {
         self.send_control(ClientMessage::TakeControl);
+    }
+    pub fn grant_control(&self, to: ClientId) {
+        self.send_control(ClientMessage::GrantControl { to });
+    }
+    pub fn set_input_lock(&self, locked: bool) {
+        self.send_control(ClientMessage::SetInputLock { locked });
     }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {

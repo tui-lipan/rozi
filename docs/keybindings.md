@@ -192,7 +192,7 @@ second confirmation.
 | --- | --- | --- |
 | Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches the current named session and exits the client; `Ctrl+K` (twice) kills the selected named session or resets a selected ephemeral session. Killing or resetting the current session shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from *Detach*, which names if needed and then leaves. See [Sessions](sessions.md). |
-| New temporary session | *(palette only)* | Discard the current ephemeral session and start a fresh empty one (its panes are killed). Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls whether it needs a second trigger. |
+| New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded and its panes are killed. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls confirmation before discarding an ephemeral session. |
 | Take layout control | `g` | Steal the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. Takes effect instantly; a brief cooldown blocks rapid tug-of-war. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
@@ -280,3 +280,8 @@ While an overlay is open (command palette, help, theme picker, search, rename):
   in another pane (or workspace) switches focus there.
 - In **rename**, submitting an empty name clears the custom title (falling back to the
   program's terminal title, then the pane's default label).
+## Session collaboration
+
+The command palette exposes `session-clients` to inspect attached clients and grant control, and
+`toggle-input-lock` to restrict terminal input to the current controller. Both ids can be used in
+`[keys]` bindings.

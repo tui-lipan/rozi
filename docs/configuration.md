@@ -264,7 +264,7 @@ it from a searchable list is already a deliberate choice.
 | `kill_workspace` | `true` | Closing every pane on the active workspace. |
 | `kill_session` | `true` | Shutting down the attached named session. |
 | `quit_ephemeral` | `true` | Quitting while on an ephemeral session with a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
-| `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). No effect on named sessions or when there is no live pane. |
+| `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
 
 **Not covered by `[confirm]`:** the session picker and the session-naming prompt carry their own
 built-in confirmations that are **always on** and cannot be disabled here, because they read off the

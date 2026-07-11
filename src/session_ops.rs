@@ -230,27 +230,100 @@ pub(crate) fn take_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
+    if ctx
+        .state
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.read_only)
+    {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Attached read-only"));
+        return Update::full();
+    }
     if let Some(client) = ctx.state.session_client.clone() {
         client.take_control();
     }
     Update::full()
 }
 
+pub(crate) fn open_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.session_attached {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    }
+    ctx.state.show_palette = false;
+    ctx.state.show_session_picker = false;
+    ctx.state.client_list = Some(crate::state::ClientListState { selected: 0 });
+    ctx.state.commands_dirty = true;
+    ctx.request_focus(crate::view::client_list_key());
+    Update::full()
+}
+
+pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if nudge_if_follower(ctx) {
+        return Update::full();
+    }
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        return Update::full();
+    };
+    if shared.read_only {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Attached read-only"));
+        return Update::full();
+    }
+    if let Some(client) = ctx.state.session_client.as_ref() {
+        client.set_input_lock(!shared.input_locked);
+    }
+    Update::full()
+}
+
+pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(shared) = ctx.state.shared.as_ref() else {
+        return Update::none();
+    };
+    let Some(target) = shared.clients.get(index) else {
+        return Update::none();
+    };
+    if !ctx.state.is_controller() {
+        nudge_if_follower(ctx);
+    } else if target.read_only {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            "Read-only clients cannot control the layout",
+        ));
+    } else if target.id != shared.client_id
+        && let Some(client) = ctx.state.session_client.as_ref()
+    {
+        client.grant_control(target.id);
+        ctx.state.client_list = None;
+    }
+    Update::full()
+}
+
 /// Release the currently attached session before switching away from it. The single rule used
-/// everywhere a transition leaves the current session: an ephemeral session is torn down
-/// (`shutdown`, its PTYs die with it — it is disposable and would otherwise leak an orphan
-/// server), while a named session is parked (the client detaches and the server, already
-/// layout-authoritative, stays running for later reattach). A no-op when nothing is attached.
+/// everywhere a transition leaves the current session: a solely attached controller tears down
+/// its ephemeral server, while followers, viewers, shared ephemeral clients, and named-session
+/// clients detach so they cannot destroy another client's session.
 pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
     crate::update::flush_layout_commit(ctx);
     let Some(client) = ctx.state.session_client.clone() else {
         return;
     };
-    if ctx.state.is_ephemeral_session() {
+    if may_shutdown_ephemeral(&ctx.state) {
         client.shutdown();
     } else {
         client.detach();
     }
+}
+
+pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
+    state.is_ephemeral_session()
+        && state.is_controller()
+        && state.attached_client_count() == 1
+        && state.shared.as_ref().is_none_or(|shared| !shared.read_only)
 }
 
 /// Detach the current named session and exit the client, leaving the server running for reattach.
@@ -303,12 +376,13 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         name: name.clone(),
         client: None,
         autostart: true,
+        read_only: false,
     });
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, false, link));
     }))
 }
 
@@ -349,9 +423,12 @@ pub(crate) fn attach_session_by_name(
         name: name.clone(),
         client: None,
         autostart,
+        read_only: false,
     });
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, autostart, link));
+        std::thread::spawn(move || {
+            crate::attach_session_client(epoch, name, autostart, false, link)
+        });
     }))
 }
 
@@ -428,9 +505,10 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
         name: name.clone(),
         client: None,
         autostart: true,
+        read_only: false,
     });
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, false, link));
     }))
 }
 
@@ -720,6 +798,8 @@ fn graceful_shutdown(
         &ClientMessage::Attach {
             session: name.to_string(),
             protocol_version: PROTOCOL_VERSION,
+            label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+            read_only: false,
         },
     )?;
     match crate::session::protocol::read_frame::<_, ServerMessage>(stream)? {
@@ -753,4 +833,47 @@ fn peer_pid(stream: &std::os::unix::net::UnixStream) -> Option<u32> {
         )
     };
     (ret == 0 && cred.pid > 0).then_some(cred.pid as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HyprmuxConfig;
+    use crate::session::protocol::ClientInfo;
+    use crate::state::{SharedSessionState, State, ThemePreset};
+
+    fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {
+        let mut state = State::new(HyprmuxConfig::default(), ThemePreset::Lipan.theme());
+        state.session_name = Some("eph-test".to_string());
+        state.session_attached = true;
+        let mut shared = SharedSessionState::new(client_id);
+        shared.controller = Some(controller);
+        shared.clients = clients;
+        state.shared = Some(shared);
+        state
+    }
+
+    #[test]
+    fn only_solo_ephemeral_controller_may_shutdown_on_release() {
+        let client = |id| ClientInfo {
+            id,
+            label: format!("client-{id}"),
+            read_only: false,
+        };
+        assert!(may_shutdown_ephemeral(&ephemeral_state(
+            1,
+            1,
+            vec![client(1)]
+        )));
+        assert!(!may_shutdown_ephemeral(&ephemeral_state(
+            2,
+            1,
+            vec![client(1), client(2)]
+        )));
+        assert!(!may_shutdown_ephemeral(&ephemeral_state(
+            1,
+            1,
+            vec![client(1), client(2)]
+        )));
+    }
 }

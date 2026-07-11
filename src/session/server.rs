@@ -11,8 +11,8 @@ use tui_lipan::prelude::*;
 
 use crate::control;
 use crate::session::protocol::{
-    self, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta, ServerMessage,
-    WirePalette,
+    self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
+    ServerMessage, WirePalette,
 };
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
@@ -45,6 +45,7 @@ pub struct SessionServer {
     layout: Option<SharedLayout>,
     layout_rev: u64,
     controller: Option<ClientId>,
+    input_locked: bool,
     last_takeover: Option<Instant>,
     clients: Vec<ClientConn>,
     next_client_id: ClientId,
@@ -81,6 +82,8 @@ struct ClientConn {
     /// Bytes of `outbox.front()` already written (non-blocking writes can be partial).
     front_offset: usize,
     attached: bool,
+    label: Option<String>,
+    read_only: bool,
     /// True while the initial replay seed is still queued; raises the backlog cap.
     seeding: bool,
     /// Close this connection once its outbox drains (query probes, rejected attaches).
@@ -101,6 +104,8 @@ impl ClientConn {
             outbox_bytes: 0,
             front_offset: 0,
             attached: false,
+            label: None,
+            read_only: false,
             seeding: false,
             close_after_flush: false,
             last_pong: now,
@@ -154,6 +159,7 @@ impl SessionServer {
             layout: None,
             layout_rev: 0,
             controller: None,
+            input_locked: false,
             last_takeover: None,
             clients: Vec::new(),
             next_client_id: 1,
@@ -260,8 +266,7 @@ impl SessionServer {
                 generation,
                 bytes,
             } => {
-                // Pane input is allowed from any attached client (controller or follower).
-                if self.client_attached(id) {
+                if self.client_may_input(id) {
                     self.handle_pane_input(pane_id, generation, &bytes);
                 }
             }
@@ -312,7 +317,9 @@ impl SessionServer {
             ClientMessage::Attach {
                 session,
                 protocol_version,
-            } => self.handle_attach(client_id, session, protocol_version),
+                label,
+                read_only,
+            } => self.handle_attach(client_id, session, protocol_version, label, read_only),
             ClientMessage::Query {
                 session,
                 protocol_version,
@@ -329,7 +336,16 @@ impl SessionServer {
                 title,
             } => {
                 if !self.is_controller(client_id) {
-                    return Vec::new();
+                    return vec![(
+                        Target::Sender,
+                        ServerMessage::SpawnResult {
+                            pane_id,
+                            generation,
+                            pid: None,
+                            ok: false,
+                            error: Some("not controller".to_string()),
+                        },
+                    )];
                 }
                 vec![(
                     Target::Sender,
@@ -427,6 +443,14 @@ impl SessionServer {
                 self.handle_commit_layout(client_id, base_rev, layout)
             }
             ClientMessage::TakeControl => self.handle_take_control(client_id),
+            ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
+            ClientMessage::SetInputLock { locked } => {
+                if !self.is_controller(client_id) || self.client_read_only(client_id) {
+                    return Vec::new();
+                }
+                self.input_locked = locked;
+                vec![(Target::Broadcast, self.clients_changed())]
+            }
             ClientMessage::Pong { seq: _ } => {
                 if let Some(client) = self.client_mut(client_id) {
                     client.last_pong = Instant::now();
@@ -441,6 +465,9 @@ impl SessionServer {
             }
             ClientMessage::Detach => Vec::new(),
             ClientMessage::Shutdown => {
+                if !self.is_controller(client_id) || self.client_read_only(client_id) {
+                    return Vec::new();
+                }
                 self.shutdown = true;
                 for pane in self.panes.values() {
                     if let Some(pty) = &pane.pty {
@@ -457,6 +484,8 @@ impl SessionServer {
         client_id: ClientId,
         session: String,
         protocol_version: u32,
+        label: String,
+        read_only: bool,
     ) -> Vec<(Target, ServerMessage)> {
         if protocol_version != PROTOCOL_VERSION {
             return vec![(
@@ -483,16 +512,18 @@ impl SessionServer {
         }
         if let Some(client) = self.client_mut(client_id) {
             client.attached = true;
+            client.label = Some(label);
+            client.read_only = read_only;
             client.last_pong = Instant::now();
         }
         // First attacher is auto-granted the layout-control lease.
-        let granted = if self.controller.is_none() {
+        let granted = if self.controller.is_none() && !read_only {
             self.controller = Some(client_id);
             true
         } else {
             false
         };
-        let clients = self.attached_count();
+        let clients = self.client_roster();
         let attached = ServerMessage::Attached {
             protocol_version: PROTOCOL_VERSION,
             session,
@@ -502,12 +533,10 @@ impl SessionServer {
             layout: self.layout.clone(),
             controller: self.controller,
             clients,
+            input_locked: self.input_locked,
         };
         let mut responses = vec![(Target::Sender, attached)];
-        responses.push((
-            Target::Broadcast,
-            ServerMessage::ClientsChanged { attached: clients },
-        ));
+        responses.push((Target::Broadcast, self.clients_changed()));
         if granted {
             responses.push((
                 Target::Broadcast,
@@ -572,7 +601,7 @@ impl SessionServer {
     ) -> Vec<(Target, ServerMessage)> {
         // Non-controller commits are silently dropped (client-side gating already blocks them;
         // this is defense in depth). The follower resyncs its base rev from ControllerChanged.
-        if !self.is_controller(client_id) {
+        if !self.is_controller(client_id) || self.client_read_only(client_id) {
             return Vec::new();
         }
         if base_rev != self.layout_rev {
@@ -597,6 +626,9 @@ impl SessionServer {
     }
 
     fn handle_take_control(&mut self, client_id: ClientId) -> Vec<(Target, ServerMessage)> {
+        if self.client_read_only(client_id) {
+            return Vec::new();
+        }
         if self.controller == Some(client_id) {
             return Vec::new();
         }
@@ -622,6 +654,25 @@ impl SessionServer {
         )]
     }
 
+    fn handle_grant_control(
+        &mut self,
+        client_id: ClientId,
+        to: ClientId,
+    ) -> Vec<(Target, ServerMessage)> {
+        if !self.is_controller(client_id) || !self.client_attached(to) || self.client_read_only(to)
+        {
+            return Vec::new();
+        }
+        self.controller = Some(to);
+        vec![(
+            Target::Broadcast,
+            ServerMessage::ControllerChanged {
+                controller: self.controller,
+                reason: ControllerChangeReason::Granted,
+            },
+        )]
+    }
+
     fn is_controller(&self, client_id: ClientId) -> bool {
         self.controller == Some(client_id)
     }
@@ -634,6 +685,38 @@ impl SessionServer {
         self.clients
             .iter()
             .any(|client| client.id == id && client.attached)
+    }
+
+    fn client_read_only(&self, id: ClientId) -> bool {
+        self.clients
+            .iter()
+            .find(|client| client.id == id && client.attached)
+            .is_none_or(|client| client.read_only)
+    }
+
+    fn client_may_input(&self, id: ClientId) -> bool {
+        self.client_attached(id)
+            && !self.client_read_only(id)
+            && (!self.input_locked || self.is_controller(id))
+    }
+
+    fn client_roster(&self) -> Vec<ClientInfo> {
+        self.clients
+            .iter()
+            .filter(|client| client.attached)
+            .map(|client| ClientInfo {
+                id: client.id,
+                label: client.label.clone().unwrap_or_else(|| "client".to_string()),
+                read_only: client.read_only,
+            })
+            .collect()
+    }
+
+    fn clients_changed(&self) -> ServerMessage {
+        ServerMessage::ClientsChanged {
+            clients: self.client_roster(),
+            input_locked: self.input_locked,
+        }
     }
 
     fn attached_count(&self) -> u32 {
@@ -662,7 +745,7 @@ impl SessionServer {
             self.controller = self
                 .clients
                 .iter()
-                .filter(|client| client.attached)
+                .filter(|client| client.attached && !client.read_only)
                 .map(|client| client.id)
                 .min();
             messages.push(ServerMessage::ControllerChanged {
@@ -674,9 +757,7 @@ impl SessionServer {
                 },
             });
         }
-        messages.push(ServerMessage::ClientsChanged {
-            attached: self.attached_count(),
-        });
+        messages.push(self.clients_changed());
         for message in messages {
             self.broadcast_control(&message);
         }
@@ -1178,12 +1259,28 @@ mod tests {
             ClientMessage::Attach {
                 session: server.session_name.clone(),
                 protocol_version: PROTOCOL_VERSION,
+                label: format!("client-{id}"),
+                read_only: false,
             },
         );
         assert!(
             responses
                 .iter()
                 .any(|(_, msg)| matches!(msg, ServerMessage::Attached { .. }))
+        );
+        (id, stream)
+    }
+
+    fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
+        let (id, stream) = add_client(server);
+        server.handle_message(
+            id,
+            ClientMessage::Attach {
+                session: server.session_name.clone(),
+                protocol_version: PROTOCOL_VERSION,
+                label: format!("viewer-{id}"),
+                read_only: true,
+            },
         );
         (id, stream)
     }
@@ -1227,6 +1324,8 @@ mod tests {
             ClientMessage::Attach {
                 session: "dev".into(),
                 protocol_version: PROTOCOL_VERSION + 1,
+                label: "client".into(),
+                read_only: false,
             },
         );
         assert!(
@@ -1405,7 +1504,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_from_follower_is_ignored() {
+    fn spawn_from_follower_is_rejected() {
         let mut server = SessionServer::new_named("dev");
         let (_controller, _s1) = attach_client(&mut server);
         let (follower, _s2) = attach_client(&mut server);
@@ -1423,8 +1522,95 @@ mod tests {
                 title: None,
             },
         );
-        assert!(responses.is_empty());
+        assert!(matches!(
+            responses.as_slice(),
+            [(Target::Sender, ServerMessage::SpawnResult { ok: false, error: Some(error), .. })]
+                if error == "not controller"
+        ));
         assert!(server.panes.is_empty());
+    }
+
+    #[test]
+    fn read_only_and_locked_follower_input_is_denied() {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _s1) = attach_client(&mut server);
+        let (follower, _s2) = attach_client(&mut server);
+        let (viewer, _s3) = attach_read_only_client(&mut server);
+        assert!(server.client_may_input(controller));
+        assert!(server.client_may_input(follower));
+        assert!(!server.client_may_input(viewer));
+
+        server.handle_message(controller, ClientMessage::SetInputLock { locked: true });
+        assert!(server.client_may_input(controller));
+        assert!(!server.client_may_input(follower));
+    }
+
+    #[test]
+    fn grant_control_validates_sender_and_target() {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _s1) = attach_client(&mut server);
+        let (follower, _s2) = attach_client(&mut server);
+        let (viewer, _s3) = attach_read_only_client(&mut server);
+
+        assert!(
+            server
+                .handle_message(follower, ClientMessage::GrantControl { to: controller })
+                .is_empty()
+        );
+        assert_eq!(server.controller, Some(controller));
+        assert!(
+            server
+                .handle_message(controller, ClientMessage::GrantControl { to: viewer })
+                .is_empty()
+        );
+        let responses =
+            server.handle_message(controller, ClientMessage::GrantControl { to: follower });
+        assert_eq!(server.controller, Some(follower));
+        assert!(matches!(
+            responses.as_slice(),
+            [(
+                Target::Broadcast,
+                ServerMessage::ControllerChanged {
+                    reason: ControllerChangeReason::Granted,
+                    ..
+                }
+            )]
+        ));
+    }
+
+    #[test]
+    fn shutdown_requires_writable_controller() {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _s1) = attach_client(&mut server);
+        let (follower, _s2) = attach_client(&mut server);
+        let (viewer, _s3) = attach_read_only_client(&mut server);
+
+        server.handle_message(follower, ClientMessage::Shutdown);
+        assert!(!server.shutdown);
+        server.handle_message(viewer, ClientMessage::Shutdown);
+        assert!(!server.shutdown);
+        server.handle_message(controller, ClientMessage::Shutdown);
+        assert!(server.shutdown);
+    }
+
+    #[test]
+    fn clients_changed_contains_roster_and_lock_state() {
+        let mut server = SessionServer::new_named("dev");
+        let (controller, _s1) = attach_client(&mut server);
+        let (viewer, _s2) = attach_read_only_client(&mut server);
+        server.input_locked = true;
+        let ServerMessage::ClientsChanged {
+            clients,
+            input_locked,
+        } = server.clients_changed()
+        else {
+            panic!("expected clients changed");
+        };
+        assert!(input_locked);
+        assert_eq!(clients.len(), 2);
+        assert_eq!(clients[0].id, controller);
+        assert_eq!(clients[1].id, viewer);
+        assert!(clients[1].read_only);
     }
 
     #[test]
@@ -1575,6 +1761,8 @@ mod tests {
             ClientMessage::Attach {
                 session: "dev".into(),
                 protocol_version: PROTOCOL_VERSION,
+                label: "client".into(),
+                read_only: false,
             },
         );
         let Some((

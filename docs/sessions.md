@@ -37,6 +37,7 @@ sanitized when constructing the socket path.
 ```bash
 hyprmux --attach dev            # attach UI to session "dev", starting it if needed
 hyprmux --session dev           # equivalent attach form
+hyprmux --attach dev --read-only # attach as a viewer without input authority
 hyprmux --session dev --server  # run the server process directly
 hyprmux list-sessions           # list connectable sessions with pane/layout status
 hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
@@ -171,6 +172,16 @@ reattach to it (shown as `ephemeral`) from the picker and recover the scrollback
 
 > Known limitation: the scratchpad is controller-only in this version (its pane id is shared and
 > would collide across clients).
+
+### Client roster and input control
+
+Open **Session clients** from the command palette (`session-clients`) to see every attached client,
+including its label, id, and `you`, `controller`, or `read-only` markers. The controller can select
+a writable client and press Enter or `g` to grant it layout control.
+
+The `toggle-input-lock` command restricts terminal input to the current controller. The lock follows
+the control lease automatically. Clients attached with `--read-only` cannot type, take control,
+commit layouts, or receive a grant. These policies are enforced by the session server.
 
 ## Crash recovery and reaping
 

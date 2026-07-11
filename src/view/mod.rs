@@ -4,10 +4,10 @@ mod pane;
 mod workbar;
 
 pub use keys::{
-    appearance_palette_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
-    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
-    theme_picker_key,
+    appearance_palette_key, client_list_key, palette_key, pane_padding_horizontal_key,
+    pane_padding_vertical_key, pane_terminal_key, pane_window_key, profile_picker_key,
+    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
+    session_picker_key, theme_picker_key,
 };
 pub(crate) use pane::{PaneMerge, pane_element};
 
@@ -24,7 +24,7 @@ use crate::tiling::PanePlacement;
 use pane::pane_title_bg;
 
 use overlays::{
-    appearance_overlay, help_overlay, palette_overlay, pane_padding_overlay,
+    appearance_overlay, client_list_overlay, help_overlay, palette_overlay, pane_padding_overlay,
     profile_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
     search_overlay, session_picker_overlay, theme_picker_overlay,
 };
@@ -70,7 +70,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.rename_session.is_some()
         || ctx.state.save_profile_prompt.is_some()
         || ctx.state.show_profile_picker
-        || ctx.state.show_session_picker;
+        || ctx.state.show_session_picker
+        || ctx.state.client_list.is_some();
     let dialog_dim_progress = ctx.transition::<f32>(
         "hyprmux-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -327,6 +328,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.show_session_picker {
         root = root.child(session_picker_overlay(ctx));
     }
+    if ctx.state.client_list.is_some() {
+        root = root.child(client_list_overlay(ctx));
+    }
 
     ThemeProvider::new(ctx.state.theme.clone())
         .child(root)
@@ -379,6 +383,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
 
     let palette = SearchPalette::<T>::new()
         .height(height)
+        .match_mode(SearchMatchMode::Hybrid)
         .input_border(false)
         .input_prefix("")
         .input_padding((0, 1))

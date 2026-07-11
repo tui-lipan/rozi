@@ -56,3 +56,7 @@ modifier, prefix, animations, theme, or to enable a project profile, create a co
 On startup, `hyprmux` shows toast notifications reporting whether the config file, theme file,
 and project profile were loaded - and any parse/read warnings - so a broken config never
 silently pretends to have loaded.
+## Read-only sessions
+
+Attach to a persistent session with `hyprmux --attach dev` (or `hyprmux --session dev`). Add
+`--read-only` to attach as a viewer without terminal input or layout-control authority.

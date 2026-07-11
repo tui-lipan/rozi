@@ -263,6 +263,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         name: name.clone(),
         client: None,
         autostart: true,
+        read_only: false,
     });
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
@@ -276,7 +277,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     // The theme-tick, workbar-tick, and workbar-command loops started at app launch are
     // self-sustaining and survive the state swap, so don't restart them here.
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, link));
+        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, false, link));
     }))
 }
 

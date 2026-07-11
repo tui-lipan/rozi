@@ -333,7 +333,7 @@ pub struct HyprmuxConfirmConfig {
     /// shuts the server down and kills those PTYs). Named-session quits are unaffected.
     pub quit_ephemeral: bool,
     /// Confirm before discarding the current ephemeral session to start a fresh one (its panes
-    /// are killed). No effect on named sessions or when there is no live pane.
+    /// are killed). Named sessions are detached safely and do not need confirmation.
     pub new_temporary_session: bool,
 }
 

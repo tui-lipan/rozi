@@ -103,7 +103,7 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
     }
 
     clear_pending(ctx);
-    if ctx.state.is_ephemeral_session()
+    if crate::session_ops::may_shutdown_ephemeral(&ctx.state)
         && let Some(client) = ctx.state.session_client.clone()
     {
         client.shutdown();
@@ -203,6 +203,10 @@ pub(crate) fn kill_session_with_confirmation(
             &ctx.state.theme,
             "Not attached to a named session",
         ));
+        return Update::full();
+    }
+    if !ctx.state.is_controller() {
+        crate::session_ops::nudge_if_follower(ctx);
         return Update::full();
     }
 

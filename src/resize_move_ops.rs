@@ -176,7 +176,9 @@ pub(crate) fn begin_resize(
 pub(crate) fn resize_pane(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
-    corner: ResizeCorner,
+    // The corner is fixed when the resize begins; the per-event callback value is ignored in favor
+    // of the session's stored corner so a jittery pointer near a border does not flip axes mid-drag.
+    _corner: ResizeCorner,
     from: (u16, u16),
     current: (u16, u16),
     modified: bool,
@@ -184,20 +186,24 @@ pub(crate) fn resize_pane(
     if !modified {
         return Update::none();
     }
-    ctx.state.animation = GeometryAnimation::None;
-    let session = ctx.state.resizing_pane.as_ref().filter(|session| {
+    // The drag delta is applied relative to the start snapshot captured by `begin_resize`. Without
+    // a matching session (a follower blocked from mutating the layout, or a stray drag event) there
+    // is no tree to restore first, so each event would restack the delta onto the already-resized
+    // tree and compound the drag. Bail instead of resizing.
+    let Some(session) = ctx.state.resizing_pane.as_ref().filter(|session| {
         session.id == id && session.start_x == from.0 && session.start_y == from.1
-    });
-    let corner = session.map(|session| session.corner).unwrap_or(corner);
-    if let Some(session) = session {
-        let workspace = &mut ctx.state.workspaces[session.workspace];
-        workspace.tile_tree = session.start_tile_tree.clone();
-        workspace.split_ratios = session.start_split_ratios.clone();
-        if let Some(rect) = session.start_floating_rect
-            && let Some(pane) = active_pane_mut(&mut ctx.state, id)
-        {
-            pane.floating_rect = rect;
-        }
+    }) else {
+        return Update::none();
+    };
+    ctx.state.animation = GeometryAnimation::None;
+    let corner = session.corner;
+    let workspace = &mut ctx.state.workspaces[session.workspace];
+    workspace.tile_tree = session.start_tile_tree.clone();
+    workspace.split_ratios = session.start_split_ratios.clone();
+    if let Some(rect) = session.start_floating_rect
+        && let Some(pane) = active_pane_mut(&mut ctx.state, id)
+    {
+        pane.floating_rect = rect;
     }
     let dx = (current.0 as i32 - from.0 as i32) as i16;
     let dy = (current.1 as i32 - from.1 as i32) as i16;
@@ -774,6 +780,12 @@ fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, 
 }
 
 fn ensure_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, from_x: u16, from_y: u16) {
+    // Followers are nudged once at drag start; do not re-nudge (via `begin_split_drag`) on every
+    // subsequent drag event, which would stack a toast per pointer move. A follower never has a
+    // session, so `restore_split_drag` bails the resize regardless.
+    if !ctx.state.is_controller() {
+        return;
+    }
     let workspace = ctx.state.active_workspace;
     let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
         session.kind == kind
@@ -1116,6 +1128,85 @@ mod tests {
             2,
             Direction::Down,
         ));
+    }
+
+    #[test]
+    fn follower_mouse_resize_leaves_the_layout_untouched() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::state::SharedSessionState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let split = DwindleTree::Split {
+                    axis: SplitAxis::Horizontal,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Leaf(1)),
+                    second: Box::new(DwindleTree::Leaf(2)),
+                };
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    // A follower: attached, but another client holds the layout lease.
+                    state.session_attached = true;
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(2);
+                    state.shared = Some(shared);
+
+                    let bounds = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 100.0,
+                        h: 30.0,
+                    };
+                    let workspace = &mut state.workspaces[state.active_workspace];
+                    workspace.panes.clear();
+                    workspace.panes.push(Pane::new(1, 100, bounds));
+                    workspace.panes.push(Pane::new(2, 100, bounds));
+                    workspace.tile_tree = Some(split.clone());
+                    state.focused_pane = Some(1);
+                }
+                backend.render();
+
+                // A drag that never got a `begin_resize` (followers are nudged and blocked there)
+                // must not resize: without the start snapshot every event would restack its delta
+                // onto the previous one and compound the drag.
+                for step in 1..=5u16 {
+                    backend
+                        .dispatch(Msg::ResizePane(
+                            1,
+                            ResizeCorner::LowerRight,
+                            10,
+                            10,
+                            10 + step,
+                            10,
+                            true,
+                        ))
+                        .expect("dispatch follower resize");
+                }
+
+                let state = backend.state_mut();
+                assert_eq!(
+                    state.workspaces[state.active_workspace].tile_tree,
+                    Some(split),
+                    "a follower's mouse resize must not mutate the layout"
+                );
+                assert!(
+                    state.resizing_pane.is_none(),
+                    "no resize session should be opened for a follower"
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 
     fn three_pane_stack_workspace() -> (FloatRect, Workspace) {

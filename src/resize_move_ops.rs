@@ -552,29 +552,17 @@ fn master_available_width(tile_bounds: FloatRect) -> f32 {
 }
 
 pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
-    let tile_gap = ctx.state.tile_gap();
-    let workspace_index = ctx.state.active_workspace;
-    let Some(focused) = ctx.state.focused_pane else {
-        return;
-    };
-    if active_pane_is_fullscreen(&ctx.state, focused) {
-        return;
-    }
-
-    let workspace = &mut ctx.state.workspaces[workspace_index];
-    if swap_tiled_neighbor_in_direction(workspace, bounds, top_gap, tile_gap, focused, direction) {
-        workspace.focused_pane = Some(focused);
-        ctx.state.focused_pane = Some(focused);
-        ctx.state.animation = GeometryAnimation::AxisChange;
-    }
+    reorder_focused_in_direction(ctx, direction);
 }
 
 /// Exchange the focused pane with its directional neighbor, keeping focus on the moved pane.
 /// This trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
 /// there is no neighbor in that direction.
 pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    reorder_focused_in_direction(ctx, direction);
+}
+
+fn reorder_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();

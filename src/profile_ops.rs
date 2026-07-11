@@ -300,3 +300,109 @@ fn refresh_profile_picker_entries(ctx: &mut Context<HyprmuxApp>) {
     }
     picker.selected = picker.selected.min(picker.entries.len() - 1);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Msg;
+    use crate::config::ProfileEntry;
+    use crate::profiles::{HyprmuxProfile, save_profile};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tui_lipan::TestBackend;
+
+    fn entry(name: &str, path: PathBuf) -> ProfileEntry {
+        ProfileEntry {
+            name: name.to_string(),
+            path,
+        }
+    }
+
+    fn temp_profile_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "hyprmux-profile-ops-{}-{}.toml",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ))
+    }
+
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn profile_names_are_trimmed_and_reject_paths() {
+        assert_eq!(normalize_profile_name("  dev  ").as_deref(), Some("dev"));
+        assert_eq!(normalize_profile_name("   "), None);
+        assert_eq!(normalize_profile_name("team/dev"), None);
+        assert_eq!(normalize_profile_name("team\\dev"), None);
+    }
+
+    #[test]
+    fn picker_query_and_selection_dispatch_reset_transient_state() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![
+                entry("one", PathBuf::from("one.toml")),
+                entry("two", PathBuf::from("two.toml")),
+            ]));
+            {
+                let picker = backend.state_mut().profile_picker.as_mut().unwrap();
+                picker.selected = 1;
+                picker.pending_delete = Some(1);
+            }
+
+            backend
+                .dispatch(Msg::ProfilePickerQueryChanged("tw".to_string()))
+                .expect("dispatch query");
+            let picker = backend.state().profile_picker.as_ref().unwrap();
+            assert_eq!(picker.input.text(), "tw");
+            assert_eq!(picker.selected, 0);
+            assert_eq!(picker.pending_delete, None);
+
+            backend
+                .dispatch(Msg::ProfilePickerSelect(1))
+                .expect("dispatch selection");
+            assert_eq!(backend.state().profile_picker.as_ref().unwrap().selected, 1);
+        });
+    }
+
+    #[test]
+    fn selecting_profile_dispatches_restore_and_fresh_session_attach() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().profile_picker =
+                Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
+            backend.state_mut().show_profile_picker = true;
+            let old_epoch = backend.state().runtime_epoch;
+
+            backend
+                .dispatch(Msg::SelectProfile(0))
+                .expect("dispatch profile restore");
+
+            let state = backend.state();
+            assert!(!state.show_profile_picker);
+            assert!(state.profile_picker.is_none());
+            let pending = state
+                .pending_session_attach
+                .as_ref()
+                .expect("fresh session attach queued");
+            assert_eq!(pending.epoch, old_epoch.saturating_add(1));
+            assert!(pending.autostart);
+            assert!(pending.name.starts_with("eph-"));
+
+            std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+}

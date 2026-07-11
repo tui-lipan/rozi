@@ -242,3 +242,115 @@ pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bo
     );
     confirm_second_press(ctx, pending, toast)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Msg;
+    use crate::input::Action;
+    use crate::session::client::SessionClient;
+    use crate::session::protocol::ClientInfo;
+    use crate::state::SharedSessionState;
+    use tui_lipan::TestBackend;
+
+    fn confirming_backend() -> TestBackend<HyprmuxApp> {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let (client, _rx) = SessionClient::test_channel();
+        let state = backend.state_mut();
+        state.session_name = Some("eph-confirm".to_string());
+        state.session_attached = true;
+        state.session_client = Some(client);
+        state.config.confirm.new_temporary_session = true;
+        let mut shared = SharedSessionState::new(1);
+        shared.controller = Some(1);
+        shared.clients = vec![ClientInfo {
+            id: 1,
+            label: "me".to_string(),
+            read_only: false,
+            requesting_control: false,
+        }];
+        state.shared = Some(shared);
+        backend
+    }
+
+    fn press_new_temporary(backend: &mut TestBackend<HyprmuxApp>) {
+        backend
+            .dispatch(Msg::RunAction(Action::NewTemporarySession))
+            .expect("dispatch new temporary session");
+    }
+
+    fn on_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn matching_second_press_within_window_consumes_confirmation() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            press_new_temporary(&mut backend);
+            assert_eq!(
+                backend
+                    .state()
+                    .pending_destructive
+                    .as_ref()
+                    .map(|pending| pending.action),
+                Some(PendingDestructive::NewTemporarySession)
+            );
+            press_new_temporary(&mut backend);
+            assert!(backend.state().pending_destructive.is_none());
+            assert_ne!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+        });
+    }
+
+    #[test]
+    fn expired_confirmation_is_rearmed() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            press_new_temporary(&mut backend);
+            backend
+                .state_mut()
+                .pending_destructive
+                .as_mut()
+                .expect("armed confirmation")
+                .armed_at = Instant::now() - Duration::from_secs(10);
+            press_new_temporary(&mut backend);
+            let pending = backend
+                .state()
+                .pending_destructive
+                .as_ref()
+                .expect("expired press rearmed");
+            assert_eq!(pending.action, PendingDestructive::NewTemporarySession);
+            assert!(pending.armed_at.elapsed() < Duration::from_secs(1));
+            assert_eq!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+        });
+    }
+
+    #[test]
+    fn mismatched_confirmation_is_replaced() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            press_new_temporary(&mut backend);
+            backend
+                .state_mut()
+                .pending_destructive
+                .as_mut()
+                .expect("armed confirmation")
+                .action = PendingDestructive::KillSession;
+            press_new_temporary(&mut backend);
+            assert_eq!(
+                backend
+                    .state()
+                    .pending_destructive
+                    .as_ref()
+                    .map(|pending| pending.action),
+                Some(PendingDestructive::NewTemporarySession)
+            );
+            assert_eq!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+        });
+    }
+}

@@ -82,24 +82,7 @@ impl SessionClient {
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
         reader.set_read_timeout(None)?;
-        if let ServerMessage::Error { code, message } = &attached {
-            // A version skew (an older server still running an earlier wire protocol) is the common
-            // cause here; give the user something actionable instead of a debug dump.
-            let detail = if code == "protocol-mismatch" {
-                format!(
-                    "runs an incompatible hyprmux version ({message}); kill it and start a new one"
-                )
-            } else {
-                message.clone()
-            };
-            return Err(io::Error::new(io::ErrorKind::InvalidData, detail));
-        }
-        if !matches!(attached, ServerMessage::Attached { .. }) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("attach handshake failed: {attached:?}"),
-            ));
-        }
+        validate_attached(&attached)?;
         let (tx, rx) = mpsc::channel::<ClientOutbound>();
         thread::spawn(move || {
             for message in rx {
@@ -118,29 +101,7 @@ impl SessionClient {
                 }
             }
         });
-        thread::spawn(move || {
-            let mut decoder = protocol::FrameDecoder::default();
-            loop {
-                match decoder.read_from_status(&mut reader) {
-                    Ok(protocol::FrameReadStatus::Eof) => break,
-                    Ok(
-                        protocol::FrameReadStatus::Read(_) | protocol::FrameReadStatus::WouldBlock,
-                    ) => {}
-                    Err(_) => break,
-                }
-                loop {
-                    match decoder.next_frame::<ServerMessage>() {
-                        Ok(Some(frame)) => {
-                            if inbound.send(frame).is_err() {
-                                return;
-                            }
-                        }
-                        Ok(None) => break,
-                        Err(_) => return,
-                    }
-                }
-            }
-        });
+        thread::spawn(move || forward_inbound(&mut reader, &inbound));
         Ok((Self { tx }, attached))
     }
 
@@ -240,5 +201,111 @@ impl SessionClient {
 
     fn send(&self, message: ClientOutbound) {
         let _ = self.tx.send(message);
+    }
+}
+
+fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
+    if let ServerMessage::Error { code, message } = attached {
+        // A version skew (an older server still running an earlier wire protocol) is the common
+        // cause here; give the user something actionable instead of a debug dump.
+        let detail = if code == "protocol-mismatch" {
+            format!("runs an incompatible hyprmux version ({message}); kill it and start a new one")
+        } else {
+            message.clone()
+        };
+        return Err(io::Error::new(io::ErrorKind::InvalidData, detail));
+    }
+    if !matches!(attached, ServerMessage::Attached { .. }) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("attach handshake failed: {attached:?}"),
+        ));
+    }
+    Ok(())
+}
+
+fn forward_inbound(reader: &mut UnixStream, inbound: &mpsc::Sender<Frame<ServerMessage>>) {
+    let mut decoder = protocol::FrameDecoder::default();
+    loop {
+        match decoder.read_from_status(reader) {
+            Ok(protocol::FrameReadStatus::Eof) => break,
+            Ok(protocol::FrameReadStatus::Read(_) | protocol::FrameReadStatus::WouldBlock) => {}
+            Err(_) => break,
+        }
+        loop {
+            match decoder.next_frame::<ServerMessage>() {
+                Ok(Some(frame)) => {
+                    if inbound.send(frame).is_err() {
+                        return;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => return,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    fn attached_message() -> ServerMessage {
+        ServerMessage::Attached {
+            protocol_version: PROTOCOL_VERSION,
+            session: "test".to_string(),
+            client_id: 7,
+            panes: Vec::new(),
+            layout_rev: 0,
+            layout: None,
+            controller: Some(7),
+            clients: Vec::new(),
+            input_locked: false,
+        }
+    }
+
+    #[test]
+    fn attached_stream_decodes_control_and_pane_frames() {
+        let (mut client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
+        let server = std::thread::spawn(move || {
+            protocol::write_frame(&mut server_stream, &ServerMessage::Ping { seq: 11 })
+                .expect("write control frame");
+            protocol::write_pane_output_frame(&mut server_stream, 3, 5, b"ready\n")
+                .expect("write pane frame");
+        });
+
+        let (inbound_tx, inbound_rx) = mpsc::channel();
+        forward_inbound(&mut client_stream, &inbound_tx);
+        assert_eq!(
+            inbound_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("control frame"),
+            Frame::Control(ServerMessage::Ping { seq: 11 })
+        );
+        assert_eq!(
+            inbound_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("pane frame"),
+            Frame::PaneBytes {
+                pane_id: 3,
+                generation: 5,
+                bytes: b"ready\n".to_vec(),
+            }
+        );
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn attach_error_is_returned_without_starting_client_threads() {
+        let error = validate_attached(&ServerMessage::Error {
+            code: "protocol-mismatch".to_string(),
+            message: "server uses protocol 2".to_string(),
+        })
+        .expect_err("attach must fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("incompatible hyprmux version"));
+        assert!(validate_attached(&attached_message()).is_ok());
+        assert!(validate_attached(&ServerMessage::Ping { seq: 1 }).is_err());
     }
 }

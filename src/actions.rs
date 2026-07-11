@@ -157,6 +157,16 @@ fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: boo
     }
 }
 
+fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_pane_string(key, value) {
+        ctx.toast().push(crate::pty_events::error_toast(
+            &ctx.state.theme,
+            "Preference not saved",
+            err,
+        ));
+    }
+}
+
 /// Whether `action` changes the shared window-manager layout (pane membership/order, tiling,
 /// geometry, workspace/pane identity). Followers are blocked from these until they take control;
 /// focus/workspace-switch/copy/search/palette/theme and terminal input stay local and are allowed.
@@ -393,61 +403,31 @@ fn execute_action_inner(
         Action::CycleBorderStyle => {
             let next = ctx.state.config.pane.border_style.next();
             ctx.state.config.pane.border_style = next;
-            if let Err(err) = crate::config::persist_pane_string("border_style", next.id()) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Preference not saved",
-                    err,
-                ));
-            }
+            persist_pane_string_or_toast(ctx, "border_style", next.id());
             Update::full()
         }
         Action::CycleTitleStyle => {
             let next = ctx.state.config.pane.title_style.next();
             ctx.state.config.pane.title_style = next;
-            if let Err(err) = crate::config::persist_pane_string("title_style", next.id()) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Preference not saved",
-                    err,
-                ));
-            }
+            persist_pane_string_or_toast(ctx, "title_style", next.id());
             Update::full()
         }
         Action::CycleWorkbarBadgeStyle => {
             let next = ctx.state.config.pane.workbar_badge_style.next_badge();
             ctx.state.config.pane.workbar_badge_style = next;
-            if let Err(err) = crate::config::persist_pane_string("workbar_badge_style", next.id()) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Preference not saved",
-                    err,
-                ));
-            }
+            persist_pane_string_or_toast(ctx, "workbar_badge_style", next.id());
             Update::full()
         }
         Action::CycleWorkbarTabStyle => {
             let next = ctx.state.config.pane.workbar_tab_style.next_badge();
             ctx.state.config.pane.workbar_tab_style = next;
-            if let Err(err) = crate::config::persist_pane_string("workbar_tab_style", next.id()) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Preference not saved",
-                    err,
-                ));
-            }
+            persist_pane_string_or_toast(ctx, "workbar_tab_style", next.id());
             Update::full()
         }
         Action::CycleWorkbarStyle => {
             let next = ctx.state.config.pane.workbar_style.next();
             ctx.state.config.pane.workbar_style = next;
-            if let Err(err) = crate::config::persist_pane_string("workbar_style", next.id()) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Preference not saved",
-                    err,
-                ));
-            }
+            persist_pane_string_or_toast(ctx, "workbar_style", next.id());
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),

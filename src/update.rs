@@ -1257,6 +1257,16 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
     let Some(client) = ctx.state.session_client.clone() else {
         return Vec::new();
     };
+    // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
+    // palette before the PTY spawns and the child's startup color queries are answered correctly.
+    let fallback_palette = crate::theme_ops::terminal_palette(
+        &ctx.state.theme,
+        crate::theme_ops::pane_frame_background(
+            &ctx.state.theme,
+            false,
+            ctx.state.config.pane.highlight_focused_background,
+        ),
+    );
     let mut targets = Vec::new();
     for pane in ctx
         .state
@@ -1279,6 +1289,7 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
             pane.identity.keep_open,
             pane_env(ctx.state.control_socket_path.as_deref(), pane),
             pane.identity.custom_title.clone(),
+            pane.terminal.last_palette.unwrap_or(fallback_palette),
         );
         targets.push((pane.id, generation));
     }
@@ -1302,6 +1313,7 @@ fn flush_pending_spawns(ctx: &mut Context<HyprmuxApp>) {
             spawn.keep_open,
             spawn.env,
             spawn.title,
+            spawn.palette,
         );
     }
 }

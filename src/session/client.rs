@@ -144,6 +144,7 @@ impl SessionClient {
         Ok((Self { tx }, attached))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_pane(
         &self,
         pane_id: PaneId,
@@ -155,6 +156,7 @@ impl SessionClient {
         keep_open: bool,
         env: Vec<(String, String)>,
         title: Option<String>,
+        palette: TerminalColorPalette,
     ) {
         self.send_control(ClientMessage::SpawnPane {
             pane_id,
@@ -166,6 +168,7 @@ impl SessionClient {
             keep_open,
             env,
             title,
+            palette: WirePalette::from(palette),
         });
     }
 

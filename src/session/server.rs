@@ -342,6 +342,7 @@ impl SessionServer {
                 keep_open,
                 env,
                 title,
+                palette,
             } => {
                 if !self.is_controller(client_id) {
                     return vec![(
@@ -367,6 +368,7 @@ impl SessionServer {
                         rows,
                         keep_open,
                         env,
+                        palette,
                     }),
                 )]
             }
@@ -1066,6 +1068,9 @@ impl SessionServer {
         let generation = request.generation;
         self.next_generation = self.next_generation.max(generation.saturating_add(1));
         let mut screen = TerminalScreen::new(rows.max(1), cols.max(1), DEFAULT_SCROLLBACK);
+        // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
+        // are answered against the theme palette instead of the screen default.
+        screen.set_palette(request.palette.into());
         let mut config = pty_config(request.command.as_deref(), request.keep_open);
         if let Some(cwd) = &request.cwd {
             config = config.cwd(cwd.clone());
@@ -1215,6 +1220,7 @@ struct SpawnRequest {
     rows: u16,
     keep_open: bool,
     env: Vec<(String, String)>,
+    palette: WirePalette,
 }
 
 impl ServerPane {
@@ -1311,6 +1317,15 @@ fn sanitize_session_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal placeholder palette for spawn requests in tests.
+    fn test_palette() -> WirePalette {
+        WirePalette {
+            foreground: None,
+            background: None,
+            ansi: [Color::Black; 16],
+        }
+    }
 
     /// Register a client backed by a socketpair and return its id plus the client-side stream.
     fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
@@ -1633,6 +1648,7 @@ mod tests {
                 keep_open: false,
                 env: Vec::new(),
                 title: None,
+                palette: test_palette(),
             },
         );
         assert!(matches!(
@@ -1797,6 +1813,7 @@ mod tests {
             rows: 5,
             keep_open: false,
             env: Vec::new(),
+            palette: test_palette(),
         });
         assert!(matches!(
             result,
@@ -1831,6 +1848,7 @@ mod tests {
             rows: 5,
             keep_open: false,
             env: Vec::new(),
+            palette: test_palette(),
         });
 
         assert!(matches!(

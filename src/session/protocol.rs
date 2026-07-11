@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -88,6 +88,11 @@ pub enum ClientMessage {
         keep_open: bool,
         env: Vec<(String, String)>,
         title: Option<String>,
+        /// Terminal color palette seeded onto the server screen *before* the PTY spawns, so the
+        /// child's startup OSC 4/10/11 color queries are answered with the theme palette rather
+        /// than the screen default. Sending it out-of-band via `SetPalette` races the child's
+        /// query, so it must ride along with the spawn request.
+        palette: WirePalette,
     },
     Resize {
         pane_id: PaneId,
@@ -506,6 +511,11 @@ mod tests {
             keep_open: false,
             env: Vec::new(),
             title: None,
+            palette: WirePalette {
+                foreground: None,
+                background: None,
+                ansi: [Color::Black; 16],
+            },
         };
         let err = write_frame(&mut Vec::new(), &msg).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
@@ -544,7 +554,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":5,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":6,"label":"alice","read_only":true})
         );
     }
 
@@ -557,7 +567,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":5})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":6})
         );
     }
 
@@ -682,6 +692,11 @@ mod tests {
 
     #[test]
     fn golden_client_spawn_json_shape() {
+        let palette = WirePalette {
+            foreground: Some(Color::White),
+            background: Some(Color::Black),
+            ansi: [Color::Black; 16],
+        };
         let value = serde_json::to_value(ClientMessage::SpawnPane {
             pane_id: 7,
             generation: 9,
@@ -692,11 +707,12 @@ mod tests {
             keep_open: true,
             env: vec![("A".into(), "B".into())],
             title: Some("shell".into()),
+            palette,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell"})
+            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap()})
         );
     }
 

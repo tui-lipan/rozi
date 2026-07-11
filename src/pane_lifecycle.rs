@@ -49,14 +49,15 @@ pub(crate) fn spawn_pane_in_workspace(
     pane.pty_generation = generation;
     pane.terminal.bind_server_backend(id, generation);
     pane.identity = identity;
-    pane.terminal.set_palette(terminal_palette(
+    let palette = terminal_palette(
         &ctx.state.theme,
         pane_frame_background(
             &ctx.state.theme,
             true,
             ctx.state.config.pane.highlight_focused_background,
         ),
-    ));
+    );
+    pane.terminal.set_palette(palette);
     pane.opening = true;
 
     let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
@@ -96,6 +97,7 @@ pub(crate) fn spawn_pane_in_workspace(
         keep_open,
         env,
         title,
+        palette,
     );
     let update = Update::with_command(open_timers_command(
         ctx.state.runtime_epoch,
@@ -121,10 +123,11 @@ pub(crate) fn request_pane_spawn(
     keep_open: bool,
     env: Vec<(String, String)>,
     title: Option<String>,
+    palette: TerminalColorPalette,
 ) {
     if let Some(client) = state.session_client.clone() {
         client.spawn_pane(
-            pane_id, generation, command, cwd, cols, rows, keep_open, env, title,
+            pane_id, generation, command, cwd, cols, rows, keep_open, env, title, palette,
         );
     } else {
         state.pending_spawns.push(crate::state::PendingPaneSpawn {
@@ -137,6 +140,7 @@ pub(crate) fn request_pane_spawn(
             keep_open,
             env,
             title,
+            palette,
         });
     }
 }

@@ -49,20 +49,6 @@ fn padding_error(ctx: &mut Context<HyprmuxApp>) {
     ));
 }
 
-#[cfg(test)]
-mod padding_input_tests {
-    use super::*;
-
-    #[test]
-    fn padding_input_accepts_empty_or_one_ascii_digit_in_range() {
-        assert!(valid_padding_text(""));
-        assert!(valid_padding_text("8"));
-        assert!(!valid_padding_text("9"));
-        assert!(!valid_padding_text("12"));
-        assert!(!valid_padding_text("８"));
-    }
-}
-
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
     let mut update = match msg {
@@ -1315,5 +1301,19 @@ fn flush_pending_spawns(ctx: &mut Context<HyprmuxApp>) {
             spawn.title,
             spawn.palette,
         );
+    }
+}
+
+#[cfg(test)]
+mod padding_input_tests {
+    use super::*;
+
+    #[test]
+    fn padding_input_accepts_empty_or_one_ascii_digit_in_range() {
+        assert!(valid_padding_text(""));
+        assert!(valid_padding_text("8"));
+        assert!(!valid_padding_text("9"));
+        assert!(!valid_padding_text("12"));
+        assert!(!valid_padding_text("８"));
     }
 }

@@ -351,8 +351,9 @@ impl SessionServer {
 }
 
 fn default_log_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
-        .map(|path| path.join("hyprmux/logs"))
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    if env.home.is_none() && env.xdg_state_home.is_none() {
+        return None;
+    }
+    Some(crate::platform::paths::state_dir(&env).join("logs"))
 }

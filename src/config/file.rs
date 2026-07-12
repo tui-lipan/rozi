@@ -1326,7 +1326,7 @@ pub fn config_path() -> PathBuf {
     if let Ok(path) = std::env::var("HYPRMUX_CONFIG") {
         return expand_path(path);
     }
-    config_home().join("hyprmux/hyprmux.toml")
+    config_home().join("hyprmux.toml")
 }
 
 fn apply_input_config(
@@ -1586,12 +1586,14 @@ fn apply_workbar_config(
     }
 }
 
+/// The `hyprmux` config directory (already includes the `hyprmux` segment - callers should join
+/// filenames directly, e.g. `config_home().join("hyprmux.toml")`).
+///
+/// Delegates to [`crate::platform::paths::config_dir`]; kept as a thin wrapper here (rather than
+/// switching every call site to the platform module directly) so `config_path()`/`profiles_dir()`/
+/// `themes_dir()` in this module family don't need to change beyond the path they join onto it.
 pub(super) fn config_home() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| home_dir().map(|home| home.join(".config")))
-        .unwrap_or_else(|| PathBuf::from(".config"))
+    crate::platform::paths::config_dir(&crate::platform::paths::PlatformEnv::from_process())
 }
 
 fn home_dir() -> Option<PathBuf> {

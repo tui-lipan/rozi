@@ -15,6 +15,7 @@ mod layout_tree_ser;
 mod ops;
 mod pane;
 mod pane_lifecycle;
+mod platform;
 mod popup;
 mod profiles;
 mod pty_events;

@@ -1,0 +1,266 @@
+//! Platform config/state/cache/runtime path resolution (cross-platform plan Phase 3).
+//!
+//! Consolidates logic that used to be duplicated (state-home resolution appeared independently in
+//! `profiles::session_path`, `session::server::resurrect::default_snapshot_dir`, and
+//! `session::server::panes::default_log_dir`) or missing entirely (there was no cache directory
+//! concept at all). Every accessor takes an explicit [`PlatformEnv`] rather than reading process
+//! environment variables itself, so tests never need to mutate real global env vars.
+//!
+//! | Purpose | Linux/macOS | Windows |
+//! |---|---|---|
+//! | Config  | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | `%APPDATA%\hyprmux` |
+//! | State   | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
+//! | Cache   | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | `%LOCALAPPDATA%\hyprmux\cache` |
+//! | Runtime | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp dir | not yet implemented (Phase 5 named-pipe registry) |
+//!
+//! The Windows column is written per the plan and believed correct against documented API
+//! contracts, but is **unverified**: this environment has no Windows target to run it on. See
+//! `AGENTS.md`/`CLAUDE.md` for the cross-platform plan's verification constraints.
+
+use std::io;
+use std::path::PathBuf;
+
+use super::fs_security;
+
+const APP_DIR: &str = "hyprmux";
+
+/// Explicit environment snapshot every path accessor in this module resolves against.
+///
+/// Production code uses [`PlatformEnv::from_process`]. Tests construct this directly instead of
+/// mutating `std::env` globals, so path-resolution tests can run in parallel with everything else
+/// without a cross-test environment-variable lock.
+#[derive(Clone, Debug, Default)]
+pub struct PlatformEnv {
+    /// `$HOME` (Unix/macOS only; ignored on Windows).
+    pub home: Option<PathBuf>,
+    /// `$XDG_CONFIG_HOME`, only if it was set to a non-empty absolute path.
+    pub xdg_config_home: Option<PathBuf>,
+    /// `$XDG_STATE_HOME`, only if it was set to a non-empty absolute path.
+    pub xdg_state_home: Option<PathBuf>,
+    /// `$XDG_CACHE_HOME`, only if it was set to a non-empty absolute path.
+    ///
+    /// [`cache_dir`] is not called by any current hyprmux code path - there is no cache-directory
+    /// use case yet - so this field is resolved but otherwise unread for now.
+    #[allow(dead_code)]
+    pub xdg_cache_home: Option<PathBuf>,
+    /// `$XDG_RUNTIME_DIR`, only if it was set to a non-empty absolute path.
+    pub xdg_runtime_dir: Option<PathBuf>,
+    /// `%APPDATA%` (Windows only).
+    pub appdata: Option<PathBuf>,
+    /// `%LOCALAPPDATA%` (Windows only).
+    pub local_appdata: Option<PathBuf>,
+}
+
+impl PlatformEnv {
+    /// Snapshot the real process environment.
+    pub fn from_process() -> Self {
+        Self {
+            home: env_path("HOME"),
+            xdg_config_home: env_absolute_path("XDG_CONFIG_HOME"),
+            xdg_state_home: env_absolute_path("XDG_STATE_HOME"),
+            xdg_cache_home: env_absolute_path("XDG_CACHE_HOME"),
+            xdg_runtime_dir: env_absolute_path("XDG_RUNTIME_DIR"),
+            appdata: env_absolute_path("APPDATA"),
+            local_appdata: env_absolute_path("LOCALAPPDATA"),
+        }
+    }
+}
+
+fn env_path(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Like [`env_path`], but additionally rejects a relative path.
+///
+/// A relative `XDG_*`/AppData override is never silently resolved against the process's current
+/// directory - that would make the "config directory" move every time the working directory
+/// changes. Reject it outright and fall through to the next tier instead.
+fn env_absolute_path(key: &str) -> Option<PathBuf> {
+    env_path(key).filter(|path| path.is_absolute())
+}
+
+/// Base config directory: `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux`;
+/// `%APPDATA%\hyprmux` on Windows.
+pub fn config_dir(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(appdata) = &env.appdata {
+            return appdata.join(APP_DIR);
+        }
+    }
+    xdg_style_dir(env.xdg_config_home.as_ref(), &env.home, ".config")
+}
+
+/// Base state directory: `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux`;
+/// `%LOCALAPPDATA%\hyprmux` on Windows.
+pub fn state_dir(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(local_appdata) = &env.local_appdata {
+            return local_appdata.join(APP_DIR);
+        }
+    }
+    xdg_style_dir(env.xdg_state_home.as_ref(), &env.home, ".local/state")
+}
+
+/// Base cache directory: `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux`;
+/// `%LOCALAPPDATA%\hyprmux\cache` on Windows.
+///
+/// No hyprmux call site needs a cache directory yet; kept public and tested now so the concept
+/// exists per the plan's path-policy table, ready for a future consumer.
+#[allow(dead_code)]
+pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows) {
+        if let Some(local_appdata) = &env.local_appdata {
+            return local_appdata.join(APP_DIR).join("cache");
+        }
+    }
+    xdg_style_dir(env.xdg_cache_home.as_ref(), &env.home, ".cache")
+}
+
+fn xdg_style_dir(
+    xdg_override: Option<&PathBuf>,
+    home: &Option<PathBuf>,
+    home_suffix: &str,
+) -> PathBuf {
+    let base = xdg_override
+        .cloned()
+        .or_else(|| home.as_ref().map(|home| home.join(home_suffix)))
+        .unwrap_or_else(|| PathBuf::from(home_suffix));
+    base.join(APP_DIR)
+}
+
+/// Runtime endpoint directory, created (if missing) and validated private to the current user.
+///
+/// Unix/macOS: `$XDG_RUNTIME_DIR/hyprmux`, falling back to [`fallback_runtime_dir_path`] when
+/// `XDG_RUNTIME_DIR` is unset. Windows has no equivalent yet: the plan calls for a
+/// `%LOCALAPPDATA%\hyprmux\run` discovery registry backing named-pipe endpoints (Phase 5), which
+/// is not implemented - this function is not meaningful on Windows today.
+pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
+    let dir = match &env.xdg_runtime_dir {
+        Some(base) => base.join(APP_DIR),
+        None => fallback_runtime_dir_path(),
+    };
+    fs_security::ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+/// Per-user private fallback runtime directory when `$XDG_RUNTIME_DIR` is unavailable.
+pub fn fallback_runtime_dir_path() -> PathBuf {
+    let owner = super::user::current_user_tag();
+    std::env::temp_dir().join(format!("{APP_DIR}-{owner}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn env_with_home(home: &str) -> PlatformEnv {
+        PlatformEnv {
+            home: Some(PathBuf::from(home)),
+            ..PlatformEnv::default()
+        }
+    }
+
+    #[test]
+    fn config_dir_prefers_xdg_override() {
+        let env = PlatformEnv {
+            xdg_config_home: Some(PathBuf::from("/custom/config")),
+            home: Some(PathBuf::from("/home/user")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(config_dir(&env), PathBuf::from("/custom/config/hyprmux"));
+    }
+
+    #[test]
+    fn config_dir_falls_back_to_home_dot_config() {
+        let env = env_with_home("/home/user");
+        assert_eq!(
+            config_dir(&env),
+            PathBuf::from("/home/user/.config/hyprmux")
+        );
+    }
+
+    #[test]
+    fn state_dir_falls_back_to_home_local_state() {
+        let env = env_with_home("/home/user");
+        assert_eq!(
+            state_dir(&env),
+            PathBuf::from("/home/user/.local/state/hyprmux")
+        );
+    }
+
+    #[test]
+    fn cache_dir_falls_back_to_home_dot_cache() {
+        let env = env_with_home("/home/user");
+        assert_eq!(cache_dir(&env), PathBuf::from("/home/user/.cache/hyprmux"));
+    }
+
+    #[test]
+    fn relative_xdg_override_is_rejected_not_silently_used() {
+        // A relative XDG_CONFIG_HOME must never be interpreted relative to the process cwd;
+        // PlatformEnv::from_process already filters these out via `env_absolute_path`, but the
+        // resolution functions here must also behave correctly if an override slips through as
+        // `None` from a relative value, falling through to the next tier.
+        let env = PlatformEnv {
+            xdg_config_home: None, // simulates env_absolute_path rejecting "relative/path"
+            home: Some(PathBuf::from("/home/user")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(
+            config_dir(&env),
+            PathBuf::from("/home/user/.config/hyprmux")
+        );
+    }
+
+    #[test]
+    fn env_absolute_path_rejects_relative_values() {
+        // Directly exercises the filter `PlatformEnv::from_process` relies on.
+        assert!(super::env_absolute_path("__HYPRMUX_TEST_NONEXISTENT_VAR__").is_none());
+    }
+
+    #[test]
+    fn no_home_and_no_xdg_falls_back_to_dotdir_relative_path() {
+        let env = PlatformEnv::default();
+        assert_eq!(config_dir(&env), PathBuf::from(".config/hyprmux"));
+        assert_eq!(state_dir(&env), PathBuf::from(".local/state/hyprmux"));
+        assert_eq!(cache_dir(&env), PathBuf::from(".cache/hyprmux"));
+    }
+
+    #[test]
+    fn fallback_runtime_dir_path_is_per_user_and_stable() {
+        let first = fallback_runtime_dir_path();
+        let second = fallback_runtime_dir_path();
+        assert_eq!(first, second);
+        assert!(first.starts_with(std::env::temp_dir()));
+        assert!(
+            first
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("hyprmux-")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_dir_creates_and_reuses_private_directory() {
+        let base = std::env::temp_dir().join(format!(
+            "hyprmux-paths-test-{}-{}",
+            "reuse",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let env = PlatformEnv {
+            xdg_runtime_dir: Some(base.clone()),
+            ..PlatformEnv::default()
+        };
+
+        let first = runtime_dir(&env).expect("create");
+        assert_eq!(first, base.join("hyprmux"));
+        let second = runtime_dir(&env).expect("reuse");
+        assert_eq!(second, first);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

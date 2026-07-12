@@ -10,7 +10,7 @@ use super::schema::ThemeChoice;
 
 /// Directory holding custom theme files. Each `*.toml` file is a theme named by its stem.
 pub fn themes_dir() -> PathBuf {
-    config_home().join("hyprmux/themes")
+    config_home().join("themes")
 }
 
 /// Path a custom theme named `name` would live at (whether or not it exists).

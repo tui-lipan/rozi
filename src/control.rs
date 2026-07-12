@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -130,65 +130,19 @@ impl Drop for ControlSocketGuard {
     }
 }
 
+/// Runtime endpoint directory. Delegates to [`crate::platform::paths::runtime_dir`] (cross-
+/// platform plan Phase 3); the private-directory creation/validation policy itself lives in
+/// [`crate::platform::fs_security`].
 pub fn runtime_dir() -> std::io::Result<PathBuf> {
     runtime_dir_with_base(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from))
 }
 
 fn runtime_dir_with_base(base: Option<PathBuf>) -> std::io::Result<PathBuf> {
-    let dir = match base {
-        Some(base) => base.join("hyprmux"),
-        None => fallback_runtime_dir_path(),
+    let env = crate::platform::paths::PlatformEnv {
+        xdg_runtime_dir: base,
+        ..Default::default()
     };
-    ensure_private_dir(&dir)?;
-    Ok(dir)
-}
-
-fn current_uid() -> u32 {
-    unsafe extern "C" {
-        fn getuid() -> u32;
-    }
-    unsafe { getuid() }
-}
-
-fn fallback_runtime_dir_path() -> PathBuf {
-    std::env::temp_dir().join(format!("hyprmux-{}", current_uid()))
-}
-
-fn ensure_private_dir(dir: &Path) -> std::io::Result<()> {
-    match fs::symlink_metadata(dir) {
-        Ok(metadata) => validate_private_dir(dir, &metadata),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir_all(dir)?;
-            fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
-            validate_private_dir(dir, &fs::symlink_metadata(dir)?)
-        }
-        Err(err) => Err(err),
-    }
-}
-
-fn validate_private_dir(dir: &Path, metadata: &fs::Metadata) -> std::io::Result<()> {
-    if !metadata.file_type().is_dir() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!("{} is not a directory", dir.display()),
-        ));
-    }
-    if metadata.uid() != current_uid() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!("{} is not owned by the current user", dir.display()),
-        ));
-    }
-    if metadata.mode() & 0o077 != 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            format!(
-                "{} permissions must not allow group/other access",
-                dir.display()
-            ),
-        ));
-    }
-    Ok(())
+    crate::platform::paths::runtime_dir(&env)
 }
 
 pub fn socket_path_for_pid(pid: u32) -> std::io::Result<PathBuf> {
@@ -291,6 +245,7 @@ fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>, event_hub: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::MetadataExt;
 
     fn temp_base(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("hyprmux-test-{name}-{}", std::process::id()))
@@ -298,8 +253,14 @@ mod tests {
 
     #[test]
     fn runtime_dir_uses_per_user_temp_fallback_without_xdg() {
-        let expected = std::env::temp_dir().join(format!("hyprmux-{}", current_uid()));
-        assert_eq!(fallback_runtime_dir_path(), expected);
+        let expected = std::env::temp_dir().join(format!(
+            "hyprmux-{}",
+            crate::platform::fs_security::current_uid()
+        ));
+        assert_eq!(
+            crate::platform::paths::fallback_runtime_dir_path(),
+            expected
+        );
     }
 
     #[test]

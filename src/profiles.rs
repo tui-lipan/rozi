@@ -45,15 +45,13 @@ pub fn session_path(config: &crate::config::HyprmuxConfig) -> Option<PathBuf> {
     if let Some(path) = &config.session.path {
         return Some(path.clone());
     }
-    let state_home = std::env::var_os("XDG_STATE_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    Some(state_home.join("hyprmux/session.toml"))
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    if env.home.is_none() && env.xdg_state_home.is_none() {
+        // No usable state-directory source at all: preserve the historical "autosave silently
+        // does nothing" behavior rather than falling back to a cwd-relative `.local/state`.
+        return None;
+    }
+    Some(crate::platform::paths::state_dir(&env).join("session.toml"))
 }
 
 /// Write the live layout to the session file when `[session] autosave` is enabled. Called

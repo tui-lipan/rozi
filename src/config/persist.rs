@@ -231,7 +231,7 @@ mod padding_persistence_tests {
 }
 
 pub fn profiles_dir() -> PathBuf {
-    config_home().join("hyprmux/profiles")
+    config_home().join("profiles")
 }
 
 pub fn profile_path_for_name(name: &str) -> PathBuf {

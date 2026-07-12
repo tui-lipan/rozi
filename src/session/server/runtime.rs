@@ -71,7 +71,7 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         last_exit_status,
         sequence: pane.runtime.sequence,
     };
-    let changed = candidate.cwd != pane.runtime.cwd
+    let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
         || candidate.cwd_host != pane.runtime.cwd_host
         || candidate.cwd_source != pane.runtime.cwd_source
         || candidate.command_phase != pane.runtime.command_phase
@@ -116,16 +116,29 @@ fn resolve_cwd(
     (pane.cwd.clone(), None, PaneCwdSource::LaunchDirectory)
 }
 
+/// Whether two resolved cwds name the same directory, under the platform's own comparison rules
+/// (case-insensitive on Windows). A pane whose shell reports `c:\users\x` where its launch
+/// directory was recorded as `C:\Users\x` has not changed directory, and must not burn a sequence
+/// number - and therefore a `PaneRuntimeChanged` broadcast to every client - saying it has.
+fn cwd_unchanged(candidate: &Option<String>, current: &Option<String>) -> bool {
+    match (candidate, current) {
+        (Some(candidate), Some(current)) => crate::platform::paths::paths_equal(candidate, current),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 /// Percent-decoded `OSC 7`/`OSC 9;9` path bytes are exposed as raw bytes by the framework (never
 /// lossy-converted) so a *local* filesystem operation could handle non-UTF-8 bytes exactly; this
 /// wire protocol's control channel is JSON text, though, so a report that is not valid UTF-8
 /// cannot be represented here without exactly the silent lossy conversion the plan forbids -
 /// treated as an invalid report and left to fall through to the next precedence tier instead.
-/// Milestone 2 should revisit non-absolute-path handling for Windows drive-letter/UNC forms; this
-/// pass only validates the Unix leading-`/` convention.
+///
+/// A decodable report is then normalized (and validated) by
+/// [`crate::platform::paths::normalize_reported_cwd`], which is what applies the Unix leading-`/`
+/// rule and the Windows drive-letter/UNC rules.
 fn decode_reported_path(reported: &TerminalWorkingDirectory) -> Option<String> {
-    let path = reported.path_str()?;
-    (!path.is_empty() && path.starts_with('/')).then(|| path.to_string())
+    crate::platform::paths::normalize_reported_cwd(reported.path_str()?)
 }
 
 /// Whether an `OSC 7` `host` component names this machine (`None`/empty/`localhost` always count

@@ -219,7 +219,7 @@ impl PipeInstance {
     /// that squatted the name earlier would keep serving clients that believe they reached us.
     fn create(endpoint: &IpcEndpoint, first: bool) -> io::Result<Self> {
         let descriptor = fs_security::private_security_descriptor()?;
-        let mut attributes = descriptor.attributes();
+        let attributes = descriptor.attributes();
         let name = endpoint.wide_pipe_name();
         let mut open_mode = PIPE_ACCESS_DUPLEX;
         if first {
@@ -234,7 +234,7 @@ impl PipeInstance {
                 PIPE_OUT_BUFFER,
                 PIPE_IN_BUFFER,
                 0,
-                &mut attributes,
+                &attributes,
             )
         };
         if handle == INVALID_HANDLE_VALUE {
@@ -607,15 +607,8 @@ impl IpcConnection {
 
 /// `PIPE_NOWAIT` when `nowait`, `PIPE_WAIT` otherwise. The pipe stays byte-mode in both.
 fn set_pipe_mode(handle: HANDLE, nowait: bool) -> io::Result<()> {
-    let mut mode = PIPE_READMODE_BYTE | if nowait { PIPE_NOWAIT } else { PIPE_WAIT };
-    let ok = unsafe {
-        SetNamedPipeHandleState(
-            handle,
-            &mut mode,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
+    let mode = PIPE_READMODE_BYTE | if nowait { PIPE_NOWAIT } else { PIPE_WAIT };
+    let ok = unsafe { SetNamedPipeHandleState(handle, &mode, std::ptr::null(), std::ptr::null()) };
     if ok == 0 {
         return Err(io::Error::last_os_error());
     }

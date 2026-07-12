@@ -193,9 +193,9 @@ mod windows_impl {
                     fs::create_dir_all(parent)?;
                 }
                 let descriptor = private_security_descriptor()?;
-                let mut attributes = descriptor.attributes();
+                let attributes = descriptor.attributes();
                 let wide = wide_path(dir);
-                if unsafe { CreateDirectoryW(wide.as_ptr(), &mut attributes) } == 0 {
+                if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 {
                     return Err(io::Error::last_os_error());
                 }
                 validate_private_dir(dir, &fs::symlink_metadata(dir)?)

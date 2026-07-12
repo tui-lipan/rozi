@@ -648,6 +648,13 @@ fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
 }
 
 fn main() -> Result<()> {
+    // Checked before anything else: on a host with no ConPTY there is no pane hyprmux could open,
+    // and saying so once is far kinder than failing on every spawn (cross-platform plan Phase 10).
+    if let Err(reason) = platform::server_lifecycle::check_host_supported() {
+        eprintln!("hyprmux: {reason}");
+        std::process::exit(1);
+    }
+
     let cli = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
         Ok(cli::ParsedCli::Help) => {
             cli::print_help();

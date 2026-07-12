@@ -1,10 +1,10 @@
-//! Shell-integration injection (cross-platform plan Phase 8, Milestone 1 rows: bash/zsh/fish).
+//! Shell-integration injection (cross-platform plan Phase 8).
 //!
-//! Ships `assets/shell-integration/hyprmux.{bash,zsh,fish}` (embedded via `include_str!`, no
+//! Ships `assets/shell-integration/hyprmux.{bash,zsh,fish,ps1}` (embedded via `include_str!`, no
 //! install step required) and, when [`ShellIntegrationMode::Auto`] recognizes the resolved
 //! *interactive* shell (never the one-off `command_shell` runner - see the plan's "do not inject
 //! into noninteractive command-runner processes" rule), adjusts that pane's spawn argv/env so the
-//! child sources the matching script automatically:
+//! child picks up the matching script automatically:
 //!
 //! - bash: appends `--rcfile <generated wrapper>`, which chains the user's real `~/.bashrc` (and
 //!   `/etc/bash.bashrc`) before sourcing `hyprmux.bash`. Skipped for a configured login shell
@@ -17,8 +17,20 @@
 //!   chain to the user's real files before sourcing `hyprmux.zsh`.
 //! - fish: prepends the install directory to `XDG_DATA_DIRS` so fish's own `vendor_conf.d`
 //!   auto-discovery picks up `hyprmux.fish` - no dotfile or wrapper needed.
+//! - PowerShell: appends `-NoExit -Command ". <hyprmux.ps1>"`. The plan assumed no clean
+//!   non-dotfile injection point existed here and settled for env markers plus a documented
+//!   `$PROFILE` edit; there is one. PowerShell runs `$PROFILE` *before* `-Command`, so the script
+//!   sees the user's finished prompt and PSReadLine configuration and wraps them, and `-NoExit`
+//!   keeps the session interactive afterwards. (This is the same mechanism VS Code's own PowerShell
+//!   integration uses.) The `$PROFILE` route still works and is still documented, for shells hyprmux
+//!   did not launch; the script is idempotent, so having both costs nothing.
+//! - cmd.exe: sets `PROMPT` to a variant carrying OSC 9;9 (cwd) and OSC 133 A/B (prompt boundaries)
+//!   markers around the user's `$P$G`. Command lifecycle (`C`/`D`, and therefore exit status and
+//!   foreground program) is *not* available: cmd has no preexec hook, and the plan rules out the
+//!   `AutoRun` registry key. Users who want the rest should install Clink. This is the one shell
+//!   where integration is partial by design.
 //!
-//! Every script itself no-ops in a non-interactive shell and guards against being sourced twice
+//! Every script itself no-ops in a non-interactive shell and guards against being loaded twice
 //! (`HYPRMUX_SHELL_INTEGRATION_LOADED`), so this module's job is purely "make sure the right file
 //! gets sourced/discovered", not deduplication - see each script's own header comment for the
 //! composition rules (never overwrites an existing hook mechanism outright).
@@ -32,24 +44,42 @@ use crate::platform::command::ShellCommand;
 const BASH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.bash");
 const ZSH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.zsh");
 const FISH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.fish");
+const POWERSHELL_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.ps1");
+
+/// cmd.exe's prompt, instrumented. `$E` is ESC and `$P` the current directory (both cmd's own
+/// `PROMPT` escapes, so the value re-expands on every prompt with no hook needed); `$E\` is the
+/// string terminator and `$P$G` is cmd's stock `C:\dir>` prompt.
+///
+/// This is the whole of cmd's integration. There is no `C`/`D` here because cmd offers nothing to
+/// hang them on - see the module doc comment.
+const CMD_PROMPT: &str = r"$E]133;A$E\$E]9;9;$P$E\$P$G$E]133;B$E\";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ShellKind {
     Bash,
     Zsh,
     Fish,
+    PowerShell,
+    Cmd,
     Other,
 }
 
 fn detect_shell_kind(program: &str) -> ShellKind {
-    let basename = Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(program);
-    match basename {
+    // Split on both separators rather than going through `Path::file_name`, which only recognizes
+    // the *host's* separator: `%COMSPEC%` is a backslash path that a Linux-hosted test (or a
+    // profile written on Windows and opened on Linux) must still recognize. Windows program names
+    // are also case-insensitive, and `%COMSPEC%` is not always spelled in lowercase.
+    let basename = program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase();
+    match basename.as_str() {
         "bash" => ShellKind::Bash,
         "zsh" => ShellKind::Zsh,
         "fish" => ShellKind::Fish,
+        "pwsh" | "pwsh.exe" | "powershell" | "powershell.exe" => ShellKind::PowerShell,
+        "cmd" | "cmd.exe" => ShellKind::Cmd,
         _ => ShellKind::Other,
     }
 }
@@ -73,6 +103,8 @@ pub fn inject(
         ShellKind::Bash => inject_bash(shell, &install_dir),
         ShellKind::Zsh => inject_zsh(shell, &install_dir, env),
         ShellKind::Fish => inject_fish(shell, &install_dir, env),
+        ShellKind::PowerShell => inject_powershell(shell, &install_dir),
+        ShellKind::Cmd => inject_cmd(shell),
         ShellKind::Other => (shell, Vec::new()),
     }
 }
@@ -169,6 +201,44 @@ fn inject_fish(
     (shell, vec![("XDG_DATA_DIRS".to_string(), dirs)])
 }
 
+/// PowerShell: dot-source `hyprmux.ps1` after the user's `$PROFILE` has run, and stay interactive.
+///
+/// Skipped when the configured shell already carries a `-Command`, `-File`, or `-EncodedCommand`
+/// argument: those say "run this and exit", so the pane is not the interactive session this is for,
+/// and appending a second `-Command` would either be rejected or silently override the user's.
+fn inject_powershell(
+    shell: ShellCommand,
+    install_dir: &Path,
+) -> (ShellCommand, Vec<(String, String)>) {
+    let already_directed = shell.args.iter().any(|arg| {
+        let lowered = arg.to_ascii_lowercase();
+        // PowerShell accepts any unambiguous prefix of a parameter name (`-Comm`, `-c`, ...), which
+        // is why this matches on a prefix rather than the full spelling.
+        ["-c", "-f", "-e", "/c"]
+            .iter()
+            .any(|prefix| lowered.starts_with(prefix))
+    });
+    if already_directed {
+        return (shell, Vec::new());
+    }
+    let script = install_dir.join("hyprmux.ps1");
+    let command = format!(". {}", powershell_quote(&script.to_string_lossy()));
+    let shell = shell.arg("-NoExit").arg("-Command").arg(command);
+    (shell, Vec::new())
+}
+
+/// cmd.exe: hand the child an instrumented `PROMPT`. Nothing else about the launch changes - no
+/// `/K`, no wrapper batch file, and emphatically no `AutoRun` registry key.
+fn inject_cmd(shell: ShellCommand) -> (ShellCommand, Vec<(String, String)>) {
+    (shell, vec![("PROMPT".to_string(), CMD_PROMPT.to_string())])
+}
+
+/// Single-quote a path for embedding in a PowerShell command string, escaping any literal `'` by
+/// doubling it (PowerShell's own escape, not a backslash).
+fn powershell_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "''"))
+}
+
 /// Idempotently (re)write every generated script/wrapper this module's injection points reference,
 /// returning the shared install directory. Installed once per process (`OnceLock`) since the
 /// content is static for a given binary - repeat pane spawns must not repeat this I/O.
@@ -229,6 +299,23 @@ fn install_assets(dir: &Path) -> std::io::Result<()> {
     crate::platform::fs_security::ensure_private_dir(&fish_vendor_conf_d)?;
     write_if_changed(&fish_vendor_conf_d.join("hyprmux.fish"), FISH_SCRIPT)?;
 
+    write_if_changed(&dir.join("hyprmux.ps1"), POWERSHELL_SCRIPT)?;
+
+    // cmd's integration is a single `PROMPT` value, which [`inject_cmd`] hands the child directly.
+    // This file is that same value in runnable form, for a cmd session hyprmux did not launch (one
+    // reached through a `command =` pane, say). Generated rather than shipped as an asset so the
+    // string cannot drift from the one actually injected.
+    write_if_changed(
+        &dir.join("hyprmux.cmd"),
+        &format!(
+            "@echo off\r\n\
+             REM Generated by hyprmux; regenerated on every launch, safe to delete.\r\n\
+             REM Adds OSC 9;9 (cwd) and OSC 133 A/B (prompt boundary) markers to cmd's prompt.\r\n\
+             REM Command lifecycle (exit status, foreground program) needs Clink; see docs/terminal.md.\r\n\
+             set PROMPT={CMD_PROMPT}\r\n"
+        ),
+    )?;
+
     Ok(())
 }
 
@@ -264,7 +351,73 @@ mod tests {
         assert_eq!(detect_shell_kind("zsh"), ShellKind::Zsh);
         assert_eq!(detect_shell_kind("/opt/homebrew/bin/fish"), ShellKind::Fish);
         assert_eq!(detect_shell_kind("/bin/sh"), ShellKind::Other);
-        assert_eq!(detect_shell_kind("pwsh.exe"), ShellKind::Other);
+        assert_eq!(detect_shell_kind("pwsh.exe"), ShellKind::PowerShell);
+        assert_eq!(
+            detect_shell_kind(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            ShellKind::PowerShell
+        );
+        // Windows program names are case-insensitive; `%COMSPEC%` in particular is often uppercase.
+        assert_eq!(
+            detect_shell_kind(r"C:\Windows\system32\CMD.EXE"),
+            ShellKind::Cmd
+        );
+    }
+
+    #[test]
+    fn powershell_gets_a_noexit_dot_source_after_the_users_profile() {
+        let shell = ShellCommand::new("pwsh.exe").arg("-NoLogo");
+        let (shell, extra_env) =
+            inject(shell, ShellIntegrationMode::Auto, &InjectionEnv::default());
+        assert_eq!(shell.program, "pwsh.exe");
+        // The user's own arguments are preserved, and ours are appended after them.
+        assert_eq!(shell.args[0], "-NoLogo");
+        assert_eq!(shell.args[1], "-NoExit");
+        assert_eq!(shell.args[2], "-Command");
+        assert!(shell.args[3].starts_with(". '"));
+        assert!(shell.args[3].ends_with("hyprmux.ps1'"));
+        assert!(extra_env.is_empty());
+    }
+
+    #[test]
+    fn powershell_already_told_to_run_something_is_left_untouched() {
+        // `-Command`/`-File` mean "run this and exit" - not an interactive session, so there is no
+        // prompt to instrument, and a second `-Command` would fight with the user's.
+        for directed in ["-Command", "-File", "-EncodedCommand", "-c"] {
+            let shell = ShellCommand::new("powershell.exe").arg(directed).arg("x");
+            let (result, extra_env) = inject(
+                shell.clone(),
+                ShellIntegrationMode::Auto,
+                &InjectionEnv::default(),
+            );
+            assert_eq!(result, shell, "{directed} must be left alone");
+            assert!(extra_env.is_empty());
+        }
+    }
+
+    #[test]
+    fn cmd_gets_an_instrumented_prompt_and_no_argv_change() {
+        let shell = ShellCommand::new(r"C:\Windows\system32\cmd.exe");
+        let (result, extra_env) = inject(
+            shell.clone(),
+            ShellIntegrationMode::Auto,
+            &InjectionEnv::default(),
+        );
+        assert_eq!(result, shell, "cmd's argv must not be touched");
+        let prompt = extra_env
+            .iter()
+            .find(|(key, _)| key == "PROMPT")
+            .map(|(_, value)| value.as_str())
+            .expect("PROMPT set");
+        // The cwd report, both prompt boundaries, and cmd's own stock prompt text.
+        assert!(prompt.contains("]9;9;$P"));
+        assert!(prompt.contains("]133;A"));
+        assert!(prompt.contains("]133;B"));
+        assert!(prompt.contains("$P$G"));
+    }
+
+    #[test]
+    fn powershell_quoting_escapes_an_apostrophe_by_doubling_it() {
+        assert_eq!(powershell_quote(r"C:\it's\here"), r"'C:\it''s\here'");
     }
 
     #[test]
@@ -367,6 +520,8 @@ mod tests {
             "hyprmux.bash",
             "hyprmux.zsh",
             "hyprmux.fish",
+            "hyprmux.ps1",
+            "hyprmux.cmd",
             "bash-rcfile",
             "zsh-zdotdir/.zshenv",
             "zsh-zdotdir/.zshrc",

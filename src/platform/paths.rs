@@ -151,6 +151,61 @@ pub fn fallback_runtime_dir_path() -> PathBuf {
     std::env::temp_dir().join(format!("{APP_DIR}-{owner}"))
 }
 
+/// Normalize a working directory reported by a shell (`OSC 7` / `OSC 9;9`) into the platform's
+/// canonical spelling, or reject it (cross-platform plan Phase 6/10 path-encoding rules).
+///
+/// `None` means "not a usable absolute local path" - the caller must fall through to the next
+/// precedence tier rather than repairing it. Repair is exactly the wrong instinct here: a path we
+/// had to guess at is a path we should not be handing to `Command::current_dir`.
+///
+/// Unix: an absolute path (leading `/`) is already canonical; anything else is rejected.
+///
+/// Windows: accepts a drive path (`C:\...` or `C:/...`) and a UNC path (`\\server\share\...`),
+/// rejects a drive-relative path (`C:foo`, which means "whatever `C:`'s current directory happens
+/// to be" - a per-process notion no other process can resolve) and a rooted-but-driveless path
+/// (`\foo`, which is relative to the current drive). Separators are normalized to `\` and a drive
+/// letter is upper-cased, so two spellings of one directory compare equal.
+pub fn normalize_reported_cwd(path: &str) -> Option<String> {
+    if path.is_empty() || path.contains('\0') {
+        return None;
+    }
+    if !cfg!(windows) {
+        return path.starts_with('/').then(|| path.to_string());
+    }
+
+    let normalized = path.replace('/', "\\");
+    if let Some(rest) = normalized.strip_prefix("\\\\") {
+        // UNC: `\\server\share\...`. Requires at least a server and a share to name anything.
+        let mut parts = rest.splitn(3, '\\').filter(|part| !part.is_empty());
+        let (Some(_server), Some(_share)) = (parts.next(), parts.next()) else {
+            return None;
+        };
+        return Some(normalized);
+    }
+
+    let mut chars = normalized.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') || chars.next() != Some('\\') {
+        return None;
+    }
+    Some(format!(
+        "{}{}",
+        drive.to_ascii_uppercase(),
+        &normalized[1..]
+    ))
+}
+
+/// Whether two paths name the same directory. Case-sensitive on Unix, case-insensitive on Windows
+/// (whose filesystems are, and whose shells will happily report `c:\users\x` where the launch
+/// directory was recorded as `C:\Users\x`).
+pub fn paths_equal(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +294,54 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with("hyprmux-")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn reported_cwd_on_unix_accepts_only_absolute_paths() {
+        assert_eq!(
+            normalize_reported_cwd("/home/user/src"),
+            Some("/home/user/src".to_string())
+        );
+        assert_eq!(normalize_reported_cwd("home/user"), None);
+        assert_eq!(normalize_reported_cwd(""), None);
+        // A NUL is never a legitimate path byte and must never reach `Command::current_dir`.
+        assert_eq!(normalize_reported_cwd("/home/\0user"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reported_cwd_on_windows_normalizes_drives_and_unc_and_rejects_the_rest() {
+        assert_eq!(
+            normalize_reported_cwd("c:/Users/x"),
+            Some(r"C:\Users\x".to_string())
+        );
+        assert_eq!(
+            normalize_reported_cwd(r"C:\Users\x"),
+            Some(r"C:\Users\x".to_string())
+        );
+        assert_eq!(
+            normalize_reported_cwd(r"\\server\share\dir"),
+            Some(r"\\server\share\dir".to_string())
+        );
+        // Drive-relative: means "wherever C:'s per-process current directory points", which no
+        // other process can resolve.
+        assert_eq!(normalize_reported_cwd(r"C:Users"), None);
+        // Rooted but driveless: relative to the current drive, same problem.
+        assert_eq!(normalize_reported_cwd(r"\Users"), None);
+        // UNC with no share names nothing.
+        assert_eq!(normalize_reported_cwd(r"\\server"), None);
+        assert_eq!(normalize_reported_cwd("relative"), None);
+    }
+
+    #[test]
+    fn paths_compare_case_insensitively_only_on_windows() {
+        assert!(paths_equal(r"C:\Users\x", r"C:\Users\x"));
+        assert_eq!(
+            paths_equal("/Home/User", "/home/user"),
+            cfg!(windows),
+            "case-insensitive comparison must follow the platform's own filesystem semantics"
         );
     }
 

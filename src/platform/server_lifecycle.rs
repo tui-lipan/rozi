@@ -372,6 +372,48 @@ pub fn terminate_server(pid: u32) {
     imp::terminate_server(pid);
 }
 
+/// Whether this host can run hyprmux at all, with a user-facing reason when it cannot
+/// (cross-platform plan Phase 10).
+///
+/// The one real gate is Windows: every pane is a PTY, and on Windows that means ConPTY, which
+/// arrived in Windows 10 1809 (build 17763). On an older build there is no PTY to fall back to and
+/// no partial mode worth offering - so this is checked once at startup and refused with an
+/// explanation, rather than surfacing later as an inscrutable "failed to spawn pane" on every
+/// single pane the user opens.
+///
+/// A modern VT-capable terminal host (Windows Terminal, or any conhost from that same build
+/// onwards) is implied by the same check: the console-VT support hyprmux's rendering needs shipped
+/// alongside ConPTY.
+pub fn check_host_supported() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // `kernel32!CreatePseudoConsole` exists exactly on builds that have ConPTY. Probing for the
+        // export is more honest than reading a version number, which lies under compatibility
+        // shims and app-manifest quirks.
+        use windows_sys::Win32::Foundation::FARPROC;
+        use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+
+        let has_conpty: bool = unsafe {
+            let kernel32 = GetModuleHandleA(c"kernel32.dll".as_ptr().cast());
+            if kernel32.is_null() {
+                false
+            } else {
+                let proc: FARPROC =
+                    GetProcAddress(kernel32, c"CreatePseudoConsole".as_ptr().cast());
+                proc.is_some()
+            }
+        };
+        if !has_conpty {
+            return Err(
+                "hyprmux needs ConPTY, which requires Windows 10 version 1809 (build 17763) or \
+                 newer. Update Windows, or run hyprmux under WSL."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

@@ -424,6 +424,10 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
 }
 
 pub(crate) fn print_help() {
+    let profiles_dir = crate::config::profile_path_for_name("<NAME>")
+        .display()
+        .to_string();
+    let endpoint_help = endpoint_help();
     println!(
         "\
 hyprmux - Hyprland-style tiling terminal multiplexer
@@ -451,15 +455,38 @@ USAGE:
 OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
-    -p, --profile <NAME>  Load a named profile from ~/.config/hyprmux/profiles/<NAME>.toml
+    -p, --profile <NAME>  Load a named profile from {profiles_dir}
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
-        --socket <PATH>   Connect CLI control command to this socket
+        --socket <PATH>   Connect CLI control command to this endpoint
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
+
+{endpoint_help}
 
 A bare PROFILE positional is equivalent to --profile PROFILE.
 Leave the running app with prefix d (detach) or a configured quit binding."
     );
+}
+
+/// The `--socket`/`HYPRMUX_SOCKET` explanation, which differs by platform: a Unix-domain socket
+/// path on Linux/macOS, a named-pipe registry entry on Windows (see `platform::ipc::windows` for
+/// why the *entry*, not the pipe name, is what a user points at).
+fn endpoint_help() -> String {
+    let runtime_dir = crate::control::runtime_dir()
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_else(|_| "the hyprmux runtime directory".to_string());
+    if cfg!(windows) {
+        format!(
+            "Control endpoints live in {runtime_dir}. Each entry stands for a named pipe\n\
+             (\\\\.\\pipe\\hyprmux.<user-sid>.control-<pid>); pass the entry, not the pipe name.\n\
+             With no --socket, HYPRMUX_SOCKET is used, then the only live endpoint found there."
+        )
+    } else {
+        format!(
+            "Control sockets live in {runtime_dir} (one per running hyprmux, named by pid).\n\
+             With no --socket, HYPRMUX_SOCKET is used, then the only live socket found there."
+        )
+    }
 }
 
 pub(crate) fn print_version() {

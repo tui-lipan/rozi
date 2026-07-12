@@ -159,12 +159,10 @@ pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: 
     if !config.notifications.enabled || !config.notifications.pane_exit {
         return;
     }
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("notify-send")
-            .arg("hyprmux")
-            .arg(format!("Pane {id} exited with code {code}"))
-            .status();
-    });
+    crate::platform::notifications::notify(
+        "hyprmux",
+        &format!("Pane {id} exited with code {code}"),
+    );
 }
 
 pub(crate) fn handle_pane_input(

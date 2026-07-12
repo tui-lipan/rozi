@@ -75,14 +75,11 @@ pub struct ShellEnv {
     pub shell_var: Option<String>,
     /// `%COMSPEC%` (Windows only), if set to a non-empty value.
     pub comspec: Option<String>,
-    /// Directories to probe for `pwsh.exe`/`powershell.exe` on Windows, in `PATH` order.
-    ///
-    /// Real PATH probing with PATHEXT semantics is Phase 10 ("Windows `PATH`/`PATHEXT` command
-    /// lookup"); this is a narrower same-phase probe - directory-plus-fixed-`.exe`-name existence
-    /// checks only - sufficient to honor the plan's `pwsh.exe -> powershell.exe` preference now
-    /// without duplicating Phase 10's fuller lookup. Unverified on Windows (no target available in
-    /// this environment); see [`resolve_interactive_shell`].
+    /// Directories to search for a program on Windows, in `PATH` order.
     pub windows_path_dirs: Vec<std::path::PathBuf>,
+    /// `%PATHEXT%` split into extensions (`.COM`, `.EXE`, `.BAT`, ...), in precedence order. Empty
+    /// on Unix, which has no such concept.
+    pub windows_path_exts: Vec<String>,
 }
 
 impl ShellEnv {
@@ -93,12 +90,66 @@ impl ShellEnv {
             windows_path_dirs: std::env::var_os("PATH")
                 .map(|path| std::env::split_paths(&path).collect())
                 .unwrap_or_default(),
+            windows_path_exts: windows_path_exts(),
         }
     }
 }
 
+/// `%PATHEXT%`, split and normalized. Falls back to the documented Windows default when the
+/// variable is unset - which happens more often than one would like (a bare `CreateProcess`
+/// environment, a service, a CI shell), and a `PATHEXT`-less lookup would find nothing at all.
+fn windows_path_exts() -> Vec<String> {
+    const DEFAULT: &str = ".COM;.EXE;.BAT;.CMD";
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    non_empty_env("PATHEXT")
+        .unwrap_or_else(|| DEFAULT.to_string())
+        .split(';')
+        .map(|ext| ext.trim().to_string())
+        .filter(|ext| ext.starts_with('.'))
+        .collect()
+}
+
 fn non_empty_env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+/// Find `program` on the current process's `PATH`, honoring `%PATHEXT%` (cross-platform plan
+/// Phase 10, "Windows `PATH`/`PATHEXT` command lookup").
+///
+/// Returns the resolved absolute path, or `None` if nothing matches. A `program` that already
+/// contains a separator is treated as a path, not a name to search for - the same rule the OS's own
+/// loader applies.
+///
+/// Windows-only: on Unix, `Command::new` resolves a bare program name against `PATH` itself, so
+/// there is nothing for a caller here to do that the OS does not already do correctly.
+#[cfg(windows)]
+pub fn lookup_program(program: &str) -> Option<std::path::PathBuf> {
+    lookup_program_in(program, &ShellEnv::from_process())
+}
+
+fn lookup_program_in(program: &str, env: &ShellEnv) -> Option<std::path::PathBuf> {
+    if program.contains('/') || (cfg!(windows) && program.contains('\\')) {
+        let path = std::path::PathBuf::from(program);
+        return path.is_file().then_some(path);
+    }
+    for dir in &env.windows_path_dirs {
+        // An explicit extension (`pwsh.exe`) is tried as given before any PATHEXT expansion, so a
+        // caller that already knows the exact file name never pays for a fruitless `.COM` probe -
+        // and, on Unix, so the extensionless name is the only thing tried at all.
+        let exact = dir.join(program);
+        if exact.is_file() {
+            return Some(exact);
+        }
+        for ext in &env.windows_path_exts {
+            let candidate = dir.join(format!("{program}{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Resolve the interactive-shell launch policy. `configured` is the user's `shell` config value
@@ -120,17 +171,11 @@ pub fn resolve_interactive_shell(configured: Option<&[String]>, env: &ShellEnv) 
 
 fn windows_interactive_shell(env: &ShellEnv) -> ShellCommand {
     for candidate in ["pwsh.exe", "powershell.exe"] {
-        if windows_path_has(env, candidate) {
+        if lookup_program_in(candidate, env).is_some() {
             return ShellCommand::new(candidate);
         }
     }
     ShellCommand::new(env.comspec.clone().unwrap_or_else(|| "cmd.exe".to_string()))
-}
-
-fn windows_path_has(env: &ShellEnv, program: &str) -> bool {
-    env.windows_path_dirs
-        .iter()
-        .any(|dir| dir.join(program).is_file())
 }
 
 /// Resolve the command-runner launch policy: the shell used to run one-off command lines
@@ -232,6 +277,42 @@ mod tests {
             resolve_interactive_shell(Some(&[]), &env),
             ShellCommand::new("/bin/zsh")
         );
+    }
+
+    #[test]
+    fn lookup_program_expands_pathext_and_prefers_an_exact_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "hyprmux-command-test-pathext-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("tool.CMD"), b"").unwrap();
+        std::fs::write(dir.join("tool.EXE"), b"").unwrap();
+
+        let env = ShellEnv {
+            windows_path_dirs: vec![dir.clone()],
+            windows_path_exts: vec![".EXE".to_string(), ".CMD".to_string()],
+            ..ShellEnv::default()
+        };
+
+        // PATHEXT order decides between two candidates that both exist.
+        assert_eq!(lookup_program_in("tool", &env), Some(dir.join("tool.EXE")));
+        // A name that already carries its extension is taken as-is, never re-expanded.
+        assert_eq!(
+            lookup_program_in("tool.CMD", &env),
+            Some(dir.join("tool.CMD"))
+        );
+        assert_eq!(lookup_program_in("absent", &env), None);
+
+        // Something that is already a path is checked, not searched for.
+        let exact = dir.join("tool.EXE");
+        assert_eq!(
+            lookup_program_in(&exact.to_string_lossy(), &env),
+            Some(exact)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -4,7 +4,24 @@
 
 - A Rust toolchain of at least **1.88** (edition 2024; this is the MSRV, and CI builds on it).
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
-- A sibling checkout of [`tui-lipan`](../../tui-lipan).
+
+A plain `git clone` builds: `tui-lipan` is a regular crates.io dependency.
+
+> **Dependency note.** `tui-lipan` is pulled from crates.io at the version pinned in `Cargo.toml`,
+> with the `terminal`, `terminal-serde`, and `theme-reload` features. `terminal` brings in
+> `portable-pty` + `alacritty_terminal` for the PTY-backed terminal widget; `theme-reload` enables
+> live theme hot-reload.
+>
+> **Developing against a local `tui-lipan`.** To build hyprmux against a sibling checkout instead of
+> the published crate - the loop for changing the framework and hyprmux together - add a
+> `.cargo/config.toml` (gitignored, so it never reaches CI or a standalone clone):
+>
+> ```toml
+> [patch.crates-io]
+> tui-lipan = { path = "../tui-lipan" }
+> ```
+>
+> The sibling's declared version must satisfy the requirement in `Cargo.toml`.
 
 ## Platform support
 
@@ -30,12 +47,6 @@ Windows Terminal is recommended but not required. Windows deliberately has **no 
 inspection**: hyprmux never probes a PEB or walks a process tree, so a pane's working directory and
 foreground program come from shell integration or not at all (see
 [Terminal](terminal.md#smart-focus-and-cwd-inheritance)).
-
-> **Dependency note.** `tui-lipan` is a **path dependency** declared in `Cargo.toml` as
-> `{ path = "../tui-lipan", features = ["terminal", "theme-reload"] }`. The sibling
-> `../tui-lipan` checkout must exist for `hyprmux` to build. The `terminal` feature pulls
-> in `portable-pty` + `alacritty_terminal` for the PTY-backed terminal; `theme-reload`
-> enables live theme hot-reload. This repo is **not** self-contained for a standalone clone.
 
 ## Build and run
 

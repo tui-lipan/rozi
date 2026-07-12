@@ -241,6 +241,26 @@ git diff --check
 cargo build
 ```
 
+- To develop against a local `tui-lipan` (framework and app changing together), add a gitignored
+  `.cargo/config.toml` overriding the crates.io dependency with the sibling checkout:
+
+```toml
+[patch.crates-io]
+tui-lipan = { path = "../tui-lipan" }
+```
+
+  The sibling's declared version must satisfy `Cargo.toml`'s requirement.
+
+  **A `Cargo.lock` generated with this patch active is not valid for CI.** The patched crate is
+  recorded as a path package with no `source`/`checksum`, so `cargo check --locked` on a plain
+  checkout rejects it. Once the framework version this depends on is published, regenerate the lock
+  with the patch out of the way and commit that:
+
+```bash
+mv .cargo/config.toml .cargo/config.toml.off && cargo generate-lockfile
+mv .cargo/config.toml.off .cargo/config.toml
+```
+
 - For framework terminal changes in `../tui-lipan`, verify both sides:
 
 ```bash
@@ -248,12 +268,14 @@ cargo check --features terminal
 cargo clippy --features terminal
 ```
 
-Then rerun the relevant `hyprmux` tests and lints.
+  Then rerun the relevant `hyprmux` tests and lints, and publish the framework before the hyprmux
+  change that needs it can go green in CI.
 
 CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check`, `clippy -D warnings`, `test`, and a
 release build natively on `ubuntu-latest`, `macos-latest`, and `windows-latest`, plus `cargo audit`
-in a separate Linux job. It checks out `tui-lipan` as a sibling at a **pinned commit**
-(`TUI_LIPAN_REF`), so bumping the framework is an explicit commit here rather than a silent drift.
+in a separate Linux job. It builds from a plain checkout: `tui-lipan` resolves from crates.io at the
+version pinned in `Cargo.toml`, so a framework bump is an explicit `Cargo.toml`/`Cargo.lock` commit
+here rather than a silent drift.
 
 Windows code cannot be run in this workspace. Type-check it before pushing - CI is the first thing
 that actually executes it:
@@ -319,8 +341,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `--attach <NAME>` / `--session <NAME>` connects to persistent named session servers.
-- Cargo feature flags are inherited from the path dependency `tui-lipan`; this crate currently uses
-  `terminal`, `terminal-serde`, and `theme-reload`.
+- Cargo feature flags are inherited from the `tui-lipan` dependency (crates.io); this crate
+  currently uses `terminal`, `terminal-serde`, and `theme-reload`.
 
 ## Further Reading
 

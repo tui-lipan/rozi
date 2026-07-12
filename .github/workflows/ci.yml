@@ -7,13 +7,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # hyprmux depends on `../tui-lipan` as a path dependency, so CI has to reproduce that layout. The
-  # ref is pinned rather than floating on the default branch so a framework change cannot silently
-  # break (or silently fix) a hyprmux build: bumping the framework is an explicit commit here.
-  # Must be a ref that exists on the tui-lipan remote.
-  TUI_LIPAN_REF: 524611f8e07e5b0f88ac5b4bb0cf0dee9ba0f0b8
-
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -22,22 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    defaults:
-      run:
-        working-directory: hyprmux
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: hyprmux
-      - uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/tui-lipan
-          ref: ${{ env.TUI_LIPAN_REF }}
-          path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: hyprmux
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check
@@ -52,18 +33,8 @@ jobs:
   audit:
     name: audit
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: hyprmux
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: hyprmux
-      - uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/tui-lipan
-          ref: ${{ env.TUI_LIPAN_REF }}
-          path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.88
       # RustSec advisories are a property of the dependency graph, not of the host, so auditing on
       # all three platforms would report the same findings three times and pay for `cargo install`

@@ -2,8 +2,8 @@
 
 `hyprmux` is a Hyprland-style tiling **terminal multiplexer**. Panes are live PTY shells laid
 out with dwindle tiling, plus floating windows, workspaces, animated geometry, and tmux-style
-prefix commands. It is built on the [`tui-lipan`](../tui-lipan) TUI framework and was ported
-from that project's `window_manager` example.
+prefix commands. It is built on the [`tui-lipan`](https://crates.io/crates/tui-lipan) TUI
+framework and was ported from that project's `window_manager` example.
 
 hyprmux runs an always-server model: a background session server owns every PTY and the UI always
 attaches to it. A bare launch uses a disposable per-process ephemeral session; explicit `--attach` /
@@ -44,7 +44,8 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
   and live hot-reload. Terminal ANSI colors are derived from the active theme.
 - **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, clipboard paste
   (`v`), and OSC52 clipboard, provided by `tui-lipan`'s terminal primitives.
-- **Scriptable control socket** - a per-run Unix socket and `hyprmux` CLI (`list-panes`, `focus`,
+- **Scriptable control socket** - a per-run private endpoint (Unix socket, or a named pipe on
+  Windows) and `hyprmux` CLI (`list-panes`, `focus`,
   `send-text`, `new-pane`, `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`)
   for external automation.
 - **Extensible workbar & keybindings** - workbar segments can run a shell command on a timer, and
@@ -55,7 +56,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 
 Full docs live in [`docs/`](docs/):
 
-- [Getting started](docs/getting-started.md) - build, run, quit, and the dependency on `tui-lipan`.
+- [Getting started](docs/getting-started.md) - requirements, platform support, build, run, and quit.
 - [Keybindings](docs/keybindings.md) - prefix, held modifier, mouse, and the full key reference.
 - [Configuration](docs/configuration.md) - the complete `hyprmux.toml` reference.
 - [Layouts & panes](docs/layouts-and-panes.md) - dwindle, master, floating, fullscreen, resize.

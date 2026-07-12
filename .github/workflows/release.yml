@@ -11,9 +11,6 @@ on:
 permissions:
   contents: write
 
-env:
-  TUI_LIPAN_REF: 524611f8e07e5b0f88ac5b4bb0cf0dee9ba0f0b8
-
 jobs:
   build:
     name: ${{ matrix.target }}
@@ -44,19 +41,11 @@ jobs:
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: hyprmux
-      - uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/tui-lipan
-          ref: ${{ env.TUI_LIPAN_REF }}
-          path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.88
         with:
           targets: ${{ matrix.target }}
 
       - name: Build
-        working-directory: hyprmux
         run: cargo build --locked --release --target ${{ matrix.target }}
 
       # Every artifact is unpacked and run before it can be published. A binary that cannot even
@@ -64,7 +53,6 @@ jobs:
       # possible place to notice - each runner is the platform it just built for, so this is a real
       # native execution, not a cross-compiled guess.
       - name: Smoke-test the built binary
-        working-directory: hyprmux
         shell: bash
         run: |
           set -euo pipefail
@@ -79,12 +67,9 @@ jobs:
       # terminal, which is where a terminal multiplexer is run from anyway.
       - name: Sign and notarize (macOS)
         if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
-        working-directory: hyprmux
         env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
         run: |
           set -euo pipefail
           echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
@@ -101,10 +86,8 @@ jobs:
 
       - name: Sign (Windows)
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
-        working-directory: hyprmux
         shell: pwsh
         env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -116,7 +99,6 @@ jobs:
 
       - name: Package
         id: package
-        working-directory: hyprmux
         shell: bash
         run: |
           set -euo pipefail
@@ -153,7 +135,7 @@ jobs:
       # check that catches a packaging bug (wrong file copied, archive built from the wrong
       # directory, an executable bit lost in the tarball) rather than a build bug.
       - name: Smoke-test the extracted archive
-        working-directory: hyprmux/dist
+        working-directory: dist
         shell: bash
         run: |
           set -euo pipefail
@@ -172,9 +154,9 @@ jobs:
         with:
           name: ${{ matrix.target }}
           path: |
-            hyprmux/dist/*.tar.gz
-            hyprmux/dist/*.zip
-            hyprmux/dist/*.sha256
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
           if-no-files-found: error
 
   publish:

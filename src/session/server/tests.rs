@@ -444,6 +444,9 @@ fn resize_updates_screen_and_broadcasts_ack() {
             cwd: None,
             command: None,
             keep_open: false,
+            command_completed: false,
+            shell: Vec::new(),
+            env: Vec::new(),
             palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
@@ -493,6 +496,9 @@ fn duplicate_spawn_is_rejected() {
             cwd: None,
             command: None,
             keep_open: false,
+            command_completed: false,
+            shell: Vec::new(),
+            env: Vec::new(),
             palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
@@ -534,6 +540,9 @@ fn exited_pane_can_be_respawned() {
             cwd: None,
             command: None,
             keep_open: false,
+            command_completed: false,
+            shell: Vec::new(),
+            env: Vec::new(),
             palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
@@ -581,6 +590,9 @@ fn attach_reports_layout_and_panes() {
         cwd: Some("/repo".into()),
         command: None,
         keep_open: false,
+        command_completed: false,
+        shell: Vec::new(),
+        env: Vec::new(),
         palette: test_palette(),
         pty: None,
         screen: TerminalScreen::new(5, 20, 100),
@@ -652,6 +664,9 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             cwd: None,
             command: None,
             keep_open: false,
+            command_completed: false,
+            shell: Vec::new(),
+            env: Vec::new(),
             palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
@@ -715,6 +730,9 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 cwd: None,
                 command: Some("true".into()),
                 keep_open: false,
+                command_completed: false,
+                shell: Vec::new(),
+                env: Vec::new(),
                 palette: test_palette(),
                 pty: None,
                 screen,
@@ -762,4 +780,86 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     restored.delete_snapshot().unwrap();
     assert!(!root.join("dev").exists());
     let _ = fs::remove_dir_all(root);
+}
+
+/// A `keep_open` pane whose command finishes must not die: the server replaces the dead PTY with the
+/// interactive shell in place, and everything the command printed stays on screen above it.
+///
+/// The status and the surviving scrollback are both load-bearing: they are what the server-driven
+/// replacement buys over appending `; exec <shell>` to the command line (cross-platform plan
+/// Phase 4).
+#[test]
+fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scrollback() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+
+    let result = server.spawn_pane(SpawnRequest {
+        pane_id: 1,
+        generation: 1,
+        command: Some("printf 'hello from the command\\n'; exit 3".to_string()),
+        cwd: None,
+        title: None,
+        cols: 40,
+        rows: 10,
+        keep_open: true,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    // Drain PTY events until the command has exited and the replacement shell is running.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_exit_broadcast = false;
+    while Instant::now() < deadline {
+        while let Ok(event) = server.event_rx.try_recv() {
+            if let Some(outbound) = server.handle_event(event) {
+                if matches!(
+                    outbound,
+                    ServerOutbound::Control(ServerMessage::Exited { .. })
+                ) {
+                    saw_exit_broadcast = true;
+                }
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        let pane = server.panes.get(&1).expect("pane still exists");
+        if pane.command_completed {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get(&1).expect("pane still exists");
+    assert!(
+        pane.command_completed,
+        "the keep-open replacement never ran"
+    );
+    // The pane is alive on a fresh PTY - it did not exit with the command.
+    assert!(pane.pty.is_some(), "replacement shell is not running");
+    assert_eq!(
+        pane.exited, None,
+        "a keep-open pane must not report an exit"
+    );
+    assert!(
+        !saw_exit_broadcast,
+        "clients must not be told the pane exited; it did not"
+    );
+
+    // Scrollback continuity: the same TerminalScreen was kept, so the command's output is still
+    // there - and the status it exited with was reported into it rather than swallowed.
+    let pane = server.panes.get_mut(&1).expect("pane still exists");
+    let text = pane.screen.snapshot();
+    assert!(
+        text.contains("hello from the command"),
+        "the command's own output was lost across the replacement; screen was:\n{text}"
+    );
+    assert!(
+        text.contains("command exited with status 3"),
+        "the command's exit status was not reported; screen was:\n{text}"
+    );
 }

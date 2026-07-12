@@ -121,7 +121,6 @@ impl SessionServer {
         }
         let mut config = pty_config(
             request.command.as_deref(),
-            request.keep_open,
             &request.shell,
             &request.command_shell,
         );
@@ -147,6 +146,7 @@ impl SessionServer {
                         cwd: request.cwd,
                         command: request.command,
                         keep_open: request.keep_open,
+                        command_completed: false,
                         palette: request.palette,
                         pty: Some(pty),
                         screen,
@@ -154,6 +154,8 @@ impl SessionServer {
                         rows: rows.max(1),
                         exited: None,
                         log: None,
+                        shell: request.shell,
+                        env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
                     },
                 );
@@ -177,6 +179,7 @@ impl SessionServer {
                             cwd: request.cwd,
                             command: request.command,
                             keep_open: request.keep_open,
+                            command_completed: false,
                             palette: request.palette,
                             pty: None,
                             screen,
@@ -184,6 +187,8 @@ impl SessionServer {
                             rows: rows.max(1),
                             exited: Some(127),
                             log: None,
+                            shell: request.shell,
+                            env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
                         },
                     );
@@ -254,8 +259,13 @@ impl SessionServer {
                         Some(output)
                     }
                     TerminalPtyEvent::Exited(code) => {
-                        pane.exited = Some(code);
                         pane.pty = None;
+                        let keep_open =
+                            pane.keep_open && pane.command.is_some() && !pane.command_completed;
+                        if keep_open {
+                            return self.replace_with_keep_open_shell(id, generation, code);
+                        }
+                        pane.exited = Some(code);
                         self.dirty = true;
                         self.sync_pane_runtime(id, generation);
                         Some(ServerOutbound::Control(ServerMessage::Exited {
@@ -276,6 +286,89 @@ impl SessionServer {
                 }
             }
         }
+    }
+
+    /// A `keep_open` pane's command has exited: report its status into the pane's own output, then
+    /// replace the dead PTY with the interactive shell so the pane stays usable (cross-platform plan
+    /// Phase 4, "server-driven PTY replacement").
+    ///
+    /// Doing this server-side, rather than by appending `; exec <shell>` to the command line, is
+    /// what makes three things true at once:
+    ///
+    /// - The exit status is *observed* here, so it can be shown. A shell that `exec`s over itself
+    ///   has already discarded it.
+    /// - **Scrollback survives.** The pane id and generation are unchanged and the `TerminalScreen`
+    ///   is never recreated, so every client simply keeps appending to the buffer it already has -
+    ///   the command's output is still there above the new shell's first prompt. The replacement is
+    ///   invisible to a client; it just sees more bytes on the same pane.
+    /// - It is shell-agnostic, and so works on Windows, where neither `exec` nor `;` means anything.
+    ///
+    /// If the replacement shell cannot be spawned, the pane exits for real with the command's
+    /// status - the same outcome as a pane that was never `keep_open`.
+    fn replace_with_keep_open_shell(
+        &mut self,
+        id: PaneId,
+        generation: u64,
+        code: i32,
+    ) -> Option<ServerOutbound> {
+        // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
+        let banner = format!("\r\n\x1b[2m[hyprmux] command exited with status {code}\x1b[0m\r\n");
+        let bytes = banner.into_bytes();
+
+        let pane = self.panes.get_mut(&id)?;
+        pane.screen.process_bytes(&bytes);
+        if let Some(log) = pane.log.as_mut() {
+            let _ = log.file.write_all(&bytes);
+        }
+
+        // `spawnable_cwd` prefers the pane's live tracked cwd (where the command actually left it)
+        // over its launch directory, and never returns a remote one.
+        let cwd = pane.spawnable_cwd();
+        let mut config = pty_config(None, &pane.shell, &[]);
+        if let Some(cwd) = cwd.filter(|cwd| Path::new(cwd).is_dir()) {
+            config = config.cwd(cwd);
+        }
+        for (key, value) in &pane.env {
+            config = config.env(key.clone(), value.clone());
+        }
+        let (cols, rows) = (pane.cols, pane.rows);
+
+        let tx = self.event_tx.clone();
+        let spawned = TerminalPty::spawn(config, move |event| {
+            let _ = tx.send(ServerEvent::Pty(id, generation, event));
+        });
+
+        let pane = self.panes.get_mut(&id)?;
+        match spawned {
+            Ok(pty) => {
+                let _ = pty.resize(cols.max(1), rows.max(1));
+                pane.pty = Some(pty);
+                pane.command_completed = true;
+                pane.exited = None;
+            }
+            Err(_) => pane.exited = Some(code),
+        }
+        let died = pane.exited;
+
+        self.dirty = true;
+        self.sync_pane_runtime(id, generation);
+        if died.is_some() {
+            self.broadcast_outbound(&ServerOutbound::PaneOutput {
+                pane_id: id,
+                generation,
+                bytes,
+            });
+            return Some(ServerOutbound::Control(ServerMessage::Exited {
+                pane_id: id,
+                generation,
+                code,
+            }));
+        }
+        Some(ServerOutbound::PaneOutput {
+            pane_id: id,
+            generation,
+            bytes,
+        })
     }
 
     pub(super) fn live_pane_mut(&mut self, id: PaneId, generation: u64) -> Option<&mut ServerPane> {

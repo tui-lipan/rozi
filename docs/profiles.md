@@ -27,7 +27,7 @@ Each pane entry supports:
 | `name` | Pane title shown in the titlebar. |
 | `cwd` | Working directory when the pane launches. `~` expands to `$HOME`. |
 | `command` | Run via `shell -lc <command>` when the pane opens. |
-| `keep_open` | When `true`, append `; exec <shell>` so an interactive shell remains after the command exits. |
+| `keep_open` | When `true`, drop into an interactive shell when the command exits instead of closing the pane. |
 | `floating` | Start as a floating pane instead of tiled. |
 | `fullscreen` | Start fullscreen. |
 | `rect` | Floating geometry `{ x, y, w, h }`. |
@@ -111,9 +111,12 @@ Deleting the default profile clears that config entry when the file is removed.
 
 ## Command lifetime
 
-Without `keep_open = true`, a pane closes when its `command` exits (`shell -lc` semantics).
-Set `keep_open = true` to drop into an interactive shell instead - hyprmux builds
-`command; exec <shell>` automatically.
+Without `keep_open = true`, a pane closes when its `command` exits.
+
+Set `keep_open = true` to drop into an interactive shell instead. When the command finishes, the
+session server prints its exit status into the pane and replaces the dead PTY with your interactive
+shell **in place** — same pane, same scrollback, so the command's output is still there above the
+new prompt. The shell starts in the directory the command left the pane in, when that is known.
 
 See also [Project profiles & pane identity](project-profiles.md) for pane titles, saving
 limitations, and session autosave details.

@@ -120,6 +120,11 @@ pub struct ServerPane {
     pub cwd: Option<String>,
     pub command: Option<String>,
     pub keep_open: bool,
+    /// Set once a `keep_open` pane's command has finished and its PTY has been replaced by the
+    /// interactive shell (see [`SessionServer::replace_with_keep_open_shell`]). Without it, the
+    /// *shell's* eventual exit would be mistaken for the command's and trigger a second
+    /// replacement - a pane you could never close.
+    pub command_completed: bool,
     pub palette: WirePalette,
     pub pty: Option<TerminalPty>,
     pub screen: TerminalScreen,
@@ -127,6 +132,12 @@ pub struct ServerPane {
     pub rows: u16,
     pub exited: Option<i32>,
     pub log: Option<PaneLog>,
+    /// The resolved interactive shell and spawn environment this pane was launched with, kept so a
+    /// `keep_open` replacement can start the same shell the client asked for - resolved from the
+    /// client's live config, with shell integration already injected - rather than re-deriving it
+    /// from the detached server's own stale environment.
+    pub shell: Vec<String>,
+    pub env: Vec<(String, String)>,
     /// Cached result of the last [`SessionServer::recompute_pane_runtime`] call (Phase 6); kept
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
@@ -374,38 +385,32 @@ impl ServerPane {
 /// argv (should not happen - the client always resolves a non-empty one - but a spawn config
 /// needs *some* program either way).
 ///
-/// `keep_open` with a `command` runs the command through `command_shell`, then `exec`s into the
-/// resolved interactive `shell` on completion so the pane stays open - the historical
-/// `command; exec shell` behavior, now correctly using the deterministic command runner rather
-/// than the interactive shell to run the one-off command. This is an interim, string-interpolated
-/// implementation preserved as-is from before this module existed; it does not yet give the
-/// keep-open replacement its own exit-status/scrollback-preserving PTY swap (cross-platform plan
-/// Phase 4's "server-driven PTY replacement" is not implemented - deferred to land alongside the
-/// Phase 6/7 runtime-state work it naturally overlaps with).
+/// A pane with a `command` runs it through the deterministic `command_shell` runner; a pane without
+/// one runs the resolved interactive `shell`.
+///
+/// `keep_open` is deliberately *not* handled here, and must not be: interpolating the shell into the
+/// command line (`command; exec <shell>`) would bind this to POSIX shell syntax - `exec` does not
+/// exist in cmd.exe or PowerShell, and `;` does not separate commands in cmd - and would swallow the
+/// command's exit status into the `exec`, leaving nothing to report. Keep-open is a server-driven
+/// PTY replacement after the command exits instead; see
+/// [`SessionServer::replace_with_keep_open_shell`].
 fn pty_config(
     command: Option<&str>,
-    keep_open: bool,
     shell: &[String],
     command_shell: &[String],
 ) -> TerminalPtyConfig {
     use crate::platform::command::ShellCommand;
 
-    let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| ShellCommand::new("/bin/sh"));
     if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
         let runner = ShellCommand::from_argv(command_shell)
             .unwrap_or_else(|| ShellCommand::new("/bin/sh").arg("-c"));
-        let command = if keep_open {
-            let shell_argv = shell.as_argv().join(" ");
-            format!("{command}; exec {shell_argv}")
-        } else {
-            command.to_string()
-        };
         let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
         for arg in runner.args {
             config = config.arg(arg);
         }
-        config.arg(command)
+        config.arg(command.to_string())
     } else {
+        let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| ShellCommand::new("/bin/sh"));
         let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
         for arg in shell.args {
             config = config.arg(arg);

@@ -1,6 +1,9 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SNAPSHOT_VERSION: u32 = 1;
@@ -69,6 +72,7 @@ impl SessionServer {
         let final_path = self.snapshot_path()?;
         let parent = final_path.parent().unwrap();
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
         let suffix = format!(
             "{}.{}",
@@ -81,9 +85,11 @@ impl SessionServer {
         let temp = parent.join(format!(".{}.tmp-{suffix}", self.session_name));
         let backup = parent.join(format!(".{}.old-{suffix}", self.session_name));
         fs::create_dir(&temp)?;
+        #[cfg(unix)]
         fs::set_permissions(&temp, fs::Permissions::from_mode(0o700))?;
         let panes_dir = temp.join("panes");
         fs::create_dir(&panes_dir)?;
+        #[cfg(unix)]
         fs::set_permissions(&panes_dir, fs::Permissions::from_mode(0o700))?;
 
         let mut panes = Vec::new();
@@ -235,6 +241,7 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
 
 fn write_secure(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()

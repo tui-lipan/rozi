@@ -1,7 +1,5 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -11,6 +9,7 @@ use tui_lipan::prelude::*;
 
 use crate::Msg;
 use crate::events::{EventHub, EventKind};
+use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcListener};
 use crate::state::PaneId;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -146,28 +145,34 @@ fn runtime_dir_with_base(base: Option<PathBuf>) -> std::io::Result<PathBuf> {
 }
 
 pub fn socket_path_for_pid(pid: u32) -> std::io::Result<PathBuf> {
-    Ok(runtime_dir()?.join(format!("control-{pid}.sock")))
+    Ok(EndpointRegistry::control_endpoint(&runtime_dir()?, pid)
+        .path()
+        .to_path_buf())
 }
 
-pub fn bind_control_socket() -> std::io::Result<(UnixListener, ControlSocketGuard)> {
+pub fn bind_control_socket() -> std::io::Result<(IpcListener, ControlSocketGuard)> {
     let path = socket_path_for_pid(std::process::id())?;
-    if path.exists() && UnixStream::connect(&path).is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    let listener = UnixListener::bind(&path)?;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    Ok((listener, ControlSocketGuard { path }))
+    let bound = crate::platform::ipc::IpcEndpoint::at_path(&path).bind()?;
+    Ok((bound.into_listener(), ControlSocketGuard { path }))
 }
 
-pub fn run_listener(listener: UnixListener, link: CommandLink<Msg>, event_hub: EventHub) {
-    for stream in listener.incoming().flatten() {
-        let link = link.clone();
-        let event_hub = event_hub.clone();
-        std::thread::spawn(move || handle_connection(stream, link, event_hub));
+pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: EventHub) {
+    listener
+        .set_nonblocking(false)
+        .expect("control listener supports blocking accept");
+    loop {
+        match listener.accept() {
+            Ok(stream) => {
+                let link = link.clone();
+                let event_hub = event_hub.clone();
+                std::thread::spawn(move || handle_connection(stream, link, event_hub));
+            }
+            Err(_) => return,
+        }
     }
 }
 
-fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>, event_hub: EventHub) {
+fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
     let reader_stream = match stream.try_clone() {
@@ -245,7 +250,7 @@ fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>, event_hub: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     fn temp_base(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("hyprmux-test-{name}-{}", std::process::id()))

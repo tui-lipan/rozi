@@ -1,10 +1,10 @@
 use super::*;
 
 impl SessionServer {
-    pub(super) fn accept_new(&mut self, listener: &UnixListener) -> io::Result<()> {
+    pub(super) fn accept_new(&mut self, listener: &IpcListener) -> io::Result<()> {
         loop {
             match listener.accept() {
-                Ok((stream, _)) => {
+                Ok(stream) => {
                     if stream.set_nonblocking(true).is_err() {
                         continue;
                     }

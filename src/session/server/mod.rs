@@ -1,15 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
 use std::io::{self, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use tui_lipan::prelude::*;
 
 use crate::control;
+use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint, IpcListener};
 use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
@@ -127,7 +126,7 @@ pub struct ServerPane {
 /// server or the other clients.
 struct ClientConn {
     id: ClientId,
-    stream: UnixStream,
+    stream: IpcConnection,
     decoder: protocol::FrameDecoder,
     outbox: VecDeque<Vec<u8>>,
     outbox_bytes: usize,
@@ -150,7 +149,7 @@ struct ClientConn {
 }
 
 impl ClientConn {
-    fn new(id: ClientId, stream: UnixStream) -> Self {
+    fn new(id: ClientId, stream: IpcConnection) -> Self {
         let now = Instant::now();
         Self {
             id,
@@ -244,7 +243,7 @@ impl SessionServer {
         }
     }
 
-    pub fn run_listener(&mut self, listener: UnixListener) -> io::Result<()> {
+    pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
         // Tracks how long an ephemeral session has had no *attached* client. A named session
         // ignores this timer and is durable until explicitly shut down.
@@ -393,28 +392,27 @@ fn pty_config(
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {
+    Ok(session_endpoint(name)?.path().to_path_buf())
+}
+
+fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid session name",
         ));
     }
-    Ok(control::runtime_dir()?.join(format!("session-{name}.sock")))
+    Ok(EndpointRegistry::session_endpoint(
+        &control::runtime_dir()?,
+        name,
+    ))
 }
 
-pub fn bind_session_socket(name: &str) -> io::Result<(UnixListener, PathBuf)> {
-    let path = session_socket_path(name)?;
-    bind_unix_socket(&path)?;
-    let listener = UnixListener::bind(&path)?;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    Ok((listener, path))
-}
-
-fn bind_unix_socket(path: &Path) -> io::Result<()> {
-    if path.exists() && UnixStream::connect(path).is_err() {
-        let _ = fs::remove_file(path);
-    }
-    Ok(())
+pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, PathBuf)> {
+    let endpoint = session_endpoint(name)?;
+    let path = endpoint.path().to_path_buf();
+    let bound = endpoint.bind()?;
+    Ok((bound.into_listener(), path))
 }
 
 pub fn run_named_session(name: &str) -> io::Result<()> {

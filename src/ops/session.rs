@@ -843,24 +843,26 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 fn shutdown_session(name: &str) -> std::io::Result<()> {
     let path = crate::session::server::session_socket_path(name)?;
-    if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
+    let endpoint = crate::platform::ipc::IpcEndpoint::at_path(&path);
+    if let Ok(mut stream) = endpoint.connect() {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
         // Grab the server's pid up front (protocol-independent) so an older, incompatible server -
         // one that rejects our attach handshake and can't be told to `Shutdown` - can still be
-        // reaped instead of leaking as an unkillable orphan.
-        let server_pid = peer_pid(&stream);
-        if graceful_shutdown(&mut stream, name).is_err() {
-            if let Some(pid) = server_pid {
-                // SIGTERM asks the orphaned server to exit and reap its PTYs on its own.
-                unsafe {
-                    libc::kill(pid as libc::pid_t, libc::SIGTERM);
-                }
-            }
+        // reaped instead of leaking as an unkillable orphan. `peer_pid` is Unix-only in practice
+        // (the Windows backend always reports `None` - see `platform::ipc::windows`), which is fine
+        // here: Windows server lifecycle uses Job Objects rather than a pid-targeted signal
+        // (cross-platform plan Phase 5b, Milestone 2), so a `None` here simply skips straight past
+        // the signal fallback below with nothing left to do.
+        let server_pid = stream.peer_pid();
+        if graceful_shutdown(&mut stream, name).is_err()
+            && let Some(pid) = server_pid
+        {
+            terminate_unresponsive_server(pid);
         }
     }
     // The server unlinks its socket only once it finishes tearing down, which races the refresh
-    // that follows a kill (and a SIGTERMed or already-dead server may never unlink at all). Drop the
+    // that follows a kill (and a signalled or already-dead server may never unlink at all). Drop the
     // path now so the killed session leaves the list immediately.
     let _ = std::fs::remove_file(&path);
     crate::session::server::delete_snapshot(name)?;
@@ -872,7 +874,7 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
 /// breaks, signalling [`shutdown_session`] to fall back to a signal-based kill rather than pushing a
 /// `Shutdown` into a half-closed pipe (which surfaced as a bogus "Broken pipe" delete failure).
 fn graceful_shutdown(
-    stream: &mut std::os::unix::net::UnixStream,
+    stream: &mut crate::platform::ipc::IpcConnection,
     name: &str,
 ) -> std::io::Result<()> {
     use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
@@ -896,27 +898,21 @@ fn graceful_shutdown(
     }
 }
 
-/// Read the peer (server) process id from a connected Unix socket via `SO_PEERCRED`. Works
-/// regardless of the wire protocol version, so it can target servers we cannot handshake with.
-fn peer_pid(stream: &std::os::unix::net::UnixStream) -> Option<u32> {
-    use std::os::fd::AsRawFd;
-    let mut cred = libc::ucred {
-        pid: 0,
-        uid: 0,
-        gid: 0,
-    };
-    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    let ret = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
-            &mut len,
-        )
-    };
-    (ret == 0 && cred.pid > 0).then_some(cred.pid as u32)
+/// Forced termination of an orphaned/unresponsive server that could not be reached via the
+/// protocol-level `Shutdown` message (cross-platform plan Phase 5b stale-server recovery). Unix
+/// sends `SIGTERM` so the process can still exit its own cleanup path and reap its PTYs; the
+/// Windows equivalent (`TerminateJobObject` on the server's job object) is Milestone 2 and not
+/// implemented - this is a no-op there today since [`shutdown_session`] only calls this when a pid
+/// was actually reported, which the Windows `IpcConnection::peer_pid` stub never does.
+#[cfg(unix)]
+fn terminate_unresponsive_server(pid: u32) {
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
 }
+
+#[cfg(not(unix))]
+fn terminate_unresponsive_server(_pid: u32) {}
 
 #[cfg(test)]
 mod tests {

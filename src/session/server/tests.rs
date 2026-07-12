@@ -1,4 +1,6 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
 
 /// Minimal placeholder palette for spawn requests in tests.
 fn test_palette() -> WirePalette {
@@ -25,7 +27,9 @@ fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     server_stream.set_nonblocking(true).unwrap();
     let id = server.next_client_id;
     server.next_client_id += 1;
-    server.clients.push(ClientConn::new(id, server_stream));
+    server
+        .clients
+        .push(ClientConn::new(id, IpcConnection::from_unix(server_stream)));
     (id, client_stream)
 }
 

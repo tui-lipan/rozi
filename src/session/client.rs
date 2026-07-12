@@ -1,14 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::io;
-use std::os::unix::net::UnixStream;
-use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
+use crate::platform::ipc::{IpcConnection, IpcEndpoint};
 use crate::session::protocol::Frame;
 use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
 use crate::shared_layout::{ClientId, SharedLayout};
@@ -44,26 +43,26 @@ impl SessionClient {
     }
 
     pub fn connect(
-        path: &Path,
+        endpoint: &IpcEndpoint,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<Self> {
-        let stream = UnixStream::connect(path)?;
+        let stream = endpoint.connect()?;
         Self::from_stream(stream, session, inbound)
     }
 
     pub fn connect_attached(
-        path: &Path,
+        endpoint: &IpcEndpoint,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
-        let stream = UnixStream::connect(path)?;
+        let stream = endpoint.connect()?;
         Self::from_stream_attached(stream, session, inbound, read_only)
     }
 
     pub fn from_stream(
-        stream: UnixStream,
+        stream: IpcConnection,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
     ) -> io::Result<Self> {
@@ -71,7 +70,7 @@ impl SessionClient {
     }
 
     pub fn from_stream_attached(
-        mut stream: UnixStream,
+        mut stream: IpcConnection,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
@@ -242,7 +241,7 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
     Ok(())
 }
 
-fn forward_inbound(reader: &mut UnixStream, inbound: &mpsc::Sender<Frame<ServerMessage>>) {
+fn forward_inbound<R: std::io::Read>(reader: &mut R, inbound: &mpsc::Sender<Frame<ServerMessage>>) {
     let mut decoder = protocol::FrameDecoder::default();
     loop {
         match decoder.read_from_status(reader) {

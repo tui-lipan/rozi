@@ -37,12 +37,14 @@ pub(crate) fn attach_session_client(
         });
         return;
     };
+    let endpoint = crate::platform::ipc::IpcEndpoint::at_path(&path);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut spawned = false;
     let mut server_child: Option<std::process::Child> = None;
     loop {
         let (tx, rx) = mpsc::channel();
-        match super::client::SessionClient::connect_attached(&path, name.clone(), tx, read_only) {
+        match super::client::SessionClient::connect_attached(&endpoint, name.clone(), tx, read_only)
+        {
             Ok((client, attached)) => {
                 link.send(Msg::SessionConnected {
                     epoch,

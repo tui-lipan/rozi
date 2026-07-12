@@ -14,10 +14,17 @@
 //!   and currently only creates the directory without enforcing privacy.
 //! - [`user`] - **implemented**: `current_user_tag()`, pulled forward from Phase 10 because
 //!   [`paths`] needed it for the runtime-dir fallback path.
-//! - [`command`], [`notifications`], [`server_lifecycle`], [`process`], [`ipc`] - module skeletons
-//!   only. No call site has been migrated to them yet; existing Unix-specific code (`control.rs`
-//!   socket binding, `ops/session.rs` peer-credential checks, `ops/config.rs` executable checks)
-//!   still lives at its current call sites pending Phases 4/5/5b/9.
+//! - [`command`] - **implemented** (Phase 4): interactive-shell/command-runner resolution, wired
+//!   into every pane/hook/workbar/`[keys] run` spawn path.
+//! - [`ipc`] - **implemented for Unix** (Phase 5): transport-neutral `IpcEndpoint`/`IpcListener`/
+//!   `IpcConnection`/`BoundEndpoint`/`EndpointRegistry`, wired into `control.rs`,
+//!   `session/client.rs`, `session/discovery.rs`, `session/server/*`, `cli.rs`, and
+//!   `ops/session.rs`'s peer-pid probe. The Windows named-pipe backend is a type-matching stub only
+//!   (Milestone 2).
+//! - [`notifications`], [`server_lifecycle`], [`process`] - module skeletons only. No call site has
+//!   been migrated to them yet; existing Unix-specific code (`ops/config.rs` executable checks, the
+//!   Unix signal/process-control logic inline in `ops/session.rs`) still lives at its current call
+//!   sites pending Phases 5b/9/10.
 
 pub mod fs_security;
 pub mod paths;

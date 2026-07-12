@@ -1,9 +1,9 @@
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 use tui_lipan::Result;
 
+use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 use crate::{control, session};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -294,16 +294,10 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
     }
     let dir =
         control::runtime_dir().map_err(|err| format!("could not inspect runtime dir: {err}"))?;
-    let live: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let live: Vec<PathBuf> = EndpointRegistry::list_live_control_endpoints(&dir)
         .map_err(|err| format!("could not read {}: {err}", dir.display()))?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("control-") && n.ends_with(".sock"))
-                && UnixStream::connect(p).is_ok()
-        })
+        .into_iter()
+        .map(|endpoint| endpoint.path().to_path_buf())
         .collect();
     match live.as_slice() {
         [path] => Ok(path.clone()),
@@ -323,7 +317,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let mut stream = match UnixStream::connect(&path) {
+    let mut stream = match IpcEndpoint::at_path(&path).connect() {
         Ok(stream) => stream,
         Err(err) => {
             eprintln!("could not connect to {}: {err}", path.display());
@@ -396,7 +390,7 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
         session::server::delete_snapshot(name)?;
         return Ok(());
     }
-    match std::os::unix::net::UnixStream::connect(&path) {
+    match IpcEndpoint::at_path(&path).connect() {
         Ok(mut stream) => {
             stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
             session::protocol::write_frame(

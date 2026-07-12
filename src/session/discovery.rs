@@ -1,6 +1,6 @@
-use std::path::Path;
 use std::time::Duration;
 
+use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
 
 const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
@@ -48,33 +48,15 @@ pub fn discover_sessions_excluding(
     exclude_name: Option<&str>,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     let dir = crate::control::runtime_dir()?;
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err),
-    };
-    let mut sockets = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let Some(name) = file_name
-            .strip_prefix("session-")
-            .and_then(|name| name.strip_suffix(".sock"))
-        else {
-            continue;
-        };
-        if exclude_name == Some(name) {
-            continue;
-        }
-        sockets.push((name.to_string(), path));
+    let mut endpoints = EndpointRegistry::list_session_endpoints(&dir)?;
+    if let Some(exclude_name) = exclude_name {
+        endpoints.retain(|(name, _)| name != exclude_name);
     }
 
-    let mut handles = Vec::with_capacity(sockets.len());
-    for (name, path) in sockets {
+    let mut handles = Vec::with_capacity(endpoints.len());
+    for (name, endpoint) in endpoints {
         handles.push(std::thread::spawn(move || {
-            query_session_socket(&name, &path)
+            query_session_endpoint(&name, &endpoint)
         }));
     }
 
@@ -88,10 +70,11 @@ pub fn discover_sessions_excluding(
     Ok(rows)
 }
 
-/// Probes one session socket. Returns `None` for a stale socket whose server is gone (connection
-/// refused): the dead file is unlinked so a killed or crashed session stops appearing in the list.
-pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession> {
-    let status = match std::os::unix::net::UnixStream::connect(path) {
+/// Probes one session endpoint. Returns `None` for a stale endpoint whose server is gone
+/// (connection refused): the dead socket file is unlinked so a killed or crashed session stops
+/// appearing in the list.
+pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<DiscoveredSession> {
+    let status = match endpoint.connect() {
         Ok(mut stream) => {
             let _ = stream.set_read_timeout(Some(QUERY_TIMEOUT));
             let _ = stream.set_write_timeout(Some(QUERY_TIMEOUT));
@@ -138,7 +121,7 @@ pub fn query_session_socket(name: &str, path: &Path) -> Option<DiscoveredSession
             DiscoveredSessionStatus::Busy
         }
         Err(_) => {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(endpoint.path());
             return None;
         }
     };

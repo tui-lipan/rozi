@@ -1,5 +1,6 @@
 use super::*;
 use std::fs::OpenOptions;
+use std::path::Path;
 
 impl SessionServer {
     /// Rename this session in place: move the listening socket to the new name so the same server
@@ -25,7 +26,7 @@ impl SessionServer {
             }
         };
         if new_path.exists() {
-            if UnixStream::connect(&new_path).is_ok() {
+            if crate::platform::ipc::IpcEndpoint::at_path(&new_path).is_live() {
                 return ServerMessage::Error {
                     code: "name-in-use".to_string(),
                     message: format!("session `{name}` already exists"),
@@ -41,7 +42,11 @@ impl SessionServer {
                     message: err.to_string(),
                 };
             }
-            let _ = fs::set_permissions(&new_path, fs::Permissions::from_mode(0o600));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&new_path, fs::Permissions::from_mode(0o600));
+            }
         }
         self.socket_path = Some(new_path);
         self.session_name = name.clone();
@@ -322,13 +327,19 @@ impl SessionServer {
         let result = root
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "state directory unavailable"))
             .and_then(|root| {
+                #[cfg(unix)]
+                use std::os::unix::fs::PermissionsExt;
+
                 fs::create_dir_all(&root)?;
+                #[cfg(unix)]
                 fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
                 let dir = root.join(&self.session_name);
                 fs::create_dir_all(&dir)?;
+                #[cfg(unix)]
                 fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
                 let path = dir.join(format!("{id}-{generation}.log"));
                 let file = OpenOptions::new().create(true).append(true).open(&path)?;
+                #[cfg(unix)]
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
                 Ok(PaneLog { file, path })
             });

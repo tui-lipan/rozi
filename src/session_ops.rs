@@ -461,7 +461,9 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.commands_dirty = true;
     crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, false, link));
+        std::thread::spawn(move || {
+            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+        });
     }))
 }
 
@@ -506,7 +508,7 @@ pub(crate) fn attach_session_by_name(
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            crate::attach_session_client(epoch, name, autostart, false, link)
+            crate::session::bootstrap::attach_session_client(epoch, name, autostart, false, link)
         });
     }))
 }
@@ -587,7 +589,9 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
         read_only: false,
     });
     Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || crate::attach_session_client(epoch, name, true, false, link));
+        std::thread::spawn(move || {
+            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+        });
     }))
 }
 

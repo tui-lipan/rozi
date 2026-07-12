@@ -613,7 +613,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ));
             Update::with_command(Command::spawn(move |link| {
                 std::thread::spawn(move || {
-                    crate::attach_session_client(new_epoch, name, autostart, read_only, link)
+                    crate::session::bootstrap::attach_session_client(
+                        new_epoch, name, autostart, read_only, link,
+                    )
                 });
             }))
         }

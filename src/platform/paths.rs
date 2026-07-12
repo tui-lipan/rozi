@@ -84,10 +84,10 @@ fn env_absolute_path(key: &str) -> Option<PathBuf> {
 /// Base config directory: `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux`;
 /// `%APPDATA%\hyprmux` on Windows.
 pub fn config_dir(env: &PlatformEnv) -> PathBuf {
-    if cfg!(windows) {
-        if let Some(appdata) = &env.appdata {
-            return appdata.join(APP_DIR);
-        }
+    if cfg!(windows)
+        && let Some(appdata) = &env.appdata
+    {
+        return appdata.join(APP_DIR);
     }
     xdg_style_dir(env.xdg_config_home.as_ref(), &env.home, ".config")
 }
@@ -95,10 +95,10 @@ pub fn config_dir(env: &PlatformEnv) -> PathBuf {
 /// Base state directory: `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux`;
 /// `%LOCALAPPDATA%\hyprmux` on Windows.
 pub fn state_dir(env: &PlatformEnv) -> PathBuf {
-    if cfg!(windows) {
-        if let Some(local_appdata) = &env.local_appdata {
-            return local_appdata.join(APP_DIR);
-        }
+    if cfg!(windows)
+        && let Some(local_appdata) = &env.local_appdata
+    {
+        return local_appdata.join(APP_DIR);
     }
     xdg_style_dir(env.xdg_state_home.as_ref(), &env.home, ".local/state")
 }
@@ -110,10 +110,10 @@ pub fn state_dir(env: &PlatformEnv) -> PathBuf {
 /// exists per the plan's path-policy table, ready for a future consumer.
 #[allow(dead_code)]
 pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
-    if cfg!(windows) {
-        if let Some(local_appdata) = &env.local_appdata {
-            return local_appdata.join(APP_DIR).join("cache");
-        }
+    if cfg!(windows)
+        && let Some(local_appdata) = &env.local_appdata
+    {
+        return local_appdata.join(APP_DIR).join("cache");
     }
     xdg_style_dir(env.xdg_cache_home.as_ref(), &env.home, ".cache")
 }

@@ -187,6 +187,8 @@ impl SessionServer {
                     keep_open: saved.keep_open,
                     env: Vec::new(),
                     palette: saved.palette,
+                    shell: self.settings.shell.clone(),
+                    command_shell: self.settings.command_shell.clone(),
                 },
                 Some(&replay),
                 true,

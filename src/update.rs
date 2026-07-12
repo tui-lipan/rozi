@@ -1246,7 +1246,8 @@ fn bind_attached_pane_backends(
 }
 
 /// Defensive fallback: adopt server panes when a live session reports panes but no committed layout
-/// (should not happen under protocol v7). Rebuilds a flat tiled workspace from the pane list.
+/// (should not happen since the shared-layout protocol landed). Rebuilds a flat tiled workspace
+/// from the pane list.
 fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
     panes: Vec<crate::session::protocol::PaneMeta>,
@@ -1321,6 +1322,11 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
             ctx.state.config.pane.highlight_focused_background,
         ),
     );
+    let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
+        ctx.state.config.shell.as_deref(),
+        ctx.state.config.command_shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
     let mut targets = Vec::new();
     for pane in ctx
         .state
@@ -1344,6 +1350,8 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
             pane_env(ctx.state.control_socket_path.as_deref(), pane),
             pane.identity.custom_title.clone(),
             pane.terminal.last_palette.unwrap_or(fallback_palette),
+            shell.clone(),
+            command_shell.clone(),
         );
         targets.push((pane.id, generation));
     }
@@ -1368,6 +1376,8 @@ fn flush_pending_spawns(ctx: &mut Context<HyprmuxApp>) {
             spawn.env,
             spawn.title,
             spawn.palette,
+            spawn.shell,
+            spawn.command_shell,
         );
     }
 }

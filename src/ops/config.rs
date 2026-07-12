@@ -156,6 +156,11 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 
     if start_theme_tick || start_workbar_tick || !new_workbar_commands.is_empty() {
+        let command_shell = crate::platform::command::resolve_command_shell(
+            ctx.state.config.command_shell.as_deref(),
+            &crate::platform::command::ShellEnv::from_process(),
+        )
+        .as_argv();
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
                 std::thread::sleep(Duration::from_millis(150));
@@ -164,7 +169,11 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             if start_workbar_tick {
                 link.send(Msg::WorkbarTick);
             }
-            crate::pane_lifecycle::spawn_workbar_command_pollers(new_workbar_commands, &link);
+            crate::pane_lifecycle::spawn_workbar_command_pollers(
+                new_workbar_commands,
+                command_shell,
+                &link,
+            );
         }))
     } else {
         Update::full()

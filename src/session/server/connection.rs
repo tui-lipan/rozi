@@ -147,6 +147,8 @@ impl SessionServer {
                 env,
                 title,
                 palette,
+                shell,
+                command_shell,
             } => {
                 if !self.is_controller(client_id) {
                     return vec![(
@@ -173,6 +175,8 @@ impl SessionServer {
                         keep_open,
                         env,
                         palette,
+                        shell,
+                        command_shell,
                     }),
                 )]
             }

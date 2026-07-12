@@ -127,7 +127,7 @@ cargo run
 
 ## Code Style & Conventions
 
-- Rust edition is 2024; minimum supported Rust version is `1.85`.
+- Rust edition is 2024; minimum supported Rust version is `1.88`.
 - Use `cargo fmt`; avoid hand-formatting style debates.
 - Use `cargo clippy` for linting before commits that touch Rust code.
 - Prefer small, direct changes over compatibility shims; this project is pre-1.0 with no external
@@ -200,13 +200,19 @@ Major module map:
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move.rs` / `anim.rs` - Window-manager
   layout, placement, movement, resizing, and animations.
-- `session/` / `ops/session.rs` - Multi-client session protocol (v7), server/client, discovery,
+- `session/` / `ops/session.rs` - Multi-client session protocol (v8), server/client, discovery,
   bootstrap, attach/kill, and layout-control lease.
 - `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
   reconciler (`apply_shared_layout`).
 - `profiles.rs` / `ops/profile.rs` - Named profile serialization, restore, picker, default profile.
 - `config/` / `ops/config.rs` / `ops/theme.rs` - Config loading/reload, themes, terminal colors.
+- `platform/` - Cross-platform abstraction layer: `paths` (config/state/cache/runtime directory
+  resolution) and `fs_security` (private-directory enforcement) are implemented; `command`
+  (shell/command-runner resolution) is implemented and wired into pane spawning, hooks, and
+  workbar commands; `user`, `notifications`, `server_lifecycle`, `process/*`, and `ipc/*` are
+  documented placeholders for later cross-platform-plan phases. See `platform/mod.rs` for the
+  current migration status of each submodule.
 - `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
 
 ## Testing Strategy

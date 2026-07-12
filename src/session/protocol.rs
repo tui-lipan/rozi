@@ -6,7 +6,11 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 7;
+/// Bumped 7 -> 8 for the cross-platform plan's launch-policy and runtime-state changes (Phases
+/// 4/6/7): `SpawnPane` now carries a client-resolved `shell`/`command_shell` argv instead of the
+/// server resolving from its own process environment or on-disk config, which could be stale
+/// relative to a live-reloaded client.
+pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -94,6 +98,15 @@ pub enum ClientMessage {
         /// than the screen default. Sending it out-of-band via `SetPalette` races the child's
         /// query, so it must ride along with the spawn request.
         palette: WirePalette,
+        /// Resolved interactive-shell argv (non-empty; program then fixed args), resolved
+        /// client-side via `platform::command::resolve_interactive_shell` against the live
+        /// config. Used verbatim when `command` is `None`; also used to `exec` into after
+        /// `command` completes when `keep_open` is set (see [`ServerPane`] doc comment).
+        shell: Vec<String>,
+        /// Resolved command-runner argv (non-empty; program then fixed args), resolved
+        /// client-side via `platform::command::resolve_command_shell`. Only used when `command`
+        /// is `Some`; the command string becomes its final argument.
+        command_shell: Vec<String>,
     },
     Resize {
         pane_id: PaneId,
@@ -614,6 +627,8 @@ mod tests {
                 background: None,
                 ansi: [Color::Black; 16],
             },
+            shell: vec!["/bin/sh".to_string()],
+            command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
         };
         let err = write_frame(&mut Vec::new(), &msg).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
@@ -652,7 +667,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":7,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":8,"label":"alice","read_only":true})
         );
     }
 
@@ -665,7 +680,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":7})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":8})
         );
     }
 
@@ -806,11 +821,13 @@ mod tests {
             env: vec![("A".into(), "B".into())],
             title: Some("shell".into()),
             palette,
+            shell: vec!["/bin/zsh".to_string()],
+            command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap()})
+            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"]})
         );
     }
 

@@ -250,5 +250,5 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
-The session wire protocol is version 7. After upgrading hyprmux, restart existing named session
+The session wire protocol is version 8. After upgrading hyprmux, restart existing named session
 servers before attaching with the new client.

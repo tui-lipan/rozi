@@ -369,6 +369,11 @@ impl Component for HyprmuxApp {
         let workbar_commands = ctx.state.config.workbar.command_specs();
         ctx.state.workbar_commands_running =
             workbar_commands.iter().map(|(c, _)| c.clone()).collect();
+        let command_shell = crate::platform::command::resolve_command_shell(
+            ctx.state.config.command_shell.as_deref(),
+            &crate::platform::command::ShellEnv::from_process(),
+        )
+        .as_argv();
 
         let start = if self.want_startup_picker && has_named_session() {
             let epoch = ops::session::open_startup_session_picker(ctx);
@@ -427,7 +432,7 @@ impl Component for HyprmuxApp {
             if workbar_tick {
                 link.send(Msg::WorkbarTick);
             }
-            pane_lifecycle::spawn_workbar_command_pollers(workbar_commands, &link);
+            pane_lifecycle::spawn_workbar_command_pollers(workbar_commands, command_shell, &link);
         }))
     }
 

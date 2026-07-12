@@ -109,7 +109,12 @@ impl SessionServer {
             screen.process_bytes(seed);
             screen.drain_responses();
         }
-        let mut config = pty_config(request.command.as_deref(), request.keep_open);
+        let mut config = pty_config(
+            request.command.as_deref(),
+            request.keep_open,
+            &request.shell,
+            &request.command_shell,
+        );
         if let Some(cwd) = request.cwd.as_ref().filter(|cwd| Path::new(cwd).is_dir()) {
             config = config.cwd(cwd.clone());
         }

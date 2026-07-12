@@ -20,6 +20,13 @@ pub struct SessionClient {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+// `ClientMessage::SpawnPane` (with its `shell`/`command_shell` argv, cross-platform plan Phase 4)
+// makes `Control` noticeably larger than `PaneInput`. Every outbound message already goes through
+// an `mpsc` channel send regardless (one heap-ish allocation either way), and this is a
+// per-user-action/per-input-chunk channel, not a hot per-byte loop, so boxing `ClientMessage` here
+// to shrink the enum is not worth the churn across every `ClientOutbound::Control(...)` construction
+// and match site.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ClientOutbound {
     Control(ClientMessage),
     PaneInput {
@@ -118,6 +125,8 @@ impl SessionClient {
         env: Vec<(String, String)>,
         title: Option<String>,
         palette: TerminalColorPalette,
+        shell: Vec<String>,
+        command_shell: Vec<String>,
     ) {
         self.send_control(ClientMessage::SpawnPane {
             pane_id,
@@ -130,6 +139,8 @@ impl SessionClient {
             env,
             title,
             palette: WirePalette::from(palette),
+            shell,
+            command_shell,
         });
     }
 

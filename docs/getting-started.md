@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- A recent Rust toolchain (edition 2024; `rust-version = 1.85`).
+- A recent Rust toolchain (edition 2024; `rust-version = 1.88`).
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
 - A sibling checkout of [`tui-lipan`](../../tui-lipan).
 

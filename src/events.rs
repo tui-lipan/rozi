@@ -103,10 +103,13 @@ pub fn emit(state: &crate::state::State, event: Event) {
     state.event_hub.publish(&event);
     if let Some(command) = state.config.hooks.get(event.kind.id()).cloned() {
         let env = hook_env(&event);
+        let runner = crate::platform::command::resolve_command_shell(
+            state.config.command_shell.as_deref(),
+            &crate::platform::command::ShellEnv::from_process(),
+        );
         std::thread::spawn(move || {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            let _ = std::process::Command::new(shell)
-                .arg("-c")
+            let _ = std::process::Command::new(runner.program)
+                .args(runner.args)
                 .arg(command)
                 .envs(env)
                 .spawn();

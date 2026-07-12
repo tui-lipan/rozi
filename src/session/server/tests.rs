@@ -9,6 +9,16 @@ fn test_palette() -> WirePalette {
     }
 }
 
+/// Placeholder resolved interactive shell for spawn requests in tests.
+fn test_shell() -> Vec<String> {
+    vec!["/bin/sh".to_string()]
+}
+
+/// Placeholder resolved command-runner shell for spawn requests in tests.
+fn test_command_shell() -> Vec<String> {
+    vec!["/bin/sh".to_string(), "-c".to_string()]
+}
+
 /// Register a client backed by a socketpair and return its id plus the client-side stream.
 fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (client_stream, server_stream) = UnixStream::pair().unwrap();
@@ -324,6 +334,8 @@ fn spawn_from_follower_is_rejected() {
             env: Vec::new(),
             title: None,
             palette: test_palette(),
+            shell: test_shell(),
+            command_shell: test_command_shell(),
         },
     );
     assert!(matches!(
@@ -496,6 +508,8 @@ fn duplicate_spawn_is_rejected() {
         keep_open: false,
         env: Vec::new(),
         palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
     });
     assert!(matches!(
         result,
@@ -535,6 +549,8 @@ fn exited_pane_can_be_respawned() {
         keep_open: false,
         env: Vec::new(),
         palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
     });
 
     assert!(matches!(

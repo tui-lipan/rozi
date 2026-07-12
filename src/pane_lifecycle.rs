@@ -250,9 +250,21 @@ pub(crate) fn request_pane_spawn(
     title: Option<String>,
     palette: TerminalColorPalette,
 ) {
+    let (shell, command_shell) = resolved_launch_argv(&state.config);
     if let Some(client) = state.session_client.clone() {
         client.spawn_pane(
-            pane_id, generation, command, cwd, cols, rows, keep_open, env, title, palette,
+            pane_id,
+            generation,
+            command,
+            cwd,
+            cols,
+            rows,
+            keep_open,
+            env,
+            title,
+            palette,
+            shell,
+            command_shell,
         );
     } else {
         state.pending_spawns.push(crate::state::PendingPaneSpawn {
@@ -266,8 +278,22 @@ pub(crate) fn request_pane_spawn(
             env,
             title,
             palette,
+            shell,
+            command_shell,
         });
     }
+}
+
+/// Resolve this session's interactive-shell and command-runner launch policies from the live
+/// config (see [`crate::platform::command`]), in wire/argv form. Called at every spawn-request
+/// site (rather than once at config-load time) so a hot config reload takes effect on the very
+/// next spawn without needing to re-derive anything else from the reload path.
+fn resolved_launch_argv(config: &crate::config::HyprmuxConfig) -> (Vec<String>, Vec<String>) {
+    crate::platform::command::resolve_launch_argv(
+        config.shell.as_deref(),
+        config.command_shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    )
 }
 
 pub(crate) fn begin_close_pane(
@@ -464,15 +490,21 @@ fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
 /// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
 /// command, sends its output, sleeps, and repeats for the life of the app - the same
 /// fire-and-forget pattern as the PTY read threads.
+///
+/// `command_shell` is the resolved command-runner argv (see
+/// [`crate::platform::command::resolve_command_shell`]), resolved once by the caller (which has
+/// the live config) rather than per-poller-thread.
 pub(crate) fn spawn_workbar_command_pollers(
     workbar_commands: Vec<(String, u64)>,
+    command_shell: Vec<String>,
     link: &CommandLink<Msg>,
 ) {
     for (command, interval_secs) in workbar_commands {
         let poller_link = link.clone();
+        let command_shell = command_shell.clone();
         std::thread::spawn(move || {
             loop {
-                let output = run_workbar_command(&command);
+                let output = run_workbar_command(&command, &command_shell);
                 poller_link.send(Msg::WorkbarCommandOutput(command.clone(), output));
                 std::thread::sleep(Duration::from_secs(interval_secs.max(1)));
             }
@@ -480,16 +512,14 @@ pub(crate) fn spawn_workbar_command_pollers(
     }
 }
 
-/// Runs a `command:` workbar segment's shell command through the user's shell and returns the
-/// first line of stdout, trimmed. Failures (missing shell, non-zero exit, no output) collapse
-/// to an empty string rather than surfacing an error in the workbar.
-fn run_workbar_command(command: &str) -> String {
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "/bin/sh".to_string());
-    std::process::Command::new(shell)
-        .arg("-c")
+/// Runs a `command:` workbar segment's shell command through the resolved command-runner shell
+/// and returns the first line of stdout, trimmed. Failures (missing shell, non-zero exit, no
+/// output) collapse to an empty string rather than surfacing an error in the workbar.
+fn run_workbar_command(command: &str, command_shell: &[String]) -> String {
+    let runner = crate::platform::command::ShellCommand::from_argv(command_shell)
+        .unwrap_or_else(|| crate::platform::command::ShellCommand::new("/bin/sh").arg("-c"));
+    std::process::Command::new(runner.program)
+        .args(runner.args)
         .arg(command)
         .output()
         .ok()

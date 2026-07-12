@@ -33,8 +33,16 @@ works as `hyprmux run-action open-config` over the control socket (see `docs/con
 ```toml
 # Shell and working directory for new panes
 shell = "/bin/zsh"          # default: $SHELL chosen by the system
+# shell = ["pwsh.exe", "-NoLogo"]  # argument-preserving array form; first element is the program
 cwd = "~/code"              # default: the directory hyprmux was launched from
 scrollback = 10000          # default: 5000 lines per pane
+
+# Deterministic shell used to run one-off command lines: pane/popup commands, hooks, workbar
+# `command:` segments, `[keys] run`, profile commands, and control-socket run requests. Unlike
+# `shell`, this is never detection-based, so a config snippet using it behaves the same on every
+# machine. Accepts the same bare-string or argument-preserving-array forms as `shell`.
+# command_shell = ["/bin/sh", "-c"]  # default on Linux/macOS
+# command_shell = ["cmd.exe", "/D", "/S", "/C"]  # default on Windows (via %COMSPEC%)
 
 [input]
 modifier = "alt"             # held WM modifier: "alt" (default) or "super"
@@ -130,9 +138,25 @@ close = "ctrl-a q"
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `shell` | string | system `$SHELL` | Program launched in each new pane. |
+| `shell` | string or array | see below | Interactive shell launched in each new pane. |
+| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, profile commands, control-socket run requests). |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |
+
+Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
+historical form) or an argument-preserving array whose first element is the program, e.g.
+`shell = ["pwsh.exe", "-NoLogo"]`. Resolution order when unset:
+
+| Purpose | Linux/macOS | Windows |
+| --- | --- | --- |
+| `shell` | `$SHELL`, else `/bin/sh` | `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`, else `cmd.exe` (unverified - no Windows target in CI yet) |
+| `command_shell` | `["/bin/sh", "-c"]` (fixed, never probes `$SHELL`) | `[%COMSPEC%, "/D", "/S", "/C"]` (fixed; unverified) |
+
+`command_shell` is deliberately never detection-based, so a `[keys] run`/hook/workbar-command
+snippet using it behaves identically regardless of the invoking user's interactive shell choice.
+Both are resolved by the client (not the session server) at spawn/command-run time, so a
+detached/persistent named-session server never falls back to its own process environment or a
+stale on-disk config after the client-side config hot-reloads.
 
 ## `[input]`
 

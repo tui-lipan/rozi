@@ -406,7 +406,16 @@ impl Default for HyprmuxScratchpadConfig {
 
 #[derive(Clone, Debug)]
 pub struct HyprmuxConfig {
-    pub shell: Option<String>,
+    /// Interactive-shell override (argument-preserving; first element is the program). `None`
+    /// falls through to `$SHELL`/`/bin/sh` on Unix or `pwsh.exe`/`powershell.exe`/`%COMSPEC%`/
+    /// `cmd.exe` on Windows - see [`crate::platform::command::resolve_interactive_shell`].
+    pub shell: Option<Vec<String>>,
+    /// Command-runner override (argument-preserving) used for one-off command lines: pane/popup
+    /// commands, hooks, workbar `command:` segments, `[keys] run`, profile commands, and
+    /// control-socket run requests. `None` falls through to a fixed, non-detection-based default
+    /// (`["/bin/sh", "-c"]` on Unix, `[%COMSPEC%, "/D", "/S", "/C"]` on Windows) - see
+    /// [`crate::platform::command::resolve_command_shell`].
+    pub command_shell: Option<Vec<String>>,
     pub cwd: Option<String>,
     pub scrollback: usize,
     pub input: InputConfig,
@@ -508,6 +517,7 @@ impl Default for HyprmuxConfig {
     fn default() -> Self {
         Self {
             shell: None,
+            command_shell: None,
             cwd: std::env::current_dir()
                 .ok()
                 .map(|path| path.to_string_lossy().to_string()),

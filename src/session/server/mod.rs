@@ -76,6 +76,17 @@ pub struct ServerSettings {
     pub resurrect: bool,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
+    /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
+    /// which respawns panes with no controlling client yet connected to resolve them - the
+    /// server's own config load is the only launch-policy source available at that point. Empty
+    /// (the default) falls through to `pty_config`'s own `/bin/sh` fallback.
+    ///
+    /// Not yet persisted in the snapshot itself; the cross-platform plan calls for bumping the
+    /// snapshot format only if resolved launch policy must be persisted, which restoring against
+    /// the server's current config (rather than whatever was resolved when the pane was
+    /// originally spawned) does not yet require.
+    pub shell: Vec<String>,
+    pub command_shell: Vec<String>,
 }
 
 impl Default for ServerSettings {
@@ -85,6 +96,8 @@ impl Default for ServerSettings {
             resurrect: false,
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
+            shell: Vec::new(),
+            command_shell: Vec::new(),
         }
     }
 }
@@ -304,6 +317,8 @@ struct SpawnRequest {
     keep_open: bool,
     env: Vec<(String, String)>,
     palette: WirePalette,
+    shell: Vec<String>,
+    command_shell: Vec<String>,
 }
 
 impl ServerPane {
@@ -332,23 +347,48 @@ fn cwd_for_pid(_pid: u32) -> Option<String> {
     None
 }
 
-fn pty_config(command: Option<&str>, keep_open: bool) -> TerminalPtyConfig {
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "/bin/sh".to_string());
+/// Build the PTY spawn config from the client-resolved `shell`/`command_shell` argv (see
+/// [`crate::platform::command`]). Falls back to a bare `/bin/sh` if a caller ever sends an empty
+/// argv (should not happen - the client always resolves a non-empty one - but a spawn config
+/// needs *some* program either way).
+///
+/// `keep_open` with a `command` runs the command through `command_shell`, then `exec`s into the
+/// resolved interactive `shell` on completion so the pane stays open - the historical
+/// `command; exec shell` behavior, now correctly using the deterministic command runner rather
+/// than the interactive shell to run the one-off command. This is an interim, string-interpolated
+/// implementation preserved as-is from before this module existed; it does not yet give the
+/// keep-open replacement its own exit-status/scrollback-preserving PTY swap (cross-platform plan
+/// Phase 4's "server-driven PTY replacement" is not implemented - deferred to land alongside the
+/// Phase 6/7 runtime-state work it naturally overlaps with).
+fn pty_config(
+    command: Option<&str>,
+    keep_open: bool,
+    shell: &[String],
+    command_shell: &[String],
+) -> TerminalPtyConfig {
+    use crate::platform::command::ShellCommand;
+
+    let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| ShellCommand::new("/bin/sh"));
     if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
+        let runner = ShellCommand::from_argv(command_shell)
+            .unwrap_or_else(|| ShellCommand::new("/bin/sh").arg("-c"));
         let command = if keep_open {
-            format!("{command}; exec {shell}")
+            let shell_argv = shell.as_argv().join(" ");
+            format!("{command}; exec {shell_argv}")
         } else {
             command.to_string()
         };
-        TerminalPtyConfig::new(shell)
-            .arg("-lc")
-            .arg(command)
-            .term("xterm-256color")
+        let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
+        for arg in runner.args {
+            config = config.arg(arg);
+        }
+        config.arg(command)
     } else {
-        TerminalPtyConfig::new(shell).term("xterm-256color")
+        let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
+        for arg in shell.args {
+            config = config.arg(arg);
+        }
+        config
     }
 }
 
@@ -389,11 +429,18 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
     for warning in loaded.warnings {
         eprintln!("hyprmux: {warning}");
     }
+    let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
+        loaded.config.shell.as_deref(),
+        loaded.config.command_shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
     let mut server = SessionServer::new_named_with_settings(
         name,
         ServerSettings {
             log_dir: loaded.config.logging.dir,
             resurrect: loaded.config.session.resurrect,
+            shell,
+            command_shell,
             ..ServerSettings::default()
         },
     );

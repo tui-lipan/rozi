@@ -2,7 +2,7 @@
 name = "hyprmux"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
 

@@ -1143,6 +1143,8 @@ pub struct PendingPaneSpawn {
     pub env: Vec<(String, String)>,
     pub title: Option<String>,
     pub palette: TerminalColorPalette,
+    pub shell: Vec<String>,
+    pub command_shell: Vec<String>,
 }
 
 /// The prefix that marks an auto-named ephemeral session. Ephemeral servers shut down on a clean

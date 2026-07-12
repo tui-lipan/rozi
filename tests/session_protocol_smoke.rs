@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-const PROTOCOL_VERSION: u32 = 7;
+const PROTOCOL_VERSION: u32 = 8;
 const CONTROL_FRAME: u8 = 1;
 const PANE_OUTPUT_FRAME: u8 = 2;
 const PANE_ID: u32 = 41;
@@ -96,7 +96,9 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
                 "background": null,
                 "ansi": ["Black", "Black", "Black", "Black", "Black", "Black", "Black", "Black",
                          "Black", "Black", "Black", "Black", "Black", "Black", "Black", "Black"]
-            }
+            },
+            "shell": ["/bin/sh"],
+            "command_shell": ["/bin/sh", "-c"]
         }),
     );
 

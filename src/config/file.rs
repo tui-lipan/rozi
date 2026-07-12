@@ -20,10 +20,29 @@ pub struct LoadedConfig {
     pub warnings: Vec<String>,
 }
 
+/// `shell`/`command_shell` config value: the historical bare string (a program name with no
+/// arguments) or an argument-preserving array, e.g. `shell = ["pwsh.exe", "-NoLogo"]`.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+enum ShellFileValue {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl ShellFileValue {
+    fn into_argv(self) -> Vec<String> {
+        match self {
+            ShellFileValue::One(program) => vec![program],
+            ShellFileValue::Many(argv) => argv,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 struct FileConfig {
-    shell: Option<String>,
+    shell: Option<ShellFileValue>,
+    command_shell: Option<ShellFileValue>,
     cwd: Option<String>,
     scrollback: Option<usize>,
     input: InputFileConfig,
@@ -1094,8 +1113,11 @@ pub fn load_config() -> LoadedConfig {
         }
     };
 
-    if let Some(shell) = non_empty(parsed.shell) {
+    if let Some(shell) = non_empty_argv(parsed.shell) {
         config.shell = Some(shell);
+    }
+    if let Some(command_shell) = non_empty_argv(parsed.command_shell) {
+        config.command_shell = Some(command_shell);
     }
     if let Some(cwd) = non_empty(parsed.cwd) {
         config.cwd = Some(expand_path(cwd).to_string_lossy().to_string());
@@ -1665,6 +1687,18 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// Like [`non_empty`], but for the argument-preserving `shell`/`command_shell` form: trims the
+/// program (first element) and rejects an empty program, an empty array, or a bare empty string.
+fn non_empty_argv(value: Option<ShellFileValue>) -> Option<Vec<String>> {
+    let mut argv = value?.into_argv();
+    let program = argv.first_mut()?;
+    *program = program.trim().to_string();
+    if program.is_empty() {
+        return None;
+    }
+    Some(argv)
 }
 
 /// Cap defensively: padding eats terminal grid on every side, so a large value would leave no

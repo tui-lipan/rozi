@@ -52,6 +52,12 @@ pub struct HyprmuxApp {
     /// `[session] startup = "picker"`). Only honored when there is no `--attach`/`--session` and at
     /// least one named session exists at startup.
     want_startup_picker: bool,
+    /// Whether to install the process-global terminal-hangup handler
+    /// ([`platform::server_lifecycle::on_hangup`]) at startup. Only the real [`main`] wants this:
+    /// a `TestBackend`-driven test constructs its app through [`Default`], and a test process must
+    /// not have its `SIGHUP`/`SIGTERM` disposition rewritten out from under the harness (nor can
+    /// several parallel tests each claim the one install slot).
+    watch_hangup: bool,
     event_hub: events::EventHub,
 }
 
@@ -69,6 +75,7 @@ impl Default for HyprmuxApp {
             attach_session: None,
             read_only: false,
             want_startup_picker: false,
+            watch_hangup: false,
             event_hub: events::EventHub::default(),
         }
     }
@@ -99,6 +106,7 @@ impl HyprmuxApp {
             attach_session,
             read_only,
             want_startup_picker,
+            watch_hangup: true,
             event_hub: events::EventHub::default(),
         }
     }
@@ -107,6 +115,11 @@ impl HyprmuxApp {
 #[derive(Clone)]
 pub enum Msg {
     CommandLinkReady(CommandLink<Msg>),
+    /// The controlling terminal or console asked this client to go away (Unix `SIGHUP`/`SIGTERM`,
+    /// Windows console close/logoff/shutdown). Delivered from
+    /// [`platform::server_lifecycle::on_hangup`]'s worker thread so the clean detach path runs
+    /// instead of the process dying where it stands.
+    Hangup,
     RunAction(Action),
     ClosePalette,
     CloseHelp,
@@ -401,9 +414,21 @@ impl Component for HyprmuxApp {
         };
 
         let startup_read_only = self.read_only;
+        let watch_hangup = self.watch_hangup;
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             link.send(Msg::CommandLinkReady(link.clone()));
             ops::config::spawn_config_watcher(&link);
+            if watch_hangup {
+                let hangup_link = link.clone();
+                if let Err(err) = platform::server_lifecycle::on_hangup(move || {
+                    hangup_link.send(Msg::Hangup);
+                }) {
+                    // Not fatal: without it, a closing terminal kills the client outright, which
+                    // loses the detach-time layout mirror but leaves a named session's server (and
+                    // its PTYs) running exactly as before.
+                    eprintln!("hyprmux: could not watch for terminal hangup: {err}");
+                }
+            }
             if let Some(listener) = control_listener {
                 let listener_link = link.clone();
                 std::thread::spawn(move || {

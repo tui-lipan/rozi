@@ -64,9 +64,14 @@ pub struct SessionServer {
     last_snapshot: Instant,
     last_attached_count: u32,
     session_name: String,
-    /// The socket file this server currently listens on. Set by [`run_named_session`]; a rename
-    /// moves this file in place so the running listener keeps serving under the new name.
-    socket_path: Option<PathBuf>,
+    /// The endpoint this server currently listens on. Set by [`run_named_session`]; a rename
+    /// replaces it (see [`SessionServer::rename_session`]).
+    endpoint: Option<IpcEndpoint>,
+    /// A listener bound to a *new* endpoint by a rename, plus the old endpoint it displaces, waiting
+    /// for the accept loop to swap them in one step (see [`SessionServer::rename_session`]). The old
+    /// endpoint is retired only at the swap, so it keeps answering right up until the moment the
+    /// listener behind it is dropped.
+    pending_listener: Option<(IpcListener, Option<IpcEndpoint>)>,
     settings: ServerSettings,
 }
 
@@ -245,17 +250,36 @@ impl SessionServer {
             last_snapshot: Instant::now(),
             last_attached_count: 0,
             session_name: session_name.into(),
-            socket_path: None,
+            endpoint: None,
+            pending_listener: None,
             settings,
         }
     }
 
     pub fn run_listener(&mut self, listener: IpcListener) -> io::Result<()> {
         listener.set_nonblocking(true)?;
+        let mut listener = listener;
         // Tracks how long an ephemeral session has had no *attached* client. A named session
         // ignores this timer and is durable until explicitly shut down.
         let mut no_client_since: Option<Instant> = None;
         while !self.shutdown {
+            // A rename binds the new endpoint before the old listener is retired, so no window
+            // exists where the session is discoverable under neither name. Dropping the old
+            // listener here does not disturb already-accepted connections: existing clients stay
+            // attached across a rename.
+            if let Some((next, retired)) = self.pending_listener.take() {
+                listener = next;
+                if let Some(retired) = retired {
+                    retired.remove_stale();
+                }
+            }
+            // A signal (Unix) or console control event (Windows) asking this server to stop routes
+            // onto the same graceful teardown the authenticated `Shutdown` message takes, rather
+            // than killing the process mid-write and stranding its PTY children.
+            if crate::platform::server_lifecycle::shutdown_requested() {
+                self.shutdown = true;
+                break;
+            }
             self.accept_new(&listener)?;
 
             while let Ok(event) = self.event_rx.try_recv() {
@@ -394,7 +418,7 @@ pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {
     Ok(session_endpoint(name)?.path().to_path_buf())
 }
 
-fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
+pub fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -407,11 +431,10 @@ fn session_endpoint(name: &str) -> io::Result<IpcEndpoint> {
     ))
 }
 
-pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, PathBuf)> {
+pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, IpcEndpoint)> {
     let endpoint = session_endpoint(name)?;
-    let path = endpoint.path().to_path_buf();
     let bound = endpoint.bind()?;
-    Ok((bound.into_listener(), path))
+    Ok((bound.into_listener(), endpoint))
 }
 
 pub fn run_named_session(name: &str) -> io::Result<()> {
@@ -421,7 +444,18 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
             "invalid session name",
         ));
     }
-    let (listener, path) = bind_session_socket(name)?;
+    // Before anything can spawn a PTY: contain this process's children so a crashed or forcibly
+    // terminated server cannot strand them (Windows Job Object; no-op on Unix), and route a stop
+    // signal / console control event onto the same graceful teardown the protocol `Shutdown`
+    // message takes (cross-platform plan Phase 5b).
+    if let Err(err) = crate::platform::server_lifecycle::contain_children() {
+        eprintln!("hyprmux: could not contain server child processes: {err}");
+    }
+    if let Err(err) = crate::platform::server_lifecycle::install_shutdown_handler() {
+        eprintln!("hyprmux: could not install server shutdown handler: {err}");
+    }
+
+    let (listener, endpoint) = bind_session_socket(name)?;
     let loaded = crate::config::load_config();
     for warning in loaded.warnings {
         eprintln!("hyprmux: {warning}");
@@ -441,16 +475,16 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
             ..ServerSettings::default()
         },
     );
-    server.socket_path = Some(path);
+    server.endpoint = Some(endpoint);
     if server.settings.resurrect
         && let Err(err) = server.restore()
     {
         eprintln!("hyprmux: could not restore session {name:?}: {err}");
     }
     let result = server.run_listener(listener);
-    // A rename moves the socket file, so unlink the current path rather than the original one.
-    if let Some(path) = &server.socket_path {
-        let _ = fs::remove_file(path);
+    // A rename replaces the endpoint, so retire the current one rather than the original.
+    if let Some(endpoint) = &server.endpoint {
+        endpoint.remove_stale();
     }
     result
 }

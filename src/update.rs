@@ -57,6 +57,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ctx.state.command_link = Some(link);
             Update::none()
         }
+        Msg::Hangup => crate::ops::exit::detach_on_hangup(ctx),
         Msg::RunAction(action) => {
             if matches!(
                 action,

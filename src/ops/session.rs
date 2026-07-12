@@ -842,29 +842,28 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 fn shutdown_session(name: &str) -> std::io::Result<()> {
-    let path = crate::session::server::session_socket_path(name)?;
-    let endpoint = crate::platform::ipc::IpcEndpoint::at_path(&path);
+    let endpoint = crate::session::server::session_endpoint(name)?;
     if let Ok(mut stream) = endpoint.connect() {
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
         let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
         // Grab the server's pid up front (protocol-independent) so an older, incompatible server -
         // one that rejects our attach handshake and can't be told to `Shutdown` - can still be
-        // reaped instead of leaking as an unkillable orphan. `peer_pid` is Unix-only in practice
-        // (the Windows backend always reports `None` - see `platform::ipc::windows`), which is fine
-        // here: Windows server lifecycle uses Job Objects rather than a pid-targeted signal
-        // (cross-platform plan Phase 5b, Milestone 2), so a `None` here simply skips straight past
-        // the signal fallback below with nothing left to do.
+        // reaped instead of leaking as an unkillable orphan (cross-platform plan Phase 5b
+        // stale-server recovery). `terminate_server` is the forced last resort *after* the graceful
+        // protocol path has already failed: SIGTERM escalating to SIGKILL on Unix, `TerminateProcess`
+        // on Windows (which takes the server's kill-on-close Job Object, and so its ConPTY children,
+        // with it).
         let server_pid = stream.peer_pid();
         if graceful_shutdown(&mut stream, name).is_err()
             && let Some(pid) = server_pid
         {
-            terminate_unresponsive_server(pid);
+            crate::platform::server_lifecycle::terminate_server(pid);
         }
     }
-    // The server unlinks its socket only once it finishes tearing down, which races the refresh
-    // that follows a kill (and a signalled or already-dead server may never unlink at all). Drop the
-    // path now so the killed session leaves the list immediately.
-    let _ = std::fs::remove_file(&path);
+    // The server retires its endpoint only once it finishes tearing down, which races the refresh
+    // that follows a kill (and a killed or already-dead server may never retire it at all). Drop it
+    // now so the killed session leaves the list immediately.
+    endpoint.remove_stale();
     crate::session::server::delete_snapshot(name)?;
     Ok(())
 }
@@ -883,7 +882,7 @@ fn graceful_shutdown(
         &ClientMessage::Attach {
             session: name.to_string(),
             protocol_version: PROTOCOL_VERSION,
-            label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+            label: crate::platform::user::current_user_label(),
             read_only: false,
         },
     )?;
@@ -897,22 +896,6 @@ fn graceful_shutdown(
         )),
     }
 }
-
-/// Forced termination of an orphaned/unresponsive server that could not be reached via the
-/// protocol-level `Shutdown` message (cross-platform plan Phase 5b stale-server recovery). Unix
-/// sends `SIGTERM` so the process can still exit its own cleanup path and reap its PTYs; the
-/// Windows equivalent (`TerminateJobObject` on the server's job object) is Milestone 2 and not
-/// implemented - this is a no-op there today since [`shutdown_session`] only calls this when a pid
-/// was actually reported, which the Windows `IpcConnection::peer_pid` stub never does.
-#[cfg(unix)]
-fn terminate_unresponsive_server(pid: u32) {
-    unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
-    }
-}
-
-#[cfg(not(unix))]
-fn terminate_unresponsive_server(_pid: u32) {}
 
 #[cfg(test)]
 mod tests {

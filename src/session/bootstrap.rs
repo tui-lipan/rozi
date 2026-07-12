@@ -97,15 +97,7 @@ pub(crate) fn attach_session_client(
                             return;
                         }
                     };
-                    match std::process::Command::new(&exe)
-                        .arg("--session")
-                        .arg(&name)
-                        .arg("--server")
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                    {
+                    match crate::platform::server_lifecycle::spawn_detached_server(&exe, &name) {
                         Ok(child) => server_child = Some(child),
                         Err(spawn_err) => {
                             link.send(Msg::SessionAttachFailed {

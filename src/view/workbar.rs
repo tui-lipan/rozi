@@ -560,16 +560,7 @@ fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
 }
 
 fn workbar_hostname() -> String {
-    std::env::var("HOSTNAME")
-        .ok()
-        .filter(|host| !host.trim().is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|host| host.trim().to_string())
-                .filter(|host| !host.is_empty())
-        })
-        .unwrap_or_else(|| "localhost".to_string())
+    crate::platform::user::hostname().unwrap_or_else(|| "localhost".to_string())
 }
 
 fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {

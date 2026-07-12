@@ -131,32 +131,15 @@ fn decode_reported_path(reported: &TerminalWorkingDirectory) -> Option<String> {
 /// Whether an `OSC 7` `host` component names this machine (`None`/empty/`localhost` always count
 /// as local). Falls back to treating an unresolvable local hostname as "not local" - the safer
 /// direction, since it only means a genuinely local report loses its `ShellReport` tier rather
-/// than a remote one being mistaken for local. A dedicated `platform::hostname` (Phase 10) should
-/// eventually replace this `libc::gethostname` call with cached, cross-platform resolution.
+/// than a remote one being mistaken for local.
 fn is_local_host(host: Option<&str>) -> bool {
     match host {
         None => true,
         Some(host) if host.is_empty() || host.eq_ignore_ascii_case("localhost") => true,
-        Some(host) => local_hostname().is_some_and(|local| local.eq_ignore_ascii_case(host)),
+        Some(host) => {
+            crate::platform::user::hostname().is_some_and(|local| local.eq_ignore_ascii_case(host))
+        }
     }
-}
-
-#[cfg(unix)]
-fn local_hostname() -> Option<String> {
-    let mut buf = [0u8; 256];
-    let result = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
-    if result != 0 {
-        return None;
-    }
-    let end = buf.iter().position(|&byte| byte == 0)?;
-    std::str::from_utf8(&buf[..end])
-        .ok()
-        .map(|host| host.to_string())
-}
-
-#[cfg(not(unix))]
-fn local_hostname() -> Option<String> {
-    None
 }
 
 #[cfg(test)]

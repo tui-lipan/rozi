@@ -398,7 +398,7 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
                 &ClientMessage::Attach {
                     session: name.to_string(),
                     protocol_version: PROTOCOL_VERSION,
-                    label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+                    label: crate::platform::user::current_user_label(),
                     read_only: false,
                 },
             )?;

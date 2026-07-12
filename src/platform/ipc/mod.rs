@@ -1,24 +1,28 @@
 //! Transport-neutral local IPC abstraction (cross-platform plan Phase 5).
 //!
 //! [`IpcEndpoint`], [`IpcListener`], [`IpcConnection`], and [`BoundEndpoint`] are re-exported from
-//! the per-platform backend ([`unix`] on Linux/macOS, [`windows`] on Windows - see each module's
-//! doc comment for what is actually implemented versus stubbed). [`EndpointRegistry`] is
-//! transport-neutral: it only knows the naming convention for control/session endpoints and how to
-//! enumerate them, delegating the actual bind/connect to whichever backend's [`IpcEndpoint`] it
-//! constructs.
+//! the per-platform backend: Unix-domain sockets on Linux/macOS ([`unix`]), named pipes on Windows
+//! ([`windows`]). [`EndpointRegistry`] is transport-neutral: it only knows the naming convention for
+//! control/session endpoints and how to enumerate them, delegating bind/connect to whichever
+//! backend's [`IpcEndpoint`] it constructs.
+//!
+//! Both backends identify an endpoint by a *path in the runtime directory*. On Unix that path is the
+//! socket. On Windows it is a discovery-registry entry standing for a named pipe whose name is
+//! derived from it (see [`windows`]'s module doc comment for why, and for why nothing trusts the
+//! entry's contents). Keeping the identity the same shape on both is what lets `control.rs`,
+//! `cli.rs`, `session/discovery.rs`, `HYPRMUX_SOCKET`, and `--socket` remain one implementation:
+//! enumeration is a `read_dir`, retirement is an unlink, and liveness is a connect attempt,
+//! everywhere.
 //!
 //! Migrated onto this abstraction: `control.rs`, `session/client.rs`, `session/discovery.rs`,
 //! `session/server/*`, `cli.rs`, `ops/session.rs`. `main.rs` holds the bound control listener
 //! across startup the same way it held a raw `UnixListener` before.
 //!
-//! Not yet built on this abstraction: the session server's per-connection loop still polls
-//! non-blocking connections directly inside [`crate::session::server::SessionServer::run_listener`]
-//! rather than using dedicated reader/writer actor threads. The plan calls for that refactor
-//! primarily so the *Windows* backend (which cannot poll a named pipe as a non-blocking socket the
-//! way Unix polls a non-blocking `UnixStream`) has a sane connection model; Unix non-blocking
-//! sockets already support today's polling loop equivalently on Linux and macOS, so Milestone 1
-//! keeps it as-is and this refactor is deferred to land together with the Windows backend in
-//! Milestone 2.
+//! The session server drives connections with non-blocking reads/writes and `WouldBlock`-based
+//! backpressure rather than reader/writer actor threads. The plan floated the actor refactor to give
+//! the Windows backend a workable connection model; it turned out not to be needed - a `PIPE_NOWAIT`
+//! named pipe supports exactly the same poll-and-`WouldBlock` loop a non-blocking `UnixStream` does,
+//! so both backends serve the existing loop and the refactor would have bought nothing but churn.
 
 use std::io;
 use std::path::Path;
@@ -42,9 +46,11 @@ pub use windows::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener};
 /// Naming convention and enumeration for the two endpoint families this app uses: one per-process
 /// *control* endpoint (`--socket`/`HYPRMUX_SOCKET`-discoverable CLI control plane) and one
 /// per-name *session* endpoint (named/ephemeral session servers). Endpoint identity is always
-/// derived from a runtime directory plus a logical id, never constructed ad hoc at call sites, so
-/// the naming scheme only needs to change in one place if a future backend (Windows pipe names are
-/// flat and dot-separated, unlike Unix socket paths) needs a different literal form.
+/// derived from a runtime directory plus a logical id, never constructed ad hoc at call sites.
+///
+/// The `.sock` suffix is literal on Unix and vestigial on Windows, where the file is a registry
+/// entry rather than a socket - but it is the *same* name on both, which is the point: one
+/// enumeration, one naming scheme, no platform branch at any call site.
 pub struct EndpointRegistry;
 
 impl EndpointRegistry {

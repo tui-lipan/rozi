@@ -1,39 +1,423 @@
 //! Cross-platform server existence and process control (cross-platform plan Phase 5b).
 //!
-//! **Still a placeholder module** - nothing calls into it yet - but most of the Unix half of what
-//! Phase 5b asks for already exists, just living inline at its call sites rather than gathered
-//! behind this module. Status against the plan's five bullets:
+//! Everything the app needs in order to *start*, *stop*, and *survive the death of* a session
+//! server, expressed without Unix signal APIs or Win32 handles leaking into higher-level modules:
 //!
-//! - Background server spawn on `--attach`/`--session` bootstrap: **done on Unix**
-//!   (`session::bootstrap::attach_session_client` spawns `hyprmux --session <name> --server` with
-//!   `Stdio::null()` on all three streams). Windows needs `DETACHED_PROCESS`/`CREATE_NO_WINDOW`
-//!   with no inherited console - **not implemented** (Milestone 2).
-//! - An authenticated protocol-level `Shutdown` control message as the primary stop mechanism:
-//!   **done, already the primary mechanism**, predating this plan.
-//!   `ClientMessage::Shutdown` is authenticated (controller-only, rejects read-only clients - see
-//!   `session::server::connection::handle_message`) and is what `SessionClient::shutdown` and
-//!   `ops::session::shutdown_session`'s graceful path send. `ops::session::shutdown_session` only
-//!   falls back to a Unix `SIGTERM` (via `terminate_unresponsive_server`, Phase 5 IPC's
-//!   `IpcConnection::peer_pid`) when the graceful protocol handshake itself fails (e.g. an
-//!   incompatible older server that cannot even attach) - i.e. exactly the "SIGTERM as a Unix
-//!   courtesy handler mapping to the same path" relationship the plan describes, already in place.
-//! - Orphan containment via a Windows Job Object with kill-on-close: **not implemented**
-//!   (Milestone 2; N/A on Unix, where SIGTERM asks the orphaned server to reap its own PTYs).
-//! - Console control events (`SetConsoleCtrlHandler` on Windows; SIGHUP-to-detach on Unix):
-//!   **not implemented on either platform**. No signal handler currently converts SIGHUP (e.g. the
-//!   terminal emulator hosting the client closing) into a clean detach; an unhandled SIGHUP today
-//!   terminates the client process, leaving a named session's server running (detach-equivalent by
-//!   accident) but skipping the clean detach path (`profiles::persist_session_on_detach`, etc.).
-//!   Genuinely deferred - it needs a signal-to-message bridge onto the app's `CommandLink`, not
-//!   attempted here to avoid rushing async-signal-context-unsafe code.
-//! - Stale-server recovery (liveness probe, registry cleanup, forced termination):
-//!   **substantially done on Unix**. `session::discovery::query_session_endpoint` probes via the
-//!   protocol handshake and unlinks a socket file with no listener behind it; `EndpointRegistry`
-//!   endpoint construction plus `IpcEndpoint::bind`'s stale-socket replacement cover the
-//!   registry-cleanup half; forced termination is the same `SIGTERM` path above. `SIGKILL`
-//!   escalation if `SIGTERM` is ignored is **not implemented** (no current call site needs it -
-//!   the fallback is already a last resort after the graceful path failed).
+//! - [`spawn_detached_server`] - background server spawn on `--attach`/`--session` bootstrap. Unix
+//!   detaches by closing all three stdio streams; Windows additionally passes
+//!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
+//! - [`on_hangup`] - the *client* half of console-control handling. Unix installs a `SIGHUP`/
+//!   `SIGTERM` handler; Windows installs a `SetConsoleCtrlHandler` for Ctrl+C/close/logoff/shutdown.
+//!   Both map to the same thing: run a clean detach instead of dying where we stand.
+//! - [`install_shutdown_handler`] / [`shutdown_requested`] - the *server* half. The authenticated
+//!   `ClientMessage::Shutdown` control message remains the primary, cross-platform stop mechanism;
+//!   these make a signal/console event a courtesy path onto that same graceful teardown rather than
+//!   an abrupt kill that would strand PTY children.
+//! - [`contain_children`] - Windows orphan containment: the server puts itself and every ConPTY
+//!   child into a kill-on-close Job Object, so a killed or crashed server cannot leave orphaned
+//!   shells behind. Unix has no equivalent need (a signalled server reaps its own PTYs, and the
+//!   escalation below guarantees it dies).
+//! - [`terminate_server`] - forced termination of an unresponsive server, the last resort after the
+//!   protocol handshake itself fails. Unix escalates `SIGTERM` to `SIGKILL`; Windows opens the
+//!   process and terminates it (which, thanks to [`contain_children`], takes the job's ConPTY
+//!   children with it).
 //!
-//! Net: for Milestone 1 (Unix-only), the only genuinely open item is SIGHUP-to-detach. Everything
-//! else is real, tested, working Unix behavior that a future pass can still choose to consolidate
-//! behind this module for symmetry with the Windows backend once that lands in Milestone 2.
+//! The Windows half is written against documented API contracts and type-checks under
+//! `cargo check --target x86_64-pc-windows-gnu`, but is **unverified at runtime** - no Windows host
+//! is available in this workspace.
+
+use std::io;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set by [`install_shutdown_handler`]'s handler; polled by the session server's accept loop.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether a signal (Unix) or console control event (Windows) has asked this server to stop.
+///
+/// The server loop polls this and takes the *same* teardown path an authenticated
+/// `ClientMessage::Shutdown` takes, so a `SIGTERM`ed server still snapshots, closes its PTYs, and
+/// unlinks its endpoint rather than dying mid-write.
+pub fn shutdown_requested() -> bool {
+    SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
+}
+
+/// Spawn a background session server for `name` (`hyprmux --session <name> --server`), fully
+/// detached from this process's terminal so it outlives the client that started it.
+pub fn spawn_detached_server(exe: &Path, name: &str) -> io::Result<std::process::Child> {
+    let mut command = std::process::Command::new(exe);
+    command
+        .arg("--session")
+        .arg(name)
+        .arg("--server")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, DETACHED_PROCESS};
+        command.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+    }
+    command.spawn()
+}
+
+#[cfg(unix)]
+mod imp {
+    use super::{Ordering, SHUTDOWN_REQUESTED};
+    use std::io;
+    use std::sync::OnceLock;
+    use std::sync::atomic::AtomicI32;
+
+    /// Write end of the self-pipe the signal handler pokes. `-1` until [`super::on_hangup`] runs.
+    static HANGUP_PIPE_WRITE: AtomicI32 = AtomicI32::new(-1);
+
+    #[cfg(target_os = "linux")]
+    unsafe fn errno_slot() -> *mut libc::c_int {
+        unsafe { libc::__errno_location() }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    unsafe fn errno_slot() -> *mut libc::c_int {
+        unsafe { libc::__error() }
+    }
+
+    /// Async-signal-safe: only `write(2)` on a pipe, with `errno` saved and restored so the
+    /// interrupted thread never observes a clobbered value.
+    extern "C" fn hangup_handler(_signal: libc::c_int) {
+        let fd = HANGUP_PIPE_WRITE.load(Ordering::Relaxed);
+        if fd < 0 {
+            return;
+        }
+        unsafe {
+            let saved = *errno_slot();
+            let byte: u8 = 1;
+            let _ = libc::write(fd, std::ptr::from_ref(&byte).cast::<libc::c_void>(), 1);
+            *errno_slot() = saved;
+        }
+    }
+
+    /// Async-signal-safe: a single relaxed atomic store.
+    extern "C" fn shutdown_handler(_signal: libc::c_int) {
+        SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+    }
+
+    fn install(signal: libc::c_int, handler: extern "C" fn(libc::c_int)) -> io::Result<()> {
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = handler as usize;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn on_hangup(callback: Box<dyn Fn() + Send + 'static>) -> io::Result<()> {
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+        if INSTALLED.get().is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "hangup handler already installed",
+            ));
+        }
+
+        let mut fds = [0 as libc::c_int; 2];
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // Neither end may survive into a spawned pane: a PTY child holding the write end open
+        // would be harmless, but a child holding the *read* end open is a leak with no owner.
+        for fd in fds {
+            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        }
+        let (read_fd, write_fd) = (fds[0], fds[1]);
+        HANGUP_PIPE_WRITE.store(write_fd, Ordering::SeqCst);
+
+        install(libc::SIGHUP, hangup_handler)?;
+        install(libc::SIGTERM, hangup_handler)?;
+        let _ = INSTALLED.set(());
+
+        std::thread::Builder::new()
+            .name("hyprmux-hangup".to_string())
+            .spawn(move || {
+                let mut byte = [0u8; 1];
+                loop {
+                    let read =
+                        unsafe { libc::read(read_fd, byte.as_mut_ptr().cast::<libc::c_void>(), 1) };
+                    match read {
+                        1 => callback(),
+                        // EINTR: another signal interrupted the blocking read; go around again.
+                        -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
+                        // 0 (write end closed) or a hard error: nothing left to watch.
+                        _ => return,
+                    }
+                }
+            })?;
+        Ok(())
+    }
+
+    pub fn install_shutdown_handler() -> io::Result<()> {
+        install(libc::SIGTERM, shutdown_handler)?;
+        install(libc::SIGHUP, shutdown_handler)?;
+        Ok(())
+    }
+
+    pub fn contain_children() -> io::Result<()> {
+        // A Unix session server reaps its own PTY children on teardown, and `terminate_server`
+        // guarantees it reaches teardown, so there is nothing extra to contain.
+        Ok(())
+    }
+
+    /// `SIGTERM`, then `SIGKILL` if the process is still alive after the grace window.
+    ///
+    /// The server is not our child (it was detached at bootstrap, or predates this client
+    /// entirely), so liveness is polled with `kill(pid, 0)` rather than `waitpid`.
+    pub fn terminate_server(pid: u32) {
+        use std::time::{Duration, Instant};
+
+        let pid = pid as libc::pid_t;
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        while Instant::now() < deadline {
+            if !alive(pid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+
+    fn alive(pid: libc::pid_t) -> bool {
+        // Signal 0 performs the permission/existence check without delivering anything. A live but
+        // unreapable zombie is still "alive" here, which is correct: it is our caller's cue that
+        // SIGTERM did not take, and SIGKILL on a zombie is harmless.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+}
+
+#[cfg(windows)]
+mod imp {
+    use super::{Ordering, SHUTDOWN_REQUESTED};
+    use std::io;
+    use std::sync::OnceLock;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, TRUE};
+    use windows_sys::Win32::System::Console::{
+        CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
+        SetConsoleCtrlHandler,
+    };
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, PROCESS_TERMINATE, TerminateProcess,
+    };
+
+    static HANGUP_CALLBACK: OnceLock<Box<dyn Fn() + Send + Sync + 'static>> = OnceLock::new();
+    static HANDLE_SHUTDOWN: OnceLock<()> = OnceLock::new();
+
+    /// Windows runs console control handlers on an OS-injected thread, not in a signal context, so
+    /// this may call arbitrary code (unlike the Unix handler, which must stay async-signal-safe).
+    ///
+    /// Returning `TRUE` claims the event, suppressing the default "terminate the process" action so
+    /// the clean detach/shutdown path gets to run. For `CTRL_CLOSE_EVENT`/`CTRL_LOGOFF_EVENT`/
+    /// `CTRL_SHUTDOWN_EVENT` Windows still hard-kills us after a short timeout, which is exactly the
+    /// window `on_hangup`'s detach needs.
+    unsafe extern "system" fn console_handler(event: u32) -> i32 {
+        match event {
+            CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
+            | CTRL_SHUTDOWN_EVENT => {
+                if HANDLE_SHUTDOWN.get().is_some() {
+                    SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+                }
+                if let Some(callback) = HANGUP_CALLBACK.get() {
+                    callback();
+                }
+                TRUE
+            }
+            _ => FALSE,
+        }
+    }
+
+    fn install_console_handler() -> io::Result<()> {
+        // `SetConsoleCtrlHandler` is idempotent per function pointer only in the sense that adding
+        // the same handler twice queues it twice; both call sites here funnel through this, and the
+        // OnceLocks above make a second registration a no-op in effect, but guard it anyway.
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+        if INSTALLED.set(()).is_err() {
+            return Ok(());
+        }
+        if unsafe { SetConsoleCtrlHandler(Some(console_handler), TRUE) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub fn on_hangup(callback: Box<dyn Fn() + Send + 'static>) -> io::Result<()> {
+        // The console handler runs on an OS thread, so the callback must be `Sync` to be shared
+        // with it. Every caller passes a `CommandLink`-sending closure, which is; the `Send`-only
+        // signature is kept so the two platform impls present one API.
+        struct Shared(Box<dyn Fn() + Send + 'static>);
+        // SAFETY: the handler thread is the only reader, and it only ever calls the closure; the
+        // closures this module is given (`CommandLink::send`) are internally synchronized.
+        unsafe impl Sync for Shared {}
+        impl Shared {
+            fn call(&self) {
+                (self.0)();
+            }
+        }
+        let shared = Shared(callback);
+        if HANGUP_CALLBACK
+            .set(Box::new(move || shared.call()))
+            .is_err()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "hangup handler already installed",
+            ));
+        }
+        install_console_handler()
+    }
+
+    pub fn install_shutdown_handler() -> io::Result<()> {
+        let _ = HANDLE_SHUTDOWN.set(());
+        install_console_handler()
+    }
+
+    /// Put this process - and therefore every ConPTY child it later spawns - into a Job Object
+    /// whose limits say "kill everything in the job when the last handle to it closes". The only
+    /// handle is ours, so any exit path (clean, crashed, `TerminateProcess`d) closes it and takes
+    /// the whole PTY tree down. Deliberately leaks the job handle: it must stay open for exactly as
+    /// long as this process lives.
+    pub fn contain_children() -> io::Result<()> {
+        unsafe {
+            let job: HANDLE = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let ok = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_mut(&mut limits).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            if ok == 0 {
+                let err = io::Error::last_os_error();
+                CloseHandle(job);
+                return Err(err);
+            }
+            if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
+                let err = io::Error::last_os_error();
+                CloseHandle(job);
+                return Err(err);
+            }
+            // `job` is a raw `HANDLE` with no `Drop`, so simply letting it fall out of scope leaks
+            // it - which is the intent. Closing it would trip the kill-on-close limit and take this
+            // process's own PTY children down immediately.
+        }
+        Ok(())
+    }
+
+    /// `TerminateProcess` on the server. Because the server called [`contain_children`] at startup,
+    /// killing it closes its job handle and the job's kill-on-close limit takes every ConPTY child
+    /// with it - the Windows equivalent of the Unix `SIGTERM`-then-`SIGKILL` escalation, minus the
+    /// grace window (there is no signal to ask nicely with; the graceful ask was the protocol
+    /// `Shutdown` message that already failed by the time we get here).
+    pub fn terminate_server(pid: u32) {
+        unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+            if handle.is_null() {
+                return;
+            }
+            TerminateProcess(handle, 1);
+            CloseHandle(handle);
+        }
+    }
+}
+
+/// Run `callback` when this process is asked to go away by its controlling terminal (Unix `SIGHUP`/
+/// `SIGTERM`) or its console (Windows Ctrl+C/close/logoff/shutdown).
+///
+/// Installed once per process; a second call is an error rather than a silent replacement. The
+/// callback runs on a dedicated worker thread (Unix: draining a self-pipe the signal handler pokes,
+/// which is what keeps the handler itself async-signal-safe), so it may do arbitrary work - in
+/// practice it pushes one `Msg` onto the app's `CommandLink` and returns.
+pub fn on_hangup(callback: impl Fn() + Send + 'static) -> io::Result<()> {
+    imp::on_hangup(Box::new(callback))
+}
+
+/// Server-side: route a stop signal/console event onto the same graceful teardown the authenticated
+/// protocol `Shutdown` message takes, observable via [`shutdown_requested`].
+pub fn install_shutdown_handler() -> io::Result<()> {
+    imp::install_shutdown_handler()
+}
+
+/// Server-side: ensure this process's PTY children cannot outlive it. No-op on Unix; a kill-on-close
+/// Job Object on Windows.
+pub fn contain_children() -> io::Result<()> {
+    imp::contain_children()
+}
+
+/// Forcibly terminate a server that would not stop through the protocol. Best-effort and silent:
+/// there is no recovery to offer a caller whose last resort just failed.
+pub fn terminate_server(pid: u32) {
+    imp::terminate_server(pid);
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// One test rather than two: `on_hangup` is process-global and install-once, so a separate
+    /// "rejects a second install" test would race the first install non-deterministically.
+    #[test]
+    fn sighup_reaches_the_callback_and_a_second_install_is_rejected() {
+        let (tx, rx) = mpsc::channel();
+        on_hangup(move || {
+            let _ = tx.send(());
+        })
+        .expect("install hangup handler");
+
+        unsafe { libc::raise(libc::SIGHUP) };
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("SIGHUP reached the callback");
+
+        assert_eq!(
+            on_hangup(|| {}).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists,
+            "a second install must be rejected, not silently replace the live handler"
+        );
+    }
+
+    #[test]
+    fn terminate_server_escalates_to_sigkill_when_sigterm_is_ignored() {
+        // `sh -c 'trap "" TERM; sleep 30'` ignores SIGTERM outright, so only the SIGKILL escalation
+        // can reap it. Without the escalation this test hangs on `wait` until the 30s sleep ends.
+        let mut child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg("trap '' TERM; sleep 30")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn SIGTERM-ignoring child");
+
+        terminate_server(child.id());
+
+        let status = child.wait().expect("child reaped");
+        assert!(
+            !status.success(),
+            "expected a signalled exit, got {status:?}"
+        );
+    }
+}

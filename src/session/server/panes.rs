@@ -3,9 +3,14 @@ use std::fs::OpenOptions;
 use std::path::Path;
 
 impl SessionServer {
-    /// Rename this session in place: move the listening socket to the new name so the same server
+    /// Rename this session in place: start listening on the new name's endpoint so the same server
     /// (and its live panes) becomes discoverable under `name` with zero pane movement. Rejects
     /// invalid names and collisions with an already-running session.
+    ///
+    /// The new endpoint is *bound before* the old listener is retired, so the session is never
+    /// momentarily discoverable under neither name; the accept loop swaps the listener in on its
+    /// next pass (see [`SessionServer::run_listener`]) and drops the old one then. Already-accepted
+    /// clients are untouched by either step and stay attached across the rename.
     pub(super) fn rename_session(&mut self, name: String) -> ServerMessage {
         if !crate::session::discovery::valid_session_name(&name) {
             return ServerMessage::Error {
@@ -16,8 +21,8 @@ impl SessionServer {
         if name == self.session_name {
             return ServerMessage::Renamed { session: name };
         }
-        let new_path = match session_socket_path(&name) {
-            Ok(path) => path,
+        let new_endpoint = match session_endpoint(&name) {
+            Ok(endpoint) => endpoint,
             Err(err) => {
                 return ServerMessage::Error {
                     code: "rename-failed".to_string(),
@@ -25,30 +30,30 @@ impl SessionServer {
                 };
             }
         };
-        if new_path.exists() {
-            if crate::platform::ipc::IpcEndpoint::at_path(&new_path).is_live() {
-                return ServerMessage::Error {
-                    code: "name-in-use".to_string(),
-                    message: format!("session `{name}` already exists"),
-                };
-            }
-            // A stale socket whose server is gone; clear it so the rename can take the name.
-            let _ = fs::remove_file(&new_path);
+        if new_endpoint.is_live() {
+            return ServerMessage::Error {
+                code: "name-in-use".to_string(),
+                message: format!("session `{name}` already exists"),
+            };
         }
-        if let Some(old_path) = self.socket_path.clone() {
-            if let Err(err) = fs::rename(&old_path, &new_path) {
+        let bound = match new_endpoint.bind() {
+            Ok(bound) => bound,
+            Err(err) => {
                 return ServerMessage::Error {
                     code: "rename-failed".to_string(),
                     message: err.to_string(),
                 };
             }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(&new_path, fs::Permissions::from_mode(0o600));
-            }
+        };
+        let listener = bound.into_listener();
+        if let Err(err) = listener.set_nonblocking(true) {
+            return ServerMessage::Error {
+                code: "rename-failed".to_string(),
+                message: err.to_string(),
+            };
         }
-        self.socket_path = Some(new_path);
+        let retired = self.endpoint.replace(new_endpoint);
+        self.pending_listener = Some((listener, retired));
         self.session_name = name.clone();
         ServerMessage::Renamed { session: name }
     }

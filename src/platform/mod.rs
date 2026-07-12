@@ -7,26 +7,35 @@
 //! submodule's doc comment for what has actually landed versus what is still a placeholder.
 //!
 //! Status (tracked against the cross-platform plan):
-//! - [`paths`] - **implemented**: config/state/cache/runtime directory resolution (Phase 3),
-//!   wired into `config::file`, `profiles`, `session::server::resurrect`,
-//!   `session::server::panes`, and `control::runtime_dir`.
-//! - [`fs_security`] - **implemented for Unix**; Windows DACL/reparse-point handling is Phase 5/5b
-//!   and currently only creates the directory without enforcing privacy.
-//! - [`user`] - **implemented**: `current_user_tag()`, pulled forward from Phase 10 because
-//!   [`paths`] needed it for the runtime-dir fallback path.
-//! - [`command`] - **implemented** (Phase 4): interactive-shell/command-runner resolution, wired
-//!   into every pane/hook/workbar/`[keys] run` spawn path.
-//! - [`ipc`] - **implemented for Unix** (Phase 5): transport-neutral `IpcEndpoint`/`IpcListener`/
-//!   `IpcConnection`/`BoundEndpoint`/`EndpointRegistry`, wired into `control.rs`,
-//!   `session/client.rs`, `session/discovery.rs`, `session/server/*`, `cli.rs`, and
-//!   `ops/session.rs`'s peer-pid probe. The Windows named-pipe backend is a type-matching stub only
-//!   (Milestone 2).
-//! - [`server_lifecycle`] - **documented, mostly already satisfied on Unix** (Phase 5b): see the
-//!   module doc comment for the bullet-by-bullet status; SIGHUP-to-detach is the one open item.
-//! - [`process`] - **implemented for Linux and macOS** (Phase 9): the `ProcessInspector` trait plus
-//!   per-OS `cwd`/`foreground_program` fallbacks, wired into `session::server`'s pane-runtime-state
-//!   computation (Phase 6). Windows is an explicit "unavailable" implementation per the plan.
-//! - [`notifications`] - module skeleton only; no call site has been migrated yet (Phase 10).
+//! - [`paths`] - config/state/cache/runtime directory resolution (Phase 3), wired into
+//!   `config::file`, `profiles`, `session::server::resurrect`, `session::server::panes`,
+//!   `platform::shell_integration`, and `control::runtime_dir`.
+//! - [`fs_security`] - private-directory policy: Unix ownership/mode/symlink enforcement, Windows
+//!   protected current-user-SID DACL plus reparse-point rejection (Phase 3/5). The Windows security
+//!   descriptor is shared with the named-pipe backend, so an endpoint and the registry entry that
+//!   advertises it carry the same ACL.
+//! - [`user`] - current-user identity (Phase 10): `current_user_tag` (machine identity: uid on Unix,
+//!   SID on Windows), `current_user_label` (`USER` vs `USERNAME`), and `hostname`.
+//! - [`command`] - interactive-shell/command-runner resolution (Phase 4), wired into every
+//!   pane/hook/workbar/`[keys] run` spawn path, plus Windows `PATH`/`PATHEXT` program lookup
+//!   (Phase 10).
+//! - [`ipc`] - transport-neutral `IpcEndpoint`/`IpcListener`/`IpcConnection`/`BoundEndpoint`/
+//!   `EndpointRegistry` (Phase 5), wired into `control.rs`, `session/client.rs`,
+//!   `session/discovery.rs`, `session/server/*`, `cli.rs`, and `ops/session.rs`. Unix-domain sockets
+//!   on Linux/macOS; secured named pipes on Windows.
+//! - [`server_lifecycle`] - background server spawn, hangup/console-control handling, protocol-first
+//!   shutdown with a signal courtesy path, Windows Job Object orphan containment, and forced
+//!   termination with `SIGKILL`/`TerminateProcess` escalation (Phase 5b).
+//! - [`shell_integration`] - shipped per-shell integration scripts and their injection points
+//!   (Phase 8): bash, zsh, fish, PowerShell, and cmd.
+//! - [`process`] - the `ProcessInspector` trait plus per-OS `cwd`/`foreground_program` fallbacks
+//!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
+//!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
+//! - [`notifications`] - desktop notifications (Phase 10).
+//!
+//! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
+//! and is exercised by Windows CI, but was **written without a Windows host in the authoring
+//! workspace**; treat CI as the first real verification of any of it.
 
 pub mod fs_security;
 pub mod paths;

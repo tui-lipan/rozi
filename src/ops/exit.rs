@@ -70,6 +70,25 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::none()
 }
 
+/// The controlling terminal/console went away (Unix `SIGHUP`/`SIGTERM`, Windows console close,
+/// logoff, or shutdown): detach cleanly instead of letting the process be killed where it stands
+/// (cross-platform plan Phase 5b).
+///
+/// Unlike [`detach`], this never prompts. There is nobody left to answer a prompt, and the window
+/// before the OS force-kills us is short (Windows gives a few seconds; a Unix `SIGHUP` is usually
+/// followed by the emulator exiting). So an ephemeral session skips the "name it first" flow and
+/// simply detaches: its server shuts itself down after the no-client grace period, which is the
+/// right outcome for a session nobody can reattach to by name anyway.
+pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::update::flush_layout_commit(ctx);
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.detach();
+    }
+    profiles::persist_session_on_detach(&ctx.state);
+    ctx.quit();
+    Update::none()
+}
+
 /// Whether any tiled/floating pane still has a running process. Used to decide whether quitting
 /// an ephemeral session (which shuts the server down and kills its PTYs) warrants a confirmation.
 fn any_pane_live(state: &State) -> bool {

@@ -82,7 +82,7 @@ impl SessionClient {
             &ClientMessage::Attach {
                 session: session.into(),
                 protocol_version: PROTOCOL_VERSION,
-                label: std::env::var("USER").unwrap_or_else(|_| "client".to_string()),
+                label: crate::platform::user::current_user_label(),
                 read_only,
             },
         )?;

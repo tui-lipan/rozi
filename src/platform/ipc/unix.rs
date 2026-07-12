@@ -58,6 +58,16 @@ impl IpcEndpoint {
     pub fn is_live(&self) -> bool {
         UnixStream::connect(&self.path).is_ok()
     }
+
+    /// Drop this endpoint's on-disk trace so a dead server stops being discoverable, without
+    /// waiting for the (possibly never-arriving) teardown of the server that created it.
+    ///
+    /// Unlinking the socket file is *all* an endpoint is on Unix; the abstraction exists so the
+    /// Windows backend - where the discoverable artifact and the transport are separate things -
+    /// can retire the right one without the caller knowing the difference.
+    pub fn remove_stale(&self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 /// A successfully bound endpoint: the listener plus the endpoint it is bound to, so a caller can

@@ -1,4 +1,5 @@
 use super::*;
+use std::fs::OpenOptions;
 
 impl SessionServer {
     /// Rename this session in place: move the listening socket to the new name so the same server
@@ -48,6 +49,15 @@ impl SessionServer {
     }
 
     pub(super) fn spawn_pane(&mut self, request: SpawnRequest) -> ServerMessage {
+        self.spawn_pane_inner(request, None, false)
+    }
+
+    pub(super) fn spawn_pane_inner(
+        &mut self,
+        request: SpawnRequest,
+        seed: Option<&[u8]>,
+        retain_on_failure: bool,
+    ) -> ServerMessage {
         let id = request.pane_id;
         // A live pane with this id already exists; refuse. An *exited* pane is replaced in place
         // so keep-open respawn (client re-sends `SpawnPane` with a fresh generation) works.
@@ -64,7 +74,21 @@ impl SessionServer {
                 error: Some(format!("pane {id} already exists")),
             };
         }
-        self.panes.remove(&id);
+        // A replaced pane's log handle dies with it; tell every client so no stale
+        // `[log]` badge survives a respawn.
+        if let Some(old) = self.panes.remove(&id)
+            && old.log.is_some()
+        {
+            self.broadcast_outbound(&ServerOutbound::Control(
+                ServerMessage::PaneLoggingChanged {
+                    pane_id: id,
+                    generation: old.generation,
+                    enabled: false,
+                    path: None,
+                    error: None,
+                },
+            ));
+        }
         let cols = if request.cols == 0 {
             DEFAULT_COLS
         } else {
@@ -81,8 +105,12 @@ impl SessionServer {
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.
         screen.set_palette(request.palette.into());
+        if let Some(seed) = seed {
+            screen.process_bytes(seed);
+            screen.drain_responses();
+        }
         let mut config = pty_config(request.command.as_deref(), request.keep_open);
-        if let Some(cwd) = &request.cwd {
+        if let Some(cwd) = request.cwd.as_ref().filter(|cwd| Path::new(cwd).is_dir()) {
             config = config.cwd(cwd.clone());
         }
         for (key, value) in &request.env {
@@ -102,13 +130,18 @@ impl SessionServer {
                         generation,
                         title: request.title,
                         cwd: request.cwd,
+                        command: request.command,
+                        keep_open: request.keep_open,
+                        palette: request.palette,
                         pty: Some(pty),
                         screen,
                         cols: cols.max(1),
                         rows: rows.max(1),
                         exited: None,
+                        log: None,
                     },
                 );
+                self.dirty = true;
                 ServerMessage::SpawnResult {
                     pane_id: id,
                     generation,
@@ -117,13 +150,34 @@ impl SessionServer {
                     error: None,
                 }
             }
-            Err(err) => ServerMessage::SpawnResult {
-                pane_id: id,
-                generation,
-                pid: None,
-                ok: false,
-                error: Some(err.to_string()),
-            },
+            Err(err) => {
+                if retain_on_failure {
+                    self.panes.insert(
+                        id,
+                        ServerPane {
+                            generation,
+                            title: request.title,
+                            cwd: request.cwd,
+                            command: request.command,
+                            keep_open: request.keep_open,
+                            palette: request.palette,
+                            pty: None,
+                            screen,
+                            cols: cols.max(1),
+                            rows: rows.max(1),
+                            exited: Some(127),
+                            log: None,
+                        },
+                    );
+                }
+                ServerMessage::SpawnResult {
+                    pane_id: id,
+                    generation,
+                    pid: None,
+                    ok: false,
+                    error: Some(err.to_string()),
+                }
+            }
         }
     }
 
@@ -144,21 +198,43 @@ impl SessionServer {
                 }
                 match event {
                     TerminalPtyEvent::Output(bytes) => {
+                        let log_error = pane
+                            .log
+                            .as_mut()
+                            .and_then(|log| log.file.write_all(&bytes).err());
+                        let logging_error = log_error.map(|error| {
+                            pane.log = None;
+                            format!("pane log write failed: {error}")
+                        });
                         pane.screen.process_bytes(&bytes);
+                        self.dirty = true;
                         if let Some(pty) = &pane.pty {
                             for response in pane.screen.drain_responses() {
                                 let _ = pty.write(&response);
                             }
                         }
-                        Some(ServerOutbound::PaneOutput {
+                        let output = ServerOutbound::PaneOutput {
                             pane_id: id,
                             generation,
                             bytes: bytes.to_vec(),
-                        })
+                        };
+                        if let Some(error) = logging_error {
+                            self.broadcast_outbound(&ServerOutbound::Control(
+                                ServerMessage::PaneLoggingChanged {
+                                    pane_id: id,
+                                    generation,
+                                    enabled: false,
+                                    path: None,
+                                    error: Some(error),
+                                },
+                            ));
+                        }
+                        Some(output)
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.exited = Some(code);
                         pane.pty = None;
+                        self.dirty = true;
                         Some(ServerOutbound::Control(ServerMessage::Exited {
                             pane_id: id,
                             generation,
@@ -197,6 +273,7 @@ impl SessionServer {
                 title: pane.effective_title(),
                 cwd: pane.effective_cwd(),
                 exited: pane.exited,
+                logging: pane.log.is_some(),
             })
             .collect()
     }
@@ -206,4 +283,76 @@ impl SessionServer {
             pane.screen.set_palette(palette.into());
         }
     }
+
+    pub(super) fn set_pane_logging(
+        &mut self,
+        id: PaneId,
+        generation: u64,
+        enabled: bool,
+    ) -> ServerMessage {
+        let Some(pane) = self
+            .panes
+            .get_mut(&id)
+            .filter(|pane| pane.generation == generation)
+        else {
+            return ServerMessage::PaneLoggingChanged {
+                pane_id: id,
+                generation,
+                enabled: false,
+                path: None,
+                error: Some("pane not found".to_string()),
+            };
+        };
+        if !enabled {
+            pane.log = None;
+            return ServerMessage::PaneLoggingChanged {
+                pane_id: id,
+                generation,
+                enabled: false,
+                path: None,
+                error: None,
+            };
+        }
+        let root = self.settings.log_dir.clone().or_else(default_log_dir);
+        let result = root
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "state directory unavailable"))
+            .and_then(|root| {
+                fs::create_dir_all(&root)?;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+                let dir = root.join(&self.session_name);
+                fs::create_dir_all(&dir)?;
+                fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+                let path = dir.join(format!("{id}-{generation}.log"));
+                let file = OpenOptions::new().create(true).append(true).open(&path)?;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+                Ok(PaneLog { file, path })
+            });
+        match result {
+            Ok(log) => {
+                let path = log.path.to_string_lossy().into_owned();
+                pane.log = Some(log);
+                ServerMessage::PaneLoggingChanged {
+                    pane_id: id,
+                    generation,
+                    enabled: true,
+                    path: Some(path),
+                    error: None,
+                }
+            }
+            Err(error) => ServerMessage::PaneLoggingChanged {
+                pane_id: id,
+                generation,
+                enabled: false,
+                path: None,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+}
+
+fn default_log_dir() -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+        .map(|path| path.join("hyprmux/logs"))
 }

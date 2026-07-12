@@ -39,7 +39,16 @@ struct FileConfig {
     confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
     workbar: WorkbarFileConfig,
+    rules: Vec<RuleFileConfig>,
+    hooks: HashMap<String, String>,
+    logging: LoggingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct LoggingFileConfig {
+    dir: Option<String>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -79,6 +88,7 @@ impl KeyBindingCandidates {
 struct UserCommandTableSpec {
     run: Option<String>,
     send: Option<String>,
+    popup: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -132,6 +142,7 @@ struct SessionFileConfig {
     autosave: Option<bool>,
     path: Option<String>,
     startup: Option<String>,
+    resurrect: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -152,6 +163,7 @@ enum PaddingSpec {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct PaneFileConfig {
+    hold_on_exit: Option<bool>,
     highlight_focused_background: Option<bool>,
     highlight_focused_border: Option<bool>,
     focus_on_hover: Option<bool>,
@@ -168,6 +180,33 @@ struct PaneFileConfig {
     workbar_powerline: Option<bool>,
     workbar_tab_style: Option<String>,
     workbar_style: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RuleFileConfig {
+    #[serde(rename = "match")]
+    matches: String,
+    float: bool,
+    width: Option<f32>,
+    height: Option<f32>,
+    workspace: Option<usize>,
+    focus: bool,
+    fullscreen: bool,
+}
+
+impl Default for RuleFileConfig {
+    fn default() -> Self {
+        Self {
+            matches: String::new(),
+            float: false,
+            width: None,
+            height: None,
+            workspace: None,
+            focus: true,
+            fullscreen: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -682,6 +721,7 @@ mod tests {
         let parsed: FileConfig = toml::from_str(
             r#"
             [pane]
+            hold_on_exit = true
             highlight_focused_background = true
             highlight_focused_border = true
             focus_on_hover = false
@@ -699,6 +739,7 @@ mod tests {
         .expect("config parses");
 
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
+        assert_eq!(parsed.pane.hold_on_exit, Some(true));
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
         assert_eq!(parsed.pane.show_workbar, Some(false));
@@ -710,6 +751,51 @@ mod tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn rules_parse_and_merge_with_clamps_and_workspace_remap() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [[rules]]
+            match = "btop"
+            float = true
+            width = 2.0
+            height = 0.05
+            workspace = 9
+            focus = false
+            fullscreen = true
+            "#,
+        )
+        .expect("config parses");
+        let mut warnings = Vec::new();
+        let rules = build_rules(parsed.rules, &mut warnings);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].width, Some(1.0));
+        assert_eq!(rules[0].height, Some(0.1));
+        assert_eq!(rules[0].workspace, Some(8));
+        assert!(!rules[0].focus);
+        assert!(rules[0].fullscreen);
+        assert_eq!(warnings.len(), 2);
+    }
+
+    #[test]
+    fn invalid_rules_are_skipped_or_lose_invalid_workspace() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [[rules]]
+            match = ""
+            [[rules]]
+            match = "cargo watch"
+            workspace = 10
+            "#,
+        )
+        .expect("config parses");
+        let mut warnings = Vec::new();
+        let rules = build_rules(parsed.rules, &mut warnings);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].workspace, None);
+        assert_eq!(warnings.len(), 2);
     }
 
     #[test]
@@ -941,6 +1027,7 @@ struct ClipboardFileConfig {
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
+    bell: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1016,6 +1103,9 @@ pub fn load_config() -> LoadedConfig {
     if let Some(scrollback) = parsed.scrollback {
         config.scrollback = scrollback.max(1);
     }
+    if let Some(dir) = non_empty(parsed.logging.dir) {
+        config.logging.dir = Some(expand_path(dir));
+    }
 
     let mut input = config.input.clone();
     apply_input_config(
@@ -1036,6 +1126,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(autosave) = parsed.session.autosave {
         config.session.autosave = autosave;
+    }
+    if let Some(resurrect) = parsed.session.resurrect {
+        config.session.resurrect = resurrect;
     }
     if let Some(path) = non_empty(parsed.session.path) {
         config.session.path = Some(expand_path(path));
@@ -1059,6 +1152,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
         config.pane.highlight_focused_background = highlight_focused_background;
+    }
+    if let Some(hold_on_exit) = parsed.pane.hold_on_exit {
+        config.pane.hold_on_exit = hold_on_exit;
     }
     if let Some(highlight_focused_border) = parsed.pane.highlight_focused_border {
         config.pane.highlight_focused_border = highlight_focused_border;
@@ -1115,6 +1211,9 @@ pub fn load_config() -> LoadedConfig {
     if let Some(pane_exit) = parsed.notifications.pane_exit {
         config.notifications.pane_exit = pane_exit;
     }
+    if let Some(bell) = parsed.notifications.bell {
+        config.notifications.bell = bell;
+    }
     if let Some(editors) = parsed.navigation.editors {
         config.navigation.editors = editors
             .into_iter()
@@ -1152,6 +1251,22 @@ pub fn load_config() -> LoadedConfig {
     }
 
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
+    config.rules = build_rules(parsed.rules, &mut warnings);
+    config.hooks = parsed
+        .hooks
+        .into_iter()
+        .filter_map(|(kind, command)| {
+            if crate::events::EventKind::parse(&kind).is_none() {
+                warnings.push(format!("Ignored unknown hook event `{kind}`"));
+                None
+            } else if command.trim().is_empty() {
+                warnings.push(format!("Ignored empty hook for `{kind}`"));
+                None
+            } else {
+                Some((kind, command))
+            }
+        })
+        .collect();
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,
@@ -1162,6 +1277,49 @@ pub fn load_config() -> LoadedConfig {
     config.user_commands = user_commands;
 
     LoadedConfig { config, warnings }
+}
+
+fn build_rules(raw: Vec<RuleFileConfig>, warnings: &mut Vec<String>) -> Vec<HyprmuxRuleConfig> {
+    raw.into_iter()
+        .filter_map(|rule| {
+            let matches = rule.matches.trim().to_string();
+            if matches.is_empty() {
+                warnings.push("Ignored rule with an empty match".to_string());
+                return None;
+            }
+            let clamp = |name: &str, value: Option<f32>, warnings: &mut Vec<String>| {
+                value.map(|value| {
+                    let clamped = value.clamp(0.1, 1.0);
+                    if (clamped - value).abs() > f32::EPSILON {
+                        warnings.push(format!(
+                            "Rule `{matches}` {name} {value} out of range; clamped to {clamped}"
+                        ));
+                    }
+                    clamped
+                })
+            };
+            let workspace = rule.workspace.and_then(|workspace| {
+                if (1..=crate::state::WORKSPACE_COUNT).contains(&workspace) {
+                    Some(workspace - 1)
+                } else {
+                    warnings.push(format!(
+                        "Ignored rule `{matches}` workspace {workspace} (expected 1..={})",
+                        crate::state::WORKSPACE_COUNT
+                    ));
+                    None
+                }
+            });
+            Some(HyprmuxRuleConfig {
+                width: clamp("width", rule.width, warnings),
+                height: clamp("height", rule.height, warnings),
+                matches,
+                float: rule.float,
+                workspace,
+                focus: rule.focus,
+                fullscreen: rule.fullscreen,
+            })
+        })
+        .collect()
 }
 
 pub fn config_path() -> PathBuf {
@@ -1331,18 +1489,26 @@ fn bind_user_command(
     // often exactly the point (e.g. `send = "ls -la\n"` to submit the command).
     let run = table.run.map(|value| value.trim().to_string());
     let send = table.send.filter(|value| !value.is_empty());
-    let action = match (run.filter(|value| !value.is_empty()), send) {
-        (Some(run), None) => UserCommandAction::Run(run),
-        (None, Some(send)) => UserCommandAction::Send(send),
-        (None, None) => {
+    let popup = table
+        .popup
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let choices = usize::from(run.as_ref().is_some_and(|v| !v.is_empty()))
+        + usize::from(send.is_some())
+        + usize::from(popup.is_some());
+    let action = match choices {
+        1 if run.as_ref().is_some_and(|v| !v.is_empty()) => UserCommandAction::Run(run.unwrap()),
+        1 if send.is_some() => UserCommandAction::Send(send.unwrap()),
+        1 => UserCommandAction::Popup(popup.unwrap()),
+        0 => {
             warnings.push(format!(
-                "User command `{key}` needs a `run` or `send` value; skipped"
+                "User command `{key}` needs a `run`, `send`, or `popup` value; skipped"
             ));
             return;
         }
-        (Some(_), Some(_)) => {
+        _ => {
             warnings.push(format!(
-                "User command `{key}` has both `run` and `send`; skipped"
+                "User command `{key}` has both/conflicting `run`, `send`, or `popup` values; skipped"
             ));
             return;
         }

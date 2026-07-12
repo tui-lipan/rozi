@@ -63,6 +63,7 @@ disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); b
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
 | Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `modifier`+`Ctrl`+`←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
 | Promote pane to master | `.` (also palette) |
+| Respawn exited pane | *Respawn exited pane* in the command palette (no default key; action id `respawn-pane`) |
 
 **Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the
 tree); *Swap* exchanges the two panes' positions in place without restructuring.
@@ -219,6 +220,14 @@ Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use 
 adjust the focused pane's split ratios, and `Esc` to leave. The workbar shows a green
 **RESIZE hjkl Esc** indicator while active.
 
+## Hint mode
+
+Press `u` (or choose *Hint mode* in the palette) to label URLs, paths (including optional line
+numbers), and 7-40 character Git SHAs in the focused pane's current visible snapshot. Type a
+lowercase label to copy it. Type the final label character uppercase to open a URL with the system
+handler; non-URL matches still copy. `Esc` or `q` exits, and keys never leak to the PTY. Hint mode
+uses the pane's current scrollback position.
+
 ## Copy mode
 
 Press `[` (or run *Copy mode* from the palette) to enter **copy mode**: a keyboard-driven way
@@ -281,3 +290,5 @@ While an overlay is open (command palette, help, theme picker, search, rename):
 The command palette exposes `session-clients` to inspect attached clients and grant control, and
 `toggle-input-lock` to restrict terminal input to the current controller. Both ids can be used in
 `[keys]` bindings.
+`toggle-pane-logging` starts or stops raw PTY output logging for the focused pane. It is available
+in the command palette and can be assigned under `[keys]`.

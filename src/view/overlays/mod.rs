@@ -22,10 +22,12 @@ use super::{
     modal_scrollbar_config, shared_search_palette, styled_modal,
 };
 
-include!("help.rs");
 include!("search.rs");
 include!("prompts.rs");
 include!("profiles.rs");
 include!("sessions.rs");
 include!("commands.rs");
 include!("appearance.rs");
+// Last: help.rs ends in a `#[cfg(test)]` module, and `include!` splices these files into one
+// module, so any include after it would put items behind that test module.
+include!("help.rs");

@@ -54,9 +54,11 @@ See [Sessions](sessions.md) for attach/detach semantics.
 ## Wire protocol
 
 The socket accepts one newline-delimited JSON request per connection and returns one JSON response.
+`subscribe` is the exception: after its acknowledgement, the connection remains open and streams
+newline-delimited event objects until disconnected.
 
 Requests use a `cmd` field: `list-panes`, `focus`, `send-text`, `new-pane`, `run-action`,
-`capture-pane`, `switch-workspace`, or `move-to-workspace`. A client may include `source_pane`; the
+`capture-pane`, `switch-workspace`, `move-to-workspace`, `popup`, or `subscribe`. A client may include `source_pane`; the
 CLI derives it from `HYPRMUX_PANE`.
 
 Examples:
@@ -70,6 +72,22 @@ Examples:
 {"cmd":"capture-pane","target":2}
 {"cmd":"switch-workspace","index":2}
 {"cmd":"move-to-workspace","index":3}
+{"cmd":"popup","command":"fzf","width":0.7,"height":0.6,"title":"files"}
+{"cmd":"subscribe","events":["pane-exited","workspace-switched"]}
 ```
 
 Responses have `ok`, and either `data` or `error`.
+
+Popup dimensions are viewport fractions, clamped to `0.2`-`0.95`; omitted dimensions default to
+`0.6`. Only one popup may exist at a time. It closes when its command exits, when its backdrop is
+clicked, or through the normal close action. Escape is sent to the popup application.
+
+Subscriptions support `pane-spawned`, `pane-exited`, `focus-changed`, and `workspace-switched`.
+An empty `events` list subscribes to all four. Event names and existing fields are stable; later
+versions may add events or fields. Slow subscribers are bounded and disconnected rather than
+blocking the UI. Example: `printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$HYPRMUX_SOCKET | jq`.
+
+## Pane logging
+
+`{"cmd":"pane-logging","target":3,"enabled":true}` enables logging for pane 3. Omit `target`
+to use the focused/source pane and omit `enabled` to toggle.

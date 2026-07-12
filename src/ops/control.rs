@@ -69,6 +69,40 @@ pub(crate) fn handle_control_request(
         }
         ControlCommand::SwitchWorkspace { index } => switch_workspace_command(ctx, index),
         ControlCommand::MoveToWorkspace { index } => move_to_workspace_command(ctx, index),
+        ControlCommand::Popup {
+            command,
+            cwd,
+            width,
+            height,
+            title,
+        } => match crate::popup::open(ctx, command, cwd, width, height, title) {
+            Ok(update) => {
+                let _ = envelope.reply.send(ControlResponse::empty());
+                return update;
+            }
+            Err(error) => ControlResponse::error(error),
+        },
+        ControlCommand::Subscribe { .. } => {
+            ControlResponse::error("subscribe is handled by the control listener")
+        }
+        ControlCommand::PaneLogging { target, enabled } => {
+            let id = target
+                .or(envelope.request.source_pane)
+                .or(ctx.state.focused_pane);
+            match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
+                Some(pane) => {
+                    if let Some(client) = &ctx.state.session_client {
+                        client.set_pane_logging(
+                            pane.id,
+                            pane.pty_generation,
+                            enabled.unwrap_or(!pane.logging),
+                        );
+                    }
+                    ControlResponse::empty()
+                }
+                None => ControlResponse::error("pane not found"),
+            }
+        }
     };
     let _ = envelope.reply.send(response);
     Update::full()
@@ -227,13 +261,18 @@ fn new_pane(
         let _ = reply.send(ControlResponse::error("not controller"));
         return Update::full();
     }
-    let workspace_index = match workspace_for_source(&ctx.state, source) {
+    let source_workspace = match workspace_for_source(&ctx.state, source) {
         Ok(index) => index,
         Err(message) => {
             let _ = reply.send(ControlResponse::error(message));
             return Update::full();
         }
     };
+    let (rule_workspace, placement) = command
+        .as_deref()
+        .map(|command| crate::rules::placement_for_command(&ctx.state.config.rules, command))
+        .unwrap_or_default();
+    let workspace_index = rule_workspace.unwrap_or(source_workspace);
     let previous_focused = source.or(ctx.state.workspaces[workspace_index].focused_pane);
     let mut identity = PaneIdentity {
         command,
@@ -244,7 +283,8 @@ fn new_pane(
     if let Some(title) = title {
         identity.set_custom_title(title);
     }
-    let (id, update) = spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity);
+    let (id, update) =
+        spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement);
     let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
         id,
         accepted: true,

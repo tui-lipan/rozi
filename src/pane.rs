@@ -13,6 +13,7 @@ pub struct TerminalPane {
     pub cwd: Option<String>,
     pub child_pid: Option<u32>,
     pub last_palette: Option<TerminalColorPalette>,
+    seen_bell_count: u64,
     screen: Box<TerminalScreen>,
 }
 
@@ -56,6 +57,7 @@ impl TerminalPane {
             cwd: None,
             child_pid: None,
             last_palette: None,
+            seen_bell_count: 0,
             screen: Box::new(screen),
         }
     }
@@ -70,10 +72,18 @@ impl TerminalPane {
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         *self.screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        self.seen_bell_count = self.screen.bell_count();
         if let Some(palette) = self.last_palette {
             self.screen.set_palette(palette);
         }
         self.snapshot = self.screen.render_snapshot();
+    }
+
+    pub fn take_bell(&mut self) -> bool {
+        let count = self.screen.bell_count();
+        let rang = count > self.seen_bell_count;
+        self.seen_bell_count = count;
+        rang
     }
 
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
@@ -227,6 +237,48 @@ impl TerminalPane {
         if changed {
             snapshot.color_lines = color_lines.into();
         }
+        snapshot
+    }
+
+    pub fn hint_snapshot(
+        &self,
+        matches: &[crate::hints::HintMatch],
+        labels: &[String],
+        input: &str,
+        style: Style,
+    ) -> TerminalRenderSnapshot {
+        let mut snapshot = self.snapshot.clone();
+        let mut lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
+        for (index, matched) in matches.iter().enumerate() {
+            let Some(label) = labels.get(index) else {
+                continue;
+            };
+            if !label.starts_with(input) {
+                continue;
+            }
+            let Some(spans) = lines.get_mut(matched.row) else {
+                continue;
+            };
+            let range = [(matched.start_col, matched.end_col)];
+            *spans = highlight_span_ranges(matched.row, spans, &range, style, style, None);
+            let mut col = 0;
+            for span in spans.iter_mut() {
+                let len = span.content.chars().count();
+                if matched.start_col >= col && matched.start_col < col + len {
+                    let mut chars: Vec<char> = span.content.chars().collect();
+                    let start = matched.start_col - col;
+                    for (offset, ch) in label.chars().enumerate() {
+                        if start + offset < chars.len() {
+                            chars[start + offset] = ch;
+                        }
+                    }
+                    span.content = chars.into_iter().collect::<String>().into();
+                    break;
+                }
+                col += len;
+            }
+        }
+        snapshot.color_lines = lines.into();
         snapshot
     }
 
@@ -486,6 +538,15 @@ fn push_span_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn take_bell_uses_a_watermark() {
+        let mut pane = TerminalPane::new(100);
+        assert!(!pane.take_bell());
+        pane.process_server_output(b"\x07");
+        assert!(pane.take_bell());
+        assert!(!pane.take_bell());
+    }
 
     #[test]
     fn extract_text_trims_and_joins_selected_rows() {

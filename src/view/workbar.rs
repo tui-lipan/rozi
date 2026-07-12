@@ -66,6 +66,8 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
         ));
     } else if state.mode == Mode::Copy {
         trailing.push(TrailingChip::badge(" COPY ", text_fg, theme.status.info));
+    } else if state.mode == Mode::Hint {
+        trailing.push(TrailingChip::badge(" HINT ", text_fg, theme.status.info));
     }
     // Keep session identity in the configured session badge and collaboration state in one chip.
     // A normal solo client needs no status; read-only remains visible because it explains why
@@ -578,7 +580,12 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
     let tabs: Vec<Tab> = (0..shown)
         .map(|idx| {
             let count = state.workspaces[idx].visible_count();
-            let label = workspace_tab_label(state.workspaces[idx].name.as_deref(), idx, count);
+            let urgent = state.workspaces[idx]
+                .panes
+                .iter()
+                .any(|pane| !pane.closing && pane.activity.bell);
+            let label =
+                workspace_tab_label(state.workspaces[idx].name.as_deref(), idx, count, urgent);
             Tab::new(label)
         })
         .collect();
@@ -622,11 +629,17 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
 
 /// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
 /// with a ` ·<count>` suffix while it holds panes.
-fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
+fn workspace_tab_label(
+    name: Option<&str>,
+    index: usize,
+    pane_count: usize,
+    urgent: bool,
+) -> String {
     let base = match name {
         Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),
         _ => (index + 1).to_string(),
     };
+    let base = if urgent { format!("!{base}") } else { base };
     if pane_count > 0 {
         format!("{base} ·{pane_count}")
     } else {
@@ -741,15 +754,16 @@ mod tests {
 
     #[test]
     fn workspace_tab_label_falls_back_to_number_without_a_name() {
-        assert_eq!(workspace_tab_label(None, 0, 0), "1");
-        assert_eq!(workspace_tab_label(Some(""), 0, 0), "1");
-        assert_eq!(workspace_tab_label(None, 0, 3), "1 ·3");
+        assert_eq!(workspace_tab_label(None, 0, 0, false), "1");
+        assert_eq!(workspace_tab_label(Some(""), 0, 0, false), "1");
+        assert_eq!(workspace_tab_label(None, 0, 3, false), "1 ·3");
+        assert_eq!(workspace_tab_label(None, 0, 3, true), "!1 ·3");
     }
 
     #[test]
     fn workspace_tab_label_prefixes_the_custom_name_with_the_number() {
-        assert_eq!(workspace_tab_label(Some("code"), 0, 0), "1:code");
-        assert_eq!(workspace_tab_label(Some("code"), 0, 2), "1:code ·2");
+        assert_eq!(workspace_tab_label(Some("code"), 0, 0, false), "1:code");
+        assert_eq!(workspace_tab_label(Some("code"), 0, 2, false), "1:code ·2");
     }
 
     #[test]

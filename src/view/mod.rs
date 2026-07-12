@@ -291,6 +291,18 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         root = root.child(scratch_layer);
     }
 
+    if ctx.state.popup.is_some() {
+        let mut popup_canvas = Canvas::new().height(Length::Flex(1));
+        for (rect, element) in crate::popup::backdrop(ctx)
+            .into_iter()
+            .chain(crate::popup::placement(app, ctx))
+        {
+            popup_canvas =
+                popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
+        }
+        root = root.child(popup_canvas);
+    }
+
     // Overlays portal to the root regardless of where they are attached.
     if ctx.state.show_palette {
         root = root.child(palette_overlay(ctx));

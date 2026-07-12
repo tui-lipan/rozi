@@ -3,6 +3,8 @@ use crate::state::Direction;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     Spawn,
+    RespawnPane,
+    TogglePaneLogging,
     Close,
     Focus(Direction),
     /// Directional focus that stays on the current pane when no spatial candidate exists.
@@ -31,6 +33,7 @@ pub enum Action {
     EnterResizeMode,
     ToggleLayout,
     EnterCopyMode,
+    EnterHintMode,
     ToggleScratchpad,
     OpenSearch,
     SaveProfile,
@@ -76,6 +79,8 @@ pub enum Action {
 
 const BINDABLE_ACTIONS: &[Action] = &[
     Action::Spawn,
+    Action::RespawnPane,
+    Action::TogglePaneLogging,
     Action::Close,
     Action::Focus(Direction::Left),
     Action::Focus(Direction::Down),
@@ -111,6 +116,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::EnterResizeMode,
     Action::ToggleLayout,
     Action::EnterCopyMode,
+    Action::EnterHintMode,
     Action::ToggleScratchpad,
     Action::OpenSearch,
     Action::SaveProfile,
@@ -158,6 +164,8 @@ impl Action {
         use Direction::{Down, Left, Right, Up};
         Some(match self {
             Action::Spawn => "spawn",
+            Action::RespawnPane => "respawn-pane",
+            Action::TogglePaneLogging => "toggle-pane-logging",
             Action::Close => "close",
             Action::Focus(Left) => "focus-left",
             Action::Focus(Down) => "focus-down",
@@ -193,6 +201,7 @@ impl Action {
             Action::EnterResizeMode => "resize-mode",
             Action::ToggleLayout => "toggle-layout",
             Action::EnterCopyMode => "copy-mode",
+            Action::EnterHintMode => "hint-mode",
             Action::ToggleScratchpad => "scratchpad",
             Action::OpenSearch => "search",
             Action::SaveProfile => "save-profile",

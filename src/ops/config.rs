@@ -192,7 +192,14 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
         command: Some(command),
         ..PaneIdentity::default()
     };
-    spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity).1
+    spawn_pane_in_workspace(
+        ctx,
+        workspace_index,
+        previous_focused,
+        identity,
+        Default::default(),
+    )
+    .1
 }
 
 /// Single-quotes a shell argument so a config path containing spaces (or other shell

@@ -85,6 +85,7 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 [notifications]
 enabled = false              # desktop notifications are opt-in (default: false)
 pane_exit = true             # notify on natural pane process exits when enabled
+bell = true                  # mark unfocused panes/workspaces urgent on BEL
 
 [navigation]
 # Programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to them
@@ -100,6 +101,7 @@ new_temporary_session = true   # confirm discarding the current ephemeral sessio
 
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
+resurrect = true             # snapshot named sessions for restart after server loss (default: true)
 startup = "picker"           # "ephemeral" (default) attaches directly; "picker" shows the session picker
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
 
@@ -166,6 +168,7 @@ Pane focus and chrome behavior.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
+| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. `keep_open = true` launch identities normally replace an exited command with a shell, so they generally do not reach this state. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
@@ -178,6 +181,35 @@ Pane focus and chrome behavior.
 | `workbar_tab_style` | `padded` | End-cap style for workspace tabs in the workbar. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
 | `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
 | `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The appearance toggle writes this back to config. |
+
+## `[[rules]]`
+
+Window rules apply to command-carrying panes spawned through control `new-pane` and `[keys]`
+`run` commands. Matching is a case-sensitive command substring and the first matching rule wins.
+Plain shell-pane spawns, profile restoration, and scratchpads do not use rules. Rules are
+command-based only; terminal titles arrive after spawn and are not matched.
+
+```toml
+[[rules]]
+match = "btop"
+float = true
+width = 0.7
+height = 0.7
+
+[[rules]]
+match = "cargo watch"
+workspace = 9
+focus = false
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `match` | required | Non-empty command substring. |
+| `float` | `false` | Spawn centered as a floating pane. |
+| `width`, `height` | `0.6` when floating | Fractions of the pane canvas, clamped to `0.1..=1.0`. |
+| `workspace` | current | 1-based target workspace (`1..=9`). |
+| `focus` | `true` | Switch to and focus the spawned pane. When false, the target workspace remembers the new pane as its own focus without stealing the current view. |
+| `fullscreen` | `false` | Spawn with fullscreen enabled. |
 
 ## `[animations]`
 
@@ -241,6 +273,7 @@ Failures are ignored and never block the UI.
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
 | `pane_exit` | `true` | Notify when a pane's process exits naturally. |
+| `bell` | `true` | Mark an unfocused pane urgent on BEL; focusing it clears urgency. Independent of desktop notifications. |
 
 ## `[navigation]`
 
@@ -330,7 +363,7 @@ restart.
 Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge and the
 workspace tabs on the left, the `session` badge on the right). Every configured segment renders as
 a colored badge; each kind has a curated default color that you can override by theme role (see
-below). The `PREFIX`/`RESIZE`/`COPY` mode chips render only while `show_workbar` is enabled, and sit
+below). The `PREFIX`/`RESIZE`/`COPY`/`HINT` mode chips render only while `show_workbar` is enabled, and sit
 to the left of the right-region segments so a `session` badge stays pinned to the trailing edge.
 With `workbar_powerline` on (the default) the mode chips and right-region badges lose the gap
 between them and interlock into a powerline: each chip's cap blends into its left neighbor's color.
@@ -478,14 +511,30 @@ alt-t = { run = "btop" }
   scratchpad's `command`), so full-screen interactive programs like `lazygit` or `btop` work.
 - `send = "<text>"` writes the literal text straight to the focused pane's PTY - TOML escapes
   like `\n` work as usual, so a binding can submit a ready-to-run command.
-- Exactly one of `run`/`send` must be set; a table with both or neither is warned about and
+- `popup = "<command>"` runs the command in a centered transient popup instead of a workspace pane.
+- Exactly one of `run`/`send`/`popup` must be set; a table with multiple values or none is warned about and
   skipped.
 - The map key here is the trigger itself (`prefix g`, `alt-t`, ...), parsed the same way as a
   binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
 - Each command shows up in the help overlay (under "Custom") and the command palette with a
   generated label (`Run: lazygit`, `Send: ls -la\n`), so its trigger stays discoverable even
   though it has no stable action id. It still can't be rebound elsewhere or invoked via
-  `hyprmux run-action` - only the trigger you configured runs it.
+`hyprmux run-action` - only the trigger you configured runs it.
+
+## `[hooks]`
+
+Hooks map control event names to shell commands. Commands run detached through `$SHELL -c` and
+receive `HYPRMUX_EVENT` plus available event fields such as `HYPRMUX_PANE`, `HYPRMUX_CODE`,
+`HYPRMUX_WORKSPACE`, `HYPRMUX_COMMAND`, and `HYPRMUX_CWD`.
+
+```toml
+[hooks]
+pane-exited = "notify-send 'pane exited'"
+workspace-switched = "logger workspace=$HYPRMUX_WORKSPACE"
+```
+
+Valid names are `pane-spawned`, `pane-exited`, `focus-changed`, and `workspace-switched`.
+Unknown names are warned and ignored.
 
 ## Pane synchronization
 
@@ -494,3 +543,14 @@ workspace. When enabled, normal key events sent to the focused/source tiled pane
 every tiled, non-floating, non-closing pane in that workspace. Prefix/held window-management
 commands still intercept first; mouse input, paste/raw non-key input, focus reports, floating panes,
 and the scratchpad are not broadcast. The workspace flag is saved in profiles and session autosaves.
+
+## `[logging]`
+
+`[logging]` accepts an optional `dir` path. By default logs are stored below
+`$XDG_STATE_HOME/hyprmux/logs` (or `~/.local/state/hyprmux/logs`). Session directories use mode
+`0700` and log files use mode `0600`.
+
+```toml
+[logging]
+dir = "~/.local/state/hyprmux/logs"
+```

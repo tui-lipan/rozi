@@ -52,6 +52,21 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
+fn toggle_pane_logging(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(id) = ctx.state.focused_pane else {
+        return Update::none();
+    };
+    let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id) else {
+        return Update::none();
+    };
+    let generation = pane.pty_generation;
+    let enabled = !pane.logging;
+    if let Some(client) = &ctx.state.session_client {
+        client.set_pane_logging(id, generation, enabled);
+    }
+    Update::none()
+}
+
 /// Dispatch a `[keys]`-defined user command: `Run` opens a new pane running the shell command
 /// (the same `identity.command` hook the scratchpad and control socket's `NewPane` use), `Send`
 /// writes the literal text straight to the focused pane's PTY.
@@ -61,13 +76,15 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     };
     match command.action {
         UserCommandAction::Run(command) => {
-            let workspace_index = ctx.state.active_workspace;
+            let (rule_workspace, placement) =
+                crate::rules::placement_for_command(&ctx.state.config.rules, &command);
+            let workspace_index = rule_workspace.unwrap_or(ctx.state.active_workspace);
             let previous_focused = ctx.state.workspaces[workspace_index].focused_pane;
             let identity = PaneIdentity {
                 command: Some(command),
                 ..PaneIdentity::default()
             };
-            spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity).1
+            spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement).1
         }
         UserCommandAction::Send(text) => {
             let Some(id) = ctx.state.focused_pane else {
@@ -81,6 +98,16 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
                 ));
             }
             Update::full()
+        }
+        UserCommandAction::Popup(command) => {
+            crate::popup::open(ctx, command, None, None, None, None).unwrap_or_else(|error| {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Popup",
+                    error,
+                ));
+                Update::full()
+            })
         }
     }
 }
@@ -173,6 +200,7 @@ fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value:
 pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) -> bool {
     match action {
         Action::Spawn
+        | Action::RespawnPane
         | Action::Close
         | Action::Move(_)
         | Action::Swap(_)
@@ -193,7 +221,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
         Action::RunUserCommand(index) => matches!(
             state.config.user_commands.get(index).map(|cmd| &cmd.action),
-            Some(UserCommandAction::Run(_))
+            Some(UserCommandAction::Run(_) | UserCommandAction::Popup(_))
         ),
         _ => false,
     }
@@ -228,7 +256,12 @@ fn execute_action_inner(
     }
     match action {
         Action::Spawn => spawn_pane(ctx),
+        Action::RespawnPane => crate::pane_lifecycle::respawn_focused_pane(ctx),
+        Action::TogglePaneLogging => toggle_pane_logging(ctx),
         Action::Close => {
+            if ctx.state.popup.is_some() {
+                return crate::popup::close(ctx);
+            }
             crate::ops::exit::close_focused_pane_with_confirmation(ctx, confirmations_enabled)
         }
         Action::Focus(direction) => {
@@ -311,6 +344,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),
+        Action::EnterHintMode => crate::hints::enter(ctx),
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
@@ -476,6 +510,7 @@ mod tests {
             Action::Focus(Direction::Left),
             Action::SwitchWorkspace(1),
             Action::EnterCopyMode,
+            Action::EnterHintMode,
             Action::TogglePalette,
             Action::Detach,
             Action::KillSession,

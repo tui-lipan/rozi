@@ -179,7 +179,7 @@ impl SessionStartup {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct HyprmuxSessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
     pub autosave: bool,
@@ -187,10 +187,25 @@ pub struct HyprmuxSessionConfig {
     pub path: Option<PathBuf>,
     /// Whether a bare launch attaches to an ephemeral session or opens the session picker first.
     pub startup: SessionStartup,
+    /// Persist and restart named sessions after their server disappears.
+    pub resurrect: bool,
+}
+
+impl Default for HyprmuxSessionConfig {
+    fn default() -> Self {
+        Self {
+            autosave: false,
+            path: None,
+            startup: SessionStartup::default(),
+            resurrect: true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct HyprmuxPaneConfig {
+    /// Keep naturally exited panes in the layout so they can be respawned in place.
+    pub hold_on_exit: bool,
     /// Whether the focused pane uses the theme's panel background instead of the normal
     /// workspace backdrop. Disabled by default so hover focus does not repaint terminal bg.
     pub highlight_focused_background: bool,
@@ -238,6 +253,7 @@ pub struct HyprmuxPaneConfig {
 impl Default for HyprmuxPaneConfig {
     fn default() -> Self {
         Self {
+            hold_on_exit: false,
             highlight_focused_background: false,
             highlight_focused_border: true,
             focus_on_hover: true,
@@ -273,6 +289,7 @@ impl Default for HyprmuxClipboardConfig {
 pub struct HyprmuxNotificationsConfig {
     pub enabled: bool,
     pub pane_exit: bool,
+    pub bell: bool,
 }
 
 impl Default for HyprmuxNotificationsConfig {
@@ -280,6 +297,7 @@ impl Default for HyprmuxNotificationsConfig {
         Self {
             enabled: false,
             pane_exit: true,
+            bell: true,
         }
     }
 }
@@ -403,6 +421,9 @@ pub struct HyprmuxConfig {
     pub navigation: HyprmuxNavigationConfig,
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
+    pub rules: Vec<HyprmuxRuleConfig>,
+    pub hooks: HashMap<String, String>,
+    pub logging: HyprmuxLoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
     /// present with an empty list is an explicit unbind; an id absent here uses the built-in
@@ -413,12 +434,30 @@ pub struct HyprmuxConfig {
     pub user_commands: Vec<UserCommand>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HyprmuxLoggingConfig {
+    pub dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HyprmuxRuleConfig {
+    pub matches: String,
+    pub float: bool,
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    /// Zero-based workspace index.
+    pub workspace: Option<usize>,
+    pub focus: bool,
+    pub fullscreen: bool,
+}
+
 /// What a user-defined keybinding does: `Run` spawns a new pane running the shell command;
 /// `Send` writes literal text to the focused pane's PTY (TOML escapes like `\n` already work).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UserCommandAction {
     Run(String),
     Send(String),
+    Popup(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,6 +475,7 @@ impl UserCommand {
             UserCommandAction::Send(text) => {
                 format!("Send: {}", truncate_for_label(&escape_for_label(text)))
             }
+            UserCommandAction::Popup(command) => format!("Popup: {}", truncate_for_label(command)),
         }
     }
 }
@@ -484,6 +524,9 @@ impl Default for HyprmuxConfig {
             navigation: HyprmuxNavigationConfig::default(),
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
+            rules: Vec::new(),
+            hooks: HashMap::new(),
+            logging: HyprmuxLoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),
             user_commands: Vec::new(),

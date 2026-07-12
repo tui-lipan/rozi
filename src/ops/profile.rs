@@ -257,6 +257,9 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     new_state.system_theme = system_theme;
     new_state.control_socket_path = control_socket_path;
     new_state.command_link = command_link;
+    // The control listener holds a clone of the original hub; a fresh default here would
+    // silently disconnect every event subscriber.
+    new_state.event_hub = ctx.state.event_hub.clone();
     new_state.runtime_epoch = old_epoch;
     new_state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,

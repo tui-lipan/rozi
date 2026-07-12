@@ -69,6 +69,20 @@ system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar sh
 indicator while active, and the selection is highlighted with the theme's selection color. Yank
 uses the system clipboard, reaching it over SSH via OSC52 when enabled.
 
+## Hint mode
+
+Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an
+optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot. Each match
+receives a home-row label. A lowercase label copies the match; an uppercase final label character
+opens URL matches and copies other kinds. `Esc`/`q` exits. Scroll first to hint older output.
+Custom hint patterns are not configurable yet.
+
+## Bell urgency
+
+With `[notifications].bell = true` (the default), BEL from an unfocused pane marks its workspace
+tab with `!`. Focusing that pane clears the marker. Attach replay and BEL used to terminate an OSC
+sequence do not create false urgency.
+
 ## Window / program titles
 
 Programs set their title via the OSC 0/2 escape sequence (shells often set it to `$PWD`,
@@ -114,3 +128,11 @@ rendered terminal lines rather than relying on an in-terminal highlight search.
 - **Profiles restore layout and launch intent, not live state.** Restoring a
   [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect
   previous processes, scrollback, or environment.
+
+## Pane logging
+
+Use the `toggle-pane-logging` action to append a pane's raw PTY output to a log file. Active
+logging is shown by a `[log]` title badge and is shared with every client, including clients that
+attach after logging starts. Raw logs may contain terminal escape sequences and credentials; view
+them with `less -R` and protect them as sensitive data. Logging stops automatically after a write
+error.

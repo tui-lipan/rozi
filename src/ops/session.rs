@@ -389,6 +389,7 @@ pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Up
 /// its ephemeral server, while followers, viewers, shared ephemeral clients, and named-session
 /// clients detach so they cannot destroy another client's session.
 pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
+    crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     let Some(client) = ctx.state.session_client.clone() else {
         return;
@@ -862,6 +863,7 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
     // that follows a kill (and a SIGTERMed or already-dead server may never unlink at all). Drop the
     // path now so the killed session leaves the list immediately.
     let _ = std::fs::remove_file(&path);
+    crate::session::server::delete_snapshot(name)?;
     Ok(())
 }
 

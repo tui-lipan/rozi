@@ -24,6 +24,7 @@ pub(crate) fn handle_key_routing(
         }
         Mode::Resize => handle_resize_mode_key(ctx, key),
         Mode::Copy => crate::copy_mode::handle_copy_key(ctx, key),
+        Mode::Hint => crate::hints::handle_hint_key(ctx, key),
     }
 }
 

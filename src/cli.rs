@@ -18,7 +18,7 @@ pub(crate) struct CliArgs {
     pub(crate) read_only: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlCli {
     socket: Option<PathBuf>,
     request: control::ControlRequest,
@@ -393,8 +393,8 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
 
     let path = session::server::session_socket_path(name)?;
     if !path.exists() {
-        eprintln!("session {name:?} is not running");
-        std::process::exit(1);
+        session::server::delete_snapshot(name)?;
+        return Ok(());
     }
     match std::os::unix::net::UnixStream::connect(&path) {
         Ok(mut stream) => {
@@ -413,6 +413,7 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
                     session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)?;
                     use std::io::Write;
                     stream.flush()?;
+                    session::server::delete_snapshot(name)?;
                 }
                 other => {
                     eprintln!("could not attach to session {name:?}: {other:?}");

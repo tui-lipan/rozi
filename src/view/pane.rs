@@ -101,7 +101,12 @@ pub(crate) fn pane_element(
             ctx.state.config.pane.highlight_focused_background,
         ),
     );
-    let frame_style = Style::new().fg(frame_fg).bg(frame_bg);
+    let exited = matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_));
+    let frame_style = if exited {
+        Style::new().fg(frame_fg).bg(frame_bg).dim()
+    } else {
+        Style::new().fg(frame_fg).bg(frame_bg)
+    };
 
     // The wrapper stack must stay unstyled: a styled stack fills its whole rect with its
     // background, and merged panes overlap neighbors by a cell, so that fill would wipe the
@@ -137,6 +142,12 @@ pub(crate) fn pane_element(
         if let Some(subtitle) = pane.subtitle_for_title(&title) {
             title.push_str(" - ");
             title.push_str(&subtitle);
+        }
+        if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
+            title.push_str(&format!(" [exited {code}]"));
+        }
+        if pane.logging {
+            title.push_str(" [log]");
         }
         let title_text: Element = Text::new(format!("{icon}  {display_number} · {title}"))
             .style(title_bar_text_style)
@@ -380,6 +391,19 @@ pub(crate) fn pane_element(
 }
 
 fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> TerminalRenderSnapshot {
+    if let Some(hints) = ctx
+        .state
+        .hint_mode
+        .as_ref()
+        .filter(|hints| hints.target == pane.id)
+    {
+        return pane.terminal.hint_snapshot(
+            &hints.matches,
+            &hints.labels,
+            &hints.input,
+            active_search_match_style(),
+        );
+    }
     let Some(query) = search_highlight_query(ctx, pane.id) else {
         return pane.terminal.snapshot.clone();
     };

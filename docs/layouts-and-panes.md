@@ -77,6 +77,21 @@ tiled or floating geometry.
 A **new pane opens in the focused pane's current working directory** (when it can be
 discovered; see [Terminal features](terminal.md)), falling back to the configured `cwd`.
 
+With `[pane] hold_on_exit = true`, a naturally exited workspace pane remains in its current
+layout position with a dim border and `[exited N]` title suffix. Run `respawn-pane` from the
+command palette (or bind it under `[keys]`) to restart its retained command and cwd with a fresh
+PTY generation. `keep_open = true` commands normally continue into a shell instead of exiting.
+In a shared session the controller's configuration decides whether an exited pane is retained;
+the resulting layout and respawn generation propagate to followers.
+
+## Popup runner
+
+A popup is a transient, centered pane launched through the control socket or a `[keys]`
+`popup = "command"` entry. Unlike the reusable bottom-anchored scratchpad, it is one-shot: process
+exit removes it, only one can be open, and it is never part of a workspace or shared layout.
+Clicking outside closes it. Escape is not intercepted, so interactive tools such as `fzf` and
+`lazygit` receive it normally.
+
 ## Titlebars
 
 Each pane shows a titlebar with an icon (tiled / floating / fullscreen), the pane id, and a

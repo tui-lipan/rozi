@@ -54,15 +54,8 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
 }
 
 #[test]
-fn session_socket_name_is_sanitized() {
-    assert!(
-        session_socket_path("dev/../../x")
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .starts_with("session-dev_______x")
-    );
+fn session_socket_path_rejects_invalid_names() {
+    assert!(session_socket_path("dev/../../x").is_err());
 }
 
 #[test]
@@ -433,11 +426,15 @@ fn resize_updates_screen_and_broadcasts_ack() {
             generation: 2,
             title: None,
             cwd: None,
+            command: None,
+            keep_open: false,
+            palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
             cols: 20,
             rows: 5,
             exited: None,
+            log: None,
         },
     );
 
@@ -477,11 +474,15 @@ fn duplicate_spawn_is_rejected() {
             generation: 2,
             title: None,
             cwd: None,
+            command: None,
+            keep_open: false,
+            palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
             cols: 20,
             rows: 5,
             exited: None,
+            log: None,
         },
     );
     let result = server.spawn_pane(SpawnRequest {
@@ -511,11 +512,15 @@ fn exited_pane_can_be_respawned() {
             generation: 2,
             title: None,
             cwd: None,
+            command: None,
+            keep_open: false,
+            palette: test_palette(),
             pty: None,
             screen: TerminalScreen::new(5, 20, 100),
             cols: 20,
             rows: 5,
             exited: Some(0),
+            log: None,
         },
     );
 
@@ -551,11 +556,15 @@ fn attach_reports_layout_and_panes() {
         generation: 8,
         title: Some("editor".into()),
         cwd: Some("/repo".into()),
+        command: None,
+        keep_open: false,
+        palette: test_palette(),
         pty: None,
         screen: TerminalScreen::new(5, 20, 100),
         cols: 20,
         rows: 5,
         exited: None,
+        log: None,
     };
     pane.screen.process_bytes(b"ready");
     server.panes.insert(4, pane);
@@ -597,4 +606,134 @@ fn attach_reports_layout_and_panes() {
     assert_eq!(*controller, Some(id));
     assert_eq!(panes.len(), 1);
     assert_eq!(panes[0].pane_id, 4);
+}
+
+#[test]
+fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
+    let root = std::env::temp_dir().join(format!("hyprmux-log-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let mut server = SessionServer::new_named_with_settings(
+        "dev",
+        ServerSettings {
+            log_dir: Some(root.clone()),
+            resurrect: false,
+            ..ServerSettings::default()
+        },
+    );
+    server.panes.insert(
+        1,
+        ServerPane {
+            generation: 2,
+            title: None,
+            cwd: None,
+            command: None,
+            keep_open: false,
+            palette: test_palette(),
+            pty: None,
+            screen: TerminalScreen::new(5, 20, 100),
+            cols: 20,
+            rows: 5,
+            exited: None,
+            log: None,
+        },
+    );
+
+    let changed = server.set_pane_logging(1, 2, true);
+    let path = match changed {
+        ServerMessage::PaneLoggingChanged {
+            enabled: true,
+            path: Some(path),
+            ..
+        } => PathBuf::from(path),
+        other => panic!("unexpected response: {other:?}"),
+    };
+    assert!(server.pane_meta()[0].logging);
+    server.handle_event(ServerEvent::Pty(
+        1,
+        2,
+        TerminalPtyEvent::Output(b"raw\x1b[31m\n".to_vec().into()),
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"raw\x1b[31m\n");
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    server.set_pane_logging(1, 2, false);
+    server.handle_event(ServerEvent::Pty(
+        1,
+        2,
+        TerminalPtyEvent::Output(b"later".to_vec().into()),
+    ));
+    assert_eq!(fs::read(&path).unwrap(), b"raw\x1b[31m\n");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
+    let root = std::env::temp_dir().join(format!("hyprmux-resurrect-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let settings = ServerSettings {
+        resurrect: true,
+        snapshot_dir: Some(root.clone()),
+        snapshot_interval: Duration::ZERO,
+        ..ServerSettings::default()
+    };
+    let mut server = SessionServer::new_named_with_settings("dev", settings.clone());
+    for (id, exited) in [(1, None), (2, Some(0)), (crate::state::POPUP_PANE_ID, None)] {
+        let mut screen = TerminalScreen::new(5, 20, 100);
+        screen.process_bytes(format!("marker-{id}").as_bytes());
+        server.panes.insert(
+            id,
+            ServerPane {
+                generation: id as u64,
+                title: Some(format!("pane-{id}")),
+                cwd: None,
+                command: Some("true".into()),
+                keep_open: false,
+                palette: test_palette(),
+                pty: None,
+                screen,
+                cols: 20,
+                rows: 5,
+                exited,
+                log: None,
+            },
+        );
+    }
+    server.layout = Some(SharedLayout {
+        version: 1,
+        canvas_cols: 20,
+        canvas_rows: 5,
+        workspaces: Vec::new(),
+    });
+    server.dirty = true;
+    server.maybe_snapshot().unwrap();
+    assert!(root.join("dev/meta.json").is_file());
+    assert!(root.join("dev/panes/1.replay").is_file());
+    assert!(!root.join("dev/panes/2.replay").exists());
+    assert!(
+        !root
+            .join(format!("dev/panes/{}.replay", crate::state::POPUP_PANE_ID))
+            .exists()
+    );
+
+    let mut restored = SessionServer::new_named_with_settings("dev", settings);
+    assert_eq!(restored.restore().unwrap(), 1);
+    assert!(restored.panes.contains_key(&1));
+    assert!(!restored.panes.contains_key(&2));
+    assert!(!restored.panes.contains_key(&crate::state::POPUP_PANE_ID));
+    assert!(
+        restored
+            .panes
+            .get_mut(&1)
+            .unwrap()
+            .screen
+            .render_snapshot()
+            .text
+            .contains("marker-1")
+    );
+    assert_eq!(restored.layout_rev, 1);
+    restored.delete_snapshot().unwrap();
+    assert!(!root.join("dev").exists());
+    let _ = fs::remove_dir_all(root);
 }

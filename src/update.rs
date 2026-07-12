@@ -52,6 +52,7 @@ fn padding_error(ctx: &mut Context<HyprmuxApp>) {
 pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
     let mut update = match msg {
+        Msg::ClosePopup => crate::popup::close(ctx),
         Msg::CommandLinkReady(link) => {
             ctx.state.command_link = Some(link);
             Update::none()
@@ -897,12 +898,17 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::none();
             }
             let focused = ctx.state.focused_pane;
+            let bell_notifications = ctx.state.config.notifications.bell;
             let matched = match find_pane_mut(&mut ctx.state, pane_id) {
                 Some(pane) if pane.pty_generation == generation => {
                     pane.terminal.process_server_output(&bytes);
+                    let bell = pane.terminal.take_bell();
                     pane.activity.last_activity = Some(std::time::Instant::now());
                     if focused != Some(pane_id) {
                         pane.activity.has_unseen_output = true;
+                        if bell && bell_notifications {
+                            pane.activity.bell = true;
+                        }
                     }
                     true
                 }
@@ -945,19 +951,34 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             if epoch != ctx.state.runtime_epoch {
                 return Update::none();
             }
+            crate::events::emit(
+                &ctx.state,
+                crate::events::Event::new(
+                    crate::events::EventKind::PaneExited,
+                    vec![("pane", pane_id.to_string()), ("code", code.to_string())],
+                ),
+            );
             let mut should_close = false;
+            let mut already_closing = false;
+            let hold_on_exit = ctx.state.config.pane.hold_on_exit;
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
                 if pane.pty_generation != generation {
                     return Update::none();
                 }
                 pane.terminal.status = ManagedTerminalStatus::Exited(code);
-                should_close = !pane.closing;
+                already_closing = pane.closing;
+                should_close = !should_hold_on_exit(hold_on_exit, pane_id, pane.closing);
             }
-            if !should_close {
+            // A user-initiated close already tore this pane down; the exit is expected, so skip
+            // the exit notification/toast and the redundant close call.
+            if already_closing {
                 return Update::full();
             }
             // The scratchpad is a local overlay (never in the shared layout), so every client that
             // owns it closes it directly.
+            if pane_id == crate::state::POPUP_PANE_ID {
+                return crate::popup::handle_exit(ctx);
+            }
             if crate::scratchpad::is_scratch(pane_id) {
                 return crate::scratchpad::handle_scratch_exit(ctx);
             }
@@ -967,6 +988,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 return Update::full();
             }
             maybe_notify_pane_exit(&ctx.state.config, pane_id, code);
+            if !should_close {
+                return Update::full();
+            }
             // A clean exit closes the pane on its own; only a failure code is worth surfacing.
             if code != 0 {
                 ctx.toast().push(crate::pty_events::info_toast(
@@ -975,6 +999,36 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 ));
             }
             begin_close_pane(ctx, pane_id, ctx.state.config.animations)
+        }
+        Msg::SessionPaneLoggingChanged {
+            epoch,
+            pane_id,
+            generation,
+            enabled,
+            path,
+            error,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+                && pane.pty_generation == generation
+            {
+                pane.logging = enabled;
+            }
+            let message = error.unwrap_or_else(|| {
+                if enabled {
+                    format!(
+                        "Logging pane {pane_id} to {}",
+                        path.as_deref().unwrap_or("log file")
+                    )
+                } else {
+                    format!("Stopped logging pane {pane_id}")
+                }
+            });
+            ctx.toast()
+                .push(crate::pty_events::info_toast(&ctx.state.theme, message));
+            Update::full()
         }
         Msg::SessionSpawnResult {
             epoch,
@@ -1069,6 +1123,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     }
 
     update
+}
+
+fn should_hold_on_exit(hold_on_exit: bool, pane_id: crate::state::PaneId, closing: bool) -> bool {
+    hold_on_exit && !crate::scratchpad::is_scratch(pane_id) && !closing
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
@@ -1172,9 +1230,14 @@ fn bind_attached_pane_backends(
             pane.terminal.title = meta.title.filter(|title| !title.trim().is_empty());
             pane.terminal.cwd = meta.cwd;
             pane.terminal.child_pid = meta.pid;
+            pane.logging = meta.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;
         }
-        ctx.state.next_pane_id = ctx.state.next_pane_id.max(meta.pane_id.saturating_add(1));
+        // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
+        // would pin next_pane_id at MAX and collide every later spawn with the popup slot.
+        if meta.pane_id != crate::state::POPUP_PANE_ID {
+            ctx.state.next_pane_id = ctx.state.next_pane_id.max(meta.pane_id.saturating_add(1));
+        }
         ctx.state.next_pty_generation = ctx
             .state
             .next_pty_generation
@@ -1183,7 +1246,7 @@ fn bind_attached_pane_backends(
 }
 
 /// Defensive fallback: adopt server panes when a live session reports panes but no committed layout
-/// (should not happen under protocol v6). Rebuilds a flat tiled workspace from the pane list.
+/// (should not happen under protocol v7). Rebuilds a flat tiled workspace from the pane list.
 fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
     panes: Vec<crate::session::protocol::PaneMeta>,
@@ -1218,12 +1281,15 @@ fn apply_attached_panes(
             pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
             pane.terminal.cwd = attached.cwd;
             pane.terminal.child_pid = attached.pid;
+            pane.logging = attached.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;
         }
-        ctx.state.next_pane_id = ctx
-            .state
-            .next_pane_id
-            .max(attached.pane_id.saturating_add(1));
+        if attached.pane_id != crate::state::POPUP_PANE_ID {
+            ctx.state.next_pane_id = ctx
+                .state
+                .next_pane_id
+                .max(attached.pane_id.saturating_add(1));
+        }
         ctx.state.next_pty_generation = ctx
             .state
             .next_pty_generation
@@ -1317,5 +1383,17 @@ mod padding_input_tests {
         assert!(!valid_padding_text("9"));
         assert!(!valid_padding_text("12"));
         assert!(!valid_padding_text("８"));
+    }
+
+    #[test]
+    fn hold_on_exit_excludes_disabled_scratch_and_closing_panes() {
+        assert!(should_hold_on_exit(true, 1, false));
+        assert!(!should_hold_on_exit(false, 1, false));
+        assert!(!should_hold_on_exit(
+            true,
+            crate::state::SCRATCH_PANE_ID,
+            false
+        ));
+        assert!(!should_hold_on_exit(true, 1, true));
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -20,6 +20,7 @@ use crate::state::PaneId;
 mod connection;
 mod lease;
 mod panes;
+mod resurrect;
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -58,21 +59,54 @@ pub struct SessionServer {
     event_rx: mpsc::Receiver<ServerEvent>,
     event_tx: mpsc::Sender<ServerEvent>,
     shutdown: bool,
+    forget_snapshot: bool,
+    dirty: bool,
+    last_snapshot: Instant,
+    last_attached_count: u32,
     session_name: String,
     /// The socket file this server currently listens on. Set by [`run_named_session`]; a rename
     /// moves this file in place so the running listener keeps serving under the new name.
     socket_path: Option<PathBuf>,
+    settings: ServerSettings,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServerSettings {
+    pub log_dir: Option<PathBuf>,
+    pub resurrect: bool,
+    pub snapshot_dir: Option<PathBuf>,
+    pub snapshot_interval: Duration,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            log_dir: None,
+            resurrect: false,
+            snapshot_dir: None,
+            snapshot_interval: Duration::from_secs(30),
+        }
+    }
+}
+
+pub struct PaneLog {
+    file: File,
+    path: PathBuf,
 }
 
 pub struct ServerPane {
     pub generation: u64,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub command: Option<String>,
+    pub keep_open: bool,
+    pub palette: WirePalette,
     pub pty: Option<TerminalPty>,
     pub screen: TerminalScreen,
     pub cols: u16,
     pub rows: u16,
     pub exited: Option<i32>,
+    pub log: Option<PaneLog>,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are
@@ -164,7 +198,15 @@ enum Target {
 }
 
 impl SessionServer {
+    #[cfg(test)]
     pub fn new_named(session_name: impl Into<String>) -> Self {
+        Self::new_named_with_settings(session_name, ServerSettings::default())
+    }
+
+    pub fn new_named_with_settings(
+        session_name: impl Into<String>,
+        settings: ServerSettings,
+    ) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
         Self {
             panes: HashMap::new(),
@@ -179,8 +221,13 @@ impl SessionServer {
             event_rx,
             event_tx,
             shutdown: false,
+            forget_snapshot: false,
+            dirty: false,
+            last_snapshot: Instant::now(),
+            last_attached_count: 0,
             session_name: session_name.into(),
             socket_path: None,
+            settings,
         }
     }
 
@@ -199,6 +246,9 @@ impl SessionServer {
             }
 
             self.pump_clients();
+            if let Err(err) = self.maybe_snapshot() {
+                eprintln!("hyprmux: session snapshot failed: {err}");
+            }
             self.heartbeat();
             self.flush_clients();
 
@@ -216,6 +266,11 @@ impl SessionServer {
 
             let idle = if self.clients.is_empty() { 20 } else { 6 };
             std::thread::sleep(Duration::from_millis(idle));
+        }
+        if self.forget_snapshot
+            && let Err(err) = self.delete_snapshot()
+        {
+            eprintln!("hyprmux: could not delete session snapshot: {err}");
         }
         for pane in self.panes.values() {
             if let Some(pty) = &pane.pty {
@@ -298,7 +353,13 @@ fn pty_config(command: Option<&str>, keep_open: bool) -> TerminalPtyConfig {
 }
 
 pub fn session_socket_path(name: &str) -> io::Result<PathBuf> {
-    Ok(control::runtime_dir()?.join(format!("session-{}.sock", sanitize_session_name(name))))
+    if !crate::session::discovery::valid_attach_target(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session name",
+        ));
+    }
+    Ok(control::runtime_dir()?.join(format!("session-{name}.sock")))
 }
 
 pub fn bind_session_socket(name: &str) -> io::Result<(UnixListener, PathBuf)> {
@@ -317,9 +378,31 @@ fn bind_unix_socket(path: &Path) -> io::Result<()> {
 }
 
 pub fn run_named_session(name: &str) -> io::Result<()> {
+    if !crate::session::discovery::valid_attach_target(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session name",
+        ));
+    }
     let (listener, path) = bind_session_socket(name)?;
-    let mut server = SessionServer::new_named(name);
+    let loaded = crate::config::load_config();
+    for warning in loaded.warnings {
+        eprintln!("hyprmux: {warning}");
+    }
+    let mut server = SessionServer::new_named_with_settings(
+        name,
+        ServerSettings {
+            log_dir: loaded.config.logging.dir,
+            resurrect: loaded.config.session.resurrect,
+            ..ServerSettings::default()
+        },
+    );
     server.socket_path = Some(path);
+    if server.settings.resurrect
+        && let Err(err) = server.restore()
+    {
+        eprintln!("hyprmux: could not restore session {name:?}: {err}");
+    }
     let result = server.run_listener(listener);
     // A rename moves the socket file, so unlink the current path rather than the original one.
     if let Some(path) = &server.socket_path {
@@ -328,18 +411,8 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
     result
 }
 
-fn sanitize_session_name(name: &str) -> String {
-    name.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string()
+pub fn delete_snapshot(name: &str) -> io::Result<()> {
+    resurrect::delete_snapshot_for(name)
 }
 
 #[cfg(test)]

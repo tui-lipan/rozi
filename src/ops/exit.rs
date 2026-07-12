@@ -56,6 +56,7 @@ fn confirm_second_press(
 /// ephemeral session down is left to [`quit_client`], which guards it with `[confirm].quit_ephemeral`.
 /// A named session (or one with no live client to rename) detaches immediately.
 pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     clear_pending(ctx);
     if ctx.state.is_ephemeral_session() && ctx.state.session_client.is_some() {
@@ -103,6 +104,7 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
     }
 
     clear_pending(ctx);
+    crate::popup::kill_if_open(ctx);
     if crate::ops::session::may_shutdown_ephemeral(&ctx.state)
         && let Some(client) = ctx.state.session_client.clone()
     {

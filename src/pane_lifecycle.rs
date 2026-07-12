@@ -3,7 +3,7 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
-use crate::geometry::default_floating_rect;
+use crate::geometry::{clamp_float_rect, default_floating_rect};
 use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
 use crate::ops::focus::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
@@ -27,7 +27,37 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         identity.cwd = Some(cwd);
     }
 
-    spawn_pane_in_workspace(ctx, ctx.state.active_workspace, previous_focused, identity).1
+    spawn_pane_in_workspace(
+        ctx,
+        ctx.state.active_workspace,
+        previous_focused,
+        identity,
+        SpawnPlacement::default(),
+    )
+    .1
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SpawnFloat {
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SpawnPlacement {
+    pub float: Option<SpawnFloat>,
+    pub fullscreen: bool,
+    pub focus: bool,
+}
+
+impl Default for SpawnPlacement {
+    fn default() -> Self {
+        Self {
+            float: None,
+            fullscreen: false,
+            focus: true,
+        }
+    }
 }
 
 pub(crate) fn spawn_pane_in_workspace(
@@ -35,6 +65,7 @@ pub(crate) fn spawn_pane_in_workspace(
     workspace_index: usize,
     previous_focused: Option<PaneId>,
     identity: PaneIdentity,
+    placement: SpawnPlacement,
 ) -> (PaneId, Update) {
     let bounds = ctx.state.canvas_bounds(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
@@ -49,6 +80,21 @@ pub(crate) fn spawn_pane_in_workspace(
     pane.pty_generation = generation;
     pane.terminal.bind_server_backend(id, generation);
     pane.identity = identity;
+    pane.fullscreen = placement.fullscreen;
+    if let Some(float) = placement.float {
+        pane.floating = true;
+        let w = bounds.w * float.width;
+        let h = bounds.h * float.height;
+        pane.floating_rect = clamp_float_rect(
+            FloatRect {
+                x: bounds.x + (bounds.w - w) / 2.0,
+                y: bounds.y + (bounds.h - h) / 2.0,
+                w,
+                h,
+            },
+            bounds,
+        );
+    }
     let palette = terminal_palette(
         &ctx.state.theme,
         pane_frame_background(
@@ -79,9 +125,10 @@ pub(crate) fn spawn_pane_in_workspace(
         tile_gap,
         split_width_multiplier,
     );
-    workspace.focused_pane = Some(id);
-    ctx.state.active_workspace = workspace_index;
-    ctx.state.focused_pane = Some(id);
+    if placement.float.is_some() {
+        remove_tiled_window(workspace, id);
+    }
+    apply_spawn_focus(&mut ctx.state, workspace_index, id, placement);
     ctx.state.animation = GeometryAnimation::Spawn;
     let open_delay = anim::open_delay(ctx.state.config.animations);
     let activate_delay = anim::activation_delay(ctx.state.config.animations);
@@ -90,14 +137,26 @@ pub(crate) fn spawn_pane_in_workspace(
         &mut ctx.state,
         id,
         generation,
-        command,
-        cwd,
+        command.clone(),
+        cwd.clone(),
         cols,
         rows,
         keep_open,
         env,
         title,
         palette,
+    );
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::PaneSpawned,
+            vec![
+                ("pane", id.to_string()),
+                ("workspace", (workspace_index + 1).to_string()),
+                ("command", command.unwrap_or_default()),
+                ("cwd", cwd.unwrap_or_default()),
+            ],
+        ),
     );
     let update = Update::with_command(open_timers_command(
         ctx.state.runtime_epoch,
@@ -107,6 +166,72 @@ pub(crate) fn spawn_pane_in_workspace(
         activate_delay,
     ));
     (id, update)
+}
+
+fn apply_spawn_focus(
+    state: &mut State,
+    workspace_index: usize,
+    id: PaneId,
+    placement: SpawnPlacement,
+) {
+    state.workspaces[workspace_index].focused_pane = Some(id);
+    if placement.focus {
+        state.active_workspace = workspace_index;
+        state.focused_pane = Some(id);
+    }
+}
+
+pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(id) = ctx.state.focused_pane else {
+        return Update::none();
+    };
+    if !find_pane(&ctx.state, id)
+        .is_some_and(|pane| matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)))
+    {
+        return Update::none();
+    }
+    let generation = ctx.state.next_pty_generation;
+    ctx.state.next_pty_generation = generation.saturating_add(1);
+    let control_socket = ctx.state.control_socket_path.clone();
+    let palette = terminal_palette(
+        &ctx.state.theme,
+        pane_frame_background(
+            &ctx.state.theme,
+            true,
+            ctx.state.config.pane.highlight_focused_background,
+        ),
+    );
+    let (env, identity, cols, rows) = {
+        let pane = find_pane_mut(&mut ctx.state, id).expect("focused exited pane still exists");
+        pane.pty_generation = generation;
+        pane.terminal.bind_server_backend(id, generation);
+        pane.terminal.set_palette(palette);
+        pane.activity = Default::default();
+        // The replacement server pane starts without a log handle; the server broadcasts the
+        // stop to other clients, this clears the local badge immediately.
+        pane.logging = false;
+        (
+            pane_env(control_socket.as_deref(), pane),
+            pane.identity.clone(),
+            pane.terminal.cols,
+            pane.terminal.rows,
+        )
+    };
+    request_pane_spawn(
+        &mut ctx.state,
+        id,
+        generation,
+        identity.command,
+        identity.cwd,
+        cols,
+        rows,
+        identity.keep_open,
+        env,
+        identity.custom_title,
+        palette,
+    );
+    crate::update::schedule_layout_commit(ctx);
+    Update::full()
 }
 
 /// Spawn a pane on the session server, or queue it if no client is connected yet (initial attach
@@ -230,6 +355,9 @@ pub(crate) fn close_pane_remote(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Op
 }
 
 pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
+    if let Some(pane) = state.popup.as_ref().filter(|pane| pane.id == id) {
+        return Some(pane);
+    }
     // The scratchpad lives outside the workspace lists; route its events here too.
     if let Some(pane) = state.scratch.as_ref().filter(|pane| pane.id == id) {
         return Some(pane);
@@ -242,6 +370,9 @@ pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
 }
 
 pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
+    if state.popup.as_ref().is_some_and(|pane| pane.id == id) {
+        return state.popup.as_mut();
+    }
     // The scratchpad lives outside the workspace lists; route its events here too.
     if state.scratch.as_ref().is_some_and(|pane| pane.id == id) {
         return state.scratch.as_mut();
@@ -492,5 +623,27 @@ mod tests {
 
         state.workspaces[0].panes[0].closing = false;
         assert!(!should_prune_closed(&state, 1, 42));
+    }
+
+    #[test]
+    fn spawn_focus_can_update_target_workspace_without_stealing_active_focus() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.active_workspace = 0;
+        state.focused_pane = Some(1);
+        apply_spawn_focus(
+            &mut state,
+            2,
+            7,
+            SpawnPlacement {
+                focus: false,
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.workspaces[2].focused_pane, Some(7));
+        assert_eq!(state.active_workspace, 0);
+        assert_eq!(state.focused_pane, Some(1));
+        apply_spawn_focus(&mut state, 2, 8, SpawnPlacement::default());
+        assert_eq!(state.active_workspace, 2);
+        assert_eq!(state.focused_pane, Some(8));
     }
 }

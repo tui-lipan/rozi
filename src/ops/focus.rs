@@ -177,10 +177,26 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     if index >= state.workspaces.len() {
         return;
     }
+    let previous = state.active_workspace;
     state.active_workspace = index;
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
     clear_focused_activity(state);
+    if previous != index {
+        emit_workspace_switched(state, index);
+    }
+}
+
+/// Emit the public `workspace-switched` event. Every mutation of `active_workspace` must go
+/// through this (switch, move-with-pane, relocate) so subscribers never see a stale workspace.
+fn emit_workspace_switched(state: &State, index: usize) {
+    crate::events::emit(
+        state,
+        crate::events::Event::new(
+            crate::events::EventKind::WorkspaceSwitched,
+            vec![("workspace", (index + 1).to_string())],
+        ),
+    );
 }
 
 pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) {
@@ -224,6 +240,7 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
     state.workspaces[target_index].focused_pane = Some(focused);
     clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
+    emit_workspace_switched(state, target_index);
 }
 
 /// Move every pane from the active workspace into `target_index`, carry the source workspace
@@ -246,6 +263,7 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
         state.active_workspace = target_index;
         choose_fallback_focus(state);
         state.animation = GeometryAnimation::None;
+        emit_workspace_switched(state, target_index);
         return;
     }
 
@@ -272,6 +290,7 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     state.focused_pane = target.focused_pane;
     clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
+    emit_workspace_switched(state, target_index);
 }
 
 fn workspace_is_empty(workspace: &Workspace) -> bool {
@@ -349,20 +368,32 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
     focus_pane(&mut ctx.state, id);
     if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id) {
         pane.activity.has_unseen_output = false;
+        pane.activity.bell = false;
     }
     request_pane_focus(ctx, id);
     Update::full()
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
+    let previous = state.focused_pane;
     if let Some(pane) = state.workspaces[state.active_workspace]
         .panes
         .iter_mut()
         .find(|pane| pane.id == id && !pane.closing)
     {
         pane.activity.has_unseen_output = false;
+        pane.activity.bell = false;
         state.focused_pane = Some(id);
         state.workspaces[state.active_workspace].focused_pane = Some(id);
+    }
+    if previous != state.focused_pane && state.focused_pane == Some(id) {
+        crate::events::emit(
+            state,
+            crate::events::Event::new(
+                crate::events::EventKind::FocusChanged,
+                vec![("pane", id.to_string())],
+            ),
+        );
     }
 }
 
@@ -376,6 +407,7 @@ fn clear_focused_activity(state: &mut State) {
         .find(|pane| pane.id == id && !pane.closing)
     {
         pane.activity.has_unseen_output = false;
+        pane.activity.bell = false;
     }
 }
 

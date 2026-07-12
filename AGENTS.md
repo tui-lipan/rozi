@@ -175,7 +175,7 @@ Detach leaves the server running for later reattach; a clean quit shuts an ephem
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
-share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v6). One client holds the
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v7). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -200,7 +200,7 @@ Major module map:
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move.rs` / `anim.rs` - Window-manager
   layout, placement, movement, resizing, and animations.
-- `session/` / `ops/session.rs` - Multi-client session protocol (v6), server/client, discovery,
+- `session/` / `ops/session.rs` - Multi-client session protocol (v7), server/client, discovery,
   bootstrap, attach/kill, and layout-control lease.
 - `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
@@ -277,12 +277,14 @@ Then rerun the relevant `hyprmux` tests and lints.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
+- `[[rules]]` applies first-match command substring placement to control and `[keys] run` spawns.
 - `[workbar]` supports built-in segments, text placeholders, and timed shell command segments; each
  segment renders as a themed badge whose color can be overridden by theme role via a segment table,
  and `[pane].workbar_powerline` toggles trailing-badge chaining.
 - `[theme].name` selects built-in, `system`, or custom themes from `~/.config/hyprmux/themes/`.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.
+- `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `--attach <NAME>` / `--session <NAME>` connects to persistent named session servers.
 - Cargo feature flags are inherited from the path dependency `tui-lipan`; this crate currently uses
   `terminal`, `terminal-serde`, and `theme-reload`.

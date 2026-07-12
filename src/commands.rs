@@ -50,6 +50,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::RespawnPane,
+        label: "Respawn exited pane",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::TogglePaneLogging,
+        label: "Toggle pane logging",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::Close,
         label: "Close pane",
         category: "Panes",
@@ -280,6 +294,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Copy mode",
         category: "App",
         default_keys: &["["],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::EnterHintMode,
+        label: "Hint mode",
+        category: "Copy",
+        default_keys: &["u"],
         palette: true,
     },
     BuiltinCommand {

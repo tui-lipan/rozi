@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
 use crate::Msg;
+use crate::events::{EventHub, EventKind};
 use crate::state::PaneId;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ControlRequest {
     #[serde(flatten)]
     pub command: ControlCommand,
@@ -20,7 +21,7 @@ pub struct ControlRequest {
     pub source_pane: Option<PaneId>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum ControlCommand {
     ListPanes,
@@ -54,6 +55,23 @@ pub enum ControlCommand {
     /// Move the focused pane to another workspace. `index` is 1-based (1-9).
     MoveToWorkspace {
         index: usize,
+    },
+    Popup {
+        command: String,
+        cwd: Option<String>,
+        width: Option<f32>,
+        height: Option<f32>,
+        title: Option<String>,
+    },
+    Subscribe {
+        #[serde(default)]
+        events: Vec<String>,
+    },
+    PaneLogging {
+        #[serde(default)]
+        target: Option<PaneId>,
+        #[serde(default)]
+        enabled: Option<bool>,
     },
 }
 
@@ -187,14 +205,15 @@ pub fn bind_control_socket() -> std::io::Result<(UnixListener, ControlSocketGuar
     Ok((listener, ControlSocketGuard { path }))
 }
 
-pub fn run_listener(listener: UnixListener, link: CommandLink<Msg>) {
+pub fn run_listener(listener: UnixListener, link: CommandLink<Msg>, event_hub: EventHub) {
     for stream in listener.incoming().flatten() {
         let link = link.clone();
-        std::thread::spawn(move || handle_connection(stream, link));
+        let event_hub = event_hub.clone();
+        std::thread::spawn(move || handle_connection(stream, link, event_hub));
     }
 }
 
-fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>) {
+fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>, event_hub: EventHub) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
     let reader_stream = match stream.try_clone() {
@@ -217,6 +236,50 @@ fn handle_connection(mut stream: UnixStream, link: CommandLink<Msg>) {
             return;
         }
     };
+    if let ControlCommand::Subscribe { events } = &request.command {
+        let mut kinds = std::collections::HashSet::new();
+        for id in events {
+            let Some(kind) = EventKind::parse(id) else {
+                let response = ControlResponse::error(format!("unknown event `{id}`"));
+                let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+                return;
+            };
+            kinds.insert(kind);
+        }
+        let rx = event_hub.subscribe((!kinds.is_empty()).then_some(kinds));
+        let _ = writeln!(
+            stream,
+            "{}",
+            serde_json::to_string(&ControlResponse::empty()).unwrap()
+        );
+        let _ = stream.set_read_timeout(None);
+        loop {
+            match rx.recv_timeout(Duration::from_secs(30)) {
+                Ok(event) => {
+                    if writeln!(stream, "{event}").is_err() {
+                        return;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Idle liveness probe: subscribers send nothing after the request line, so
+                    // EOF (or any hard error) means the peer is gone and this thread can be
+                    // reaped instead of waiting for a matching event's failed write.
+                    let mut probe = [0u8; 8];
+                    let _ = stream.set_nonblocking(true);
+                    let disconnected = match std::io::Read::read(&mut stream, &mut probe) {
+                        Ok(0) => true,
+                        Ok(_) => false,
+                        Err(err) => err.kind() != std::io::ErrorKind::WouldBlock,
+                    };
+                    let _ = stream.set_nonblocking(false);
+                    if disconnected {
+                        return;
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    }
     let (tx, rx) = mpsc::channel();
     link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));
     let response = rx
@@ -309,6 +372,25 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ControlRequest>(&json).unwrap(),
             move_to
+        );
+    }
+
+    #[test]
+    fn popup_command_round_trips_through_json() {
+        let request = ControlRequest {
+            command: ControlCommand::Popup {
+                command: "fzf".into(),
+                cwd: Some("/tmp".into()),
+                width: Some(0.7),
+                height: Some(0.5),
+                title: Some("pick".into()),
+            },
+            source_pane: None,
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            request
         );
     }
 

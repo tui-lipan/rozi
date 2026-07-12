@@ -112,6 +112,30 @@ impl SessionServer {
                 session,
                 protocol_version,
             } => self.handle_query(session, protocol_version),
+            ClientMessage::SetPaneLogging {
+                pane_id,
+                generation,
+                enabled,
+            } => {
+                if self
+                    .client_mut(client_id)
+                    .is_some_and(|client| client.read_only)
+                {
+                    vec![(
+                        Target::Sender,
+                        ServerMessage::PaneLoggingChanged {
+                            pane_id,
+                            generation,
+                            enabled: false,
+                            path: None,
+                            error: Some("read-only client".to_string()),
+                        },
+                    )]
+                } else {
+                    let message = self.set_pane_logging(pane_id, generation, enabled);
+                    vec![(Target::Broadcast, message)]
+                }
+            }
             ClientMessage::SpawnPane {
                 pane_id,
                 generation,
@@ -260,6 +284,7 @@ impl SessionServer {
                     return Vec::new();
                 }
                 self.shutdown = true;
+                self.forget_snapshot = true;
                 for pane in self.panes.values() {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.kill();

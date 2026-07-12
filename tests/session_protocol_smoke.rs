@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-const PROTOCOL_VERSION: u32 = 6;
+const PROTOCOL_VERSION: u32 = 7;
 const CONTROL_FRAME: u8 = 1;
 const PANE_OUTPUT_FRAME: u8 = 2;
 const PANE_ID: u32 = 41;

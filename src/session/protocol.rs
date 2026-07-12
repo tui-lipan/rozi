@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -49,6 +49,7 @@ pub struct PaneMeta {
     pub title: Option<String>,
     pub cwd: Option<String>,
     pub exited: Option<i32>,
+    pub logging: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,6 +116,11 @@ pub enum ClientMessage {
         palette: Option<WirePalette>,
         title: Option<String>,
         cwd: Option<String>,
+    },
+    SetPaneLogging {
+        pane_id: PaneId,
+        generation: u64,
+        enabled: bool,
     },
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
@@ -203,6 +209,13 @@ pub enum ServerMessage {
         generation: u64,
         pid: Option<u32>,
         ok: bool,
+        error: Option<String>,
+    },
+    PaneLoggingChanged {
+        pane_id: PaneId,
+        generation: u64,
+        enabled: bool,
+        path: Option<String>,
         error: Option<String>,
     },
     Renamed {
@@ -639,7 +652,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":6,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":7,"label":"alice","read_only":true})
         );
     }
 
@@ -652,7 +665,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":6})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":7})
         );
     }
 

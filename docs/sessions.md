@@ -222,6 +222,23 @@ and direct tree references, so reattaching preserves pane ids and dwindle tree s
 are non-contiguous. On detach, the layout is also mirrored to disk (via the profile format) so a
 fresh launch can restore it after the server is gone.
 
+## Session resurrection
+
+Named sessions are periodically snapshotted when `[session] resurrect = true` (the default), and
+also immediately when their last client detaches after a change. Snapshots live under
+`$XDG_STATE_HOME/hyprmux/sessions/<name>/` (or `~/.local/state/hyprmux/sessions/<name>/`) and use
+versioned JSON metadata plus per-pane terminal replay files. Writes replace the complete snapshot
+atomically with private directory (`0700`) and file (`0600`) permissions.
+
+Starting a named server restores its layout, pane commands, working directories, titles, palette,
+and saved scrollback. Processes themselves are not checkpointed: each pane command starts again in
+a fresh PTY, with the old terminal history replayed above its new output. Missing replay files,
+working directories, or individual pane spawn failures do not prevent the rest of the session from
+loading. Unsupported or malformed snapshots are left on disk and reported without blocking startup.
+
+`kill-session` and a clean in-protocol session shutdown mean **forget**: they remove the snapshot as
+well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it for resurrection.
+
 Named profiles are separate startup layouts: `hyprmux dev` / `hyprmux --profile dev` load
 `~/.config/hyprmux/profiles/dev.toml` into a fresh ephemeral session. See
 [profiles.md](profiles.md).
@@ -233,3 +250,5 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
+The session wire protocol is version 7. After upgrading hyprmux, restart existing named session
+servers before attaching with the new client.

@@ -17,6 +17,7 @@ pub const WORKSPACE_COUNT: usize = 9;
 /// Reserved id for the scratchpad pane. Workspace panes start at 1 (see `State::new`), so 0
 /// can never collide with an allocated `next_pane_id`.
 pub const SCRATCH_PANE_ID: PaneId = 0;
+pub const POPUP_PANE_ID: PaneId = u32::MAX;
 pub const WORKBAR_HEIGHT: u16 = 1;
 pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
@@ -417,6 +418,16 @@ pub enum Mode {
     Normal,
     Resize,
     Copy,
+    Hint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintModeState {
+    pub target: PaneId,
+    pub matches: Vec<crate::hints::HintMatch>,
+    pub labels: Vec<String>,
+    pub input: String,
+    pub offset: usize,
 }
 
 /// State for keyboard copy mode: a cursor and optional selection anchor in the target
@@ -771,6 +782,7 @@ pub struct Pane {
     pub opening: bool,
     pub terminal_active: bool,
     pub closing: bool,
+    pub logging: bool,
     pub activity: PaneActivity,
     pub terminal: TerminalPane,
 }
@@ -779,6 +791,7 @@ pub struct Pane {
 pub struct PaneActivity {
     pub last_activity: Option<Instant>,
     pub has_unseen_output: bool,
+    pub bell: bool,
 }
 
 impl Pane {
@@ -794,6 +807,7 @@ impl Pane {
             opening: true,
             terminal_active: false,
             closing: false,
+            logging: false,
             activity: PaneActivity::default(),
             terminal: {
                 let mut terminal = TerminalPane::new(scrollback);
@@ -976,6 +990,7 @@ pub struct State {
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
     pub copy_mode: Option<CopyModeState>,
+    pub hint_mode: Option<HintModeState>,
     pub copy_flash: Option<CopyFlashState>,
     pub next_copy_flash_id: u64,
     pub scratch: Option<Pane>,
@@ -988,7 +1003,10 @@ pub struct State {
     /// Height fraction captured at the start of a scratchpad top-edge resize drag, so each drag
     /// move recomputes from the origin (drift-free) rather than accumulating deltas.
     pub scratch_resize_start: Option<f32>,
+    pub popup: Option<Pane>,
+    pub popup_return_focus: Option<PaneId>,
     pub control_socket_path: Option<PathBuf>,
+    pub event_hub: crate::events::EventHub,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     pub session_attached: bool,
@@ -1201,6 +1219,7 @@ impl State {
             last_blocked_input_toast: None,
             session_picker_epoch: 0,
             copy_mode: None,
+            hint_mode: None,
             copy_flash: None,
             next_copy_flash_id: 1,
             scratch: None,
@@ -1208,7 +1227,10 @@ impl State {
             scratch_return_focus: None,
             scratch_height: None,
             scratch_resize_start: None,
+            popup: None,
+            popup_return_focus: None,
             control_socket_path: None,
+            event_hub: crate::events::EventHub::default(),
             session_client: None,
             session_name: None,
             session_attached: false,

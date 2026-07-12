@@ -5,7 +5,9 @@ mod commands;
 mod config;
 mod control;
 mod copy_mode;
+mod events;
 mod geometry;
+mod hints;
 mod input;
 mod key_routing;
 mod layout;
@@ -13,8 +15,10 @@ mod layout_tree_ser;
 mod ops;
 mod pane;
 mod pane_lifecycle;
+mod popup;
 mod profiles;
 mod pty_events;
+mod rules;
 mod scratchpad;
 mod session;
 mod shared_layout;
@@ -47,6 +51,7 @@ pub struct HyprmuxApp {
     /// `[session] startup = "picker"`). Only honored when there is no `--attach`/`--session` and at
     /// least one named session exists at startup.
     want_startup_picker: bool,
+    event_hub: events::EventHub,
 }
 
 impl Default for HyprmuxApp {
@@ -63,6 +68,7 @@ impl Default for HyprmuxApp {
             attach_session: None,
             read_only: false,
             want_startup_picker: false,
+            event_hub: events::EventHub::default(),
         }
     }
 }
@@ -92,6 +98,7 @@ impl HyprmuxApp {
             attach_session,
             read_only,
             want_startup_picker,
+            event_hub: events::EventHub::default(),
         }
     }
 }
@@ -160,6 +167,7 @@ pub enum Msg {
     ClientListGrant(usize),
     ClientListDecline(usize),
     FocusPane(PaneId),
+    ClosePopup,
     HoverPane(PaneId),
     BeginMove(PaneId, FloatRect, u16, u16, u16, u16, bool),
     MovePane(PaneId, i16, i16, bool),
@@ -283,6 +291,14 @@ pub enum Msg {
         generation: u64,
         code: i32,
     },
+    SessionPaneLoggingChanged {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+        enabled: bool,
+        path: Option<String>,
+        error: Option<String>,
+    },
     SessionError {
         epoch: u64,
         message: String,
@@ -309,6 +325,7 @@ impl Component for HyprmuxApp {
             .control_guard
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
+        state.event_hub = self.event_hub.clone();
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -345,6 +362,7 @@ impl Component for HyprmuxApp {
         // `[session] startup = "picker"` instead opens the session picker first when a named
         // session exists, so nothing is attached until the user chooses.
         let control_listener = self.control_listener.take();
+        let event_hub = self.event_hub.clone();
         let theme_tick = ctx.state.theme_watcher.is_some();
         let workbar_tick = ctx.state.config.workbar.has_clock();
         let workbar_commands = ctx.state.config.workbar.command_specs();
@@ -376,7 +394,9 @@ impl Component for HyprmuxApp {
             ops::config::spawn_config_watcher(&link);
             if let Some(listener) = control_listener {
                 let listener_link = link.clone();
-                std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
+                std::thread::spawn(move || {
+                    crate::control::run_listener(listener, listener_link, event_hub)
+                });
             }
             match start {
                 SessionStart::Attach { epoch, name } => {

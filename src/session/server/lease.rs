@@ -23,6 +23,7 @@ impl SessionServer {
         }
         self.layout_rev += 1;
         self.layout = Some(layout.clone());
+        self.dirty = true;
         vec![(
             Target::Broadcast,
             ServerMessage::LayoutCommitted {

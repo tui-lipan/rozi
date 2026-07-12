@@ -161,6 +161,13 @@ impl SessionClient {
             palette: WirePalette::from(palette),
         });
     }
+    pub fn set_pane_logging(&self, pane_id: PaneId, generation: u64, enabled: bool) {
+        self.send_control(ClientMessage::SetPaneLogging {
+            pane_id,
+            generation,
+            enabled,
+        });
+    }
     /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only
     /// while this client holds the lease and `base_rev` matches the current revision.
     pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {

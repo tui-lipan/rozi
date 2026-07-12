@@ -37,3 +37,4 @@ pub mod ipc;
 pub mod notifications;
 pub mod process;
 pub mod server_lifecycle;
+pub mod shell_integration;

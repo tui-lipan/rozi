@@ -24,13 +24,27 @@ and the UI client parses the raw PTY byte stream into its own `TerminalScreen`.
 The shell and starting directory come from the [config](configuration.md) (`shell`, `cwd`),
 falling back to the system `$SHELL` and the launch directory.
 
+## Shell metadata
+
+The server tracks runtime metadata independently from terminal rendering and shares it with every
+attached client. It recognizes OSC 7 `file://` current-directory reports, OSC 9;9 Windows-style
+directory reports, and OSC 133 prompt/input/execution/completion boundaries. Valid local OSC cwd
+reports take precedence over native process inspection; remote OSC 7 hosts are shown as metadata
+but are never used as spawn directories.
+
+In the default `[shell_integration]` `auto` mode, bash, zsh, and fish panes emit these markers
+without modifying dotfiles. Their execution marker includes a hyprmux-namespaced executable
+basename only, never a command line. Smart focus uses that shell-reported identity first, then
+native Linux/macOS inspection when available; without either source it conservatively treats the
+foreground program as unknown. See [Configuration](configuration.md#shell_integration) for the
+per-shell setup and opt-out.
+
 ### New panes inherit the focused directory
 
-A new pane opens in the **focused pane's current working directory** when it can be
-discovered, falling back to the configured `cwd`. On Linux the directory is read on demand from
-`/proc/<pid>/cwd` of the pane's shell - no shell configuration is required. On other platforms
-(or if the pid is unavailable) it falls back to the configured `cwd`. The same live cwd is what
-*Save profile* records (see [Project profiles](project-profiles.md)).
+A new pane opens in the **focused pane's current working directory** when it can be discovered,
+falling back to the configured `cwd`. A valid local OSC report is preferred; Linux and macOS then
+inspect the PTY's foreground process as a fallback, followed by the launch directory. The same
+live cwd is what *Save profile* records (see [Project profiles](project-profiles.md)).
 
 ## Mouse support
 

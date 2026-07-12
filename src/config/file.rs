@@ -43,6 +43,7 @@ impl ShellFileValue {
 struct FileConfig {
     shell: Option<ShellFileValue>,
     command_shell: Option<ShellFileValue>,
+    shell_integration: ShellIntegrationFileConfig,
     cwd: Option<String>,
     scrollback: Option<usize>,
     input: InputFileConfig,
@@ -156,6 +157,12 @@ struct ProfileFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct ShellIntegrationFileConfig {
+    mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct SessionFileConfig {
     autosave: Option<bool>,
@@ -247,6 +254,24 @@ mod tests {
             HyprmuxLayoutConfig::default().split_width_multiplier,
             DEFAULT_SPLIT_WIDTH_MULTIPLIER
         );
+    }
+
+    #[test]
+    fn shell_integration_section_parses_its_mode() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [shell_integration]
+            mode = "off"
+            "#,
+        )
+        .expect("config parses");
+
+        assert_eq!(parsed.shell_integration.mode.as_deref(), Some("off"));
+        assert_eq!(
+            ShellIntegrationMode::parse("off"),
+            Some(ShellIntegrationMode::Off)
+        );
+        assert_eq!(ShellIntegrationMode::parse("sometimes"), None);
     }
 
     #[test]
@@ -1118,6 +1143,14 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(command_shell) = non_empty_argv(parsed.command_shell) {
         config.command_shell = Some(command_shell);
+    }
+    if let Some(mode) = non_empty(parsed.shell_integration.mode) {
+        match ShellIntegrationMode::parse(&mode) {
+            Some(value) => config.shell_integration.mode = value,
+            None => warnings.push(format!(
+                "Ignored unknown shell_integration.mode \"{mode}\" (expected `auto` or `off`)"
+            )),
+        }
     }
     if let Some(cwd) = non_empty(parsed.cwd) {
         config.cwd = Some(expand_path(cwd).to_string_lossy().to_string());

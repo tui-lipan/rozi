@@ -44,6 +44,12 @@ scrollback = 10000          # default: 5000 lines per pane
 # command_shell = ["/bin/sh", "-c"]  # default on Linux/macOS
 # command_shell = ["cmd.exe", "/D", "/S", "/C"]  # default on Windows (via %COMSPEC%)
 
+[shell_integration]
+# Emit OSC 7/133 cwd and command-lifecycle metadata from recognized interactive shells.
+# `auto` (default) injects bash, zsh, and fish without editing dotfiles; `off` leaves shell
+# initialization entirely untouched.
+mode = "auto"
+
 [input]
 modifier = "alt"             # held WM modifier: "alt" (default) or "super"
 prefix = "ctrl-a"            # prefix key (default: ctrl-a)
@@ -140,6 +146,7 @@ close = "ctrl-a q"
 | --- | --- | --- | --- |
 | `shell` | string or array | see below | Interactive shell launched in each new pane. |
 | `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, profile commands, control-socket run requests). |
+| `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |
 
@@ -157,6 +164,25 @@ snippet using it behaves identically regardless of the invoking user's interacti
 Both are resolved by the client (not the session server) at spawn/command-run time, so a
 detached/persistent named-session server never falls back to its own process environment or a
 stale on-disk config after the client-side config hot-reloads.
+
+## `[shell_integration]`
+
+With `mode = "auto"` (the default), hyprmux injects its shell integration into supported
+**interactive** shell panes only. It never changes dotfiles, registry settings, or the
+noninteractive `command_shell` runner. The integration emits OSC 7 current-directory updates and
+OSC 133 prompt/command lifecycle markers; it sends only the executable basename for smart focus,
+never a full command line.
+
+| Shell | Injection mechanism | Notes |
+| --- | --- | --- |
+| bash | Generated `--rcfile` wrapper | Chains `/etc/bash.bashrc` and `~/.bashrc`, then the integration. Login-shell configurations are intentionally left untouched because bash ignores `--rcfile` for login shells. |
+| zsh | Temporary `ZDOTDIR` shim | Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
+| fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
+| PowerShell | Not automatically injected | Full lifecycle integration will require a documented `$PROFILE` opt-in when Windows support lands. |
+| cmd.exe | Not automatically injected | Prompt markers only; full lifecycle metadata requires Clink. |
+
+Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want hyprmux to
+leave shell startup completely unchanged.
 
 ## `[input]`
 

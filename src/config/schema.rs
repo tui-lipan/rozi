@@ -404,6 +404,41 @@ impl Default for HyprmuxScratchpadConfig {
     }
 }
 
+/// `[shell_integration] mode` (cross-platform plan Phase 8): whether hyprmux injects its
+/// OSC 7/133 shell-integration scripts into resolved-interactive-shell spawns.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShellIntegrationMode {
+    /// Inject for a recognized shell (bash/zsh/fish today; PowerShell/cmd.exe stay documented
+    /// opt-in per the plan even once Milestone 2 lands), unless an existing hyprmux or
+    /// terminal-native integration is already loaded.
+    #[default]
+    Auto,
+    /// Never inject; panes get whatever shell config/integration the user already has.
+    Off,
+}
+
+impl ShellIntegrationMode {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HyprmuxShellIntegrationConfig {
+    pub mode: ShellIntegrationMode,
+}
+
 #[derive(Clone, Debug)]
 pub struct HyprmuxConfig {
     /// Interactive-shell override (argument-preserving; first element is the program). `None`
@@ -416,6 +451,7 @@ pub struct HyprmuxConfig {
     /// (`["/bin/sh", "-c"]` on Unix, `[%COMSPEC%, "/D", "/S", "/C"]` on Windows) - see
     /// [`crate::platform::command::resolve_command_shell`].
     pub command_shell: Option<Vec<String>>,
+    pub shell_integration: HyprmuxShellIntegrationConfig,
     pub cwd: Option<String>,
     pub scrollback: usize,
     pub input: InputConfig,
@@ -518,6 +554,7 @@ impl Default for HyprmuxConfig {
         Self {
             shell: None,
             command_shell: None,
+            shell_integration: HyprmuxShellIntegrationConfig::default(),
             cwd: std::env::current_dir()
                 .ok()
                 .map(|path| path.to_string_lossy().to_string()),

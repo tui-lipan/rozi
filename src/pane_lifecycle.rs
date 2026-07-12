@@ -250,7 +250,10 @@ pub(crate) fn request_pane_spawn(
     title: Option<String>,
     palette: TerminalColorPalette,
 ) {
-    let (shell, command_shell) = resolved_launch_argv(&state.config);
+    let (shell, command_shell, extra_env) = resolved_launch_argv(&state.config);
+    // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
+    // override for the same key (rare, but a pane/profile could set one deliberately) wins.
+    let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
     if let Some(client) = state.session_client.clone() {
         client.spawn_pane(
             pane_id,
@@ -285,15 +288,25 @@ pub(crate) fn request_pane_spawn(
 }
 
 /// Resolve this session's interactive-shell and command-runner launch policies from the live
-/// config (see [`crate::platform::command`]), in wire/argv form. Called at every spawn-request
-/// site (rather than once at config-load time) so a hot config reload takes effect on the very
-/// next spawn without needing to re-derive anything else from the reload path.
-fn resolved_launch_argv(config: &crate::config::HyprmuxConfig) -> (Vec<String>, Vec<String>) {
-    crate::platform::command::resolve_launch_argv(
+/// config (see [`crate::platform::command`]), in wire/argv form, plus any shell-integration env
+/// (Phase 8) the resolved interactive shell needs. Called at every spawn-request site (rather than
+/// once at config-load time) so a hot config reload takes effect on the very next spawn without
+/// needing to re-derive anything else from the reload path.
+fn resolved_launch_argv(
+    config: &crate::config::HyprmuxConfig,
+) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
+    let shell_env = crate::platform::command::ShellEnv::from_process();
+    let (shell, extra_env) = crate::platform::shell_integration::resolve_interactive_shell(
         config.shell.as_deref(),
+        &shell_env,
+        config.shell_integration.mode,
+        &crate::platform::shell_integration::InjectionEnv::from_process(),
+    );
+    let command_shell = crate::platform::command::resolve_command_shell(
         config.command_shell.as_deref(),
-        &crate::platform::command::ShellEnv::from_process(),
-    )
+        &shell_env,
+    );
+    (shell.as_argv(), command_shell.as_argv(), extra_env)
 }
 
 pub(crate) fn begin_close_pane(

@@ -1347,11 +1347,19 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
             ctx.state.config.pane.highlight_focused_background,
         ),
     );
-    let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
+    let shell_env = crate::platform::command::ShellEnv::from_process();
+    let (shell, integration_env) = crate::platform::shell_integration::resolve_interactive_shell(
         ctx.state.config.shell.as_deref(),
-        ctx.state.config.command_shell.as_deref(),
-        &crate::platform::command::ShellEnv::from_process(),
+        &shell_env,
+        ctx.state.config.shell_integration.mode,
+        &crate::platform::shell_integration::InjectionEnv::from_process(),
     );
+    let command_shell = crate::platform::command::resolve_command_shell(
+        ctx.state.config.command_shell.as_deref(),
+        &shell_env,
+    );
+    let shell = shell.as_argv();
+    let command_shell = command_shell.as_argv();
     let mut targets = Vec::new();
     for pane in ctx
         .state
@@ -1364,6 +1372,11 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         pane.pty_generation = generation;
         pane.terminal.bind_server_backend(pane.id, generation);
+        let env = integration_env
+            .iter()
+            .cloned()
+            .chain(pane_env(ctx.state.control_socket_path.as_deref(), pane))
+            .collect::<Vec<_>>();
         client.spawn_pane(
             pane.id,
             generation,
@@ -1372,7 +1385,7 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
             pane.terminal.cols,
             pane.terminal.rows,
             pane.identity.keep_open,
-            pane_env(ctx.state.control_socket_path.as_deref(), pane),
+            env,
             pane.identity.custom_title.clone(),
             pane.terminal.last_palette.unwrap_or(fallback_palette),
             shell.clone(),

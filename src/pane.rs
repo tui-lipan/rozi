@@ -104,11 +104,7 @@ impl TerminalPane {
     pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
         self.screen.process_bytes(bytes);
         let _ = self.screen.drain_responses();
-        self.title = self
-            .screen
-            .title()
-            .map(|title| title.trim().to_string())
-            .filter(|title| !title.is_empty());
+        self.title = self.screen.title().and_then(sanitize_terminal_title);
         self.snapshot = self.screen.render_snapshot();
         self.status = ManagedTerminalStatus::Ready;
         PaneEventOutcome::Repaint
@@ -411,6 +407,25 @@ impl TerminalPane {
     }
 }
 
+pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let title = title
+        .strip_prefix("Administrator: ")
+        .or_else(|| title.strip_prefix("Administrator:  "))
+        .unwrap_or(title);
+    let lower = title.to_ascii_lowercase();
+    if lower.contains("\\windowspowershell\\") && lower.contains("powershell.exe") {
+        return Some("PowerShell".to_string());
+    }
+    if lower.ends_with("\\pwsh.exe") || lower == "pwsh.exe" {
+        return Some("PowerShell".to_string());
+    }
+    Some(title.chars().filter(|ch| !ch.is_control()).collect())
+}
+
 fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
     let needle = query.to_ascii_lowercase();
     if needle.is_empty() {
@@ -511,6 +526,24 @@ fn push_span_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitizes_verbose_elevated_windows_powershell_title() {
+        assert_eq!(
+            sanitize_terminal_title(
+                r"Administrator: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe - C:\Users\Razuer\Downloads".to_string()
+            ),
+            Some("PowerShell".to_string())
+        );
+    }
+
+    #[test]
+    fn preserves_normal_terminal_titles() {
+        assert_eq!(
+            sanitize_terminal_title(" nvim - src/main.rs ".to_string()),
+            Some("nvim - src/main.rs".to_string())
+        );
+    }
 
     #[test]
     fn take_bell_uses_a_watermark() {

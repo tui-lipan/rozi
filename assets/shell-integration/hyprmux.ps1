@@ -65,7 +65,7 @@ function Global:__hyprmux_cwd() {
     # separators: `C:\Users\x` -> `file:///C:/Users/x`.
     $uriPath = '/' + ($path -replace '\\', '/')
     $encoded = __hyprmux_urlencode $uriPath '/:'
-    __hyprmux_emit "]7;file://$([System.Net.Dns]::GetHostName())$encoded"
+    __hyprmux_emit "]7;file://$encoded"
 }
 
 # Wrap - never replace - the prompt the user's `$PROFILE` (or a prompt theme like oh-my-posh or
@@ -87,6 +87,7 @@ function Global:Prompt() {
         $Global:__hyprmuxRanCommand = $false
     }
     __hyprmux_cwd
+    __hyprmux_emit ']2;PowerShell'
     __hyprmux_emit ']133;A'
 
     $rendered = & $Global:__hyprmuxOriginalPrompt

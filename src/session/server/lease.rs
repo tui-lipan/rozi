@@ -1,6 +1,25 @@
 use super::*;
 
 impl SessionServer {
+    pub(super) fn credit_server_stall(&mut self, stalled_for: Duration) {
+        if stalled_for < HEARTBEAT_STALL_THRESHOLD {
+            return;
+        }
+        let now = Instant::now();
+        for client in &mut self.clients {
+            client.last_pong = client
+                .last_pong
+                .checked_add(stalled_for)
+                .unwrap_or(now)
+                .min(now);
+            client.last_ping = client
+                .last_ping
+                .checked_add(stalled_for)
+                .unwrap_or(now)
+                .min(now);
+        }
+    }
+
     pub(super) fn handle_commit_layout(
         &mut self,
         client_id: ClientId,

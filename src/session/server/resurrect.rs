@@ -62,9 +62,12 @@ impl SessionServer {
         if !last_detached && self.last_snapshot.elapsed() < self.settings.snapshot_interval {
             return Ok(());
         }
+        // Advance the deadline before doing synchronous I/O. A transient filesystem error keeps
+        // the snapshot dirty for a later retry, but must not turn the server loop into a 1 ms
+        // export/write/sync retry storm.
+        self.last_snapshot = Instant::now();
         self.write_snapshot()?;
         self.dirty = false;
-        self.last_snapshot = Instant::now();
         Ok(())
     }
 
@@ -138,7 +141,7 @@ impl SessionServer {
                 &serde_json::to_vec_pretty(&layout).map_err(io::Error::other)?,
             )?;
         }
-        File::open(&temp)?.sync_all()?;
+        sync_directory(&temp)?;
         if final_path.exists() {
             fs::rename(&final_path, &backup)?;
         }
@@ -149,7 +152,7 @@ impl SessionServer {
             let _ = fs::remove_dir_all(&temp);
             return Err(err);
         }
-        File::open(parent)?.sync_all()?;
+        sync_directory(parent)?;
         if backup.exists() {
             fs::remove_dir_all(backup)?;
         }
@@ -231,6 +234,19 @@ pub fn delete_snapshot_for(name: &str) -> io::Result<()> {
         },
     );
     server.delete_snapshot()
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+#[cfg(windows)]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    // Opening a directory for FlushFileBuffers requires Windows-only handle flags and the flush is
+    // not supported consistently across filesystems. Snapshot files themselves are synced before
+    // the atomic rename; do not fail an otherwise valid snapshot on this durability enhancement.
+    Ok(())
 }
 
 fn write_secure(path: &Path, bytes: &[u8]) -> io::Result<()> {

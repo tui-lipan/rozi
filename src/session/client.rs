@@ -88,6 +88,10 @@ impl SessionClient {
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
         reader.set_read_timeout(None)?;
+        #[cfg(windows)]
+        // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
+        // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
+        reader.set_nonblocking(true)?;
         validate_attached(&attached)?;
         let (tx, rx) = mpsc::channel::<ClientOutbound>();
         thread::spawn(move || {
@@ -107,7 +111,8 @@ impl SessionClient {
                 }
             }
         });
-        thread::spawn(move || forward_inbound(&mut reader, &inbound));
+        let heartbeat_tx = tx.clone();
+        thread::spawn(move || forward_inbound(&mut reader, &inbound, Some(&heartbeat_tx)));
         Ok((Self { tx }, attached))
     }
 
@@ -241,17 +246,33 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
     Ok(())
 }
 
-fn forward_inbound<R: std::io::Read>(reader: &mut R, inbound: &mpsc::Sender<Frame<ServerMessage>>) {
+fn forward_inbound<R: std::io::Read>(
+    reader: &mut R,
+    inbound: &mpsc::Sender<Frame<ServerMessage>>,
+    outbound: Option<&mpsc::Sender<ClientOutbound>>,
+) {
     let mut decoder = protocol::FrameDecoder::default();
     loop {
-        match decoder.read_from_status(reader) {
+        let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
-            Ok(protocol::FrameReadStatus::Read(_) | protocol::FrameReadStatus::WouldBlock) => {}
+            Ok(protocol::FrameReadStatus::Read(_)) => false,
+            Ok(protocol::FrameReadStatus::WouldBlock) => true,
             Err(_) => break,
-        }
+        };
         loop {
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(frame)) => {
+                    if let Frame::Control(ServerMessage::Ping { seq }) = frame
+                        && let Some(outbound) = outbound
+                    {
+                        if outbound
+                            .send(ClientOutbound::Control(ClientMessage::Pong { seq }))
+                            .is_err()
+                        {
+                            return;
+                        }
+                        continue;
+                    }
                     if inbound.send(frame).is_err() {
                         return;
                     }
@@ -259,6 +280,9 @@ fn forward_inbound<R: std::io::Read>(reader: &mut R, inbound: &mpsc::Sender<Fram
                 Ok(None) => break,
                 Err(_) => return,
             }
+        }
+        if would_block {
+            thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -295,7 +319,7 @@ mod tests {
         });
 
         let (inbound_tx, inbound_rx) = mpsc::channel();
-        forward_inbound(&mut client_stream, &inbound_tx);
+        forward_inbound(&mut client_stream, &inbound_tx, None);
         assert_eq!(
             inbound_rx
                 .recv_timeout(Duration::from_secs(1))
@@ -326,5 +350,68 @@ mod tests {
         assert!(error.to_string().contains("incompatible hyprmux version"));
         assert!(validate_attached(&attached_message()).is_ok());
         assert!(validate_attached(&ServerMessage::Ping { seq: 1 }).is_err());
+    }
+
+    #[test]
+    fn transport_replies_to_ping_without_waiting_for_ui_dispatch() {
+        let mut bytes = Vec::new();
+        protocol::write_frame(&mut bytes, &ServerMessage::Ping { seq: 42 }).unwrap();
+        let (inbound_tx, inbound_rx) = mpsc::channel();
+        let (outbound_tx, outbound_rx) = mpsc::channel();
+
+        forward_inbound(
+            &mut std::io::Cursor::new(bytes),
+            &inbound_tx,
+            Some(&outbound_tx),
+        );
+
+        assert_eq!(
+            outbound_rx.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::Pong { seq: 42 })
+        );
+        assert!(inbound_rx.try_recv().is_err());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_duplex_transport_delivers_pong_while_reader_polls() {
+        let endpoint = IpcEndpoint::at_path(
+            std::env::temp_dir().join(format!("hyprmux-client-duplex-{}.sock", std::process::id())),
+        );
+        endpoint.remove_stale();
+        let listener = endpoint.bind().unwrap().into_listener();
+        listener.set_nonblocking(true).unwrap();
+
+        let server = thread::spawn(move || {
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok(stream) => break stream,
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(err) => panic!("accept failed: {err}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            assert!(matches!(
+                protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap(),
+                ClientMessage::Attach { .. }
+            ));
+            protocol::write_frame(&mut stream, &attached_message()).unwrap();
+            protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 }).unwrap();
+            assert_eq!(
+                protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap(),
+                ClientMessage::Pong { seq: 77 }
+            );
+        });
+
+        let (inbound_tx, _inbound_rx) = mpsc::channel();
+        let (_client, attached) =
+            SessionClient::connect_attached(&endpoint, "test", inbound_tx, false).unwrap();
+        assert!(matches!(attached, ServerMessage::Attached { .. }));
+        server.join().unwrap();
+        endpoint.remove_stale();
     }
 }

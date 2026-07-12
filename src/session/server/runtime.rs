@@ -195,6 +195,7 @@ mod tests {
             exited: None,
             log: None,
             runtime: PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         }
     }
 

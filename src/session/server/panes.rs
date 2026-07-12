@@ -125,7 +125,8 @@ impl SessionServer {
             request.command.as_deref(),
             &request.shell,
             &request.command_shell,
-        );
+        )
+        .size(cols.max(1), rows.max(1));
         if let Some(cwd) = request.cwd.as_ref().filter(|cwd| Path::new(cwd).is_dir()) {
             config = config.cwd(cwd.clone());
         }
@@ -138,7 +139,6 @@ impl SessionServer {
         }) {
             Ok(pty) => {
                 let pid = pty.pid();
-                let _ = pty.resize(cols.max(1), rows.max(1));
                 screen.resize(rows.max(1), cols.max(1));
                 self.panes.insert(
                     id,
@@ -159,6 +159,7 @@ impl SessionServer {
                         shell: request.shell,
                         env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
+                        initial_cursor_report_primed: cfg!(windows),
                     },
                 );
                 self.dirty = true;
@@ -192,6 +193,7 @@ impl SessionServer {
                             shell: request.shell,
                             env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
+                            initial_cursor_report_primed: false,
                         },
                     );
                 }
@@ -236,6 +238,12 @@ impl SessionServer {
                         let semantic_events = pane.screen.drain_semantic_events();
                         if let Some(pty) = &pane.pty {
                             for response in pane.screen.drain_responses() {
+                                if pane.initial_cursor_report_primed
+                                    && is_cursor_position_report(&response)
+                                {
+                                    pane.initial_cursor_report_primed = false;
+                                    continue;
+                                }
                                 let _ = pty.write(&response);
                             }
                         }
@@ -327,15 +335,14 @@ impl SessionServer {
         // `spawnable_cwd` prefers the pane's live tracked cwd (where the command actually left it)
         // over its launch directory, and never returns a remote one.
         let cwd = pane.spawnable_cwd();
-        let mut config = pty_config(None, &pane.shell, &[]);
+        let (cols, rows) = (pane.cols, pane.rows);
+        let mut config = pty_config(None, &pane.shell, &[]).size(cols.max(1), rows.max(1));
         if let Some(cwd) = cwd.filter(|cwd| Path::new(cwd).is_dir()) {
             config = config.cwd(cwd);
         }
         for (key, value) in &pane.env {
             config = config.env(key.clone(), value.clone());
         }
-        let (cols, rows) = (pane.cols, pane.rows);
-
         let tx = self.event_tx.clone();
         let spawned = TerminalPty::spawn(config, move |event| {
             let _ = tx.send(ServerEvent::Pty(id, generation, event));
@@ -344,7 +351,7 @@ impl SessionServer {
         let pane = self.panes.get_mut(&id)?;
         match spawned {
             Ok(pty) => {
-                let _ = pty.resize(cols.max(1), rows.max(1));
+                pane.initial_cursor_report_primed = cfg!(windows);
                 pane.pty = Some(pty);
                 pane.command_completed = true;
                 pane.exited = None;
@@ -466,6 +473,23 @@ impl SessionServer {
             },
         }
     }
+}
+
+pub(super) fn is_cursor_position_report(bytes: &[u8]) -> bool {
+    let Some(body) = bytes
+        .strip_prefix(b"\x1b[")
+        .and_then(|bytes| bytes.strip_suffix(b"R"))
+    else {
+        return false;
+    };
+    let Some(separator) = body.iter().position(|byte| *byte == b';') else {
+        return false;
+    };
+    let (row, col) = body.split_at(separator);
+    !row.is_empty()
+        && col.len() > 1
+        && row.iter().all(u8::is_ascii_digit)
+        && col[1..].iter().all(u8::is_ascii_digit)
 }
 
 fn default_log_dir() -> Option<PathBuf> {

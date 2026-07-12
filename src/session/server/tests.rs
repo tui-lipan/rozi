@@ -73,6 +73,15 @@ fn session_socket_path_rejects_invalid_names() {
 }
 
 #[test]
+fn cursor_position_report_detection_is_strict() {
+    assert!(super::panes::is_cursor_position_report(b"\x1b[1;1R"));
+    assert!(super::panes::is_cursor_position_report(b"\x1b[24;120R"));
+    assert!(!super::panes::is_cursor_position_report(b"\x1b[6n"));
+    assert!(!super::panes::is_cursor_position_report(b"\x1b[;R"));
+    assert!(!super::panes::is_cursor_position_report(b"1;1R"));
+}
+
+#[test]
 fn rename_in_place_updates_session_name() {
     let mut server = SessionServer::new_named("eph-123");
     let response = server.rename_session("renametest-unlikely-xyz".into());
@@ -123,6 +132,21 @@ fn second_attacher_is_a_follower() {
     assert_eq!(server.controller, Some(first));
     assert_ne!(server.controller, Some(second));
     assert_eq!(server.attached_count(), 2);
+}
+
+#[test]
+fn server_stalls_do_not_consume_client_heartbeat_deadlines() {
+    let mut server = SessionServer::new_named("dev");
+    let (client_id, _stream) = attach_client(&mut server);
+    let before = Instant::now() - Duration::from_secs(10);
+    server.client_mut(client_id).unwrap().last_pong = before;
+    let stall = Duration::from_secs(6);
+
+    server.credit_server_stall(stall);
+
+    let after = server.client_mut(client_id).unwrap().last_pong;
+    assert!(after.duration_since(before) >= stall);
+    assert!(after <= Instant::now());
 }
 
 #[test]
@@ -455,6 +479,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         },
     );
 
@@ -507,6 +532,7 @@ fn duplicate_spawn_is_rejected() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         },
     );
     let result = server.spawn_pane(SpawnRequest {
@@ -551,6 +577,7 @@ fn exited_pane_can_be_respawned() {
             exited: Some(0),
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         },
     );
 
@@ -601,6 +628,7 @@ fn attach_reports_layout_and_panes() {
         exited: None,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
+        initial_cursor_report_primed: false,
     };
     pane.screen.process_bytes(b"ready");
     server.panes.insert(4, pane);
@@ -675,6 +703,7 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         },
     );
 
@@ -731,6 +760,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            initial_cursor_report_primed: false,
         },
     );
 
@@ -789,6 +819,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 exited,
                 log: None,
                 runtime: protocol::PaneRuntimeState::default(),
+                initial_cursor_report_primed: false,
             },
         );
     }

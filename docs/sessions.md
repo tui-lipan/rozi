@@ -193,9 +193,9 @@ scrollback position, and theme - is **never** shared, so each client browses ind
   at its edges. When control moves, the new controller's size becomes canonical in a single resize
   wave, avoiding SIGWINCH thrash in the panes.
 - **Heartbeat.** The server pings each client and drops one that stops responding (≈15s), releasing
-  its lease. Because pongs are answered on the UI thread, a wedged client loses control (a merely
-  busy one has a generous timeout). Slow clients that fall too far behind are disconnected rather
-  than allowed to stall the broadcast to everyone else.
+  its lease. Pongs are answered by the transport thread, and time the server itself spends blocked
+  in a PTY or filesystem operation is excluded from the deadline. Slow clients that fall too far
+  behind are disconnected rather than allowed to stall the broadcast to everyone else.
 
 A UI crash (e.g. `kill -9`) leaves the ephemeral server running with its panes intact, so you can
 reattach to it (shown as `ephemeral`) from the picker and recover the scrollback.

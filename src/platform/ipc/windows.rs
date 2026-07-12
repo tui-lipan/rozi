@@ -61,9 +61,10 @@ use windows_sys::Win32::Storage::FileSystem::{
     WriteFile,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
-    PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState, WaitNamedPipeW,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+    GetNamedPipeServerProcessId, PIPE_NOWAIT, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState,
+    WaitNamedPipeW,
 };
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -184,6 +185,12 @@ impl IpcEndpoint {
                     format!("no listener at {}", self.pipe_name()),
                 ));
             }
+            if err.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    format!("{} is busy", self.pipe_name()),
+                ));
+            }
             return Err(err);
         }
         Err(io::Error::new(
@@ -300,13 +307,21 @@ impl IpcListener {
     /// `accept`.
     pub fn accept(&self) -> io::Result<IpcConnection> {
         let pending = self.pending.get();
-        let connected = unsafe { ConnectNamedPipe(pending, std::ptr::null_mut()) } != 0;
-        if !connected {
+        loop {
+            let connected = unsafe { ConnectNamedPipe(pending, std::ptr::null_mut()) } != 0;
+            if connected {
+                break;
+            }
             let err = io::Error::last_os_error();
             match err.raw_os_error().map(|code| code as u32) {
                 // The client connected in the window between `CreateNamedPipeW` and here. Not an
                 // error: the instance is connected, which is all we wanted.
-                Some(ERROR_PIPE_CONNECTED) => {}
+                Some(ERROR_PIPE_CONNECTED) => break,
+                // A short-lived discovery client connected and closed before this poll. Reset the
+                // same instance instead of letting one abandoned probe terminate the server.
+                Some(ERROR_NO_DATA) => {
+                    unsafe { DisconnectNamedPipe(pending) };
+                }
                 // Non-blocking mode with nobody waiting.
                 Some(ERROR_PIPE_LISTENING) => {
                     return Err(io::Error::new(

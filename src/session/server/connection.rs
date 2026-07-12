@@ -22,10 +22,15 @@ impl SessionServer {
         let mut inbound: Vec<(ClientId, Frame<ClientMessage>)> = Vec::new();
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
-            match client.decoder.read_from_status(&mut client.stream) {
-                Ok(protocol::FrameReadStatus::Eof) => dead.push(client.id),
-                Ok(_) => {}
-                Err(_) => dead.push(client.id),
+            for _ in 0..16 {
+                match client.decoder.read_from_status(&mut client.stream) {
+                    Ok(protocol::FrameReadStatus::Read(_)) => {}
+                    Ok(protocol::FrameReadStatus::WouldBlock) => break,
+                    Ok(protocol::FrameReadStatus::Eof) | Err(_) => {
+                        dead.push(client.id);
+                        break;
+                    }
+                }
             }
             loop {
                 match client.decoder.next_frame::<ClientMessage>() {

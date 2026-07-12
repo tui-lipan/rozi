@@ -196,7 +196,7 @@ pub fn resolve_interactive_shell(configured: Option<&[String]>, env: &ShellEnv) 
 fn windows_interactive_shell(env: &ShellEnv) -> ShellCommand {
     for candidate in ["pwsh.exe", "powershell.exe"] {
         if lookup_program_in(candidate, env).is_some() {
-            return ShellCommand::new(candidate);
+            return ShellCommand::new(candidate).arg("-NoLogo");
         }
     }
     ShellCommand::new(env.comspec.clone().unwrap_or_else(|| "cmd.exe".to_string()))
@@ -376,13 +376,13 @@ mod tests {
         };
         assert_eq!(
             windows_interactive_shell(&env),
-            ShellCommand::new("pwsh.exe")
+            ShellCommand::new("pwsh.exe").arg("-NoLogo")
         );
 
         std::fs::remove_file(dir.join("pwsh.exe")).unwrap();
         assert_eq!(
             windows_interactive_shell(&env),
-            ShellCommand::new("powershell.exe")
+            ShellCommand::new("powershell.exe").arg("-NoLogo")
         );
 
         env.windows_path_dirs.clear();

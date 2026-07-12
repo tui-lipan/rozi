@@ -35,6 +35,10 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long a client may go without a pong before it is disconnected (and its lease released). A
 /// wedged UI loses control deliberately; a merely busy one has ample slack.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Server work below this duration is ordinary scheduling overhead. Longer pauses are excluded from
+/// client heartbeat deadlines because the server itself could not exchange heartbeat frames.
+const HEARTBEAT_STALL_THRESHOLD: Duration = Duration::from_millis(100);
+const MAX_PTY_EVENTS_PER_TICK: usize = 256;
 /// Minimum spacing between control-request notifications to the controller from the same requester,
 /// so a held `request-control` key raises one toast rather than a stream (the roster badge is sticky
 /// regardless).
@@ -143,6 +147,9 @@ pub struct ServerPane {
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
+    /// The framework answered ConPTY's startup cursor query before spawning. Suppress the parser's
+    /// later duplicate cursor report so it cannot leak into child stdin.
+    pub initial_cursor_report_primed: bool,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are
@@ -243,6 +250,7 @@ impl SessionServer {
         session_name: impl Into<String>,
         settings: ServerSettings,
     ) -> Self {
+        let session_name = session_name.into();
         let (event_tx, event_rx) = mpsc::channel();
         Self {
             panes: HashMap::new(),
@@ -262,7 +270,7 @@ impl SessionServer {
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
-            session_name: session_name.into(),
+            session_name,
             endpoint: None,
             pending_listener: None,
             settings,
@@ -276,6 +284,7 @@ impl SessionServer {
         // ignores this timer and is durable until explicitly shut down.
         let mut no_client_since: Option<Instant> = None;
         while !self.shutdown {
+            let iteration_started = Instant::now();
             // A rename binds the new endpoint before the old listener is retired, so no window
             // exists where the session is discoverable under neither name. Dropping the old
             // listener here does not disturb already-accepted connections: existing clients stay
@@ -295,7 +304,10 @@ impl SessionServer {
             }
             self.accept_new(&listener)?;
 
-            while let Ok(event) = self.event_rx.try_recv() {
+            for _ in 0..MAX_PTY_EVENTS_PER_TICK {
+                let Ok(event) = self.event_rx.try_recv() else {
+                    break;
+                };
                 if let Some(outbound) = self.handle_event(event) {
                     self.broadcast_outbound(&outbound);
                 }
@@ -312,6 +324,8 @@ impl SessionServer {
             if let Err(err) = self.maybe_snapshot() {
                 eprintln!("hyprmux: session snapshot failed: {err}");
             }
+            let iteration_elapsed = iteration_started.elapsed();
+            self.credit_server_stall(iteration_elapsed);
             self.heartbeat();
             self.flush_clients();
 
@@ -327,7 +341,7 @@ impl SessionServer {
                 no_client_since = None;
             }
 
-            let idle = if self.clients.is_empty() { 20 } else { 6 };
+            let idle = if self.clients.is_empty() { 20 } else { 1 };
             std::thread::sleep(Duration::from_millis(idle));
         }
         if self.forget_snapshot
@@ -373,7 +387,10 @@ struct SpawnRequest {
 
 impl ServerPane {
     fn effective_title(&self) -> Option<String> {
-        self.screen.title().or_else(|| self.title.clone())
+        self.screen
+            .title()
+            .and_then(crate::pane::sanitize_terminal_title)
+            .or_else(|| self.title.clone())
     }
 
     /// The best *local* cwd known for this pane, suitable for `Command::current_dir` on a

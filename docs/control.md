@@ -1,20 +1,38 @@
 # Control socket and automation
 
-When the UI starts, hyprmux tries to bind an in-process Unix control socket at
-`$XDG_RUNTIME_DIR/hyprmux/control-<pid>.sock` (falling back to the system temp directory). If binding
-fails, the UI still starts and shows a warning; panes only receive `HYPRMUX_SOCKET` when a socket is
-available.
+When the UI starts, hyprmux binds a per-process control endpoint at `control-<pid>.sock` in its
+runtime directory. If binding fails, the UI still starts and shows a warning; panes only receive
+`HYPRMUX_SOCKET` when an endpoint is available.
+
+## Endpoints per platform
+
+| | Runtime directory | Transport |
+| --- | --- | --- |
+| Linux | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp directory | Unix-domain socket at that path |
+| macOS | a private directory under `$TMPDIR` | Unix-domain socket at that path |
+| Windows | `%LOCALAPPDATA%\hyprmux\run` | Named pipe `\\.\pipe\hyprmux.<user-sid>.control-<pid>` |
+
+On Windows the file in the runtime directory is a **discovery entry**, not the transport: it stands
+for a named pipe whose name is derived from the entry's own name and your SID. Point `--socket` and
+`HYPRMUX_SOCKET` at the entry, exactly as you would at a socket path on Unix — the same command
+line works on all three platforms. Nothing trusts the entry's contents; the pipe name is recomputed
+rather than read out of it, and every connection completes an authenticated handshake regardless.
+
+Endpoints are private to the user who created them (mode `0600` on Unix; a protected
+current-user-SID DACL plus `PIPE_REJECT_REMOTE_CLIENTS` on Windows, which makes a pipe unreachable
+over SMB). An entry left behind by a crashed process is replaced on the next bind; a *live* one
+cannot be squatted.
 
 Every spawned pane receives:
 
 - `HYPRMUX=1`
 - `HYPRMUX_PANE=<pane id>`
-- `HYPRMUX_SOCKET=<socket path>` when control is available
+- `HYPRMUX_SOCKET=<endpoint path>` when control is available
 
 ## CLI
 
-Control commands do not mount the UI. Socket discovery order is `--socket PATH`, `HYPRMUX_SOCKET`,
-then exactly one live socket in the runtime directory.
+Control commands do not mount the UI. Endpoint discovery order is `--socket PATH`, `HYPRMUX_SOCKET`,
+then exactly one live endpoint in the runtime directory.
 
 ```bash
 hyprmux list-panes

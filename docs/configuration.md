@@ -9,11 +9,25 @@ defaults and reports the problem as a startup toast.
 `hyprmux` resolves the config path in this order:
 
 1. `$HYPRMUX_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
-2. `$XDG_CONFIG_HOME/hyprmux/hyprmux.toml`.
-3. `~/.config/hyprmux/hyprmux.toml`.
+2. `$XDG_CONFIG_HOME/hyprmux/hyprmux.toml`, else `~/.config/hyprmux/hyprmux.toml` — on Windows,
+   `%APPDATA%\hyprmux\hyprmux.toml`.
 
 On startup a toast reports `Loaded config from <path>` on success, or a warning if the file
 could not be read or parsed.
+
+### Where hyprmux keeps its files
+
+Every path below is the *base* directory; profiles, themes, session snapshots, and pane logs live
+under it. macOS follows the XDG convention rather than `~/Library`, matching tmux, neovim, and
+alacritty. A relative `XDG_*` override is rejected outright rather than being resolved against the
+working directory, which would make the config directory move every time you `cd`.
+
+| | Linux/macOS | Windows |
+| --- | --- | --- |
+| Config (`hyprmux.toml`, `themes/`, `profiles/`) | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | `%APPDATA%\hyprmux` |
+| State (session autosave, resurrection snapshots, pane logs) | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
+| Cache (generated shell-integration scripts) | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | `%LOCALAPPDATA%\hyprmux\cache` |
+| Runtime (control and session endpoints) | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp directory | `%LOCALAPPDATA%\hyprmux\run` |
 
 ### Live reload and editing
 
@@ -156,8 +170,8 @@ historical form) or an argument-preserving array whose first element is the prog
 
 | Purpose | Linux/macOS | Windows |
 | --- | --- | --- |
-| `shell` | `$SHELL`, else `/bin/sh` | `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`, else `cmd.exe` (unverified - no Windows target in CI yet) |
-| `command_shell` | `["/bin/sh", "-c"]` (fixed, never probes `$SHELL`) | `[%COMSPEC%, "/D", "/S", "/C"]` (fixed; unverified) |
+| `shell` | `$SHELL`, else `/bin/sh` | `pwsh.exe`, else `powershell.exe`, else `%COMSPEC%`, else `cmd.exe` (found via `PATH` + `PATHEXT`) |
+| `command_shell` | `["/bin/sh", "-c"]` (fixed, never probes `$SHELL`) | `[%COMSPEC%, "/D", "/S", "/C"]` (fixed) |
 
 `command_shell` is deliberately never detection-based, so a `[keys] run`/hook/workbar-command
 snippet using it behaves identically regardless of the invoking user's interactive shell choice.
@@ -173,16 +187,30 @@ noninteractive `command_shell` runner. The integration emits OSC 7 current-direc
 OSC 133 prompt/command lifecycle markers; it sends only the executable basename for smart focus,
 never a full command line.
 
-| Shell | Injection mechanism | Notes |
+| Shell | Injection mechanism | What you get |
 | --- | --- | --- |
-| bash | Generated `--rcfile` wrapper | Chains `/etc/bash.bashrc` and `~/.bashrc`, then the integration. Login-shell configurations are intentionally left untouched because bash ignores `--rcfile` for login shells. |
-| zsh | Temporary `ZDOTDIR` shim | Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
-| fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
-| PowerShell | Not automatically injected | Full lifecycle integration will require a documented `$PROFILE` opt-in when Windows support lands. |
-| cmd.exe | Not automatically injected | Prompt markers only; full lifecycle metadata requires Clink. |
+| bash | Generated `--rcfile` wrapper | Everything. Chains `/etc/bash.bashrc` and `~/.bashrc`, then the integration. Login-shell configurations are intentionally left untouched, because bash ignores `--rcfile` for login shells. |
+| zsh | Temporary `ZDOTDIR` shim | Everything. Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
+| fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Everything. Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
+| PowerShell | `-NoExit -Command . <script>` | Everything. Runs *after* your `$PROFILE`, so your prompt (oh-my-posh, Starship, a hand-rolled `prompt` function) and PSReadLine configuration are wrapped, not replaced. A pane whose `shell` already carries `-Command`/`-File` is left alone — that is a "run this and exit" launch, not an interactive session. |
+| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook, and hyprmux will not touch the `AutoRun` registry key, so there is no way to report the running command or its exit status. Install [Clink](https://chrisant996.github.io/clink/) if you want the rest. |
 
 Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want hyprmux to
 leave shell startup completely unchanged.
+
+### PowerShell sessions hyprmux did not launch
+
+The `-NoExit -Command` injection above only applies to panes hyprmux starts. For a PowerShell
+reached some other way — nested inside a pane, or launched through a `command =` pane — add one
+line to your `$PROFILE` instead:
+
+```powershell
+. "$env:LOCALAPPDATA\hyprmux\cache\shell-integration\hyprmux.ps1"
+```
+
+(On Linux/macOS the script lives under `~/.cache/hyprmux/shell-integration/`.) The script is
+idempotent, so having both the `$PROFILE` line and the automatic injection is harmless. The
+equivalent for cmd.exe is `hyprmux.cmd` in the same directory, which just sets `PROMPT`.
 
 ## `[input]`
 
@@ -340,8 +368,11 @@ move its own split; otherwise hyprmux moves pane focus in that direction.
 | --- | --- | --- |
 | `editors` | vim family + `hx`/`helix`/`kak`/`emacs`/`emacsclient`/`fzf` | Foreground process names (matched case-insensitively) that should receive `Ctrl-h/j/k/l` themselves. Setting this **replaces** the default list. Names match the executable basename as seen by the OS (e.g. `nvim`, not a full path). |
 
-Foreground detection uses Linux `/proc`; on other platforms the check is a no-op and smart-focus
-always moves pane focus.
+Foreground detection prefers what the shell itself reports (see
+[`[shell_integration]`](#shell_integration)), and falls back to `/proc` on Linux and `libproc` on
+macOS. Windows has no fallback — process inspection is deliberately unsupported — so a Windows pane
+whose shell is not reporting metadata is treated as running an unknown program, and smart-focus
+simply moves pane focus.
 
 ## `[confirm]`
 

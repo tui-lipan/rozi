@@ -31,8 +31,9 @@ movement): the running shells and their scrollback are untouched. See
 
 ## Named sessions
 
-Session sockets live under hyprmux's runtime directory as `session-<name>.sock`. Names are
-sanitized when constructing the socket path.
+Session endpoints live under hyprmux's runtime directory as `session-<name>.sock` (on Windows, that
+entry stands for the named pipe `\\.\pipe\hyprmux.<user-sid>.session-<name>` — see
+[Control](control.md#endpoints-per-platform)). Names are sanitized when constructing the endpoint.
 
 ```bash
 hyprmux --attach dev            # attach UI to session "dev", starting it if needed
@@ -43,8 +44,30 @@ hyprmux list-sessions           # list connectable sessions with pane/layout sta
 hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
 ```
 
-`kill-session` only talks to hyprmux's session socket and sends the protocol `Shutdown` message; it
-does not kill arbitrary processes or remove unrelated files.
+`kill-session` only talks to hyprmux's session endpoint and sends the protocol `Shutdown` message;
+it does not kill arbitrary processes or remove unrelated files.
+
+## How a server starts and stops
+
+A server is started in the background by whichever client first needs it (`--attach`/`--session`
+with no server running), fully detached from that client's terminal — `DETACHED_PROCESS` with no
+inherited console on Windows.
+
+Stopping one is **always** the authenticated protocol `Shutdown` message first. That is the
+mechanism on every platform; it is what `kill-session`, the picker's kill action, and a clean quit
+of an ephemeral session all send, and it is what lets the server snapshot, close its PTYs, and
+retire its endpoint on the way out. Only when that fails — an unresponsive server, or one too old
+to even complete the handshake — does hyprmux escalate to forced termination: `SIGTERM` and then
+`SIGKILL` on Unix, `TerminateProcess` on Windows.
+
+A signal or console event asking the *server* to stop (`SIGTERM`/`SIGHUP`, or a Windows console
+close) is routed onto that same graceful teardown rather than killing it where it stands. On Windows
+the server additionally places itself and every ConPTY child in a kill-on-close Job Object, so even
+a crash or a forced kill cannot leave orphaned shells behind.
+
+Closing the terminal your *client* is running in (`SIGHUP`, or a Windows console close/logoff) is
+treated as a **detach**, not a crash: the layout is mirrored to disk and a named session's server is
+left running for you to reattach to.
 
 ## Naming and renaming the current session
 

@@ -229,6 +229,13 @@ mod imp {
     /// the clean detach/shutdown path gets to run. For `CTRL_CLOSE_EVENT`/`CTRL_LOGOFF_EVENT`/
     /// `CTRL_SHUTDOWN_EVENT` Windows still hard-kills us after a short timeout, which is exactly the
     /// window `on_hangup`'s detach needs.
+    ///
+    /// In practice the events that actually arrive in the *client* are the close/logoff/shutdown
+    /// ones. The TUI puts the console in raw mode, which clears `ENABLE_PROCESSED_INPUT`, so a typed
+    /// `Ctrl+C` is delivered as a key event to the focused pane rather than raised as a
+    /// `CTRL_C_EVENT` here - as it should be. `CTRL_C_EVENT`/`CTRL_BREAK_EVENT` are still handled
+    /// because a *server* has no raw-mode console, and because the client can receive one in the
+    /// window before raw mode is entered; a clean detach is the right answer in both cases.
     unsafe extern "system" fn console_handler(event: u32) -> i32 {
         match event {
             CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT

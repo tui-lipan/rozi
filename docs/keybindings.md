@@ -48,6 +48,20 @@ All exit and lifecycle commands are prefix/modifier actions like everything else
 disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); bind
 `quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux.
 
+### Windows input notes
+
+Key handling is the same on Windows, with two things worth knowing:
+
+- **`Alt` chords reach hyprmux, `Super` (the Windows key) largely does not.** The shell intercepts
+  most `Win+<key>` combinations system-wide before any console application sees them, so the default
+  `Alt` modifier is not merely the better choice on Windows — it is close to the only workable one.
+  `[input] modifier = "super"` will leave several commands unreachable.
+- **`Ctrl+C` goes to your pane, not to hyprmux.** The TUI puts the console in raw mode, so `Ctrl+C`
+  arrives as an ordinary key event and is forwarded to the program running in the focused pane,
+  exactly as on Unix. It does not interrupt hyprmux. *Closing the console window* (or logging off)
+  is what hyprmux treats as a clean detach — see
+  [Sessions](sessions.md#how-a-server-starts-and-stops).
+
 ## Command reference
 
 ### Panes

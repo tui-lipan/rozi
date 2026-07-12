@@ -2,13 +2,34 @@
 
 ## Requirements
 
-- A recent Rust toolchain (edition 2024; `rust-version = 1.88`).
+- A Rust toolchain of at least **1.88** (edition 2024; this is the MSRV, and CI builds on it).
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
 - A sibling checkout of [`tui-lipan`](../../tui-lipan).
 
-Linux and macOS use Unix-domain sockets for local control and named-session IPC. Windows named-pipe
-support is planned but not yet available; do not rely on Windows-specific configuration defaults
-until that work ships.
+## Platform support
+
+| | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| PTYs | Unix PTY | Unix PTY | ConPTY |
+| Control + session IPC | Unix-domain sockets | Unix-domain sockets | Named pipes |
+| Config directory | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | same | `%APPDATA%\hyprmux` |
+| State directory | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | same | `%LOCALAPPDATA%\hyprmux` |
+| Cache directory | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | same | `%LOCALAPPDATA%\hyprmux\cache` |
+| Runtime endpoints | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp directory | private directory under `$TMPDIR` | `%LOCALAPPDATA%\hyprmux\run` |
+| Shell integration | bash, zsh, fish | bash, zsh, fish | PowerShell (full), cmd.exe (prompt markers only) |
+| Foreground-program detection | shell metadata, then `/proc` | shell metadata, then `libproc` | shell metadata only |
+
+Endpoints are private to the user who created them: mode `0700`/`0600` on Unix, and a protected
+current-user-SID DACL plus `PIPE_REJECT_REMOTE_CLIENTS` on Windows. Every connection additionally
+completes an authenticated protocol handshake, so discovery entries are hints, never trust.
+
+**Windows needs Windows 10 version 1809 (build 17763) or newer** — the build that introduced
+ConPTY. hyprmux checks for it at startup and refuses with an explanation rather than failing on
+every pane. Any console host from that build onwards has the VT support hyprmux renders through;
+Windows Terminal is recommended but not required. Windows deliberately has **no process
+inspection**: hyprmux never probes a PEB or walks a process tree, so a pane's working directory and
+foreground program come from shell integration or not at all (see
+[Terminal](terminal.md#smart-focus-and-cwd-inheritance)).
 
 > **Dependency note.** `tui-lipan` is a **path dependency** declared in `Cargo.toml` as
 > `{ path = "../tui-lipan", features = ["terminal", "theme-reload"] }`. The sibling

@@ -9,8 +9,8 @@ hyprmux runs an always-server model: a background session server owns every PTY 
 attaches to it. A bare launch uses a disposable per-process ephemeral session; explicit `--attach` /
 `--session` connects to a persistent named session for detach/reattach-style workflows.
 
-It supports native Linux and macOS builds. Windows named-pipe and ConPTY support remains in
-development.
+It builds natively on Linux, macOS, and Windows. See the
+[platform support matrix](docs/getting-started.md#platform-support).
 
 ```bash
 cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml

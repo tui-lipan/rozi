@@ -32,19 +32,43 @@ directory reports, and OSC 133 prompt/input/execution/completion boundaries. Val
 reports take precedence over native process inspection; remote OSC 7 hosts are shown as metadata
 but are never used as spawn directories.
 
-In the default `[shell_integration]` `auto` mode, bash, zsh, and fish panes emit these markers
-without modifying dotfiles. Their execution marker includes a hyprmux-namespaced executable
-basename only, never a command line. Smart focus uses that shell-reported identity first, then
-native Linux/macOS inspection when available; without either source it conservatively treats the
-foreground program as unknown. See [Configuration](configuration.md#shell_integration) for the
-per-shell setup and opt-out.
+In the default `[shell_integration]` `auto` mode, bash, zsh, fish, and PowerShell panes emit these
+markers without modifying dotfiles, registry keys, or `$PROFILE`. Their execution marker includes a
+hyprmux-namespaced executable basename only, never a command line — treat everything a terminal
+tells you as untrusted, including your own shell's report of what you just typed. See
+[Configuration](configuration.md#shell_integration) for the per-shell setup and opt-out.
 
-### New panes inherit the focused directory
+cmd.exe is the exception: it reports its working directory and prompt boundaries but nothing about
+the command it is running, because it offers no pre-execution hook and hyprmux will not install an
+`AutoRun` registry key.
+
+### Smart focus and cwd inheritance
 
 A new pane opens in the **focused pane's current working directory** when it can be discovered,
-falling back to the configured `cwd`. A valid local OSC report is preferred; Linux and macOS then
-inspect the PTY's foreground process as a fallback, followed by the launch directory. The same
-live cwd is what *Save profile* records (see [Project profiles](project-profiles.md)).
+falling back to the configured `cwd`. Likewise, smart focus needs to know what program a pane is
+running. Both resolve through the same precedence:
+
+| | cwd | Foreground program |
+| --- | --- | --- |
+| 1 | A valid **local** OSC 7 / OSC 9;9 report | The shell's own OSC 133 execution marker |
+| 2 | Linux `/proc` / macOS `libproc` inspection of the PTY's process | Linux `/proc` / macOS foreground process group |
+| 3 | The pane's launch directory | — (treated as unknown) |
+| 4 | The configured `cwd` | — |
+
+A path that decodes to something not absolute — a Windows drive-relative `C:foo`, a rooted-but-
+driveless `\foo`, a bare `foo` — falls through to the next tier rather than being repaired. A path
+we would have to guess at is a path we should not be handing to a new pane.
+
+**Windows has no tier 2.** Process inspection is deliberately unsupported: hyprmux never probes a
+PEB or walks a process tree. Shell integration is therefore the only source of this metadata on
+Windows, which is why the PowerShell integration is worth having and why cmd.exe panes will not do
+smart focus.
+
+An OSC 7 report carrying a *remote* host (an SSH session with the integration installed on the far
+side) is displayed but never used as a spawn directory — the path is real, but not on this machine.
+A host hyprmux cannot resolve is treated as remote, which is the safe direction to be wrong in.
+
+The live cwd is also what *Save profile* records (see [Project profiles](project-profiles.md)).
 
 ## Mouse support
 

@@ -6,6 +6,10 @@
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
 - A sibling checkout of [`tui-lipan`](../../tui-lipan).
 
+Linux and macOS use Unix-domain sockets for local control and named-session IPC. Windows named-pipe
+support is planned but not yet available; do not rely on Windows-specific configuration defaults
+until that work ships.
+
 > **Dependency note.** `tui-lipan` is a **path dependency** declared in `Cargo.toml` as
 > `{ path = "../tui-lipan", features = ["terminal", "theme-reload"] }`. The sibling
 > `../tui-lipan` checkout must exist for `hyprmux` to build. The `terminal` feature pulls

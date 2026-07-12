@@ -152,6 +152,30 @@ fn lookup_program_in(program: &str, env: &ShellEnv) -> Option<std::path::PathBuf
     None
 }
 
+/// Whether `program` names an executable available to the current process.
+pub fn program_exists(program: &str) -> bool {
+    #[cfg(windows)]
+    {
+        lookup_program(program).is_some()
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let executable = |path: &std::path::Path| {
+            path.metadata().is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        };
+        if program.contains('/') {
+            return executable(std::path::Path::new(program));
+        }
+        std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| executable(&dir.join(program)))
+        })
+    }
+}
+
 /// Resolve the interactive-shell launch policy. `configured` is the user's `shell` config value
 /// (already normalized to argv form by `config::file`); empty is treated as "not configured".
 pub fn resolve_interactive_shell(configured: Option<&[String]>, env: &ShellEnv) -> ShellCommand {
@@ -234,6 +258,25 @@ mod tests {
     fn from_argv_rejects_empty_argv_and_empty_program() {
         assert_eq!(ShellCommand::from_argv(&[]), None);
         assert_eq!(ShellCommand::from_argv(&argv(&[""])), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn program_exists_requires_an_executable_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "hyprmux-command-test-executable-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("editor");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        assert!(!program_exists(&path.to_string_lossy()));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(program_exists(&path.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

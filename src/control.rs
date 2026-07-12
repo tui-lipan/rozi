@@ -133,12 +133,13 @@ impl Drop for ControlSocketGuard {
 /// platform plan Phase 3); the private-directory creation/validation policy itself lives in
 /// [`crate::platform::fs_security`].
 pub fn runtime_dir() -> std::io::Result<PathBuf> {
-    runtime_dir_with_base(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from))
+    crate::platform::paths::runtime_dir(&crate::platform::paths::PlatformEnv::from_process())
 }
 
+#[cfg(all(test, unix))]
 fn runtime_dir_with_base(base: Option<PathBuf>) -> std::io::Result<PathBuf> {
     let env = crate::platform::paths::PlatformEnv {
-        xdg_runtime_dir: base,
+        xdg_runtime_dir: base.filter(|path| path.is_absolute()),
         ..Default::default()
     };
     crate::platform::paths::runtime_dir(&env)
@@ -167,7 +168,11 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
                 let event_hub = event_hub.clone();
                 std::thread::spawn(move || handle_connection(stream, link, event_hub));
             }
-            Err(_) => return,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => {
+                eprintln!("hyprmux: control endpoint accept failed: {err}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
     }
 }

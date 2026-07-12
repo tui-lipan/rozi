@@ -297,10 +297,10 @@ pub(crate) fn handle_pane_scroll(
     id: PaneId,
     offset: usize,
 ) -> Update {
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        if pane.terminal.set_scrollback(offset) {
-            return Update::full();
-        }
+    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
+        && pane.terminal.set_scrollback(offset)
+    {
+        return Update::full();
     }
     Update::none()
 }

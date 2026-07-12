@@ -62,6 +62,7 @@ pub struct SessionServer {
     forget_snapshot: bool,
     dirty: bool,
     last_snapshot: Instant,
+    last_runtime_poll: Instant,
     last_attached_count: u32,
     session_name: String,
     /// The endpoint this server currently listens on. Set by [`run_named_session`]; a rename
@@ -138,7 +139,7 @@ pub struct ServerPane {
     /// from the detached server's own stale environment.
     pub shell: Vec<String>,
     pub env: Vec<(String, String)>,
-    /// Cached result of the last [`SessionServer::recompute_pane_runtime`] call (Phase 6); kept
+    /// Cached result of the last [`SessionServer::sync_pane_runtime`] call; kept
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
@@ -259,6 +260,7 @@ impl SessionServer {
             forget_snapshot: false,
             dirty: false,
             last_snapshot: Instant::now(),
+            last_runtime_poll: Instant::now(),
             last_attached_count: 0,
             session_name: session_name.into(),
             endpoint: None,
@@ -300,6 +302,13 @@ impl SessionServer {
             }
 
             self.pump_clients();
+            self.poll_pane_runtime();
+            if let Some((next, retired)) = self.pending_listener.take() {
+                listener = next;
+                if let Some(retired) = retired {
+                    retired.remove_stale();
+                }
+            }
             if let Err(err) = self.maybe_snapshot() {
                 eprintln!("hyprmux: session snapshot failed: {err}");
             }
@@ -381,9 +390,7 @@ impl ServerPane {
 }
 
 /// Build the PTY spawn config from the client-resolved `shell`/`command_shell` argv (see
-/// [`crate::platform::command`]). Falls back to a bare `/bin/sh` if a caller ever sends an empty
-/// argv (should not happen - the client always resolves a non-empty one - but a spawn config
-/// needs *some* program either way).
+/// [`crate::platform::command`]). Empty argv falls back to the current platform's resolved policy.
 ///
 /// A pane with a `command` runs it through the deterministic `command_shell` runner; a pane without
 /// one runs the resolved interactive `shell`.
@@ -401,16 +408,19 @@ fn pty_config(
 ) -> TerminalPtyConfig {
     use crate::platform::command::ShellCommand;
 
+    let env = crate::platform::command::ShellEnv::from_process();
+
     if let Some(command) = command.filter(|command| !command.trim().is_empty()) {
         let runner = ShellCommand::from_argv(command_shell)
-            .unwrap_or_else(|| ShellCommand::new("/bin/sh").arg("-c"));
+            .unwrap_or_else(|| crate::platform::command::resolve_command_shell(None, &env));
         let mut config = TerminalPtyConfig::new(runner.program).term("xterm-256color");
         for arg in runner.args {
             config = config.arg(arg);
         }
         config.arg(command.to_string())
     } else {
-        let shell = ShellCommand::from_argv(shell).unwrap_or_else(|| ShellCommand::new("/bin/sh"));
+        let shell = ShellCommand::from_argv(shell)
+            .unwrap_or_else(|| crate::platform::command::resolve_interactive_shell(None, &env));
         let mut config = TerminalPtyConfig::new(shell.program).term("xterm-256color");
         for arg in shell.args {
             config = config.arg(arg);

@@ -6,14 +6,8 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-/// Bumped 7 -> 8 for the cross-platform plan's launch-policy and runtime-state changes (Phases
-/// 4/6/7): `SpawnPane` now carries a client-resolved `shell`/`command_shell` argv instead of the
-/// server resolving from its own process environment or on-disk config, which could be stale
-/// relative to a live-reloaded client. Phase 6/7's `PaneMeta::runtime` field and the
-/// `ServerMessage::PaneRuntimeChanged` message land within this same v8 rather than bumping again:
-/// the plan's own Phase 4 changelog entry already described v8 as covering "launch-policy and
-/// runtime-state changes" together, and this crate is pre-1.0 with no wire compatibility
-/// obligations to an already-shipped v8, so there is nothing a second bump would protect.
+/// Protocol version shared by clients and session servers. Spawn requests carry resolved launch
+/// policy, and pane metadata includes server-authoritative runtime state.
 pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
@@ -57,7 +51,7 @@ pub struct PaneMeta {
     pub title: Option<String>,
     pub exited: Option<i32>,
     pub logging: bool,
-    /// Authoritative pane runtime state (cross-platform plan Phase 6/7): CWD, command lifecycle,
+    /// Authoritative pane runtime state: CWD, command lifecycle,
     /// and foreground executable, as tracked server-side from shell-integration OSC reports and
     /// native process-inspection fallbacks. Present in every `Attached`/`SpawnResult`-adjacent
     /// pane listing so a freshly attached client starts with current state rather than waiting for
@@ -65,7 +59,7 @@ pub struct PaneMeta {
     pub runtime: PaneRuntimeState,
 }
 
-/// Which precedence tier produced [`PaneRuntimeState::cwd`] (cross-platform plan Phase 6).
+/// Which precedence tier produced [`PaneRuntimeState::cwd`].
 ///
 /// Tier order, most to least authoritative: [`ShellReport`](Self::ShellReport) (a local or remote
 /// `OSC 7`/`OSC 9;9` report) -> [`ProcessInspector`](Self::ProcessInspector) (native `/proc` or
@@ -111,7 +105,7 @@ impl From<TerminalCommandPhase> for PaneCommandPhase {
     }
 }
 
-/// Authoritative pane runtime state (cross-platform plan Phase 6): the server-owned `TerminalPty`/
+/// Authoritative pane runtime state: the server-owned `TerminalPty`/
 /// `TerminalScreen` pair is the source of truth for all of this, combining shell-integration OSC
 /// reports with native process-inspection fallbacks per [`PaneCwdSource`]'s precedence order.
 ///
@@ -317,7 +311,7 @@ pub enum ServerMessage {
         path: Option<String>,
         error: Option<String>,
     },
-    /// A pane's [`PaneRuntimeState`] changed (cross-platform plan Phase 7): broadcast after raw
+    /// A pane's [`PaneRuntimeState`] changed: broadcast after raw
     /// pane output for the same event, once the server has both processed the bytes into the
     /// screen and re-derived runtime state from them. `generation` guards against a message that
     /// raced a respawn; `state.sequence` guards against out-of-order delivery.

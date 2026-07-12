@@ -57,7 +57,8 @@ set `name` (its custom name, settable at runtime with *Rename workspace* - see
 
 - `name`: pane title shown by `hyprmux` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
-- `command`: shell command string passed to the configured shell as `shell -lc <command>` when launching the pane.
+- `command`: command string run through the configured `command_shell` when launching the pane.
+- `keep_open`: start the configured interactive shell in the same pane after `command` exits.
 - `floating`: whether the pane is floating instead of tiled.
 - `fullscreen`: whether the pane starts fullscreen.
 - `rect`: floating geometry as `{ x, y, w, h }`; used for floating panes.
@@ -78,7 +79,8 @@ focused_pane = 0
 id = 0
 name = "server"
 cwd = "~/code/my-app"
-command = "cargo run; exec ${SHELL:-/bin/sh}"
+command = "cargo run"
+keep_open = true
 
 [[workspaces.panes]]
 id = 1
@@ -98,10 +100,11 @@ rect = { x = 8.0, y = 4.0, w = 80.0, h = 24.0 }
 
 ## Command lifetime
 
-Profile commands run as `shell -lc <command>`. If the command exits, the shell exits and `hyprmux` closes that pane. To keep a pane open after a command finishes, replace the shell process at the end of the command:
+Profile commands run through the configured `command_shell`. If the command exits, `hyprmux` closes that pane. Set `keep_open = true` to preserve the pane and start the configured interactive shell in place after the command finishes:
 
 ```toml
-command = "cargo run; exec ${SHELL:-/bin/sh}"
+command = "cargo run"
+keep_open = true
 ```
 
 ## Session auto-save

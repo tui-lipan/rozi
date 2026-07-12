@@ -709,6 +709,54 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
 }
 
 #[test]
+fn semantic_runtime_change_is_queued_after_its_raw_output() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    server.panes.insert(
+        1,
+        ServerPane {
+            generation: 2,
+            title: None,
+            cwd: None,
+            command: None,
+            keep_open: false,
+            command_completed: false,
+            shell: Vec::new(),
+            env: Vec::new(),
+            palette: test_palette(),
+            pty: None,
+            screen: TerminalScreen::new(5, 20, 100),
+            cols: 20,
+            rows: 5,
+            exited: None,
+            log: None,
+            runtime: protocol::PaneRuntimeState::default(),
+        },
+    );
+
+    let bytes = b"\x1b]7;file://localhost/repo\x1b\\".to_vec();
+    assert!(
+        server
+            .handle_event(ServerEvent::Pty(
+                1,
+                2,
+                TerminalPtyEvent::Output(bytes.clone().into()),
+            ))
+            .is_none()
+    );
+
+    let client = server
+        .clients
+        .iter()
+        .find(|item| item.id == client)
+        .unwrap();
+    assert_eq!(client.outbox.len(), 2);
+    assert_eq!(client.outbox[0][4], 2, "raw pane frame must be first");
+    assert_eq!(client.outbox[1][4], 1, "runtime control frame must follow");
+    assert_eq!(server.panes[&1].runtime.cwd.as_deref(), Some("/repo"));
+}
+
+#[test]
 fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     let root = std::env::temp_dir().join(format!("hyprmux-resurrect-test-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);

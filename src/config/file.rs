@@ -1243,10 +1243,10 @@ pub fn load_config() -> LoadedConfig {
             )),
         }
     }
-    if let Some(padding) = parsed.pane.padding.clone() {
-        if let Some(resolved) = resolve_pane_padding(padding, &mut warnings) {
-            config.pane.padding = resolved;
-        }
+    if let Some(padding) = parsed.pane.padding.clone()
+        && let Some(resolved) = resolve_pane_padding(padding, &mut warnings)
+    {
+        config.pane.padding = resolved;
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {
         match CapStyle::parse(title_style) {

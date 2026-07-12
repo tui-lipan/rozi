@@ -44,7 +44,11 @@ impl SplitAxis {
     }
 
     pub fn at_depth(self, depth: usize) -> Self {
-        if depth % 2 == 0 { self } else { self.flipped() }
+        if depth.is_multiple_of(2) {
+            self
+        } else {
+            self.flipped()
+        }
     }
 }
 
@@ -905,7 +909,7 @@ impl Workspace {
             focused_pane: None,
             synchronized: false,
             layout_kind: LayoutKind::Dwindle,
-            start_axis: if index % 2 == 0 {
+            start_axis: if index.is_multiple_of(2) {
                 SplitAxis::Horizontal
             } else {
                 SplitAxis::Vertical

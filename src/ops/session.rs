@@ -45,14 +45,13 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     match picker_rows(ctx) {
         Ok(rows) => {
             let mut picker = SessionPickerState::new(rows);
-            if let Some(current_name) = ctx.state.session_name.as_deref() {
-                if let Some(pos) = picker
+            if let Some(current_name) = ctx.state.session_name.as_deref()
+                && let Some(pos) = picker
                     .entries
                     .iter()
                     .position(|entry| entry.name == current_name)
-                {
-                    picker.selected = pos;
-                }
+            {
+                picker.selected = pos;
             }
             ctx.state.session_picker = Some(picker);
         }

@@ -39,9 +39,6 @@ pub struct PlatformEnv {
     pub xdg_state_home: Option<PathBuf>,
     /// `$XDG_CACHE_HOME`, only if it was set to a non-empty absolute path.
     ///
-    /// [`cache_dir`] is not called by any current hyprmux code path - there is no cache-directory
-    /// use case yet - so this field is resolved but otherwise unread for now.
-    #[allow(dead_code)]
     pub xdg_cache_home: Option<PathBuf>,
     /// `$XDG_RUNTIME_DIR`, only if it was set to a non-empty absolute path.
     pub xdg_runtime_dir: Option<PathBuf>,
@@ -106,9 +103,6 @@ pub fn state_dir(env: &PlatformEnv) -> PathBuf {
 /// Base cache directory: `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux`;
 /// `%LOCALAPPDATA%\hyprmux\cache` on Windows.
 ///
-/// No hyprmux call site needs a cache directory yet; kept public and tested now so the concept
-/// exists per the plan's path-policy table, ready for a future consumer.
-#[allow(dead_code)]
 pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata

@@ -53,6 +53,11 @@ pub fn current_user_label() -> String {
 /// `None` when the platform cannot report one - callers must then treat any OSC 7 report carrying a
 /// host component as remote, which is the safe direction to fail.
 pub fn hostname() -> Option<String> {
+    static HOSTNAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    HOSTNAME.get_or_init(resolve_hostname).clone()
+}
+
+fn resolve_hostname() -> Option<String> {
     #[cfg(unix)]
     {
         let mut buffer = [0 as libc::c_char; 256];

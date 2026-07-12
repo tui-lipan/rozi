@@ -1,5 +1,7 @@
 use super::*;
 use std::fs::OpenOptions;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 impl SessionServer {
@@ -242,6 +244,7 @@ impl SessionServer {
                             generation,
                             bytes: bytes.to_vec(),
                         };
+                        self.broadcast_outbound(&output);
                         if let Some(error) = logging_error {
                             self.broadcast_outbound(&ServerOutbound::Control(
                                 ServerMessage::PaneLoggingChanged {
@@ -256,7 +259,7 @@ impl SessionServer {
                         if !semantic_events.is_empty() {
                             self.sync_pane_runtime(id, generation);
                         }
-                        Some(output)
+                        None
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.pty = None;
@@ -433,16 +436,9 @@ impl SessionServer {
         let result = root
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "state directory unavailable"))
             .and_then(|root| {
-                #[cfg(unix)]
-                use std::os::unix::fs::PermissionsExt;
-
-                fs::create_dir_all(&root)?;
-                #[cfg(unix)]
-                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+                crate::platform::fs_security::ensure_private_dir(&root)?;
                 let dir = root.join(&self.session_name);
-                fs::create_dir_all(&dir)?;
-                #[cfg(unix)]
-                fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+                crate::platform::fs_security::ensure_private_dir(&dir)?;
                 let path = dir.join(format!("{id}-{generation}.log"));
                 let file = OpenOptions::new().create(true).append(true).open(&path)?;
                 #[cfg(unix)]

@@ -19,6 +19,7 @@ pub struct TerminalPane {
     pub foreground_program: Option<String>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
+    pub runtime_sequence: u64,
     pub last_palette: Option<TerminalColorPalette>,
     seen_bell_count: u64,
     screen: Box<TerminalScreen>,
@@ -66,6 +67,7 @@ impl TerminalPane {
             foreground_program: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
+            runtime_sequence: 0,
             last_palette: None,
             seen_bell_count: 0,
             screen: Box::new(screen),
@@ -81,6 +83,7 @@ impl TerminalPane {
     /// of the current size, ready to be seeded by the replay bytes that follow an attach or spawn.
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
+        self.runtime_sequence = 0;
         *self.screen = TerminalScreen::new(self.rows, self.cols, 5000);
         self.seen_bell_count = self.screen.bell_count();
         if let Some(palette) = self.last_palette {

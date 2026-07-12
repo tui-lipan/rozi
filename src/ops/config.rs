@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::Duration;
 
@@ -239,29 +238,7 @@ fn missing_editor_command(editor: &str) -> Option<String> {
 }
 
 fn command_exists(command: &str) -> bool {
-    if command.contains('/') {
-        return is_executable_file(Path::new(command));
-    }
-
-    std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths).any(|dir| is_executable_file(&dir.join(command)))
-        })
-        .unwrap_or(false)
-}
-
-#[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    path.metadata()
-        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
-}
-
-#[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+    crate::platform::command::program_exists(command)
 }
 
 fn first_shell_word(value: &str) -> Option<&str> {

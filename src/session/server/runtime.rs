@@ -10,7 +10,25 @@ use super::*;
 use crate::platform::process::{PlatformProcessInspector, ProcessInspector};
 use crate::session::protocol::{PaneCommandPhase, PaneCwdSource, PaneRuntimeState};
 
+const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
 impl SessionServer {
+    pub(super) fn poll_pane_runtime(&mut self) {
+        if self.last_runtime_poll.elapsed() < RUNTIME_POLL_INTERVAL {
+            return;
+        }
+        self.last_runtime_poll = Instant::now();
+        let panes: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, pane)| pane.pty.is_some())
+            .map(|(&id, pane)| (id, pane.generation))
+            .collect();
+        for (id, generation) in panes {
+            self.sync_pane_runtime(id, generation);
+        }
+    }
+
     /// Recompute `pane_id`'s runtime state and broadcast a
     /// [`ServerMessage::PaneRuntimeChanged`] if it changed. `generation` must match the pane's
     /// current generation - a stale caller (e.g. a queued event racing a respawn) is a silent

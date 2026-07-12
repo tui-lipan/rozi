@@ -26,7 +26,7 @@ Each pane entry supports:
 | --- | --- |
 | `name` | Pane title shown in the titlebar. |
 | `cwd` | Working directory when the pane launches. `~` expands to `$HOME`. |
-| `command` | Run via `shell -lc <command>` when the pane opens. |
+| `command` | Run through the configured `command_shell` when the pane opens. |
 | `keep_open` | When `true`, drop into an interactive shell when the command exits instead of closing the pane. |
 | `floating` | Start as a floating pane instead of tiled. |
 | `fullscreen` | Start fullscreen. |

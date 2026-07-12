@@ -71,9 +71,7 @@ impl SessionServer {
     fn write_snapshot(&mut self) -> io::Result<()> {
         let final_path = self.snapshot_path()?;
         let parent = final_path.parent().unwrap();
-        fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        crate::platform::fs_security::ensure_private_dir(parent)?;
         let suffix = format!(
             "{}.{}",
             std::process::id(),
@@ -84,13 +82,9 @@ impl SessionServer {
         );
         let temp = parent.join(format!(".{}.tmp-{suffix}", self.session_name));
         let backup = parent.join(format!(".{}.old-{suffix}", self.session_name));
-        fs::create_dir(&temp)?;
-        #[cfg(unix)]
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o700))?;
+        crate::platform::fs_security::ensure_private_dir(&temp)?;
         let panes_dir = temp.join("panes");
-        fs::create_dir(&panes_dir)?;
-        #[cfg(unix)]
-        fs::set_permissions(&panes_dir, fs::Permissions::from_mode(0o700))?;
+        crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
 
         let mut panes = Vec::new();
         for (&pane_id, pane) in &mut self.panes {

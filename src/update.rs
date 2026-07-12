@@ -1042,7 +1042,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
                 && pane.pty_generation == generation
+                && state.sequence > pane.terminal.runtime_sequence
             {
+                pane.terminal.runtime_sequence = state.sequence;
                 pane.terminal.cwd = state.cwd;
                 pane.terminal.foreground_program = state.foreground_program;
                 pane.terminal.command_phase = state.command_phase;
@@ -1252,6 +1254,7 @@ fn bind_attached_pane_backends(
             pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
             pane.terminal.command_phase = meta.runtime.command_phase;
             pane.terminal.last_exit_status = meta.runtime.last_exit_status;
+            pane.terminal.runtime_sequence = meta.runtime.sequence;
             pane.terminal.child_pid = meta.pid;
             pane.logging = meta.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;
@@ -1307,6 +1310,7 @@ fn apply_attached_panes(
             pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
             pane.terminal.command_phase = attached.runtime.command_phase;
             pane.terminal.last_exit_status = attached.runtime.last_exit_status;
+            pane.terminal.runtime_sequence = attached.runtime.sequence;
             pane.terminal.child_pid = attached.pid;
             pane.logging = attached.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;

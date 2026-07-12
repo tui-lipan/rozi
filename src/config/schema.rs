@@ -624,13 +624,13 @@ impl WorkbarSegment {
     /// interval) or `<interval_secs>:<command>` when the part before the first colon is a
     /// plain integer.
     fn parse_command(rest: &str) -> Self {
-        if let Some((secs, command)) = rest.split_once(':') {
-            if let Ok(interval_secs) = secs.trim().parse::<u64>() {
-                return Self::Command {
-                    command: command.to_string(),
-                    interval_secs: interval_secs.max(1),
-                };
-            }
+        if let Some((secs, command)) = rest.split_once(':')
+            && let Ok(interval_secs) = secs.trim().parse::<u64>()
+        {
+            return Self::Command {
+                command: command.to_string(),
+                interval_secs: interval_secs.max(1),
+            };
         }
         Self::Command {
             command: rest.to_string(),

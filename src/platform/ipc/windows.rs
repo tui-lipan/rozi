@@ -623,3 +623,162 @@ impl Drop for OwnedHandle {
         unsafe { CloseHandle(self.0) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Endpoints are registry entries under a private directory, so each test needs its own to avoid
+    /// colliding on the derived pipe name when the suite runs in parallel.
+    fn temp_endpoint(name: &str) -> IpcEndpoint {
+        let dir = std::env::temp_dir().join(format!("hyprmux-ipc-win-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        IpcEndpoint::at_path(dir.join(format!("{name}-{}.sock", std::process::id())))
+    }
+
+    #[test]
+    fn bind_then_connect_round_trips_bytes_in_both_directions() {
+        let endpoint = temp_endpoint("roundtrip");
+        endpoint.remove_stale();
+        let bound = endpoint.bind().expect("bind");
+        let listener = bound.into_listener();
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let mut client = endpoint.connect().expect("connect");
+
+        let mut server_conn = loop {
+            match listener.accept() {
+                Ok(conn) => break conn,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(err) => panic!("accept failed: {err}"),
+            }
+        };
+
+        client.write_all(b"ping").expect("client write");
+        let mut buf = [0u8; 4];
+        server_conn.read_exact(&mut buf).expect("server read");
+        assert_eq!(&buf, b"ping");
+
+        server_conn.write_all(b"pong").expect("server write");
+        let mut buf = [0u8; 4];
+        client.read_exact(&mut buf).expect("client read");
+        assert_eq!(&buf, b"pong");
+
+        endpoint.remove_stale();
+    }
+
+    #[test]
+    fn a_nonblocking_read_with_no_data_reports_would_block_not_eof() {
+        // The single most load-bearing behavior of this backend: `PIPE_NOWAIT` reports "nothing to
+        // read" as a *successful zero-byte read*, which `io::Read` would take for EOF - and the
+        // session server would take for "this client hung up" and evict it on its first idle poll.
+        let endpoint = temp_endpoint("wouldblock");
+        endpoint.remove_stale();
+        let bound = endpoint.bind().expect("bind");
+        let listener = bound.into_listener();
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let _client = endpoint.connect().expect("connect");
+        let mut server_conn = loop {
+            match listener.accept() {
+                Ok(conn) => break conn,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(err) => panic!("accept failed: {err}"),
+            }
+        };
+        server_conn.set_nonblocking(true).expect("nonblocking");
+
+        let mut buf = [0u8; 16];
+        let err = server_conn
+            .read(&mut buf)
+            .expect_err("a read with nothing buffered must not succeed with 0 bytes");
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+
+        endpoint.remove_stale();
+    }
+
+    #[test]
+    fn a_closed_peer_reads_as_eof() {
+        // The other half of the same distinction: a *genuine* disconnect is the one thing that may
+        // become `Ok(0)`.
+        let endpoint = temp_endpoint("eof");
+        endpoint.remove_stale();
+        let bound = endpoint.bind().expect("bind");
+        let listener = bound.into_listener();
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let client = endpoint.connect().expect("connect");
+        let mut server_conn = loop {
+            match listener.accept() {
+                Ok(conn) => break conn,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(err) => panic!("accept failed: {err}"),
+            }
+        };
+        drop(client);
+
+        let mut buf = [0u8; 16];
+        assert_eq!(
+            server_conn.read(&mut buf).expect("read after peer close"),
+            0
+        );
+
+        endpoint.remove_stale();
+    }
+
+    #[test]
+    fn each_end_reports_the_other_ends_pid() {
+        let endpoint = temp_endpoint("peerpid");
+        endpoint.remove_stale();
+        let bound = endpoint.bind().expect("bind");
+        let listener = bound.into_listener();
+        listener.set_nonblocking(true).expect("nonblocking");
+
+        let client = endpoint.connect().expect("connect");
+        let server_conn = loop {
+            match listener.accept() {
+                Ok(conn) => break conn,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(POLL_INTERVAL);
+                }
+                Err(err) => panic!("accept failed: {err}"),
+            }
+        };
+
+        // Both ends are this process here, so both directions must report this pid - which is
+        // exactly what distinguishes a working `GetNamedPipe{Client,Server}ProcessId` pairing from
+        // one that asks the wrong end and gets nothing.
+        assert_eq!(client.peer_pid(), Some(std::process::id()));
+        assert_eq!(server_conn.peer_pid(), Some(std::process::id()));
+
+        endpoint.remove_stale();
+    }
+
+    #[test]
+    fn a_stale_registry_entry_is_replaced_and_a_live_one_is_not_squattable() {
+        let endpoint = temp_endpoint("stale");
+        endpoint.remove_stale();
+
+        // A registry entry with no pipe behind it (a crashed server) must not block a rebind.
+        std::fs::write(endpoint.path(), "stale").expect("plant a stale entry");
+        assert!(!endpoint.is_live());
+        let bound = endpoint.bind().expect("rebind over a stale entry");
+
+        // While that bind is live, a second one must fail closed rather than quietly interposing on
+        // the name (FILE_FLAG_FIRST_PIPE_INSTANCE).
+        assert!(endpoint.is_live());
+        assert!(
+            endpoint.bind().is_err(),
+            "a second bind on a live endpoint must fail"
+        );
+
+        drop(bound);
+        endpoint.remove_stale();
+    }
+}

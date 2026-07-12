@@ -451,6 +451,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             rows: 5,
             exited: None,
             log: None,
+            runtime: protocol::PaneRuntimeState::default(),
         },
     );
 
@@ -499,6 +500,7 @@ fn duplicate_spawn_is_rejected() {
             rows: 5,
             exited: None,
             log: None,
+            runtime: protocol::PaneRuntimeState::default(),
         },
     );
     let result = server.spawn_pane(SpawnRequest {
@@ -539,6 +541,7 @@ fn exited_pane_can_be_respawned() {
             rows: 5,
             exited: Some(0),
             log: None,
+            runtime: protocol::PaneRuntimeState::default(),
         },
     );
 
@@ -585,6 +588,7 @@ fn attach_reports_layout_and_panes() {
         rows: 5,
         exited: None,
         log: None,
+        runtime: protocol::PaneRuntimeState::default(),
     };
     pane.screen.process_bytes(b"ready");
     server.panes.insert(4, pane);
@@ -655,6 +659,7 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             rows: 5,
             exited: None,
             log: None,
+            runtime: protocol::PaneRuntimeState::default(),
         },
     );
 
@@ -717,6 +722,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 rows: 5,
                 exited,
                 log: None,
+                runtime: protocol::PaneRuntimeState::default(),
             },
         );
     }

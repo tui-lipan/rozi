@@ -300,6 +300,12 @@ pub enum Msg {
         path: Option<String>,
         error: Option<String>,
     },
+    SessionPaneRuntimeChanged {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+        state: crate::session::protocol::PaneRuntimeState,
+    },
     SessionError {
         epoch: u64,
         message: String,

@@ -103,7 +103,7 @@ impl SessionServer {
                 pane_id,
                 generation: pane.generation,
                 command: pane.command.clone(),
-                cwd: pane.effective_cwd(),
+                cwd: pane.spawnable_cwd(),
                 keep_open: pane.keep_open,
                 title: pane.effective_title(),
                 palette: pane.palette,

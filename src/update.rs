@@ -1030,6 +1030,25 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 .push(crate::pty_events::info_toast(&ctx.state.theme, message));
             Update::full()
         }
+        Msg::SessionPaneRuntimeChanged {
+            epoch,
+            pane_id,
+            generation,
+            state,
+        } => {
+            if epoch != ctx.state.runtime_epoch {
+                return Update::none();
+            }
+            if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
+                && pane.pty_generation == generation
+            {
+                pane.terminal.cwd = state.cwd;
+                pane.terminal.foreground_program = state.foreground_program;
+                pane.terminal.command_phase = state.command_phase;
+                pane.terminal.last_exit_status = state.last_exit_status;
+            }
+            Update::full()
+        }
         Msg::SessionSpawnResult {
             epoch,
             pane_id,
@@ -1228,7 +1247,10 @@ fn bind_attached_pane_backends(
             pane.terminal
                 .bind_server_backend(meta.pane_id, meta.generation);
             pane.terminal.title = meta.title.filter(|title| !title.trim().is_empty());
-            pane.terminal.cwd = meta.cwd;
+            pane.terminal.cwd = meta.runtime.cwd.clone();
+            pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
+            pane.terminal.command_phase = meta.runtime.command_phase;
+            pane.terminal.last_exit_status = meta.runtime.last_exit_status;
             pane.terminal.child_pid = meta.pid;
             pane.logging = meta.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;
@@ -1280,7 +1302,10 @@ fn apply_attached_panes(
             pane.terminal
                 .bind_server_backend(attached.pane_id, attached.generation);
             pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
-            pane.terminal.cwd = attached.cwd;
+            pane.terminal.cwd = attached.runtime.cwd.clone();
+            pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
+            pane.terminal.command_phase = attached.runtime.command_phase;
+            pane.terminal.last_exit_status = attached.runtime.last_exit_status;
             pane.terminal.child_pid = attached.pid;
             pane.logging = attached.logging;
             pane.terminal.status = ManagedTerminalStatus::Ready;

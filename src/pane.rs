@@ -12,6 +12,13 @@ pub struct TerminalPane {
     pub title: Option<String>,
     pub cwd: Option<String>,
     pub child_pid: Option<u32>,
+    /// Normalized foreground-executable basename, server-authoritative (cross-platform plan
+    /// Phase 6/7): pushed down via [`crate::session::protocol::PaneMeta::runtime`] and
+    /// [`crate::session::protocol::ServerMessage::PaneRuntimeChanged`] rather than inspected
+    /// locally, since the server (not necessarily this client's host) owns the PTY.
+    pub foreground_program: Option<String>,
+    pub command_phase: crate::session::protocol::PaneCommandPhase,
+    pub last_exit_status: Option<i32>,
     pub last_palette: Option<TerminalColorPalette>,
     seen_bell_count: u64,
     screen: Box<TerminalScreen>,
@@ -56,6 +63,9 @@ impl TerminalPane {
             title: None,
             cwd: None,
             child_pid: None,
+            foreground_program: None,
+            command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
+            last_exit_status: None,
             last_palette: None,
             seen_bell_count: 0,
             screen: Box::new(screen),
@@ -356,25 +366,27 @@ impl TerminalPane {
         self.status = ManagedTerminalStatus::Exited(0);
     }
 
-    /// The live working directory of the pane's shell, read from `/proc/<pid>/cwd` using the pid
-    /// the server reported, falling back to the last cwd the server sent.
+    /// The live working directory of the pane's shell.
+    ///
+    /// Server-authoritative (cross-platform plan Phase 6): the session server tracks this from
+    /// shell-integration OSC reports and native process-inspection fallbacks and pushes it down via
+    /// `PaneMeta`/`PaneRuntimeChanged`, rather than this client inspecting `/proc` itself - the
+    /// server, not necessarily this client's host, owns the PTY and process identity.
     pub fn working_directory(&self) -> Option<String> {
-        if let Some(pid) = self.child_pid
-            && let Some(cwd) = cwd_for_pid(pid)
-        {
-            return Some(cwd);
-        }
         self.cwd.clone()
     }
 
     /// The command name of the process currently in the foreground of the pane's terminal
-    /// (e.g. `bash` at a prompt, `nvim` while editing), read from `/proc` using the pid the
-    /// server reported. This is the terminal's foreground process group leader, so it reflects
-    /// the actually-running program regardless of shell/process-tree depth - the signal a
-    /// vim-tmux-navigator-style binding uses to decide whether `Ctrl-h/j/k/l` should move focus
-    /// or be forwarded to the program. Returns `None` when it cannot be determined.
+    /// (e.g. `bash` at a prompt, `nvim` while editing).
+    ///
+    /// Server-authoritative (cross-platform plan Phase 6/7), same rationale as
+    /// [`working_directory`](Self::working_directory). This is the terminal's foreground process
+    /// group leader, so it reflects the actually-running program regardless of shell/process-tree
+    /// depth - the signal a vim-tmux-navigator-style binding uses to decide whether
+    /// `Ctrl-h/j/k/l` should move focus or be forwarded to the program. Returns `None` when it
+    /// cannot be determined.
     pub fn foreground_command(&self) -> Option<String> {
-        foreground_command_for_pid(self.child_pid?)
+        self.foreground_program.clone()
     }
 
     /// The title the running program set via OSC 0/2 (shell `$PWD`, `vim`, etc.),
@@ -394,48 +406,6 @@ impl TerminalPane {
             ManagedTerminalStatus::Error(message) => format!("error: {message}"),
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn cwd_for_pid(pid: u32) -> Option<String> {
-    let path = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-    Some(path.to_string_lossy().to_string())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn cwd_for_pid(_pid: u32) -> Option<String> {
-    None
-}
-
-/// Read the command name of the foreground process group of `pid`'s controlling terminal via
-/// `/proc/<pid>/stat` (field 8, `tpgid`) then `/proc/<tpgid>/comm`. `tpgid` is the terminal's
-/// current foreground process group, so this reports the program the user is really interacting
-/// with (the shell at a prompt, or `nvim`/`less`/etc. when one is running) rather than the shell
-/// leader itself.
-#[cfg(target_os = "linux")]
-fn foreground_command_for_pid(pid: u32) -> Option<String> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let tpgid = tpgid_from_stat(&stat)?;
-    let comm = std::fs::read_to_string(format!("/proc/{tpgid}/comm")).ok()?;
-    let comm = comm.trim();
-    (!comm.is_empty()).then(|| comm.to_string())
-}
-
-/// Extract `tpgid` (the controlling terminal's foreground process group) from `/proc/<pid>/stat`
-/// contents, or `None` when there is no foreground group (`tpgid <= 0`). Field 2 (`comm`) is
-/// parenthesized and may itself contain spaces or `)`, so the fixed-width numeric fields only
-/// resume after the final `)`; after it come state, ppid, pgrp, session, tty_nr, tpgid, making
-/// `tpgid` the 6th whitespace-separated token.
-#[cfg(target_os = "linux")]
-fn tpgid_from_stat(stat: &str) -> Option<u32> {
-    let after_comm = stat.rsplit_once(')')?.1;
-    let tpgid: i32 = after_comm.split_whitespace().nth(5)?.parse().ok()?;
-    u32::try_from(tpgid).ok().filter(|value| *value > 0)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn foreground_command_for_pid(_pid: u32) -> Option<String> {
-    None
 }
 
 fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
@@ -565,20 +535,6 @@ mod tests {
         );
         // Anchor/cursor order is normalized.
         assert_eq!(pane.extract_text((0, 4), (0, 0)), "hello");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn tpgid_from_stat_handles_comm_with_parens_and_missing_foreground() {
-        // Normal case: foreground group differs from the leader.
-        let stat = "1234 (bash) S 1000 1234 1234 34816 4567 4194304 …";
-        assert_eq!(tpgid_from_stat(stat), Some(4567));
-        // `comm` may contain spaces and parentheses; only the final `)` delimits the fields.
-        let tricky = "1234 (weird (proc) name) S 1 2 3 34816 4567 0";
-        assert_eq!(tpgid_from_stat(tricky), Some(4567));
-        // No controlling-terminal foreground group (`tpgid == -1`).
-        let none = "1234 (bash) S 1 2 3 34816 -1 0";
-        assert_eq!(tpgid_from_stat(none), None);
     }
 
     #[test]

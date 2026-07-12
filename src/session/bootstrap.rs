@@ -291,6 +291,16 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                 path,
                 error,
             },
+            ServerMessage::PaneRuntimeChanged {
+                pane_id,
+                generation,
+                state,
+            } => Msg::SessionPaneRuntimeChanged {
+                epoch,
+                pane_id,
+                generation,
+                state,
+            },
         },
     }
 }

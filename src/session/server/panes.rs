@@ -149,9 +149,11 @@ impl SessionServer {
                         rows: rows.max(1),
                         exited: None,
                         log: None,
+                        runtime: protocol::PaneRuntimeState::default(),
                     },
                 );
                 self.dirty = true;
+                self.sync_pane_runtime(id, generation);
                 ServerMessage::SpawnResult {
                     pane_id: id,
                     generation,
@@ -177,6 +179,7 @@ impl SessionServer {
                             rows: rows.max(1),
                             exited: Some(127),
                             log: None,
+                            runtime: protocol::PaneRuntimeState::default(),
                         },
                     );
                 }
@@ -218,6 +221,7 @@ impl SessionServer {
                         });
                         pane.screen.process_bytes(&bytes);
                         self.dirty = true;
+                        let semantic_events = pane.screen.drain_semantic_events();
                         if let Some(pty) = &pane.pty {
                             for response in pane.screen.drain_responses() {
                                 let _ = pty.write(&response);
@@ -239,12 +243,16 @@ impl SessionServer {
                                 },
                             ));
                         }
+                        if !semantic_events.is_empty() {
+                            self.sync_pane_runtime(id, generation);
+                        }
                         Some(output)
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.exited = Some(code);
                         pane.pty = None;
                         self.dirty = true;
+                        self.sync_pane_runtime(id, generation);
                         Some(ServerOutbound::Control(ServerMessage::Exited {
                             pane_id: id,
                             generation,
@@ -281,9 +289,9 @@ impl SessionServer {
                 rows: pane.rows,
                 pid: pane.pty.as_ref().and_then(TerminalPty::pid),
                 title: pane.effective_title(),
-                cwd: pane.effective_cwd(),
                 exited: pane.exited,
                 logging: pane.log.is_some(),
+                runtime: pane.runtime.clone(),
             })
             .collect()
     }

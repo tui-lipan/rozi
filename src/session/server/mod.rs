@@ -20,6 +20,7 @@ mod connection;
 mod lease;
 mod panes;
 mod resurrect;
+mod runtime;
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -109,6 +110,8 @@ pub struct PaneLog {
 pub struct ServerPane {
     pub generation: u64,
     pub title: Option<String>,
+    /// Launch-time working directory (tier 3 of [`protocol::PaneCwdSource`]'s precedence order) -
+    /// what the pane was spawned with, before any live OSC report or process-inspector fallback.
     pub cwd: Option<String>,
     pub command: Option<String>,
     pub keep_open: bool,
@@ -119,6 +122,10 @@ pub struct ServerPane {
     pub rows: u16,
     pub exited: Option<i32>,
     pub log: Option<PaneLog>,
+    /// Cached result of the last [`SessionServer::recompute_pane_runtime`] call (Phase 6); kept
+    /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
+    /// and so change detection has a "previous value" to diff against.
+    pub runtime: protocol::PaneRuntimeState,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are
@@ -325,25 +332,17 @@ impl ServerPane {
         self.screen.title().or_else(|| self.title.clone())
     }
 
-    fn effective_cwd(&self) -> Option<String> {
-        self.pty
-            .as_ref()
-            .and_then(|pty| pty.pid())
-            .and_then(cwd_for_pid)
-            .or_else(|| self.cwd.clone())
+    /// The best *local* cwd known for this pane, suitable for `Command::current_dir` on a
+    /// respawn (session resurrection, keep-open restart): the live-tracked runtime cwd when it
+    /// does not name a remote host, else the pane's original launch directory. Never returns a
+    /// remote `OSC 7` path - see [`protocol::PaneRuntimeState`]'s doc comment.
+    pub(super) fn spawnable_cwd(&self) -> Option<String> {
+        if self.runtime.cwd_host.is_none() {
+            self.runtime.cwd.clone().or_else(|| self.cwd.clone())
+        } else {
+            self.cwd.clone()
+        }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn cwd_for_pid(pid: u32) -> Option<String> {
-    std::fs::read_link(format!("/proc/{pid}/cwd"))
-        .ok()
-        .map(|path| path.to_string_lossy().to_string())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn cwd_for_pid(_pid: u32) -> Option<String> {
-    None
 }
 
 /// Build the PTY spawn config from the client-resolved `shell`/`command_shell` argv (see

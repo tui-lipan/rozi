@@ -9,7 +9,11 @@ use crate::state::PaneId;
 /// Bumped 7 -> 8 for the cross-platform plan's launch-policy and runtime-state changes (Phases
 /// 4/6/7): `SpawnPane` now carries a client-resolved `shell`/`command_shell` argv instead of the
 /// server resolving from its own process environment or on-disk config, which could be stale
-/// relative to a live-reloaded client.
+/// relative to a live-reloaded client. Phase 6/7's `PaneMeta::runtime` field and the
+/// `ServerMessage::PaneRuntimeChanged` message land within this same v8 rather than bumping again:
+/// the plan's own Phase 4 changelog entry already described v8 as covering "launch-policy and
+/// runtime-state changes" together, and this crate is pre-1.0 with no wire compatibility
+/// obligations to an already-shipped v8, so there is nothing a second bump would protect.
 pub const PROTOCOL_VERSION: u32 = 8;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
@@ -51,9 +55,91 @@ pub struct PaneMeta {
     pub rows: u16,
     pub pid: Option<u32>,
     pub title: Option<String>,
-    pub cwd: Option<String>,
     pub exited: Option<i32>,
     pub logging: bool,
+    /// Authoritative pane runtime state (cross-platform plan Phase 6/7): CWD, command lifecycle,
+    /// and foreground executable, as tracked server-side from shell-integration OSC reports and
+    /// native process-inspection fallbacks. Present in every `Attached`/`SpawnResult`-adjacent
+    /// pane listing so a freshly attached client starts with current state rather than waiting for
+    /// the next [`ServerMessage::PaneRuntimeChanged`].
+    pub runtime: PaneRuntimeState,
+}
+
+/// Which precedence tier produced [`PaneRuntimeState::cwd`] (cross-platform plan Phase 6).
+///
+/// Tier order, most to least authoritative: [`ShellReport`](Self::ShellReport) (a local or remote
+/// `OSC 7`/`OSC 9;9` report) -> [`ProcessInspector`](Self::ProcessInspector) (native `/proc` or
+/// `libproc` inspection) -> [`LaunchDirectory`](Self::LaunchDirectory) (the directory the pane was
+/// spawned with). A configured-fallback fourth tier from the plan's precedence table collapses
+/// into `LaunchDirectory` here: the launch cwd a pane starts with is already itself resolved from
+/// config/profile defaults, so there is no separate value a fourth tier could contribute once
+/// launch has happened.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaneCwdSource {
+    #[default]
+    Unknown,
+    ShellReport,
+    ProcessInspector,
+    LaunchDirectory,
+}
+
+/// Mirrors [`TerminalCommandPhase`] on the wire (that framework type has no `serde` impls, since
+/// it is UI-agnostic runtime state rather than persisted/transmitted data).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum PaneCommandPhase {
+    #[default]
+    Unknown,
+    Prompt,
+    Input,
+    Executing,
+    Completed {
+        exit_status: Option<i32>,
+    },
+}
+
+impl From<TerminalCommandPhase> for PaneCommandPhase {
+    fn from(phase: TerminalCommandPhase) -> Self {
+        match phase {
+            TerminalCommandPhase::Unknown => Self::Unknown,
+            TerminalCommandPhase::Prompt => Self::Prompt,
+            TerminalCommandPhase::Input => Self::Input,
+            TerminalCommandPhase::Executing => Self::Executing,
+            TerminalCommandPhase::Completed { exit_status } => Self::Completed { exit_status },
+        }
+    }
+}
+
+/// Authoritative pane runtime state (cross-platform plan Phase 6): the server-owned `TerminalPty`/
+/// `TerminalScreen` pair is the source of truth for all of this, combining shell-integration OSC
+/// reports with native process-inspection fallbacks per [`PaneCwdSource`]'s precedence order.
+///
+/// `cwd` is always the *best available displayable* path regardless of source; `cwd_host` is set
+/// only when that path names a location on a different host than the server (a remote `OSC 7`
+/// report over SSH, for instance) - callers that need a *local* filesystem path (e.g. "open a new
+/// pane in the same directory") must treat a present `cwd_host` as disqualifying, never pass such a
+/// path to a local spawn's working directory, and should prefer `cwd_source` for that check rather
+/// than string-matching hostnames themselves.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PaneRuntimeState {
+    pub cwd: Option<String>,
+    pub cwd_host: Option<String>,
+    pub cwd_source: PaneCwdSource,
+    pub command_phase: PaneCommandPhase,
+    /// Normalized executable basename only - never a full command line (shell integrations are
+    /// expected to emit just the name; the process-inspector fallbacks read a `comm`/`proc_name`
+    /// value that is inherently already just a basename).
+    pub foreground_program: Option<String>,
+    /// The most recently observed exit status, from either an `OSC 133;D` report or the PTY child
+    /// itself exiting. Sticky across the next command's `Prompt`/`Input` phases so callers can
+    /// still show "last command exited N" at a fresh prompt.
+    pub last_exit_status: Option<i32>,
+    /// Monotonic per-pane counter, bumped only when some other field in this struct actually
+    /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
+    /// updates out of order (should not happen on a single ordered connection, but is cheap
+    /// insurance) can detect and ignore a stale one.
+    pub sequence: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +316,15 @@ pub enum ServerMessage {
         enabled: bool,
         path: Option<String>,
         error: Option<String>,
+    },
+    /// A pane's [`PaneRuntimeState`] changed (cross-platform plan Phase 7): broadcast after raw
+    /// pane output for the same event, once the server has both processed the bytes into the
+    /// screen and re-derived runtime state from them. `generation` guards against a message that
+    /// raced a respawn; `state.sequence` guards against out-of-order delivery.
+    PaneRuntimeChanged {
+        pane_id: PaneId,
+        generation: u64,
+        state: PaneRuntimeState,
     },
     Renamed {
         session: String,

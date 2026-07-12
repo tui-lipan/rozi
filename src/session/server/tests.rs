@@ -1,4 +1,3 @@
-
 use super::*;
 
 /// Minimal placeholder palette for spawn requests in tests.

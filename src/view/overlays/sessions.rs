@@ -299,4 +299,3 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
         }
     })
 }
-

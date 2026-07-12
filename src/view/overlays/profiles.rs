@@ -177,4 +177,3 @@ fn render_ephemeral_session_item(
     }
     row
 }
-

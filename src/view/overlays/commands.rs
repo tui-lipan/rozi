@@ -187,4 +187,3 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
 fn alias_list(values: &[&str]) -> Vec<Arc<str>> {
     values.iter().copied().map(Arc::from).collect()
 }
-

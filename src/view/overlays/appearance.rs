@@ -121,7 +121,6 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         60,
     )
 }
-
 fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
     if top == bottom && right == left {
         format!("V{top} · H{right}")
@@ -298,4 +297,3 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         60,
     )
 }
-

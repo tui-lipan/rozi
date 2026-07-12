@@ -86,6 +86,13 @@ Lint:
 cargo clippy
 ```
 
+Audit dependencies for known security vulnerabilities:
+
+```bash
+cargo install cargo-audit --locked
+cargo audit
+```
+
 Type-check:
 
 ```bash
@@ -245,10 +252,9 @@ Then rerun the relevant `hyprmux` tests and lints.
   handling defensive.
 - Clipboard and OSC52 behavior can expose copied data; keep `[clipboard].enable_osc52` controls
   intact.
-- Dependency scanning is not configured in this repo.
+- Dependency auditing uses RustSec via `cargo audit`; run it after dependency updates and before
+  release builds.
 - License is `MIT OR Apache-2.0`; preserve dual-license headers/files.
-
-> TODO: Add dependency-audit command if the project standardizes on `cargo audit` or similar.
 
 ## Agent Guardrails
 

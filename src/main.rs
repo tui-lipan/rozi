@@ -14,6 +14,7 @@ mod identity_ops;
 mod input;
 mod key_routing;
 mod layout;
+mod layout_tree_ser;
 mod pane;
 mod pane_lifecycle;
 mod profile_ops;

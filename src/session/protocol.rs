@@ -521,7 +521,7 @@ mod tests {
                         "synchronized": true,
                         "layout": "master",
                         "start_axis": "vertical",
-                        "split_ratios": [0.4],
+                        "split_ratios": [0.4000000059604645],
                         "tree": {
                             "kind": "split",
                             "axis": "vertical",

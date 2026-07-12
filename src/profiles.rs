@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::FloatRect;
 
-use crate::state::{LayoutKind, Mode, Pane, PaneId, SplitAxis, State, WORKSPACE_COUNT, Workspace};
+use crate::layout_tree_ser::{
+    SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
+};
+use crate::state::{Mode, Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
 use crate::tiling::DwindleTree;
 use crate::tiling::append_tiled_window;
 
@@ -249,20 +252,7 @@ fn restore_dwindle_tree(
     tree: &ProfileTree,
     profile_pane_ids: &HashMap<PaneId, PaneId>,
 ) -> Option<DwindleTree> {
-    match tree {
-        ProfileTree::Leaf { pane } => profile_pane_ids.get(pane).copied().map(DwindleTree::Leaf),
-        ProfileTree::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => Some(DwindleTree::Split {
-            axis: (*axis).into(),
-            ratio: *ratio,
-            first: Box::new(restore_dwindle_tree(first, profile_pane_ids)?),
-            second: Box::new(restore_dwindle_tree(second, profile_pane_ids)?),
-        }),
-    }
+    to_dwindle(tree, &|pane| profile_pane_ids.get(pane).copied(), false)
 }
 
 fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> WorkspaceProfile {
@@ -321,22 +311,9 @@ fn profile_tree_from_dwindle(
     tree: &DwindleTree,
     pane_indices: &HashMap<PaneId, usize>,
 ) -> Option<ProfileTree> {
-    match tree {
-        DwindleTree::Leaf(id) => pane_indices.get(id).copied().map(|pane| ProfileTree::Leaf {
-            pane: pane as PaneId,
-        }),
-        DwindleTree::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => Some(ProfileTree::Split {
-            axis: (*axis).into(),
-            ratio: *ratio,
-            first: Box::new(profile_tree_from_dwindle(first, pane_indices)?),
-            second: Box::new(profile_tree_from_dwindle(second, pane_indices)?),
-        }),
-    }
+    from_dwindle(tree, &|id| {
+        pane_indices.get(&id).copied().map(|pane| pane as PaneId)
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -396,25 +373,7 @@ pub struct PaneProfile {
     pub rect: Option<ProfileRect>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum ProfileTree {
-    Leaf {
-        pane: PaneId,
-    },
-    Split {
-        axis: ProfileSplitAxis,
-        ratio: f32,
-        first: Box<ProfileTree>,
-        second: Box<ProfileTree>,
-    },
-}
-
-impl Default for ProfileTree {
-    fn default() -> Self {
-        Self::Leaf { pane: 0 }
-    }
-}
+pub type ProfileTree = SerializedTree<PaneId>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -458,63 +417,9 @@ impl From<ProfileRect> for FloatRect {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ProfileLayoutKind {
-    #[default]
-    Dwindle,
-    Master,
-    Grid,
-    Monocle,
-}
-
-impl From<LayoutKind> for ProfileLayoutKind {
-    fn from(layout: LayoutKind) -> Self {
-        match layout {
-            LayoutKind::Dwindle => Self::Dwindle,
-            LayoutKind::Master => Self::Master,
-            LayoutKind::Grid => Self::Grid,
-            LayoutKind::Monocle => Self::Monocle,
-        }
-    }
-}
-
-impl From<ProfileLayoutKind> for LayoutKind {
-    fn from(layout: ProfileLayoutKind) -> Self {
-        match layout {
-            ProfileLayoutKind::Dwindle => Self::Dwindle,
-            ProfileLayoutKind::Master => Self::Master,
-            ProfileLayoutKind::Grid => Self::Grid,
-            ProfileLayoutKind::Monocle => Self::Monocle,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ProfileSplitAxis {
-    #[default]
-    Horizontal,
-    Vertical,
-}
-
-impl From<SplitAxis> for ProfileSplitAxis {
-    fn from(axis: SplitAxis) -> Self {
-        match axis {
-            SplitAxis::Horizontal => Self::Horizontal,
-            SplitAxis::Vertical => Self::Vertical,
-        }
-    }
-}
-
-impl From<ProfileSplitAxis> for SplitAxis {
-    fn from(axis: ProfileSplitAxis) -> Self {
-        match axis {
-            ProfileSplitAxis::Horizontal => Self::Horizontal,
-            ProfileSplitAxis::Vertical => Self::Vertical,
-        }
-    }
-}
+pub type ProfileLayoutKind = SerializedLayoutKind;
+#[allow(dead_code)]
+pub type ProfileSplitAxis = SerializedSplitAxis;
 
 #[cfg(test)]
 mod tests {
@@ -523,7 +428,7 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use crate::config::HyprmuxConfig;
-    use crate::state::{Pane, State};
+    use crate::state::{LayoutKind, Pane, SplitAxis, State};
     use tui_lipan::prelude::Theme;
 
     #[test]

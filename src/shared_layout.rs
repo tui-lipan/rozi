@@ -11,7 +11,10 @@
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
-use crate::state::{LayoutKind, PaneId, SplitAxis, State};
+use crate::layout_tree_ser::{
+    SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
+};
+use crate::state::{PaneId, State};
 use crate::tiling::DwindleTree;
 
 /// Stable identity for an attached client, assigned by the server on attach.
@@ -68,77 +71,9 @@ pub struct FracRect {
 }
 
 /// The tiling tree with direct pane ids (no positional indirection like profile TOML).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum SharedTree {
-    Leaf {
-        pane: PaneId,
-    },
-    Split {
-        axis: SharedSplitAxis,
-        ratio: f32,
-        first: Box<SharedTree>,
-        second: Box<SharedTree>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SharedLayoutKind {
-    #[default]
-    Dwindle,
-    Master,
-    Grid,
-    Monocle,
-}
-
-impl From<LayoutKind> for SharedLayoutKind {
-    fn from(layout: LayoutKind) -> Self {
-        match layout {
-            LayoutKind::Dwindle => Self::Dwindle,
-            LayoutKind::Master => Self::Master,
-            LayoutKind::Grid => Self::Grid,
-            LayoutKind::Monocle => Self::Monocle,
-        }
-    }
-}
-
-impl From<SharedLayoutKind> for LayoutKind {
-    fn from(layout: SharedLayoutKind) -> Self {
-        match layout {
-            SharedLayoutKind::Dwindle => Self::Dwindle,
-            SharedLayoutKind::Master => Self::Master,
-            SharedLayoutKind::Grid => Self::Grid,
-            SharedLayoutKind::Monocle => Self::Monocle,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SharedSplitAxis {
-    #[default]
-    Horizontal,
-    Vertical,
-}
-
-impl From<SplitAxis> for SharedSplitAxis {
-    fn from(axis: SplitAxis) -> Self {
-        match axis {
-            SplitAxis::Horizontal => Self::Horizontal,
-            SplitAxis::Vertical => Self::Vertical,
-        }
-    }
-}
-
-impl From<SharedSplitAxis> for SplitAxis {
-    fn from(axis: SharedSplitAxis) -> Self {
-        match axis {
-            SharedSplitAxis::Horizontal => Self::Horizontal,
-            SharedSplitAxis::Vertical => Self::Vertical,
-        }
-    }
-}
+pub type SharedTree = SerializedTree<PaneId>;
+pub type SharedLayoutKind = SerializedLayoutKind;
+pub type SharedSplitAxis = SerializedSplitAxis;
 
 /// Build the shared document from the client's live `State` for the given canonical canvas size
 /// (in cells, excluding the workbar). Closing panes and the scratchpad are excluded - they are
@@ -173,7 +108,7 @@ fn shared_workspace_from_state(
     // stragglers, so it matches exactly what the layout engine renders.
     let tree = crate::layout::effective_tile_tree(workspace, None)
         .as_ref()
-        .map(shared_tree_from_dwindle);
+        .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
     SharedWorkspace {
         index,
         name: workspace.name.clone(),
@@ -207,52 +142,13 @@ fn shared_workspace_from_state(
     }
 }
 
-fn shared_tree_from_dwindle(tree: &DwindleTree) -> SharedTree {
-    match tree {
-        DwindleTree::Leaf(id) => SharedTree::Leaf { pane: *id },
-        DwindleTree::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => SharedTree::Split {
-            axis: (*axis).into(),
-            ratio: *ratio,
-            first: Box::new(shared_tree_from_dwindle(first)),
-            second: Box::new(shared_tree_from_dwindle(second)),
-        },
-    }
-}
-
 /// Rebuild a [`DwindleTree`] from a shared tree, keeping only leaves whose pane id is present
 /// locally (`known`). Returns `None` if nothing survives, so the caller can rebuild from order.
 pub(crate) fn dwindle_from_shared(
     tree: &SharedTree,
     known: &std::collections::HashSet<PaneId>,
 ) -> Option<DwindleTree> {
-    match tree {
-        SharedTree::Leaf { pane } => known.contains(pane).then_some(DwindleTree::Leaf(*pane)),
-        SharedTree::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } => {
-            let first = dwindle_from_shared(first, known);
-            let second = dwindle_from_shared(second, known);
-            match (first, second) {
-                (Some(first), Some(second)) => Some(DwindleTree::Split {
-                    axis: (*axis).into(),
-                    ratio: *ratio,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }),
-                // A collapsed split promotes its surviving child.
-                (Some(only), None) | (None, Some(only)) => Some(only),
-                (None, None) => None,
-            }
-        }
-    }
+    to_dwindle(tree, &|pane| known.contains(pane).then_some(*pane), true)
 }
 
 pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: u16) -> FloatRect {

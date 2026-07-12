@@ -266,6 +266,7 @@ fn forward_inbound<R: std::io::Read>(reader: &mut R, inbound: &mpsc::Sender<Fram
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::net::UnixStream;
 
     fn attached_message() -> ServerMessage {
@@ -283,6 +284,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn attached_stream_decodes_control_and_pane_frames() {
         let (mut client_stream, mut server_stream) = UnixStream::pair().expect("socket pair");
         let server = std::thread::spawn(move || {

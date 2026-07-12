@@ -250,13 +250,16 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
+    #[cfg(unix)]
     fn temp_base(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("hyprmux-test-{name}-{}", std::process::id()))
     }
 
     #[test]
+    #[cfg(unix)]
     fn runtime_dir_uses_per_user_temp_fallback_without_xdg() {
         let expected = std::env::temp_dir().join(format!(
             "hyprmux-{}",
@@ -269,6 +272,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn runtime_dir_rejects_unsafe_existing_directory_without_chmod() {
         let base = temp_base("unsafe");
         let dir = base.join("hyprmux");
@@ -361,6 +365,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn runtime_dir_rejects_symlink() {
         let base = temp_base("symlink");
         let dir = base.join("hyprmux");

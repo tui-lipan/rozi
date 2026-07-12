@@ -217,7 +217,7 @@ enum Target {
 }
 
 impl SessionServer {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn new_named(session_name: impl Into<String>) -> Self {
         Self::new_named_with_settings(session_name, ServerSettings::default())
     }
@@ -459,5 +459,5 @@ pub fn delete_snapshot(name: &str) -> io::Result<()> {
     resurrect::delete_snapshot_for(name)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;

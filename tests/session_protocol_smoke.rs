@@ -4,6 +4,8 @@
 //! the framed Unix-socket protocol directly. This deliberately crosses the process boundary that
 //! the inline `session::server` tests stop short of covering.
 
+#![cfg(unix)]
+
 use std::fs;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::PermissionsExt;

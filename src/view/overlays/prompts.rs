@@ -117,9 +117,15 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(rename) = ctx.state.rename.as_ref() else {
         return Text::new("").into();
     };
+    let display_number = ctx
+        .state
+        .workspaces
+        .iter()
+        .find_map(|workspace| workspace.pane_display_number(rename.target))
+        .unwrap_or(rename.target as usize);
     prompt_overlay(
         ctx,
-        &format!("Rename pane {}", rename.target),
+        &format!("Rename pane {display_number}"),
         "Pane name, empty clears custom title",
         &rename.input,
         rename_input_key(),

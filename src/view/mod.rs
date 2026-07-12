@@ -143,11 +143,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // process-wide `PaneId`, so panes renumber after a close instead of ticking upward
         // forever (the internal id still keys focus/tile-tree/sessions).
         let display_number = workspace
-            .panes
-            .iter()
-            .position(|candidate| candidate.id == pane.id)
-            .map(|index| index + 1)
-            .unwrap_or_else(|| pane.id as usize)
+            .pane_display_number(pane.id)
+            .unwrap_or(pane.id as usize)
             .to_string();
         let render_in_fullscreen_layer = !pane.closing && pane.fullscreen;
         let render_rect = if render_in_fullscreen_layer {

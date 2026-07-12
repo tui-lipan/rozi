@@ -906,6 +906,13 @@ impl Workspace {
         self.panes.iter().filter(|pane| !pane.closing).count()
     }
 
+    pub fn pane_display_number(&self, id: PaneId) -> Option<usize> {
+        self.panes
+            .iter()
+            .position(|pane| pane.id == id)
+            .map(|index| index + 1)
+    }
+
     pub fn tiled_ids(&self) -> Vec<PaneId> {
         let active = self.active_tiled_ids_by_pane_order();
         let mut ordered = Vec::new();
@@ -1364,6 +1371,19 @@ mod tests {
     fn layout_kind_labels_are_distinct() {
         let labels: Vec<&str> = LayoutKind::all().iter().map(|k| k.label()).collect();
         assert_eq!(labels, ["dwindle", "master", "grid", "monocle"]);
+    }
+
+    #[test]
+    fn pane_display_number_uses_workspace_position_not_internal_id() {
+        let mut workspace = Workspace::new(0);
+        let mut first = pane();
+        first.id = 7;
+        let mut second = pane();
+        second.id = 42;
+        workspace.panes = vec![first, second];
+
+        assert_eq!(workspace.pane_display_number(42), Some(2));
+        assert_eq!(workspace.pane_display_number(99), None);
     }
 
     #[test]

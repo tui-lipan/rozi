@@ -21,10 +21,12 @@
 //!   `session/client.rs`, `session/discovery.rs`, `session/server/*`, `cli.rs`, and
 //!   `ops/session.rs`'s peer-pid probe. The Windows named-pipe backend is a type-matching stub only
 //!   (Milestone 2).
-//! - [`notifications`], [`server_lifecycle`], [`process`] - module skeletons only. No call site has
-//!   been migrated to them yet; existing Unix-specific code (`ops/config.rs` executable checks, the
-//!   Unix signal/process-control logic inline in `ops/session.rs`) still lives at its current call
-//!   sites pending Phases 5b/9/10.
+//! - [`server_lifecycle`] - **documented, mostly already satisfied on Unix** (Phase 5b): see the
+//!   module doc comment for the bullet-by-bullet status; SIGHUP-to-detach is the one open item.
+//! - [`process`] - **implemented for Linux and macOS** (Phase 9): the `ProcessInspector` trait plus
+//!   per-OS `cwd`/`foreground_program` fallbacks, wired into `session::server`'s pane-runtime-state
+//!   computation (Phase 6). Windows is an explicit "unavailable" implementation per the plan.
+//! - [`notifications`] - module skeleton only; no call site has been migrated yet (Phase 10).
 
 pub mod fs_security;
 pub mod paths;

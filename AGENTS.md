@@ -126,7 +126,8 @@ cargo run
 - Prefer small, direct changes over compatibility shims; this project is pre-1.0 with no external
   compatibility obligations.
 - Comments describe current invariants and non-obvious reasons, never changelog/history.
-- Feature reaction modules use `*_ops` names, such as `focus_ops`, `theme_ops`, and `exit_ops`.
+- Feature reaction modules live under `ops/`, such as `ops/focus.rs`, `ops/theme.rs`, and
+  `ops/exit.rs`.
 - Lifecycle/event/data modules use plain names, such as `pane_lifecycle`, `pty_events`, and
   `profiles`.
 - Keep `input.rs` as the source of truth for command/action metadata used by help and palettes.
@@ -145,7 +146,7 @@ CLI/main
   v
 HyprmuxApp (tui-lipan Component)
   |-- State / Msg model in state.rs + main.rs
-  |-- update::handle_msg dispatches messages to *_ops modules
+  |-- update::handle_msg dispatches messages to ops/* feature modules
   |-- key_routing routes prefix/held-modifier/terminal keys
   |-- actions dispatches Action values
   |-- view renders Canvas, panes, workbar, and overlays
@@ -167,7 +168,7 @@ Detach leaves the server running for later reattach; a clean quit shuts an ephem
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
-share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v3). One client holds the
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v6). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -184,20 +185,21 @@ Important data flow:
 
 Major module map:
 
-- `main.rs` - App shell, CLI parsing, startup, transition policies, and runtime wiring.
+- `main.rs` / `cli.rs` - App shell, command-line parsing, transition policies, and runtime wiring.
 - `update.rs` - Flat message router and post-update synchronization.
 - `state.rs` - Runtime model, pane/workspace/session/profile state, and constants.
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.
 - `key_routing.rs` / `keymap.rs` / `input.rs` - Input modes, bindings, actions, and command ids.
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
-- `tiling.rs` / `layout.rs` / `geometry.rs` / `resize_move_ops.rs` / `anim.rs` - Window-manager
+- `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move.rs` / `anim.rs` - Window-manager
   layout, placement, movement, resizing, and animations.
-- `session/` / `session_ops.rs` - Multi-client session protocol (v3), server/client, discovery,
-  attach/kill, and layout-control lease.
+- `session/` / `ops/session.rs` - Multi-client session protocol (v6), server/client, discovery,
+  bootstrap, attach/kill, and layout-control lease.
+- `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
   reconciler (`apply_shared_layout`).
-- `profiles.rs` / `profile_ops.rs` - Named profile serialization, restore, picker, default profile.
-- `config.rs` / `config_ops.rs` / `theme_ops.rs` - Config loading/reload, themes, terminal colors.
+- `profiles.rs` / `ops/profile.rs` - Named profile serialization, restore, picker, default profile.
+- `config/` / `ops/config.rs` / `ops/theme.rs` - Config loading/reload, themes, terminal colors.
 - `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
 
 ## Testing Strategy

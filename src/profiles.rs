@@ -622,7 +622,7 @@ mod tests {
         let mut state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
         let pane_id = state.workspaces[0].panes[0].id;
 
-        crate::identity_ops::rename_pane_in_workspaces(&mut state.workspaces, pane_id, "");
+        crate::ops::identity::rename_pane_in_workspaces(&mut state.workspaces, pane_id, "");
         let snapshot = profile_from_state(&state);
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), snapshot);
 

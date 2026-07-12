@@ -51,15 +51,15 @@ fn confirm_second_press(
 /// Detaching an *anonymous* ephemeral session is contradictory: it has no name to reattach by, so a
 /// literal detach could only shut it down - indistinguishable from a quit, minus the confirmation.
 /// Instead an ephemeral session first prompts for a name; naming it turns the detach into a durable
-/// named detach that keeps the server running (see [`crate::session_ops::open_detach_rename`] and
-/// [`crate::session_ops::apply_rename_session`]), while cancelling returns to the session. Tearing an
+/// named detach that keeps the server running (see [`crate::ops::session::open_detach_rename`] and
+/// [`crate::ops::session::apply_rename_session`]), while cancelling returns to the session. Tearing an
 /// ephemeral session down is left to [`quit_client`], which guards it with `[confirm].quit_ephemeral`.
 /// A named session (or one with no live client to rename) detaches immediately.
 pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::update::flush_layout_commit(ctx);
     clear_pending(ctx);
     if ctx.state.is_ephemeral_session() && ctx.state.session_client.is_some() {
-        return crate::session_ops::open_detach_rename(ctx);
+        return crate::ops::session::open_detach_rename(ctx);
     }
     if let Some(client) = ctx.state.session_client.clone() {
         client.detach();
@@ -103,7 +103,7 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
     }
 
     clear_pending(ctx);
-    if crate::session_ops::may_shutdown_ephemeral(&ctx.state)
+    if crate::ops::session::may_shutdown_ephemeral(&ctx.state)
         && let Some(client) = ctx.state.session_client.clone()
     {
         client.shutdown();
@@ -206,7 +206,7 @@ pub(crate) fn kill_session_with_confirmation(
         return Update::full();
     }
     if !ctx.state.is_controller() {
-        crate::session_ops::nudge_if_follower(ctx);
+        crate::ops::session::nudge_if_follower(ctx);
         return Update::full();
     }
 
@@ -231,7 +231,7 @@ pub(crate) fn kill_session_with_confirmation(
     }
 
     clear_pending(ctx);
-    crate::session_ops::kill_current_session(ctx, session_name)
+    crate::ops::session::kill_current_session(ctx, session_name)
 }
 
 pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bool {

@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::focus_ops::{request_rename_focus, request_rename_session_focus};
+use crate::ops::focus::{request_rename_focus, request_rename_session_focus};
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{Mode, PaneId, PaneRenameState, SessionRenameState, Workspace};
 

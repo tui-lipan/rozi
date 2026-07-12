@@ -3,7 +3,7 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::Msg;
-use crate::focus_ops::{
+use crate::ops::focus::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
 };
 use crate::session::discovery::DiscoveredSession;
@@ -413,7 +413,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
-    crate::exit_ops::detach(ctx)
+    crate::ops::exit::detach(ctx)
 }
 
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive by switching to a
@@ -459,7 +459,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     });
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
-    crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
+    crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)

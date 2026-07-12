@@ -3,11 +3,11 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
-use crate::focus_ops::{request_current_pane_focus, request_pane_focus};
 use crate::geometry::workspace_tile_bounds;
+use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
+use crate::ops::theme::{pane_frame_background, terminal_palette};
 use crate::pane_lifecycle::{pane_env, request_pane_spawn};
 use crate::state::{Pane, SCRATCH_PANE_ID};
-use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::view;
 
 /// Below this much progress the dropdown is treated as fully retracted and not rendered.
@@ -66,7 +66,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         ctx.state.scratch_visible = false;
         ctx.state.animation = GeometryAnimation::TileFloat;
         if let Some(prev) = ctx.state.scratch_return_focus.take() {
-            crate::focus_ops::focus_pane(&mut ctx.state, prev);
+            crate::ops::focus::focus_pane(&mut ctx.state, prev);
             request_pane_focus(ctx, prev);
         } else {
             request_current_pane_focus(ctx);
@@ -145,7 +145,7 @@ pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.scratch = None;
     ctx.state.scratch_visible = false;
     if let Some(prev) = ctx.state.scratch_return_focus.take() {
-        crate::focus_ops::focus_pane(&mut ctx.state, prev);
+        crate::ops::focus::focus_pane(&mut ctx.state, prev);
         request_pane_focus(ctx, prev);
     } else {
         request_current_pane_focus(ctx);

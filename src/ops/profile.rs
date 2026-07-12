@@ -5,12 +5,12 @@ use crate::config::{
     clear_default_profile, delete_profile_file, list_profiles, persist_default_profile,
     profile_path_for_name,
 };
-use crate::focus_ops::request_profile_picker_focus;
-use crate::focus_ops::request_save_profile_focus;
+use crate::ops::focus::request_profile_picker_focus;
+use crate::ops::focus::request_save_profile_focus;
+use crate::ops::theme;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
 use crate::state::{Mode, PaneRenameState, ProfilePickerState, State};
-use crate::theme_ops;
 
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.save_profile_prompt = Some(PaneRenameState::new(0, ""));
@@ -240,7 +240,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     // Loading a profile replaces the whole layout, so release the current session (an ephemeral
     // one is disposable and shut down; a named one is parked for reattach) and start the profile in
     // a fresh ephemeral.
-    crate::session_ops::release_current_session(ctx);
+    crate::ops::session::release_current_session(ctx);
 
     let theme_watcher = ctx.state.theme_watcher.take();
     let system_theme = ctx.state.system_theme.clone();
@@ -267,7 +267,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     });
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
-    theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
+    theme::apply_terminal_palette_to_state(&mut ctx.state);
     ctx.toast().push(info_toast(
         &ctx.state.theme,
         format!("Loaded profile `{}`", entry.name),

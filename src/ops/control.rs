@@ -4,11 +4,11 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::actions::execute_action;
 use crate::control::{ControlCommand, ControlEnvelope, ControlResponse};
-use crate::focus_ops::{
+use crate::input::Action;
+use crate::ops::focus::{
     focus_pane, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
     switch_workspace,
 };
-use crate::input::Action;
 use crate::pane_lifecycle::{find_pane_mut, spawn_pane_in_workspace};
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 

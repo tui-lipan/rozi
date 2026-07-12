@@ -7,7 +7,7 @@ use tui_lipan::text_motion::{
 };
 
 use crate::HyprmuxApp;
-use crate::focus_ops::request_current_pane_focus;
+use crate::ops::focus::request_current_pane_focus;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{CopyFlashState, CopyModeState, Mode, PaneId};
 

@@ -115,8 +115,8 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             }
         }
     }
-    let host_bg = crate::theme_ops::host_background(&ctx.state);
-    ctx.state.theme = crate::theme_ops::apply_backdrop_policy(
+    let host_bg = crate::ops::theme::host_background(&ctx.state);
+    ctx.state.theme = crate::ops::theme::apply_backdrop_policy(
         resolved.theme,
         host_bg,
         new_config.pane.background_follows_terminal,
@@ -139,7 +139,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
     ctx.state.config = new_config;
-    crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state);
+    crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
         ctx.toast().push(crate::pty_events::error_toast(

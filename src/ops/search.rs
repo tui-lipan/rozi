@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::focus_ops::{focus_pane, request_search_focus};
+use crate::ops::focus::{focus_pane, request_search_focus};
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{PaneId, ScrollbackMatch, ScrollbackSearchState, SearchScope, State};
 

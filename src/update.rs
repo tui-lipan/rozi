@@ -2,27 +2,27 @@ use tui_lipan::prelude::*;
 
 use crate::actions::{execute_action, execute_palette_action};
 use crate::anim::GeometryAnimation;
-use crate::focus_ops::{
+use crate::input::Action;
+use crate::key_routing::handle_key_routing;
+use crate::ops::focus::{
     focus_pane, request_current_pane_focus, request_pane_focus, request_rename_focus,
     request_rename_session_focus, request_save_profile_focus, request_search_focus,
 };
-use crate::identity_ops::{apply_rename_pane, close_rename_pane};
-use crate::input::Action;
-use crate::key_routing::handle_key_routing;
-use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed, pane_env};
-use crate::profile_ops::{
+use crate::ops::identity::{apply_rename_pane, close_rename_pane};
+use crate::ops::profile::{
     cancel_profile_picker, close_save_profile_prompt, profile_picker_delete_key,
     profile_picker_query_changed, profile_picker_selection_changed, profile_picker_set_default,
     select_profile, submit_save_profile,
 };
+use crate::ops::resize_move::{begin_move, begin_resize, end_move, move_pane, resize_pane};
+use crate::ops::search::{recompute_search, search_next, select_search_match};
+use crate::ops::theme::{cancel_theme_picker, preview_theme, select_theme, theme_tick};
+use crate::pane_lifecycle::{begin_close_pane, find_pane_mut, handle_prune_closed, pane_env};
 use crate::pty_events::{
     error_toast, handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
     maybe_notify_pane_exit,
 };
-use crate::resize_move_ops::{begin_move, begin_resize, end_move, move_pane, resize_pane};
-use crate::search_ops::{recompute_search, search_next, select_search_match};
 use crate::state::State;
-use crate::theme_ops::{cancel_theme_picker, preview_theme, select_theme, theme_tick};
 use crate::tiling::append_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
@@ -267,7 +267,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PreviewTheme(index) => preview_theme(ctx, index),
         Msg::SelectTheme(index) => select_theme(ctx, index),
         Msg::ThemeTick => theme_tick(ctx),
-        Msg::ConfigFileChanged => crate::config_ops::config_file_changed(ctx),
+        Msg::ConfigFileChanged => crate::ops::config::config_file_changed(ctx),
         Msg::WorkbarTick => {
             // Repaint for the clock, then reschedule only while a clock segment is configured.
             if ctx.state.config.workbar.has_clock() {
@@ -309,7 +309,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             Update::full()
         }
-        Msg::SearchCycleScope => crate::search_ops::cycle_search_scope(ctx),
+        Msg::SearchCycleScope => crate::ops::search::cycle_search_scope(ctx),
         Msg::CloseRenamePane => {
             let update = close_rename_pane(ctx);
             request_current_pane_focus(ctx);
@@ -327,7 +327,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
-        Msg::CloseRenameSession => crate::session_ops::close_rename_session(ctx),
+        Msg::CloseRenameSession => crate::ops::session::close_rename_session(ctx),
         Msg::RenameSessionChanged(event) => {
             if let Some(rename) = ctx.state.rename_session.as_mut() {
                 event.apply_to(&mut rename.input);
@@ -335,10 +335,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 // confirmation; the next Enter re-arms it (see `apply_rename_session`).
                 rename.pending_confirm = false;
             }
-            crate::focus_ops::request_rename_session_focus(ctx);
+            crate::ops::focus::request_rename_session_focus(ctx);
             Update::full()
         }
-        Msg::SubmitRenameSession => crate::session_ops::apply_rename_session(ctx),
+        Msg::SubmitRenameSession => crate::ops::session::apply_rename_session(ctx),
         Msg::CloseSaveProfile => {
             let update = close_save_profile_prompt(ctx);
             request_current_pane_focus(ctx);
@@ -370,15 +370,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_current_pane_focus(ctx);
             update
         }
-        Msg::CloseSessionPicker => crate::session_ops::close_session_picker(ctx),
+        Msg::CloseSessionPicker => crate::ops::session::close_session_picker(ctx),
         Msg::SessionsDiscovered { epoch, rows } => {
-            crate::session_ops::apply_discovered_sessions(ctx, epoch, rows)
+            crate::ops::session::apply_discovered_sessions(ctx, epoch, rows)
         }
         Msg::SessionPickerQueryChanged(query) => {
             if let Some(picker) = ctx.state.session_picker.as_mut() {
                 picker.input.set_text(query);
             }
-            crate::session_ops::clear_pending_session_arms(ctx);
+            crate::ops::session::clear_pending_session_arms(ctx);
             Update::full()
         }
         Msg::SessionPickerSelect(index) => {
@@ -394,17 +394,17 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                     || picker.pending_open.is_some_and(|index| index != selected)
             });
             if moved_off_armed {
-                crate::session_ops::clear_pending_session_arms(ctx);
+                crate::ops::session::clear_pending_session_arms(ctx);
             }
             Update::full()
         }
         Msg::SessionPickerActivate(index) => {
-            crate::session_ops::activate_selected_session(ctx, index)
+            crate::ops::session::activate_selected_session(ctx, index)
         }
-        Msg::SessionPickerCreateFromQuery => crate::session_ops::open_create_session(ctx),
-        Msg::SessionPickerDetachCurrent => crate::session_ops::detach_current_session(ctx),
-        Msg::SessionPickerKillSelected => crate::session_ops::kill_selected_session(ctx),
-        Msg::SessionPickerNameCurrent => crate::session_ops::open_rename_session(ctx),
+        Msg::SessionPickerCreateFromQuery => crate::ops::session::open_create_session(ctx),
+        Msg::SessionPickerDetachCurrent => crate::ops::session::detach_current_session(ctx),
+        Msg::SessionPickerKillSelected => crate::ops::session::kill_selected_session(ctx),
+        Msg::SessionPickerNameCurrent => crate::ops::session::open_rename_session(ctx),
         Msg::CloseClientList => {
             ctx.state.client_list = None;
             ctx.state.commands_dirty = true;
@@ -422,8 +422,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             }
             Update::full()
         }
-        Msg::ClientListGrant(index) => crate::session_ops::grant_control(ctx, index),
-        Msg::ClientListDecline(index) => crate::session_ops::decline_control(ctx, index),
+        Msg::ClientListGrant(index) => crate::ops::session::grant_control(ctx, index),
+        Msg::ClientListDecline(index) => crate::ops::session::decline_control(ctx, index),
         Msg::FocusPane(id) => {
             focus_pane(&mut ctx.state, id);
             if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -432,7 +432,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             request_pane_focus(ctx, id);
             Update::full()
         }
-        Msg::HoverPane(id) => crate::focus_ops::hover_focus_pane(ctx, id),
+        Msg::HoverPane(id) => crate::ops::focus::hover_focus_pane(ctx, id),
         Msg::BeginMove(
             id,
             current_rect,
@@ -471,10 +471,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             Update::full()
         }
         Msg::BeginResizeSplit(id, horizontal_split, x, y) => {
-            crate::resize_move_ops::begin_resize_split_drag(ctx, id, horizontal_split, x, y)
+            crate::ops::resize_move::begin_resize_split_drag(ctx, id, horizontal_split, x, y)
         }
         Msg::ResizeSplit(id, horizontal_split, from_x, from_y, x, y) => {
-            crate::resize_move_ops::resize_split_by_drag(
+            crate::ops::resize_move::resize_split_by_drag(
                 ctx,
                 id,
                 horizontal_split,
@@ -485,10 +485,10 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             )
         }
         Msg::BeginResizeSplitJunction(left_id, top_id, x, y) => {
-            crate::resize_move_ops::begin_resize_split_junction_drag(ctx, left_id, top_id, x, y)
+            crate::ops::resize_move::begin_resize_split_junction_drag(ctx, left_id, top_id, x, y)
         }
         Msg::ResizeSplitJunction(left_id, top_id, from_x, from_y, x, y) => {
-            crate::resize_move_ops::resize_split_junction_by_drag(
+            crate::ops::resize_move::resize_split_junction_by_drag(
                 ctx, left_id, top_id, from_x, from_y, x, y,
             )
         }
@@ -550,7 +550,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PaneMouse(id, bytes) => handle_pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => handle_pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => handle_pane_scroll(ctx, id, offset),
-        Msg::ControlRequest(envelope) => crate::control_ops::handle_control_request(ctx, envelope),
+        Msg::ControlRequest(envelope) => crate::ops::control::handle_control_request(ctx, envelope),
         Msg::SessionConnected {
             epoch,
             name,
@@ -694,7 +694,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 Update::full()
             } else if had_panes {
                 // Defensive: a live server holding panes but no committed layout (should not occur
-                // under protocol v3). Adopt the panes, then republish a layout if we control it.
+                // under protocol v6). Adopt the panes, then republish a layout if we control it.
                 apply_attached_panes(ctx, panes);
                 flush_pending_spawns(ctx);
                 Update::full()
@@ -1052,7 +1052,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
     };
 
-    if crate::theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
+    if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);
     }
@@ -1183,7 +1183,7 @@ fn bind_attached_pane_backends(
 }
 
 /// Defensive fallback: adopt server panes when a live session reports panes but no committed layout
-/// (should not happen under protocol v3). Rebuilds a flat tiled workspace from the pane list.
+/// (should not happen under protocol v6). Rebuilds a flat tiled workspace from the pane list.
 fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
     panes: Vec<crate::session::protocol::PaneMeta>,
@@ -1247,9 +1247,9 @@ fn spawn_state_panes_on_session(ctx: &mut Context<HyprmuxApp>) -> Vec<(crate::st
     };
     // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
     // palette before the PTY spawns and the child's startup color queries are answered correctly.
-    let fallback_palette = crate::theme_ops::terminal_palette(
+    let fallback_palette = crate::ops::theme::terminal_palette(
         &ctx.state.theme,
-        crate::theme_ops::pane_frame_background(
+        crate::ops::theme::pane_frame_background(
             &ctx.state.theme,
             false,
             ctx.state.config.pane.highlight_focused_background,

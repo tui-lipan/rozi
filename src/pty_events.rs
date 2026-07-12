@@ -35,7 +35,7 @@ pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
 /// window so its dismissal coincides with the pending action expiring.
 pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
-        .duration(crate::exit_ops::CONFIRM_WINDOW_SECS)
+        .duration(crate::ops::exit::CONFIRM_WINDOW_SECS)
         .wrap(true)
         .max_width(Length::Px(64))
         .frame_style(toast_frame_style(theme.status.error))
@@ -67,7 +67,7 @@ fn toast_frame_style(accent: Color) -> Style {
 }
 
 fn toast_text_style(theme: &Theme) -> Style {
-    crate::theme_ops::style_fg(theme.primary).map_or_else(Style::new, |text| Style::new().fg(text))
+    crate::ops::theme::style_fg(theme.primary).map_or_else(Style::new, |text| Style::new().fg(text))
 }
 
 pub(crate) fn forward_key_to_pane(
@@ -202,7 +202,7 @@ pub(crate) fn handle_pane_mouse(
     // A pane running mouse tracking swallows pointer motion in the framework before our per-pane
     // hover callback runs, so on-hover focus would otherwise never fire over a full-screen TUI.
     // Forwarded mouse activity means the pointer is over this pane, so re-apply the hover policy.
-    let hover = crate::focus_ops::hover_focus_pane(ctx, id);
+    let hover = crate::ops::focus::hover_focus_pane(ctx, id);
     if input_blocked(ctx).is_some() {
         return Update::full();
     }

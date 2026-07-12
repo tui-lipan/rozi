@@ -2,22 +2,22 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::config::UserCommandAction;
-use crate::focus_ops::{
+use crate::input::Action;
+use crate::ops::focus::{
     cycle_focus_in_tiled_order, focus_in_direction, focus_in_direction_no_wrap,
     move_focused_to_workspace, promote_focused_to_master, relocate_active_workspace,
     request_current_pane_focus, request_palette_focus, request_pane_focus, switch_workspace,
 };
-use crate::identity_ops::open_rename_pane;
-use crate::input::Action;
-use crate::pane_lifecycle::{find_pane, spawn_pane, spawn_pane_in_workspace};
-use crate::profile_ops::{open_profile_picker, open_save_profile_prompt};
-use crate::resize_move_ops::{
+use crate::ops::identity::open_rename_pane;
+use crate::ops::profile::{open_profile_picker, open_save_profile_prompt};
+use crate::ops::resize_move::{
     adjust_focused_split_ratio, move_focused_in_direction, swap_focused_in_direction,
     toggle_focused_split_axis, toggle_fullscreen, toggle_layout, toggle_tiling,
 };
-use crate::search_ops::open_search;
+use crate::ops::search::open_search;
+use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
+use crate::pane_lifecycle::{find_pane, spawn_pane, spawn_pane_in_workspace};
 use crate::state::{Direction, Mode, PaneIdentity};
-use crate::theme_ops::{apply_terminal_palette_to_state, open_theme_picker};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
@@ -215,12 +215,12 @@ fn execute_action_inner(
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
     // `Msg::RunAction` path and control-socket `RunAction` requests
-    // (`control_ops::run_action`), which call this directly.
+    // (`ops::control::run_action`), which call this directly.
     ctx.state.commands_dirty = true;
     // Followers may not mutate the shared layout: intercept before dispatch and nudge toward
     // taking control. Focus, workspace switching, copy/search/palette, and terminal input are all
     // local and fall through.
-    if is_layout_mutating(&ctx.state, action) && crate::session_ops::nudge_if_follower(ctx) {
+    if is_layout_mutating(&ctx.state, action) && crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
     if !crate::commands::command_available(action, &ctx.state) {
@@ -229,7 +229,7 @@ fn execute_action_inner(
     match action {
         Action::Spawn => spawn_pane(ctx),
         Action::Close => {
-            crate::exit_ops::close_focused_pane_with_confirmation(ctx, confirmations_enabled)
+            crate::ops::exit::close_focused_pane_with_confirmation(ctx, confirmations_enabled)
         }
         Action::Focus(direction) => {
             let viewport = ctx.viewport();
@@ -272,7 +272,7 @@ fn execute_action_inner(
         }
         Action::ToggleFullscreen => toggle_fullscreen(ctx),
         Action::RenamePane => open_rename_pane(ctx),
-        Action::RenameWorkspace => crate::identity_ops::open_rename_workspace(ctx),
+        Action::RenameWorkspace => crate::ops::identity::open_rename_workspace(ctx),
         Action::Paste => paste_from_focused_pane(ctx),
         Action::Swap(direction) => {
             swap_focused_in_direction(ctx, direction);
@@ -315,36 +315,36 @@ fn execute_action_inner(
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
-        Action::OpenSessionPicker => crate::session_ops::open_session_picker(ctx),
-        Action::OpenClientList => crate::session_ops::open_client_list(ctx),
-        Action::RenameSession => crate::session_ops::open_rename_session(ctx),
+        Action::OpenSessionPicker => crate::ops::session::open_session_picker(ctx),
+        Action::OpenClientList => crate::ops::session::open_client_list(ctx),
+        Action::RenameSession => crate::ops::session::open_rename_session(ctx),
         Action::NewTemporarySession => {
             if ctx.state.session_attached
-                && crate::session_ops::may_shutdown_ephemeral(&ctx.state)
+                && crate::ops::session::may_shutdown_ephemeral(&ctx.state)
                 && confirmations_enabled
                 && ctx.state.config.confirm.new_temporary_session
-                && !crate::exit_ops::confirm_new_temporary_session(ctx)
+                && !crate::ops::exit::confirm_new_temporary_session(ctx)
             {
                 return Update::full();
             }
-            crate::session_ops::release_current_session(ctx);
-            let update = crate::session_ops::swap_to_fresh_ephemeral(ctx);
+            crate::ops::session::release_current_session(ctx);
+            let update = crate::ops::session::swap_to_fresh_ephemeral(ctx);
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
                 "Started a fresh ephemeral session",
             ));
             update
         }
-        Action::RequestControl => crate::session_ops::request_control(ctx),
-        Action::GrantControl => crate::session_ops::grant_control_to_requester(ctx),
-        Action::ToggleInputLock => crate::session_ops::toggle_input_lock(ctx),
-        Action::Detach => crate::exit_ops::detach(ctx),
-        Action::Quit => crate::exit_ops::quit_client(ctx, confirmations_enabled),
+        Action::RequestControl => crate::ops::session::request_control(ctx),
+        Action::GrantControl => crate::ops::session::grant_control_to_requester(ctx),
+        Action::ToggleInputLock => crate::ops::session::toggle_input_lock(ctx),
+        Action::Detach => crate::ops::exit::detach(ctx),
+        Action::Quit => crate::ops::exit::quit_client(ctx, confirmations_enabled),
         Action::KillWorkspace => {
-            crate::exit_ops::kill_workspace_with_confirmation(ctx, confirmations_enabled)
+            crate::ops::exit::kill_workspace_with_confirmation(ctx, confirmations_enabled)
         }
         Action::KillSession => {
-            crate::exit_ops::kill_session_with_confirmation(ctx, confirmations_enabled)
+            crate::ops::exit::kill_session_with_confirmation(ctx, confirmations_enabled)
         }
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenAppearance => {
@@ -398,7 +398,7 @@ fn execute_action_inner(
         Action::ToggleBorderMerge => toggle_pane_flag!(ctx, merge_borders),
         Action::ToggleBackgroundFollowsTerminal => {
             toggle_pane_flag!(ctx, background_follows_terminal);
-            crate::theme_ops::reapply_active_theme(ctx)
+            crate::ops::theme::reapply_active_theme(ctx)
         }
         Action::CycleBorderStyle => {
             let next = ctx.state.config.pane.border_style.next();
@@ -431,7 +431,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
-        Action::OpenConfigFile => crate::config_ops::open_config_file(ctx),
+        Action::OpenConfigFile => crate::ops::config::open_config_file(ctx),
         Action::TogglePaneSynchronization => {
             let synchronized = {
                 let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];

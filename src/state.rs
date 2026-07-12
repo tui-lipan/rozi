@@ -991,7 +991,7 @@ pub struct State {
     /// [`Msg::SessionAttached`](crate::Msg::SessionAttached) installs the client.
     pub pending_spawns: Vec<PendingPaneSpawn>,
     /// A destructive action armed by its first press; the second press only fires while the arm
-    /// time is within [`crate::exit_ops::CONFIRM_WINDOW_SECS`].
+    /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
     /// Shared-session bookkeeping for the attached named/ephemeral session: the layout lease,
     /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
@@ -1028,7 +1028,7 @@ pub const ORPHAN_OUTPUT_CAP: usize = 256 * 1024;
 
 /// Client-side state for an attached shared session: the layout-control lease, revision
 /// bookkeeping for optimistic commits, the controller's canonical canvas, and the buffers the
-/// reconciler needs. Present whenever [`State::session_attached`] is true under protocol v3.
+/// reconciler needs. Present whenever [`State::session_attached`] is true under protocol v6.
 pub struct SharedSessionState {
     /// This client's server-assigned id.
     pub client_id: crate::shared_layout::ClientId,

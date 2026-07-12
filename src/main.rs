@@ -3,31 +3,22 @@ mod anim;
 mod cli;
 mod commands;
 mod config;
-mod config_ops;
 mod control;
-mod control_ops;
 mod copy_mode;
-mod exit_ops;
-mod focus_ops;
 mod geometry;
-mod identity_ops;
 mod input;
 mod key_routing;
 mod layout;
 mod layout_tree_ser;
+mod ops;
 mod pane;
 mod pane_lifecycle;
-mod profile_ops;
 mod profiles;
 mod pty_events;
-mod resize_move_ops;
 mod scratchpad;
-mod search_ops;
 mod session;
-mod session_ops;
 mod shared_layout;
 mod state;
-mod theme_ops;
 mod tiling;
 mod update;
 mod view;
@@ -318,7 +309,7 @@ impl Component for HyprmuxApp {
             .control_guard
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
-        theme_ops::apply_terminal_palette_to_state(&mut state);
+        ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
 
@@ -361,7 +352,7 @@ impl Component for HyprmuxApp {
             workbar_commands.iter().map(|(c, _)| c.clone()).collect();
 
         let start = if self.want_startup_picker && has_named_session() {
-            let epoch = session_ops::open_startup_session_picker(ctx);
+            let epoch = ops::session::open_startup_session_picker(ctx);
             SessionStart::Picker { epoch }
         } else {
             let name = self
@@ -382,7 +373,7 @@ impl Component for HyprmuxApp {
         let startup_read_only = self.read_only;
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             link.send(Msg::CommandLinkReady(link.clone()));
-            config_ops::spawn_config_watcher(&link);
+            ops::config::spawn_config_watcher(&link);
             if let Some(listener) = control_listener {
                 let listener_link = link.clone();
                 std::thread::spawn(move || crate::control::run_listener(listener, listener_link));
@@ -426,7 +417,7 @@ impl Component for HyprmuxApp {
     fn on_key(&mut self, key: KeyEvent, ctx: &mut Context<Self>) -> KeyUpdate {
         key_routing::sync_focus_from_framework(ctx);
         let (handled, mut update) = key_routing::handle_key_routing(ctx, key, None);
-        if theme_ops::apply_terminal_palette_to_state(&mut ctx.state) {
+        if ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
             let command = update.command.take();
             update = Update::with_command(command);
         }
@@ -673,10 +664,10 @@ fn main() -> Result<()> {
         && (cli.pick || config.session.startup == config::SessionStartup::Picker);
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
-    let startup_system_theme = startup_host_colors.map(theme_ops::system_theme_from_host_colors);
+    let startup_system_theme = startup_host_colors.map(ops::theme::system_theme_from_host_colors);
     let resolved_theme = config::resolve_theme(&config.theme.name, startup_system_theme.as_ref());
     startup_messages.extend(resolved_theme.warnings);
-    let theme = theme_ops::apply_backdrop_policy(
+    let theme = ops::theme::apply_backdrop_policy(
         resolved_theme.theme,
         terminal_bg,
         config.pane.background_follows_terminal,

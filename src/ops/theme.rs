@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::focus_ops::request_theme_picker_focus;
+use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{Mode, State, ThemePickerPreview, ThemePreset};
 use crate::{HyprmuxApp, Msg, schedule_theme_tick};
 

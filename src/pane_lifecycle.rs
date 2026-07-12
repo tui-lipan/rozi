@@ -3,14 +3,14 @@ use std::time::Duration;
 use tui_lipan::prelude::*;
 
 use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
-use crate::focus_ops::{
+use crate::geometry::default_floating_rect;
+use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
+use crate::ops::focus::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
     request_current_pane_focus, total_visible_panes,
 };
-use crate::geometry::default_floating_rect;
-use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
+use crate::ops::theme::{pane_frame_background, terminal_palette};
 use crate::state::{Pane, PaneId, PaneIdentity, State};
-use crate::theme_ops::{pane_frame_background, terminal_palette};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
@@ -164,7 +164,7 @@ pub(crate) fn begin_close_pane(
 /// Mark a pane closing, kill its terminal/PTY, and update fallback focus + the close animation,
 /// without scheduling the delayed prune. Callers that close a single pane wrap the returned
 /// generation in one [`prune_closed_command`]; callers that close several panes at once (e.g.
-/// [`crate::exit_ops::kill_workspace`]) collect generations across multiple calls and schedule
+/// [`crate::ops::exit::kill_workspace`]) collect generations across multiple calls and schedule
 /// one combined [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
 /// Returns `None` (no state change) if the pane was already closing.
 pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
@@ -460,7 +460,7 @@ pub(crate) fn prune_closed_command(
     })
 }
 
-/// Prune several panes closed in the same batch (e.g. [`crate::exit_ops::kill_workspace`])
+/// Prune several panes closed in the same batch (e.g. [`crate::ops::exit::kill_workspace`])
 /// after one shared delay, since an [`Update`] can only carry a single [`Command`].
 pub(crate) fn prune_closed_batch_command(
     epoch: u64,

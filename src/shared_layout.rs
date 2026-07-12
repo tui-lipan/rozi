@@ -20,7 +20,7 @@ use crate::tiling::DwindleTree;
 /// Stable identity for an attached client, assigned by the server on attach.
 pub type ClientId = u64;
 
-/// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes; protocol v3
+/// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes; protocol v6
 /// carries version 1.
 pub const SHARED_LAYOUT_VERSION: u32 = 1;
 

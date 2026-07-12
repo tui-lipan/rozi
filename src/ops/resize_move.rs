@@ -2,9 +2,6 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::focus_ops::{
-    self, active_pane_is_fullscreen, active_pane_mut, focus_pane, request_pane_focus,
-};
 use crate::geometry::{
     canvas_local_point_from_mouse, clamp_float_rect, clamp_floating_rect, directional_score,
     grabbed_edge_on_outer_border, lift_off_float_rect, resize_float_rect_from_corner,
@@ -13,6 +10,9 @@ use crate::geometry::{
 use crate::layout::{
     self, insert_tiled_pane_at_point, placement_for, target_tiled_pane_for_drop,
     workspace_target_rects, workspace_target_rects_excluding,
+};
+use crate::ops::focus::{
+    active_pane_is_fullscreen, active_pane_mut, focus_pane, request_pane_focus,
 };
 use crate::state::{
     self, Direction, LayoutKind, MoveSession, MoveSwapHint, PaneId, RATIO_STEP, ResizeCorner,
@@ -52,7 +52,7 @@ pub(crate) fn begin_move(
     if !modified {
         return Update::none();
     }
-    if crate::session_ops::nudge_if_follower(ctx) {
+    if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
     focus_pane(&mut ctx.state, id);
@@ -149,7 +149,7 @@ pub(crate) fn begin_resize(
     if !modified {
         return Update::none();
     }
-    if crate::session_ops::nudge_if_follower(ctx) {
+    if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
     ctx.state.animation = GeometryAnimation::None;
@@ -750,7 +750,7 @@ pub(crate) fn begin_resize_split_junction_drag(
 }
 
 fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
-    if crate::session_ops::nudge_if_follower(ctx) {
+    if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
     let workspace_index = ctx.state.active_workspace;
@@ -926,7 +926,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
     }
 
     if workspace.layout_kind == LayoutKind::Master {
-        let axis = focus_ops::split_axis_for_direction(direction);
+        let axis = crate::ops::focus::split_axis_for_direction(direction);
         if axis != state::SplitAxis::Horizontal {
             return;
         }
@@ -948,7 +948,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         return;
     };
 
-    let axis = focus_ops::split_axis_for_direction(direction);
+    let axis = crate::ops::focus::split_axis_for_direction(direction);
     let Some(available) =
         nearest_split_available(tree, tile_bounds, TileGap::DEFAULT, focused, axis)
     else {

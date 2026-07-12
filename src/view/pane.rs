@@ -85,7 +85,7 @@ pub(crate) fn pane_element(
         ctx,
         pane.id,
         "frame-fg",
-        crate::theme_ops::pane_frame_foreground(
+        crate::ops::theme::pane_frame_foreground(
             theme,
             focused,
             ctx.state.config.pane.highlight_focused_border,
@@ -95,7 +95,7 @@ pub(crate) fn pane_element(
         ctx,
         pane.id,
         "frame-bg",
-        crate::theme_ops::pane_frame_background(
+        crate::ops::theme::pane_frame_background(
             theme,
             focused,
             ctx.state.config.pane.highlight_focused_background,
@@ -119,7 +119,7 @@ pub(crate) fn pane_element(
             ctx,
             pane.id,
             "title-fg",
-            crate::theme_ops::pane_title_foreground(theme, focused, title_bar_bg_target),
+            crate::ops::theme::pane_title_foreground(theme, focused, title_bar_bg_target),
         );
         let title_bar_fill_style = Style::new().bg(title_bar_bg);
         let title_bar_text_style = if focused {

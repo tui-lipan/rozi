@@ -17,7 +17,7 @@ use crate::ops::resize_move::{
 use crate::ops::search::open_search;
 use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
 use crate::pane_lifecycle::{find_pane, spawn_pane, spawn_pane_in_workspace};
-use crate::state::{Direction, Mode, PaneIdentity};
+use crate::state::{Direction, Mode, PaneIdentity, ToastChannel};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
@@ -158,11 +158,11 @@ fn navigation_key(direction: Direction) -> KeyEvent {
 
 fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Preference not saved",
-            err,
-        ));
+        crate::pty_events::replace_toast(
+            ctx,
+            ToastChannel::PreferenceSave,
+            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+        );
     }
 }
 
@@ -176,21 +176,21 @@ macro_rules! toggle_pane_flag {
 
 fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_animation_flag(key, value) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Preference not saved",
-            err,
-        ));
+        crate::pty_events::replace_toast(
+            ctx,
+            ToastChannel::PreferenceSave,
+            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+        );
     }
 }
 
 fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Preference not saved",
-            err,
-        ));
+        crate::pty_events::replace_toast(
+            ctx,
+            ToastChannel::PreferenceSave,
+            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+        );
     }
 }
 
@@ -472,10 +472,14 @@ fn execute_action_inner(
                 workspace.synchronized = !workspace.synchronized;
                 workspace.synchronized
             };
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                if synchronized { "Sync on" } else { "Sync off" },
-            ));
+            crate::pty_events::replace_toast(
+                ctx,
+                ToastChannel::PaneSynchronization,
+                crate::pty_events::info_toast(
+                    &ctx.state.theme,
+                    if synchronized { "Sync on" } else { "Sync off" },
+                ),
+            );
             Update::full()
         }
     }
@@ -595,6 +599,54 @@ mod tests {
         assert_eq!(navigation_key(Direction::Down), ctrl('j'));
         assert_eq!(navigation_key(Direction::Up), ctrl('k'));
         assert_eq!(navigation_key(Direction::Right), ctrl('l'));
+    }
+
+    #[test]
+    fn repeated_state_toasts_replace_only_their_own_channel() {
+        use crate::Msg;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+
+                backend
+                    .dispatch(Msg::RunAction(Action::ToggleLayout))
+                    .expect("dispatch first layout cycle");
+                let first_layout_toast = *backend
+                    .state()
+                    .replaceable_toasts
+                    .get(&ToastChannel::LayoutMode)
+                    .expect("layout toast is tracked");
+
+                backend
+                    .dispatch(Msg::RunAction(Action::ToggleLayout))
+                    .expect("dispatch second layout cycle");
+                let second_layout_toast = *backend
+                    .state()
+                    .replaceable_toasts
+                    .get(&ToastChannel::LayoutMode)
+                    .expect("replacement layout toast is tracked");
+                assert_ne!(first_layout_toast, second_layout_toast);
+                assert_eq!(backend.state().replaceable_toasts.len(), 1);
+
+                backend
+                    .dispatch(Msg::RunAction(Action::TogglePaneSynchronization))
+                    .expect("dispatch synchronization toggle");
+                assert_eq!(backend.state().replaceable_toasts.len(), 2);
+                assert_eq!(
+                    backend
+                        .state()
+                        .replaceable_toasts
+                        .get(&ToastChannel::LayoutMode),
+                    Some(&second_layout_toast),
+                    "an independent toast channel must not replace the layout toast",
+                );
+            })
+            .expect("spawn toast replacement test thread")
+            .join()
+            .expect("toast replacement test thread completes");
     }
 
     #[test]

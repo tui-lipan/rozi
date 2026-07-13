@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::pane_lifecycle::find_pane_mut;
-use crate::state::PaneId;
+use crate::state::{PaneId, ToastChannel};
 
 fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
     let reason = ctx.state.pane_input_block_reason()?.to_string();
@@ -12,10 +12,22 @@ fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
         .is_none_or(|last| last.elapsed() >= std::time::Duration::from_secs(2));
     if notify {
         ctx.state.last_blocked_input_toast = Some(std::time::Instant::now());
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, reason.clone()));
+        replace_toast(
+            ctx,
+            ToastChannel::InputState,
+            info_toast(&ctx.state.theme, reason.clone()),
+        );
     }
     Some(reason)
+}
+
+/// Show the newest state for a notification channel without disturbing unrelated toasts.
+pub(crate) fn replace_toast(ctx: &mut Context<HyprmuxApp>, channel: ToastChannel, toast: Toast) {
+    if let Some(id) = ctx.state.replaceable_toasts.remove(&channel) {
+        ctx.toast().dismiss(id);
+    }
+    let id = ctx.toast().push(toast);
+    ctx.state.replaceable_toasts.insert(channel, id);
 }
 
 pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {

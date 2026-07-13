@@ -231,10 +231,14 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
         .and_then(|shared| shared.controller)
         .map(|id| format!("client {id}"))
         .unwrap_or_else(|| "another client".to_string());
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
-        format!("Layout controlled by {who}\nTry requesting control"),
-    ));
+    crate::pty_events::replace_toast(
+        ctx,
+        crate::state::ToastChannel::LayoutControl,
+        info_toast(
+            &ctx.state.theme,
+            format!("Layout controlled by {who}\nTry requesting control"),
+        ),
+    );
     true
 }
 
@@ -275,7 +279,11 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         (false, Some(who)) => format!("Requested layout control from {who}"),
         (false, None) => "Requested layout control".to_string(),
     };
-    ctx.toast().push(info_toast(&ctx.state.theme, message));
+    crate::pty_events::replace_toast(
+        ctx,
+        crate::state::ToastChannel::LayoutControl,
+        info_toast(&ctx.state.theme, message),
+    );
     Update::full()
 }
 

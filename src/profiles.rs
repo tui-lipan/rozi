@@ -223,6 +223,7 @@ pub fn restore_state_from_profile(
         session_picker: None,
         client_list: None,
         last_blocked_input_toast: None,
+        replaceable_toasts: std::collections::HashMap::new(),
         session_picker_epoch: 0,
         copy_mode: None,
         hint_mode: None,

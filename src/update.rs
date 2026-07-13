@@ -790,15 +790,20 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 let who = controller
                     .map(|id| format!("client {id}"))
                     .unwrap_or_else(|| "another client".to_string());
-                ctx.toast().push(crate::pty_events::info_toast(
-                    &ctx.state.theme,
-                    format!("Layout control taken by {who}"),
-                ));
+                crate::pty_events::replace_toast(
+                    ctx,
+                    crate::state::ToastChannel::LayoutControl,
+                    crate::pty_events::info_toast(
+                        &ctx.state.theme,
+                        format!("Layout control taken by {who}"),
+                    ),
+                );
             } else if !was_controller && now_controller {
-                ctx.toast().push(crate::pty_events::info_toast(
-                    &ctx.state.theme,
-                    "You now control the layout",
-                ));
+                crate::pty_events::replace_toast(
+                    ctx,
+                    crate::state::ToastChannel::LayoutControl,
+                    crate::pty_events::info_toast(&ctx.state.theme, "You now control the layout"),
+                );
             }
             ctx.state.commands_dirty = true;
             Update::full()
@@ -816,14 +821,18 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 shared.clients = clients;
                 shared.input_locked = input_locked;
                 if changed {
-                    ctx.toast().push(crate::pty_events::info_toast(
-                        &ctx.state.theme,
-                        if input_locked {
-                            "Input locked to controller"
-                        } else {
-                            "Input unlocked"
-                        },
-                    ));
+                    crate::pty_events::replace_toast(
+                        ctx,
+                        crate::state::ToastChannel::InputState,
+                        crate::pty_events::info_toast(
+                            &ctx.state.theme,
+                            if input_locked {
+                                "Input locked to controller"
+                            } else {
+                                "Input unlocked"
+                            },
+                        ),
+                    );
                 }
             }
             ctx.state.commands_dirty = true;

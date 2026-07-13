@@ -505,10 +505,11 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
     if show_toast {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            format!("Layout mode: {layout_label}"),
-        ));
+        crate::pty_events::replace_toast(
+            ctx,
+            crate::state::ToastChannel::LayoutMode,
+            crate::pty_events::info_toast(&ctx.state.theme, format!("Layout mode: {layout_label}")),
+        );
     }
 }
 

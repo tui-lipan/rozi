@@ -788,12 +788,17 @@ pub(crate) fn command_prefix_chord(ctx: &Context<HyprmuxApp>, id: &str) -> Optio
 
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
 /// explicit empty override that unbinds it) if configured, otherwise the leader-prefix chord and
-/// WM-modifier chord mirrored from its default key steps.
+/// WM-modifier chord mirrored from its default key steps. Paste also accepts plain `Ctrl+V`, which
+/// tui-lipan handles for text inputs but intentionally forwards from terminal widgets by default.
 fn resolve_shortcuts(config: &HyprmuxConfig, id: &str, defaults: &[&str]) -> KeyBindings {
     if let Some(bindings) = config.key_overrides.get(id) {
         KeyBindings::from_bindings(bindings.iter().cloned())
     } else {
-        KeyBindings::from_bindings(default_shortcuts_for(config, defaults))
+        let mut bindings = default_shortcuts_for(config, defaults);
+        if id == "paste" {
+            bindings.push(KeyBinding::from_str("ctrl-v").expect("paste shortcut parses"));
+        }
+        KeyBindings::from_bindings(bindings)
     }
 }
 
@@ -1103,6 +1108,28 @@ mod tests {
                 .primary()
                 .unwrap()
                 .matches_sequence(&[ctrl('b'), plain('c')])
+        );
+    }
+
+    #[test]
+    fn paste_accepts_ctrl_v_unless_explicitly_overridden() {
+        let mut config = HyprmuxConfig::default();
+        let shortcuts = resolve_shortcuts(&config, "paste", &["v", "shift-v"]);
+        assert!(
+            shortcuts
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('v')]))
+        );
+
+        config.key_overrides.insert(
+            "paste".to_string(),
+            vec![KeyBinding::from_str("ctrl-shift-v").unwrap()],
+        );
+        let shortcuts = resolve_shortcuts(&config, "paste", &["v", "shift-v"]);
+        assert!(
+            !shortcuts
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('v')]))
         );
     }
 

@@ -572,9 +572,9 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).
 
-`paste` (default `v`) reads the system clipboard and sends it to the focused pane's PTY, wrapped
-in bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
-simulated keystrokes.
+`paste` (default `v` or direct `Ctrl+V`) reads the system clipboard and sends it to the focused
+pane's PTY, wrapped in bracketed-paste markers so shells/editors that opt in treat it as one paste
+instead of simulated keystrokes.
 
 ### User-defined command keybindings
 

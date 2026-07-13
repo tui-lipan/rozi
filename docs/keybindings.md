@@ -73,7 +73,7 @@ Key handling is the same on Windows, with two things worth knowing:
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
-| Paste from clipboard | `v` |
+| Paste from clipboard | `v` or `Ctrl+V` |
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
 | Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `modifier`+`Ctrl`+`←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
 | Promote pane to master | `.` (also palette) |
@@ -84,7 +84,7 @@ tree); *Swap* exchanges the two panes' positions in place without restructuring.
 
 **Paste** reads the system clipboard and sends it to the focused pane's PTY, wrapped in
 bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
-simulated keystrokes.
+simulated keystrokes. `Ctrl+V` works directly in normal mode without entering the prefix.
 
 ### Focus
 

@@ -292,6 +292,10 @@ pub struct MoveSession {
     pub id: PaneId,
     pub was_floating: bool,
     pub drag_rect: FloatRect,
+    /// Last pointer position in root coordinates, retained so a keyboard action can finish the
+    /// drop exactly like a mouse release before changing the pane's mode.
+    pub pointer_x: i32,
+    pub pointer_y: i32,
 }
 
 #[derive(Clone, Debug, PartialEq)]

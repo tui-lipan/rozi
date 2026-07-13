@@ -43,10 +43,10 @@ pub(crate) fn begin_move(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
     current_rect: FloatRect,
-    _from_local_x: u16,
-    _from_local_y: u16,
-    _target_w: u16,
-    _target_h: u16,
+    from_local_x: u16,
+    from_local_y: u16,
+    target_w: u16,
+    target_h: u16,
     modified: bool,
 ) -> Update {
     if !modified {
@@ -70,6 +70,10 @@ pub(crate) fn begin_move(
                 id,
                 was_floating,
                 drag_rect,
+                pointer_x: current_rect.x.round() as i32
+                    + i32::from(from_local_x.min(target_w.saturating_sub(1))),
+                pointer_y: current_rect.y.round() as i32
+                    + i32::from(from_local_y.min(target_h.saturating_sub(1))),
             });
         }
     }
@@ -103,6 +107,8 @@ pub(crate) fn move_pane(
         session.drag_rect.x += f32::from(dx);
         session.drag_rect.y += f32::from(dy);
         session.drag_rect = clamp_floating_rect(session.drag_rect, bounds);
+        session.pointer_x += i32::from(dx);
+        session.pointer_y += i32::from(dy);
         if session.was_floating {
             persisted_floating_rect = Some(session.drag_rect);
         }
@@ -136,6 +142,20 @@ pub(crate) fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16
         }
     }
     Update::full()
+}
+
+/// Finish any pointer-driven layout edit before an action changes pane/layout mode. Mouse drag-end
+/// events arriving afterward become harmless because their session has already been cleared.
+fn finish_pointer_layout_interaction(ctx: &mut Context<HyprmuxApp>) {
+    if let Some(session) = ctx.state.moving_pane {
+        focus_pane(&mut ctx.state, session.id);
+        request_pane_focus(ctx, session.id);
+        let x = session.pointer_x.clamp(0, i32::from(u16::MAX)) as u16;
+        let y = session.pointer_y.clamp(0, i32::from(u16::MAX)) as u16;
+        end_move(ctx, session.id, x, y);
+    }
+    ctx.state.resizing_pane = None;
+    ctx.state.split_drag = None;
 }
 
 pub(crate) fn begin_resize(
@@ -368,6 +388,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
 }
 
 pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
+    finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.focused_pane else {
         return;
     };
@@ -418,6 +439,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
 }
 
 pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
+    finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.focused_pane else {
         return Update::full();
     };
@@ -496,6 +518,7 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
 }
 
 pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
+    finish_pointer_layout_interaction(ctx);
     let workspace_index = ctx.state.active_workspace;
     let layout_label = {
         let workspace = &mut ctx.state.workspaces[workspace_index];
@@ -976,8 +999,27 @@ fn keyboard_resize_pixels(direction: Direction, focused_is_first: bool, availabl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::Action;
     use crate::state::{Pane, SplitAxis};
     use crate::tiling::DwindleTree;
+    use crate::{HyprmuxApp, Msg};
+    use tui_lipan::TestBackend;
+
+    const TEST_VIEWPORT: Rect = Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 30,
+    };
+
+    fn in_test_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
 
     #[test]
     fn keyboard_resize_directions_grow_toward_the_nearest_split() {
@@ -1120,82 +1162,224 @@ mod tests {
     }
 
     #[test]
-    fn follower_mouse_resize_leaves_the_layout_untouched() {
-        use crate::HyprmuxApp;
-        use crate::Msg;
-        use crate::state::SharedSessionState;
-        use tui_lipan::TestBackend;
-
-        std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let split = DwindleTree::Split {
-                    axis: SplitAxis::Horizontal,
-                    ratio: 0.5,
-                    first: Box::new(DwindleTree::Leaf(1)),
-                    second: Box::new(DwindleTree::Leaf(2)),
-                };
-                let mut backend = TestBackend::new(HyprmuxApp::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 100,
-                    h: 30,
-                });
-                {
-                    let state = backend.state_mut();
-                    // A follower: attached, but another client holds the layout lease.
-                    state.session_attached = true;
-                    let mut shared = SharedSessionState::new(1);
-                    shared.controller = Some(2);
-                    state.shared = Some(shared);
-
-                    let bounds = FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 100.0,
-                        h: 30.0,
-                    };
-                    let workspace = &mut state.workspaces[state.active_workspace];
-                    workspace.panes.clear();
-                    workspace.panes.push(Pane::new(1, 100, bounds));
-                    workspace.panes.push(Pane::new(2, 100, bounds));
-                    workspace.tile_tree = Some(split.clone());
-                    state.focused_pane = Some(1);
-                }
-                backend.render();
-
-                // A drag that never got a `begin_resize` (followers are nudged and blocked there)
-                // must not resize: without the start snapshot every event would restack its delta
-                // onto the previous one and compound the drag.
-                for step in 1..=5u16 {
-                    backend
-                        .dispatch(Msg::ResizePane(
-                            1,
-                            ResizeCorner::LowerRight,
-                            10,
-                            10,
-                            10 + step,
-                            10,
-                            true,
-                        ))
-                        .expect("dispatch follower resize");
-                }
-
+    fn fullscreen_toggle_finishes_tiled_drag_at_current_pointer() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let (start_rect, start_pointer, target_pointer, original_tree) = {
                 let state = backend.state_mut();
-                assert_eq!(
-                    state.workspaces[state.active_workspace].tile_tree,
-                    Some(split),
-                    "a follower's mouse resize must not mutate the layout"
-                );
-                assert!(
-                    state.resizing_pane.is_none(),
-                    "no resize session should be opened for a follower"
-                );
-            })
-            .expect("spawn test thread")
-            .join()
-            .expect("test thread panicked");
+                let (_, workspace) = three_pane_stack_workspace();
+                state.workspaces[state.active_workspace] = workspace;
+                state.focused_pane = Some(1);
+                state.workspaces[state.active_workspace].focused_pane = Some(1);
+
+                let bounds = state.canvas_bounds(TEST_VIEWPORT);
+                let top_gap = state.workspace_top_gap();
+                let tile_gap = state.tile_gap();
+                let top_offset = state.content_top_offset();
+                let workspace = &state.workspaces[state.active_workspace];
+                let placements = workspace_target_rects(workspace, bounds, top_gap, tile_gap);
+                let start = placement_for(&placements, 1).expect("pane 1 placement");
+                let drop_placements =
+                    workspace_target_rects_excluding(workspace, bounds, Some(1), top_gap, tile_gap);
+                let target = placement_for(&drop_placements, 3).expect("pane 3 drop placement");
+                let start_pointer = crate::geometry::rect_center(start);
+                let target_pointer = crate::geometry::rect_center(target);
+                (
+                    FloatRect {
+                        y: start.y + f32::from(top_offset),
+                        ..start
+                    },
+                    (start_pointer.0, start_pointer.1 + f32::from(top_offset)),
+                    (target_pointer.0, target_pointer.1 + f32::from(top_offset)),
+                    workspace.tile_tree.clone(),
+                )
+            };
+            backend.render();
+
+            let local_x = (start_pointer.0 - start_rect.x).round() as u16;
+            let local_y = (start_pointer.1 - start_rect.y).round() as u16;
+            backend
+                .dispatch(Msg::BeginMove(
+                    1,
+                    start_rect,
+                    local_x,
+                    local_y,
+                    start_rect.w.round() as u16,
+                    start_rect.h.round() as u16,
+                    true,
+                ))
+                .expect("begin drag");
+            backend
+                .dispatch(Msg::MovePane(
+                    1,
+                    (target_pointer.0 - start_pointer.0).round() as i16,
+                    (target_pointer.1 - start_pointer.1).round() as i16,
+                    true,
+                ))
+                .expect("move drag");
+            // Focus-on-hover may briefly select the pane under the pointer. The mode action still
+            // belongs to the pane whose drag is active.
+            backend.state_mut().focused_pane = Some(3);
+            backend.state_mut().workspaces[0].focused_pane = Some(3);
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFullscreen))
+                .expect("toggle fullscreen");
+
+            let state = backend.state_mut();
+            assert!(state.moving_pane.is_none());
+            assert!(
+                state.workspaces[state.active_workspace]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == 1)
+                    .is_some_and(|pane| pane.fullscreen)
+            );
+            assert_ne!(
+                state.workspaces[state.active_workspace].tile_tree, original_tree,
+                "the tiled pane must be dropped before fullscreen is applied"
+            );
+            let dropped_tree = state.workspaces[state.active_workspace].tile_tree.clone();
+
+            backend
+                .dispatch(Msg::MovePane(1, 5, 5, true))
+                .expect("stale drag event");
+            assert_eq!(
+                backend.state_mut().workspaces[0].tile_tree,
+                dropped_tree,
+                "stale mouse events must not resume a completed drag"
+            );
+        });
+    }
+
+    #[test]
+    fn tiling_toggle_persists_floating_drag_before_insertion() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let start_rect = FloatRect {
+                x: 8.0,
+                y: 5.0,
+                w: 30.0,
+                h: 10.0,
+            };
+            {
+                let state = backend.state_mut();
+                let workspace = &mut state.workspaces[state.active_workspace];
+                workspace.panes.clear();
+                let mut floating = Pane::new(1, 100, start_rect);
+                floating.floating = true;
+                workspace.panes.push(floating);
+                workspace
+                    .panes
+                    .push(Pane::new(2, 100, FloatRect::default()));
+                workspace.tile_tree = Some(DwindleTree::Leaf(2));
+                workspace.focused_pane = Some(1);
+                state.focused_pane = Some(1);
+            }
+            backend.render();
+
+            backend
+                .dispatch(Msg::BeginMove(1, start_rect, 4, 3, 30, 10, true))
+                .expect("begin floating drag");
+            backend
+                .dispatch(Msg::MovePane(1, 12, 4, true))
+                .expect("move floating pane");
+            let dragged_rect = backend
+                .state_mut()
+                .moving_pane
+                .expect("active drag")
+                .drag_rect;
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFloat))
+                .expect("toggle tiling");
+
+            let state = backend.state_mut();
+            let pane = state.workspaces[state.active_workspace]
+                .panes
+                .iter()
+                .find(|pane| pane.id == 1)
+                .expect("pane 1");
+            assert!(state.moving_pane.is_none());
+            assert!(!pane.floating);
+            assert_eq!(pane.floating_rect, dragged_rect);
+            assert!(
+                state.workspaces[state.active_workspace]
+                    .tiled_ids()
+                    .contains(&1)
+            );
+        });
+    }
+
+    #[test]
+    fn follower_mouse_resize_leaves_the_layout_untouched() {
+        use crate::state::SharedSessionState;
+
+        in_test_stack(|| {
+            let split = DwindleTree::Split {
+                axis: SplitAxis::Horizontal,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(1)),
+                second: Box::new(DwindleTree::Leaf(2)),
+            };
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                // A follower: attached, but another client holds the layout lease.
+                state.session_attached = true;
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(2);
+                state.shared = Some(shared);
+
+                let bounds = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 30.0,
+                };
+                let workspace = &mut state.workspaces[state.active_workspace];
+                workspace.panes.clear();
+                workspace.panes.push(Pane::new(1, 100, bounds));
+                workspace.panes.push(Pane::new(2, 100, bounds));
+                workspace.tile_tree = Some(split.clone());
+                state.focused_pane = Some(1);
+            }
+            backend.render();
+
+            // A drag that never got a `begin_resize` (followers are nudged and blocked there)
+            // must not resize: without the start snapshot every event would restack its delta
+            // onto the previous one and compound the drag.
+            for step in 1..=5u16 {
+                backend
+                    .dispatch(Msg::ResizePane(
+                        1,
+                        ResizeCorner::LowerRight,
+                        10,
+                        10,
+                        10 + step,
+                        10,
+                        true,
+                    ))
+                    .expect("dispatch follower resize");
+            }
+
+            let state = backend.state_mut();
+            assert_eq!(
+                state.workspaces[state.active_workspace].tile_tree,
+                Some(split),
+                "a follower's mouse resize must not mutate the layout"
+            );
+            assert!(
+                state.resizing_pane.is_none(),
+                "no resize session should be opened for a follower"
+            );
+        });
     }
 
     fn three_pane_stack_workspace() -> (FloatRect, Workspace) {

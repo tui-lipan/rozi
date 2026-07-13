@@ -624,6 +624,48 @@ mod reconciler_tests {
             assert_eq!(added.pty_generation, 5);
             assert!(added.terminal.is_ready());
             assert!(find_pane(backend.state_mut(), 1).is_some(), "survivor kept");
+            assert_eq!(
+                backend.state_mut().animation,
+                crate::anim::GeometryAnimation::TileFloat,
+                "live layout commits should retain geometry transitions"
+            );
+        });
+    }
+
+    #[test]
+    fn initial_session_layout_is_applied_without_geometry_transition() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            backend.state_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
+                epoch: 1,
+                name: "live".into(),
+                client: Some(client),
+                autostart: false,
+                read_only: false,
+            });
+            backend.render();
+
+            backend
+                .dispatch(Msg::SessionAttached {
+                    epoch: 1,
+                    session: "live".into(),
+                    client_id: 1,
+                    panes: Vec::new(),
+                    layout_rev: 7,
+                    layout: Some(layout_with_panes(&[(1, 4), (2, 9)])),
+                    controller: Some(1),
+                    clients: Vec::new(),
+                    input_locked: false,
+                    read_only: false,
+                })
+                .expect("dispatch attach");
+
+            let state = backend.state_mut();
+            assert!(find_pane(state, 1).is_some());
+            assert!(find_pane(state, 2).is_some());
+            assert_eq!(state.animation, crate::anim::GeometryAnimation::None);
         });
     }
 

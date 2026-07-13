@@ -691,6 +691,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 // from the pane metadata before the replay seed frames arrive.
                 reset_state_for_shared_seed(&mut ctx.state);
                 crate::shared_layout::apply_shared_layout(ctx, &layout, layout_rev);
+                // Attaching reveals an already-running session, so snap to its authoritative
+                // geometry instead of interpolating from the previous session's pane rectangles.
+                ctx.state.animation = GeometryAnimation::None;
                 bind_attached_pane_backends(ctx, panes);
                 flush_pending_spawns(ctx);
                 Update::full()
@@ -698,6 +701,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 // Defensive: a live server holding panes but no committed layout (should not occur
                 // under protocol v6). Adopt the panes, then republish a layout if we control it.
                 apply_attached_panes(ctx, panes);
+                ctx.state.animation = GeometryAnimation::None;
                 flush_pending_spawns(ctx);
                 Update::full()
             } else {

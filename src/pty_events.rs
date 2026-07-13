@@ -24,7 +24,7 @@ fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
 /// Show the newest state for a notification channel without disturbing unrelated toasts.
 pub(crate) fn replace_toast(ctx: &mut Context<HyprmuxApp>, channel: ToastChannel, toast: Toast) {
     if let Some(id) = ctx.state.replaceable_toasts.remove(&channel) {
-        ctx.toast().dismiss(id);
+        ctx.toast().dismiss_immediately(id);
     }
     let id = ctx.toast().push(toast);
     ctx.state.replaceable_toasts.insert(channel, id);

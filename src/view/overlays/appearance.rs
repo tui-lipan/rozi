@@ -1,4 +1,4 @@
-pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let pane = &ctx.state.config.pane;
     // Dependent rows (Titlebar style, Workbar gap/position) always stay in the list; when their
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
@@ -112,14 +112,45 @@ pub(crate) fn appearance_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             Msg::AppearanceActivate(event.item.value)
         }));
 
-    action_palette(
-        ctx,
-        "Change appearance",
-        appearance_palette_key(),
-        Msg::CloseAppearance,
-        palette,
-        60,
-    )
+    let panel: Element = Frame::new()
+        .title("Change appearance")
+        .title_style(ctx.state.theme.accent.bold())
+        .border_style(BorderStyle::Rounded)
+        .padding(0)
+        .style(Style::new().bg(ctx.state.theme.surface.element))
+        .height(Length::Auto)
+        .child(action_palette_frame(palette))
+        .into();
+    let dim_progress = ctx.transition::<f32>(
+        "hyprmux-appearance-padding-dim",
+        if ctx.state.pane_padding_editor.is_some() {
+            1.0
+        } else {
+            0.0
+        },
+        app.scratch_transition_config(ctx),
+    );
+    let panel: Element = if dim_progress > 0.0 {
+        Animated::new(panel)
+            .opacity(crate::scratchpad::backdrop_dim(dim_progress))
+            .opacity_target(ctx.state.theme.surface.backdrop)
+            .transition(crate::anim::instant_transition())
+            .into()
+    } else {
+        panel
+    };
+
+    Modal::new()
+        .width(Length::Px(60))
+        .height(Length::Auto)
+        .max_height(Length::Percent(65))
+        .reserve_height(Length::Percent(65))
+        .border(false)
+        .padding(0)
+        .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+        .on_close(ctx.link().callback(|_| Msg::CloseAppearance))
+        .child(panel)
+        .key(appearance_palette_key())
 }
 fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
     if top == bottom && right == left {

@@ -308,7 +308,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         root = root.child(palette_overlay(ctx));
     }
     if ctx.state.show_appearance {
-        root = root.child(appearance_overlay(ctx));
+        root = root.child(appearance_overlay(app, ctx));
     }
     if ctx.state.show_appearance && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));

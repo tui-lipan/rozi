@@ -62,12 +62,33 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     if ctx.state.is_ephemeral_session() && ctx.state.session_client.is_some() {
         return crate::ops::session::open_detach_rename(ctx);
     }
+    mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.session_client.clone() {
         client.detach();
         profiles::persist_session_on_detach(&ctx.state);
     }
     ctx.quit();
     Update::none()
+}
+
+/// Mark the current session as intentionally left and emit its hook event exactly once.
+/// Callers must flush pending layout changes before entering this transition.
+pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Option<&str>) {
+    if !ctx.state.session_attached {
+        return;
+    }
+    let session = session
+        .map(str::to_string)
+        .or_else(|| ctx.state.session_name.clone())
+        .unwrap_or_default();
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::SessionDetached,
+            vec![("session", session)],
+        ),
+    );
+    ctx.state.session_attached = false;
 }
 
 /// The controlling terminal/console went away (Unix `SIGHUP`/`SIGTERM`, Windows console close,
@@ -81,6 +102,7 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// right outcome for a session nobody can reattach to by name anyway.
 pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::update::flush_layout_commit(ctx);
+    mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.session_client.clone() {
         client.detach();
     }
@@ -124,9 +146,9 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
 
     clear_pending(ctx);
     crate::popup::kill_if_open(ctx);
-    if crate::ops::session::may_shutdown_ephemeral(&ctx.state)
-        && let Some(client) = ctx.state.session_client.clone()
-    {
+    let shutdown_ephemeral = crate::ops::session::may_shutdown_ephemeral(&ctx.state);
+    mark_session_detached(ctx, None);
+    if shutdown_ephemeral && let Some(client) = ctx.state.session_client.clone() {
         client.shutdown();
     }
     profiles::persist_session_if_enabled(&ctx.state);
@@ -269,8 +291,8 @@ mod tests {
     use super::*;
     use crate::Msg;
     use crate::input::Action;
-    use crate::session::client::SessionClient;
-    use crate::session::protocol::ClientInfo;
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::{ClientInfo, ClientMessage};
     use crate::state::SharedSessionState;
     use tui_lipan::TestBackend;
 
@@ -307,6 +329,101 @@ mod tests {
             .expect("spawn test thread")
             .join()
             .expect("test thread panicked");
+    }
+
+    fn named_attached_backend() -> (
+        TestBackend<HyprmuxApp>,
+        std::sync::mpsc::Receiver<ClientOutbound>,
+        std::sync::mpsc::Receiver<String>,
+    ) {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let (client, outbound) = SessionClient::test_channel();
+        let events = {
+            let state = backend.state_mut();
+            state.session_name = Some("named".to_string());
+            state.session_attached = true;
+            state.session_client = Some(client);
+            let mut shared = SharedSessionState::new(1);
+            shared.controller = Some(1);
+            shared.clients = vec![ClientInfo {
+                id: 1,
+                label: "me".to_string(),
+                read_only: false,
+                requesting_control: false,
+            }];
+            shared.last_committed_layout = None;
+            state.shared = Some(shared);
+            state.event_hub.subscribe(None)
+        };
+        (backend, outbound, events)
+    }
+
+    #[test]
+    fn detach_flushes_layout_before_marking_session_detached() {
+        on_large_stack(|| {
+            let (mut backend, outbound, events) = named_attached_backend();
+            backend.render();
+
+            backend
+                .dispatch(Msg::RunAction(Action::Detach))
+                .expect("dispatch detach");
+
+            let sent: Vec<_> = outbound.try_iter().collect();
+            let commit = sent.iter().position(|message| {
+                matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::CommitLayout { .. })
+                )
+            });
+            let detach = sent.iter().position(|message| {
+                matches!(message, ClientOutbound::Control(ClientMessage::Detach))
+            });
+            assert!(
+                commit.is_some_and(|commit| detach.is_some_and(|detach| commit < detach)),
+                "expected layout commit before detach, got {sent:?}"
+            );
+            assert!(!backend.state().session_attached);
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
+            assert_eq!(
+                event,
+                serde_json::json!({"event":"session-detached","data":{"session":"named"}})
+            );
+        });
+    }
+
+    #[test]
+    fn named_session_quit_emits_session_detached() {
+        on_large_stack(|| {
+            let (mut backend, _outbound, events) = named_attached_backend();
+            backend.render();
+
+            backend
+                .dispatch(Msg::RunAction(Action::Quit))
+                .expect("dispatch quit");
+
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
+            assert_eq!(event["event"], "session-detached");
+            assert_eq!(event["data"]["session"], "named");
+            assert!(!backend.state().session_attached);
+        });
+    }
+
+    #[test]
+    fn hangup_emits_session_detached() {
+        on_large_stack(|| {
+            let (mut backend, _outbound, events) = named_attached_backend();
+            backend.render();
+
+            backend.dispatch(Msg::Hangup).expect("dispatch hangup");
+
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
+            assert_eq!(event["event"], "session-detached");
+            assert_eq!(event["data"]["session"], "named");
+            assert!(!backend.state().session_attached);
+        });
     }
 
     #[test]

@@ -155,7 +155,7 @@ CLI / thin main.rs
   v
 lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
   |-- State / Msg model in state/ + msg.rs
-  |-- update::handle_msg dispatches messages to ops/* feature modules
+  |-- update/::handle_msg dispatches messages to focused update/ops modules
   |-- key_routing routes prefix/held-modifier/terminal keys
   |-- actions dispatches Action values
   |-- view renders Canvas, panes, workbar, and overlays
@@ -188,8 +188,8 @@ Important data flow:
 1. Keys arrive via `Component::on_key` or focused terminal callbacks.
 2. `key_routing.rs` decides whether to run an app `Action` or forward input to the session server.
 3. `actions.rs` dispatches app actions to feature modules.
-4. `update.rs` handles async/runtime messages, session pane output/spawn/exit/resize/rename frames,
-   and palette changes.
+4. `update/mod.rs` exhaustively routes messages to focused handlers for overlays, prompts, panes,
+   attach setup, and session frames, then performs post-update synchronization.
 5. `view/` renders current state into a `Canvas` and overlay stack.
 
 Major module map:
@@ -197,7 +197,8 @@ Major module map:
 - `main.rs` / `lib.rs` - Thin binary entry point and shared library module/re-export surface.
 - `app.rs` / `msg.rs` / `cli.rs` - Root component, message model, command-line parsing, transition
   policies, startup orchestration, and runtime wiring.
-- `update.rs` - Flat message router and post-update synchronization.
+- `update/` - Exhaustive message router and post-update synchronization in `mod.rs`, with focused
+  overlay, prompt, pane, attach, and session handlers.
 - `state/` - Central runtime `State` plus focused layout, appearance, drag, mode, search, identity,
   picker, pane, workspace, and shared-session state modules.
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.

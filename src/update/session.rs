@@ -128,7 +128,7 @@ pub(super) fn attached(
     };
     ctx.state.runtime_epoch = epoch;
     ctx.state.session_client = Some(client);
-    ctx.state.session_name = Some(session);
+    ctx.state.session_name = Some(session.clone());
     ctx.state.session_attached = true;
 
     let mut shared = crate::state::SharedSessionState::new(client_id);
@@ -139,6 +139,22 @@ pub(super) fn attached(
     shared.input_locked = input_locked;
     shared.read_only = read_only;
     ctx.state.shared = Some(shared);
+
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::SessionAttached,
+            vec![
+                ("session", session.clone()),
+                ("client_id", client_id.to_string()),
+                (
+                    "controller",
+                    controller.map(|id| id.to_string()).unwrap_or_default(),
+                ),
+                ("read_only", read_only.to_string()),
+            ],
+        ),
+    );
 
     // The session identity just changed (ephemeral vs named), which the "Name/Rename session"
     // palette label reflects; the lease state affects command labels too.
@@ -238,7 +254,7 @@ pub(super) fn controller_changed(
     ctx: &mut Context<HyprmuxApp>,
     epoch: u64,
     controller: Option<ClientId>,
-    _reason: ControllerChangeReason,
+    reason: ControllerChangeReason,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
@@ -254,6 +270,20 @@ pub(super) fn controller_changed(
         }
     }
     let now_controller = ctx.state.is_controller();
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::ControllerChanged,
+            vec![
+                (
+                    "controller",
+                    controller.map(|id| id.to_string()).unwrap_or_default(),
+                ),
+                ("self_controller", now_controller.to_string()),
+                ("reason", controller_change_reason_id(reason).to_string()),
+            ],
+        ),
+    );
     if was_controller && !now_controller {
         ctx.state.moving_pane = None;
         ctx.state.resizing_pane = None;
@@ -289,6 +319,12 @@ pub(super) fn clients_changed(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
+    let roster_events = ctx
+        .state
+        .shared
+        .as_ref()
+        .map(|shared| roster_diff_events(&shared.clients, &clients))
+        .unwrap_or_default();
     if let Some(shared) = ctx.state.shared.as_mut() {
         let changed = shared.input_locked != input_locked;
         shared.clients = clients;
@@ -307,6 +343,9 @@ pub(super) fn clients_changed(
                 ),
             );
         }
+    }
+    for event in roster_events {
+        crate::events::emit(&ctx.state, event);
     }
     ctx.state.commands_dirty = true;
     Update::full()
@@ -630,7 +669,18 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    ctx.state.session_name = Some(session.clone());
+    let previous = ctx
+        .state
+        .session_name
+        .replace(session.clone())
+        .unwrap_or_default();
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::SessionRenamed,
+            vec![("session", session.clone()), ("previous", previous)],
+        ),
+    );
     // An ephemeral session becoming named flips the "Name/Rename session" palette label.
     ctx.state.commands_dirty = true;
     ctx.toast().push(crate::pty_events::info_toast(
@@ -642,6 +692,47 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
 
 fn should_hold_on_exit(hold_on_exit: bool, pane_id: PaneId, closing: bool) -> bool {
     hold_on_exit && !crate::scratchpad::is_scratch(pane_id) && !closing
+}
+
+fn controller_change_reason_id(reason: ControllerChangeReason) -> &'static str {
+    match reason {
+        ControllerChangeReason::Released => "released",
+        ControllerChangeReason::Expired => "expired",
+        ControllerChangeReason::Granted => "granted",
+    }
+}
+
+fn roster_diff_events(
+    previous: &[ClientInfo],
+    current: &[ClientInfo],
+) -> Vec<crate::events::Event> {
+    let count = current.len().to_string();
+    let mut events = Vec::new();
+    for client in current {
+        if !previous.iter().any(|existing| existing.id == client.id) {
+            events.push(crate::events::Event::new(
+                crate::events::EventKind::ClientJoined,
+                vec![
+                    ("client_id", client.id.to_string()),
+                    ("client_name", client.label.clone()),
+                    ("count", count.clone()),
+                ],
+            ));
+        }
+    }
+    for client in previous {
+        if !current.iter().any(|existing| existing.id == client.id) {
+            events.push(crate::events::Event::new(
+                crate::events::EventKind::ClientLeft,
+                vec![
+                    ("client_id", client.id.to_string()),
+                    ("client_name", client.label.clone()),
+                    ("count", count.clone()),
+                ],
+            ));
+        }
+    }
+    events
 }
 
 #[cfg(test)]
@@ -658,5 +749,39 @@ mod tests {
             false
         ));
         assert!(!should_hold_on_exit(true, 1, true));
+    }
+
+    #[test]
+    fn roster_diff_emits_joins_and_leaves_with_the_new_count() {
+        let client = |id, label: &str| ClientInfo {
+            id,
+            label: label.to_string(),
+            read_only: false,
+            requesting_control: false,
+        };
+        let events = roster_diff_events(
+            &[client(1, "one"), client(2, "two")],
+            &[client(2, "renamed"), client(3, "three")],
+        );
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, crate::events::EventKind::ClientJoined);
+        assert_eq!(
+            events[0].fields,
+            vec![
+                ("client_id", "3".into()),
+                ("client_name", "three".into()),
+                ("count", "2".into()),
+            ]
+        );
+        assert_eq!(events[1].kind, crate::events::EventKind::ClientLeft);
+        assert_eq!(
+            events[1].fields,
+            vec![
+                ("client_id", "1".into()),
+                ("client_name", "one".into()),
+                ("count", "2".into()),
+            ]
+        );
     }
 }

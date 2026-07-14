@@ -9,14 +9,30 @@ pub enum EventKind {
     PaneExited,
     FocusChanged,
     WorkspaceSwitched,
+    SessionAttached,
+    SessionDetached,
+    SessionRenamed,
+    ControllerChanged,
+    ClientJoined,
+    ClientLeft,
+    ProfileLoaded,
+    ConfigReloaded,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 12] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::FocusChanged,
         Self::WorkspaceSwitched,
+        Self::SessionAttached,
+        Self::SessionDetached,
+        Self::SessionRenamed,
+        Self::ControllerChanged,
+        Self::ClientJoined,
+        Self::ClientLeft,
+        Self::ProfileLoaded,
+        Self::ConfigReloaded,
     ];
 
     pub fn id(self) -> &'static str {
@@ -25,6 +41,14 @@ impl EventKind {
             Self::PaneExited => "pane-exited",
             Self::FocusChanged => "focus-changed",
             Self::WorkspaceSwitched => "workspace-switched",
+            Self::SessionAttached => "session-attached",
+            Self::SessionDetached => "session-detached",
+            Self::SessionRenamed => "session-renamed",
+            Self::ControllerChanged => "controller-changed",
+            Self::ClientJoined => "client-joined",
+            Self::ClientLeft => "client-left",
+            Self::ProfileLoaded => "profile-loaded",
+            Self::ConfigReloaded => "config-reloaded",
         }
     }
 
@@ -149,9 +173,13 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
+        assert_eq!(EventKind::ALL.len(), 12);
+        let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));
+            assert!(ids.insert(kind.id()));
         }
+        assert_eq!(EventKind::parse("not-an-event"), None);
     }
 
     #[test]

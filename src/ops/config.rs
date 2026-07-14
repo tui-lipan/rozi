@@ -152,6 +152,13 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             &ctx.state.theme,
             "Config reloaded",
         ));
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::ConfigReloaded,
+                vec![("path", crate::config::config_path().display().to_string())],
+            ),
+        );
     }
 
     if start_theme_tick || start_workbar_tick || !new_workbar_commands.is_empty() {

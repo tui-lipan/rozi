@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
@@ -16,7 +17,7 @@ pub struct HyprmuxApp {
     config: HyprmuxConfig,
     initial_theme: Theme,
     initial_system_theme: Option<Theme>,
-    startup_profile: Option<profiles::HyprmuxProfile>,
+    startup_profile: Option<StartupProfile>,
     startup_messages: Vec<String>,
     control_listener: Option<crate::platform::ipc::IpcListener>,
     control_guard: Option<control::ControlSocketGuard>,
@@ -33,6 +34,13 @@ pub struct HyprmuxApp {
     /// several parallel tests each claim the one install slot).
     watch_hangup: bool,
     event_hub: events::EventHub,
+}
+
+#[derive(Clone)]
+struct StartupProfile {
+    profile: profiles::HyprmuxProfile,
+    name: String,
+    path: PathBuf,
 }
 
 impl Default for HyprmuxApp {
@@ -61,7 +69,7 @@ impl HyprmuxApp {
         config: HyprmuxConfig,
         initial_theme: Theme,
         initial_system_theme: Option<Theme>,
-        startup_profile: Option<profiles::HyprmuxProfile>,
+        startup_profile: Option<StartupProfile>,
         startup_messages: Vec<String>,
         control_listener: Option<crate::platform::ipc::IpcListener>,
         control_guard: Option<control::ControlSocketGuard>,
@@ -92,8 +100,12 @@ impl Component for HyprmuxApp {
     type State = State;
 
     fn create_state(&self, _props: &Self::Properties) -> Self::State {
-        let mut state = if let Some(profile) = self.startup_profile.clone() {
-            State::from_profile(self.config.clone(), self.initial_theme.clone(), profile)
+        let mut state = if let Some(startup) = self.startup_profile.clone() {
+            State::from_profile(
+                self.config.clone(),
+                self.initial_theme.clone(),
+                startup.profile,
+            )
         } else {
             State::new(self.config.clone(), self.initial_theme.clone())
         };
@@ -103,6 +115,18 @@ impl Component for HyprmuxApp {
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
         state.event_hub = self.event_hub.clone();
+        if let Some(startup) = &self.startup_profile {
+            events::emit(
+                &state,
+                events::Event::new(
+                    events::EventKind::ProfileLoaded,
+                    vec![
+                        ("profile", startup.name.clone()),
+                        ("path", startup.path.display().to_string()),
+                    ],
+                ),
+            );
+        }
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -444,7 +468,11 @@ pub fn run() -> Result<()> {
     let mut startup_profile = cli.profile.as_ref().and_then(|name| {
         let path = config::profile_path_for_name(name);
         match profiles::load_profile(&path) {
-            Ok(profile) => Some(profile),
+            Ok(profile) => Some(StartupProfile {
+                profile,
+                name: name.clone(),
+                path,
+            }),
             Err(err) => {
                 startup_messages.push(format!("Profile `{name}` load failed: {err}"));
                 None
@@ -457,7 +485,13 @@ pub fn run() -> Result<()> {
     {
         let path = config::profile_path_for_name(name);
         match profiles::load_profile(&path) {
-            Ok(profile) => startup_profile = Some(profile),
+            Ok(profile) => {
+                startup_profile = Some(StartupProfile {
+                    profile,
+                    name: name.clone(),
+                    path,
+                })
+            }
             Err(err) => {
                 startup_messages.push(format!("Default profile `{name}` load failed: {err}"))
             }
@@ -472,7 +506,15 @@ pub fn run() -> Result<()> {
     {
         match profiles::load_profile(&path) {
             Ok(profile) => {
-                startup_profile = Some(profile);
+                startup_profile = Some(StartupProfile {
+                    profile,
+                    name: path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("session")
+                        .to_string(),
+                    path,
+                });
             }
             Err(err) => startup_messages.push(format!("Session restore failed: {err}")),
         }

@@ -271,6 +271,16 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
     theme::apply_terminal_palette_to_state(&mut ctx.state);
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::ProfileLoaded,
+            vec![
+                ("profile", entry.name.clone()),
+                ("path", entry.path.display().to_string()),
+            ],
+        ),
+    );
     ctx.toast().push(info_toast(
         &ctx.state.theme,
         format!("Loaded profile `{}`", entry.name),
@@ -390,6 +400,13 @@ mod tests {
             backend.state_mut().profile_picker =
                 Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
             backend.state_mut().show_profile_picker = true;
+            let events =
+                backend
+                    .state()
+                    .event_hub
+                    .subscribe(Some(std::collections::HashSet::from([
+                        crate::events::EventKind::ProfileLoaded,
+                    ])));
             let old_epoch = backend.state().runtime_epoch;
 
             backend
@@ -406,6 +423,15 @@ mod tests {
             assert_eq!(pending.epoch, old_epoch.saturating_add(1));
             assert!(pending.autostart);
             assert!(pending.name.starts_with("eph-"));
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().expect("profile-loaded event")).unwrap();
+            assert_eq!(
+                event,
+                serde_json::json!({
+                    "event": "profile-loaded",
+                    "data": {"profile": "empty", "path": path.display().to_string()}
+                })
+            );
 
             std::fs::remove_file(path).expect("remove profile");
         });

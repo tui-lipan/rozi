@@ -372,7 +372,7 @@ fn execute_action_inner(
         Action::RequestControl => crate::ops::session::request_control(ctx),
         Action::GrantControl => crate::ops::session::grant_control_to_requester(ctx),
         Action::ToggleInputLock => crate::ops::session::toggle_input_lock(ctx),
-        Action::Detach => crate::ops::exit::detach(ctx),
+        Action::Detach => crate::ops::session::detach_current_session(ctx),
         Action::Quit => crate::ops::exit::quit_client(ctx, confirmations_enabled),
         Action::KillWorkspace => {
             crate::ops::exit::kill_workspace_with_confirmation(ctx, confirmations_enabled)

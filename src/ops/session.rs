@@ -401,6 +401,7 @@ pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
     let Some(client) = ctx.state.session_client.clone() else {
         return;
     };
+    emit_session_detached(ctx, None);
     if may_shutdown_ephemeral(&ctx.state) {
         client.shutdown();
     } else {
@@ -421,7 +422,35 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
+    if !ctx.state.is_ephemeral_session() {
+        emit_session_detached(ctx, None);
+    }
     crate::ops::exit::detach(ctx)
+}
+
+fn emit_session_detached(ctx: &mut Context<HyprmuxApp>, session: Option<&str>) {
+    let Some(event) = session_detached_event(&mut ctx.state, session) else {
+        return;
+    };
+    crate::events::emit(&ctx.state, event);
+}
+
+fn session_detached_event(
+    state: &mut crate::state::State,
+    session: Option<&str>,
+) -> Option<crate::events::Event> {
+    if !state.session_attached {
+        return None;
+    }
+    state.session_attached = false;
+    let session = session
+        .map(str::to_string)
+        .or_else(|| state.session_name.clone())
+        .unwrap_or_default();
+    Some(crate::events::Event::new(
+        crate::events::EventKind::SessionDetached,
+        vec![("session", session)],
+    ))
 }
 
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive by switching to a
@@ -743,6 +772,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                     ));
                     return Update::full();
                 };
+                emit_session_detached(ctx, Some(&name));
                 client.rename(name);
                 client.detach();
                 crate::profiles::persist_session_on_detach(&ctx.state);
@@ -1067,5 +1097,15 @@ mod tests {
             1,
             vec![client(1), client(2)]
         )));
+    }
+
+    #[test]
+    fn session_detached_event_is_emitted_once_per_attachment() {
+        let mut state = ephemeral_state(1, 1, Vec::new());
+
+        let event = session_detached_event(&mut state, Some("named")).unwrap();
+        assert_eq!(event.kind, crate::events::EventKind::SessionDetached);
+        assert_eq!(event.fields, vec![("session", "named".into())]);
+        assert!(session_detached_event(&mut state, Some("named")).is_none());
     }
 }

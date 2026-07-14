@@ -490,18 +490,11 @@ pub(crate) fn tiled_resize_strips(
     for strip in &horizontal_strips {
         strips.push((strip.rect, resize_strip_element(ctx, strip.pane_id, false)));
     }
-    for vertical in &vertical_strips {
-        for horizontal in &horizontal_strips {
-            if let Some(rect) = intersect_rect(
-                vertical.junction_probe_rect(true),
-                horizontal.junction_probe_rect(false),
-            ) {
-                strips.push((
-                    rect,
-                    resize_junction_element(ctx, vertical.pane_id, horizontal.pane_id),
-                ));
-            }
-        }
+    for junction in resize_junction_hitboxes(&vertical_strips, &horizontal_strips) {
+        strips.push((
+            junction.rect,
+            resize_junction_element(ctx, junction.horizontal_panes, junction.vertical_panes),
+        ));
     }
     strips
 }
@@ -567,6 +560,15 @@ struct ResizeStripHitbox {
     pane_id: PaneId,
 }
 
+#[derive(Clone)]
+struct ResizeJunctionHitbox {
+    rect: FloatRect,
+    /// Pane representatives on vertical boundaries, used to find horizontal tree splits.
+    horizontal_panes: Vec<PaneId>,
+    /// Pane representatives on horizontal boundaries, used to find vertical tree splits.
+    vertical_panes: Vec<PaneId>,
+}
+
 impl ResizeStripHitbox {
     fn junction_probe_rect(self, vertical: bool) -> FloatRect {
         if vertical {
@@ -600,6 +602,51 @@ fn intersect_rect(a: FloatRect, b: FloatRect) -> Option<FloatRect> {
     })
 }
 
+fn resize_junction_hitboxes(
+    vertical_strips: &[ResizeStripHitbox],
+    horizontal_strips: &[ResizeStripHitbox],
+) -> Vec<ResizeJunctionHitbox> {
+    let mut junctions: Vec<ResizeJunctionHitbox> = Vec::new();
+    for vertical in vertical_strips {
+        for horizontal in horizontal_strips {
+            let Some(rect) = intersect_rect(
+                vertical.junction_probe_rect(true),
+                horizontal.junction_probe_rect(false),
+            ) else {
+                continue;
+            };
+            let junction = junctions
+                .iter_mut()
+                .find(|junction| intersect_rect(junction.rect, rect).is_some());
+            if let Some(junction) = junction {
+                let x0 = junction.rect.x.min(rect.x);
+                let y0 = junction.rect.y.min(rect.y);
+                let x1 = (junction.rect.x + junction.rect.w).max(rect.x + rect.w);
+                let y1 = (junction.rect.y + junction.rect.h).max(rect.y + rect.h);
+                junction.rect = FloatRect {
+                    x: x0,
+                    y: y0,
+                    w: x1 - x0,
+                    h: y1 - y0,
+                };
+                if !junction.horizontal_panes.contains(&vertical.pane_id) {
+                    junction.horizontal_panes.push(vertical.pane_id);
+                }
+                if !junction.vertical_panes.contains(&horizontal.pane_id) {
+                    junction.vertical_panes.push(horizontal.pane_id);
+                }
+            } else {
+                junctions.push(ResizeJunctionHitbox {
+                    rect,
+                    horizontal_panes: vec![vertical.pane_id],
+                    vertical_panes: vec![horizontal.pane_id],
+                });
+            }
+        }
+    }
+    junctions
+}
+
 fn resize_strip_element(
     ctx: &Context<HyprmuxApp>,
     pane_id: PaneId,
@@ -624,15 +671,19 @@ fn resize_strip_element(
         .into()
 }
 
-fn resize_junction_element(ctx: &Context<HyprmuxApp>, left_id: PaneId, top_id: PaneId) -> Element {
+fn resize_junction_element(
+    ctx: &Context<HyprmuxApp>,
+    horizontal_panes: Vec<PaneId>,
+    vertical_panes: Vec<PaneId>,
+) -> Element {
     MouseRegion::new()
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
-            Msg::BeginResizeSplitJunction(left_id, top_id, event.from_x, event.from_y)
+            Msg::BeginResizeSplitJunction(event.from_x, event.from_y)
         }))
         .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::ResizeSplitJunction(
-                left_id,
-                top_id,
+                horizontal_panes.clone(),
+                vertical_panes.clone(),
                 event.from_x,
                 event.from_y,
                 event.x,
@@ -719,12 +770,11 @@ mod tests {
             (4, rect(11.0, 10.0, 10.0, 10.0)),
         ];
         let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
-        let junction = intersect_rect(
-            vertical[0].junction_probe_rect(true),
-            horizontal[0].junction_probe_rect(false),
-        )
-        .unwrap();
+        let junctions = resize_junction_hitboxes(&vertical, &horizontal);
 
-        assert_eq!(junction, rect(9.0, 9.0, 2.0, 2.0));
+        assert_eq!(junctions.len(), 1, "coincident intersections must merge");
+        assert_eq!(junctions[0].rect, rect(9.0, 9.0, 3.0, 2.0));
+        assert_eq!(junctions[0].horizontal_panes, vec![1, 3]);
+        assert_eq!(junctions[0].vertical_panes, vec![1, 2]);
     }
 }

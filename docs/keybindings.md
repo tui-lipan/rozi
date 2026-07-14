@@ -77,7 +77,7 @@ Key handling is the same on Windows, with two things worth knowing:
 | Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
 | Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `modifier`+`Ctrl`+`←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
 | Promote pane to master | `.` (also palette) |
-| Respawn exited pane | *Respawn exited pane* in the command palette (no default key; action id `respawn-pane`) |
+| Respawn exited pane | *Respawn exited pane* appears in the command palette when the focused pane is retained after exit (no default key; action id `respawn-pane`) |
 
 **Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the
 tree); *Swap* exchanges the two panes' positions in place without restructuring.

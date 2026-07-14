@@ -21,8 +21,9 @@ use crate::state::{
 use crate::tiling::{
     SplitEdge, adjust_ratio_value, adjust_tree_split_for_focused, allocate_dwindle,
     append_tiled_window, flip_tree_split_for_focused, focused_is_first_in_nearest_axis_split,
-    move_tiled_window_around_target, nearest_split_available, ratio_at, remove_tiled_window,
-    resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge, swap_tree_leaves,
+    move_tiled_window_around_target, nearest_axis_split_path, nearest_split_available, ratio_at,
+    remove_tiled_window, resize_tiled_split, resize_tiled_split_for_edge, split_available_for_edge,
+    swap_tree_leaves,
 };
 
 /// Whether tree-based split resizing applies to this layout. Grid and monocle place panes
@@ -765,12 +766,10 @@ pub(crate) fn begin_resize_split_drag(
 
 pub(crate) fn begin_resize_split_junction_drag(
     ctx: &mut Context<HyprmuxApp>,
-    left_id: PaneId,
-    top_id: PaneId,
     x: u16,
     y: u16,
 ) -> Update {
-    begin_split_drag(ctx, SplitDragKind::Junction { left_id, top_id }, x, y)
+    begin_split_drag(ctx, SplitDragKind::Junction, x, y)
 }
 
 fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
@@ -912,23 +911,55 @@ fn apply_resize_split_pixels(
 
 pub(crate) fn resize_split_junction_by_drag(
     ctx: &mut Context<HyprmuxApp>,
-    left_id: PaneId,
-    top_id: PaneId,
+    horizontal_panes: &[PaneId],
+    vertical_panes: &[PaneId],
     from_x: u16,
     from_y: u16,
     x: u16,
     y: u16,
 ) -> Update {
-    let kind = SplitDragKind::Junction { left_id, top_id };
+    let kind = SplitDragKind::Junction;
     ensure_split_drag(ctx, kind, from_x, from_y);
     if !restore_split_drag(ctx, kind) {
         return Update::none();
     }
     let dx = (x as i32 - from_x as i32) as f32;
     let dy = (y as i32 - from_y as i32) as f32;
-    apply_resize_split_pixels(ctx, left_id, true, dx);
-    apply_resize_split_pixels(ctx, top_id, false, dy);
+    let horizontal_panes = distinct_split_representatives(
+        &ctx.state.workspaces[ctx.state.active_workspace],
+        horizontal_panes,
+        state::SplitAxis::Horizontal,
+    );
+    let vertical_panes = distinct_split_representatives(
+        &ctx.state.workspaces[ctx.state.active_workspace],
+        vertical_panes,
+        state::SplitAxis::Vertical,
+    );
+    for pane_id in horizontal_panes {
+        apply_resize_split_pixels(ctx, pane_id, true, dx);
+    }
+    for pane_id in vertical_panes {
+        apply_resize_split_pixels(ctx, pane_id, false, dy);
+    }
     Update::full()
+}
+
+fn distinct_split_representatives(
+    workspace: &Workspace,
+    panes: &[PaneId],
+    axis: state::SplitAxis,
+) -> Vec<PaneId> {
+    let Some(tree) = workspace.tile_tree.as_ref() else {
+        return Vec::new();
+    };
+    let mut paths = std::collections::HashSet::new();
+    panes
+        .iter()
+        .copied()
+        .filter(|pane_id| {
+            nearest_axis_split_path(tree, *pane_id, axis).is_some_and(|path| paths.insert(path))
+        })
+        .collect()
 }
 
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
@@ -1159,6 +1190,102 @@ mod tests {
             2,
             Direction::Down,
         ));
+    }
+
+    #[test]
+    fn four_pane_junction_tracks_absolute_pointer_once_per_split() {
+        in_test_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            let (root_available, left_available, right_available) = {
+                let state = backend.state_mut();
+                let workspace = &mut state.workspaces[state.active_workspace];
+                workspace.panes.clear();
+                for id in 1..=4 {
+                    workspace
+                        .panes
+                        .push(Pane::new(id, 100, FloatRect::default()));
+                }
+                workspace.tile_tree = Some(balanced_grid_tree());
+
+                let bounds = state.canvas_bounds(TEST_VIEWPORT);
+                let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
+                let tree = state.workspaces[state.active_workspace]
+                    .tile_tree
+                    .as_ref()
+                    .unwrap();
+                (
+                    nearest_split_available(
+                        tree,
+                        tile_bounds,
+                        TileGap::DEFAULT,
+                        1,
+                        SplitAxis::Horizontal,
+                    )
+                    .unwrap(),
+                    nearest_split_available(
+                        tree,
+                        tile_bounds,
+                        TileGap::DEFAULT,
+                        1,
+                        SplitAxis::Vertical,
+                    )
+                    .unwrap(),
+                    nearest_split_available(
+                        tree,
+                        tile_bounds,
+                        TileGap::DEFAULT,
+                        3,
+                        SplitAxis::Vertical,
+                    )
+                    .unwrap(),
+                )
+            };
+            backend.render();
+            backend
+                .dispatch(Msg::BeginResizeSplitJunction(50, 15))
+                .expect("begin junction drag");
+            backend
+                .dispatch(Msg::ResizeSplitJunction(
+                    vec![1, 2],
+                    vec![1, 3],
+                    50,
+                    15,
+                    60,
+                    18,
+                ))
+                .expect("resize junction");
+
+            let ratios = balanced_grid_ratios(
+                backend.state_mut().workspaces[0]
+                    .tile_tree
+                    .as_ref()
+                    .unwrap(),
+            );
+            assert_ratio_close(ratios.0, 0.5 + 10.0 / root_available);
+            assert_ratio_close(ratios.1, 0.5 + 3.0 / left_available);
+            assert_ratio_close(ratios.2, 0.5 + 3.0 / right_available);
+
+            backend
+                .dispatch(Msg::ResizeSplitJunction(
+                    vec![1, 2],
+                    vec![1, 3],
+                    50,
+                    15,
+                    61,
+                    19,
+                ))
+                .expect("continue junction drag");
+            let ratios = balanced_grid_ratios(
+                backend.state_mut().workspaces[0]
+                    .tile_tree
+                    .as_ref()
+                    .unwrap(),
+            );
+            assert_ratio_close(ratios.0, 0.5 + 11.0 / root_available);
+            assert_ratio_close(ratios.1, 0.5 + 4.0 / left_available);
+            assert_ratio_close(ratios.2, 0.5 + 4.0 / right_available);
+        });
     }
 
     #[test]
@@ -1409,6 +1536,55 @@ mod tests {
                 second: Box::new(DwindleTree::Leaf(3)),
             }),
         })
+    }
+
+    fn balanced_grid_tree() -> DwindleTree {
+        DwindleTree::Split {
+            axis: SplitAxis::Horizontal,
+            ratio: 0.5,
+            first: Box::new(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(1)),
+                second: Box::new(DwindleTree::Leaf(2)),
+            }),
+            second: Box::new(DwindleTree::Split {
+                axis: SplitAxis::Vertical,
+                ratio: 0.5,
+                first: Box::new(DwindleTree::Leaf(3)),
+                second: Box::new(DwindleTree::Leaf(4)),
+            }),
+        }
+    }
+
+    fn balanced_grid_ratios(tree: &DwindleTree) -> (f32, f32, f32) {
+        let DwindleTree::Split {
+            ratio,
+            first,
+            second,
+            ..
+        } = tree
+        else {
+            panic!("expected root split");
+        };
+        let DwindleTree::Split {
+            ratio: first_ratio, ..
+        } = first.as_ref()
+        else {
+            panic!("expected first child split");
+        };
+        let DwindleTree::Split {
+            ratio: second_ratio,
+            ..
+        } = second.as_ref()
+        else {
+            panic!("expected second child split");
+        };
+        (*ratio, *first_ratio, *second_ratio)
+    }
+
+    fn assert_ratio_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 0.0001, "{actual} != {expected}");
     }
 
     fn root_ratio(workspace: &Workspace) -> f32 {

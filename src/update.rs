@@ -486,12 +486,18 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 y,
             )
         }
-        Msg::BeginResizeSplitJunction(left_id, top_id, x, y) => {
-            crate::ops::resize_move::begin_resize_split_junction_drag(ctx, left_id, top_id, x, y)
+        Msg::BeginResizeSplitJunction(x, y) => {
+            crate::ops::resize_move::begin_resize_split_junction_drag(ctx, x, y)
         }
-        Msg::ResizeSplitJunction(left_id, top_id, from_x, from_y, x, y) => {
+        Msg::ResizeSplitJunction(horizontal_panes, vertical_panes, from_x, from_y, x, y) => {
             crate::ops::resize_move::resize_split_junction_by_drag(
-                ctx, left_id, top_id, from_x, from_y, x, y,
+                ctx,
+                &horizontal_panes,
+                &vertical_panes,
+                from_x,
+                from_y,
+                x,
+                y,
             )
         }
         Msg::EndResizeSplit => {
@@ -983,6 +989,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
                 already_closing = pane.closing;
                 should_close = !should_hold_on_exit(hold_on_exit, pane_id, pane.closing);
             }
+            ctx.state.commands_dirty = true;
             // A user-initiated close already tore this pane down; the exit is expected, so skip
             // the exit notification/toast and the redundant close call.
             if already_closing {
@@ -1105,6 +1112,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             } else if let Some(error) = error {
                 toast_error = Some(error);
             }
+            ctx.state.commands_dirty = true;
             if let Some(error) = toast_error {
                 ctx.toast()
                     .push(error_toast(&ctx.state.theme, "Session Spawn", error));

@@ -314,10 +314,7 @@ pub enum SplitDragKind {
         pane_id: PaneId,
         horizontal_split: bool,
     },
-    Junction {
-        left_id: PaneId,
-        top_id: PaneId,
-    },
+    Junction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

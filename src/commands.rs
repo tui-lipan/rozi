@@ -755,6 +755,16 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
 pub(crate) fn command_available(action: Action, state: &State) -> bool {
     let shared = state.shared.as_ref();
     match action {
+        Action::RespawnPane => state.focused_pane.is_some_and(|focused| {
+            state
+                .workspaces
+                .iter()
+                .flat_map(|workspace| &workspace.panes)
+                .find(|pane| pane.id == focused)
+                .is_some_and(|pane| {
+                    matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
+                })
+        }),
         Action::OpenClientList => shared.is_some_and(|shared| shared.clients.len() > 1),
         Action::ToggleInputLock => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
@@ -1305,6 +1315,25 @@ mod tests {
         assert!(command_available(Action::OpenClientList, &viewer));
         assert!(!command_available(Action::RequestControl, &viewer));
         assert!(!command_available(Action::ToggleInputLock, &viewer));
+    }
+
+    #[test]
+    fn respawn_is_available_only_for_the_focused_exited_pane() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        assert!(!command_available(Action::RespawnPane, &state));
+
+        let focused = state.focused_pane.unwrap();
+        state.workspaces[0]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == focused)
+            .unwrap()
+            .terminal
+            .status = ManagedTerminalStatus::Exited(1);
+        assert!(command_available(Action::RespawnPane, &state));
+
+        state.focused_pane = None;
+        assert!(!command_available(Action::RespawnPane, &state));
     }
 
     #[test]

@@ -742,6 +742,47 @@ pub fn focused_is_first_in_nearest_axis_split(
     }
 }
 
+/// Tree path to the nearest split on `target_axis` containing `focused`. Equal paths identify the
+/// same split, allowing a geometric junction to deduplicate representatives from adjacent panes.
+pub fn nearest_axis_split_path(
+    tree: &DwindleTree,
+    focused: PaneId,
+    target_axis: SplitAxis,
+) -> Option<Vec<bool>> {
+    fn visit(
+        tree: &DwindleTree,
+        focused: PaneId,
+        target_axis: SplitAxis,
+        path: &mut Vec<bool>,
+    ) -> Option<Vec<bool>> {
+        let DwindleTree::Split {
+            axis,
+            first,
+            second,
+            ..
+        } = tree
+        else {
+            return None;
+        };
+        let (child, second_side) = if tree_contains(first, focused) {
+            (first.as_ref(), false)
+        } else if tree_contains(second, focused) {
+            (second.as_ref(), true)
+        } else {
+            return None;
+        };
+
+        path.push(second_side);
+        if let Some(deeper) = visit(child, focused, target_axis, path) {
+            return Some(deeper);
+        }
+        path.pop();
+        (*axis == target_axis).then(|| path.clone())
+    }
+
+    visit(tree, focused, target_axis, &mut Vec::new())
+}
+
 pub fn resize_tiled_split(
     workspace: &mut Workspace,
     focused: PaneId,

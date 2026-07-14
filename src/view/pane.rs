@@ -251,8 +251,11 @@ pub(crate) fn pane_element(
 
     let snapshot = terminal_snapshot_for_pane(ctx, pane);
     let terminal_ready = pane.terminal_active && !pane.opening && !pane.closing;
-    let show_cursor =
-        terminal_cursor_visible(ctx.state.hint_mode.as_ref().map(|hints| hints.target), id);
+    let show_cursor = terminal_cursor_visible(
+        snapshot.cursor_visible,
+        ctx.state.hint_mode.as_ref().map(|hints| hints.target),
+        id,
+    );
     let mut selection_style = theme.text_selection;
     if ctx
         .state
@@ -744,8 +747,12 @@ fn selection_from_points(a: (usize, usize), b: (usize, usize)) -> TerminalSelect
     }
 }
 
-fn terminal_cursor_visible(hint_target: Option<PaneId>, id: PaneId) -> bool {
-    hint_target != Some(id)
+fn terminal_cursor_visible(
+    snapshot_cursor_visible: bool,
+    hint_target: Option<PaneId>,
+    id: PaneId,
+) -> bool {
+    snapshot_cursor_visible && hint_target != Some(id)
 }
 
 #[cfg(test)]
@@ -753,10 +760,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hint_mode_hides_only_the_target_terminal_cursor() {
-        assert!(!terminal_cursor_visible(Some(7), 7));
-        assert!(terminal_cursor_visible(Some(7), 8));
-        assert!(terminal_cursor_visible(None, 7));
+    fn hint_mode_only_suppresses_snapshot_cursor_visibility() {
+        assert!(!terminal_cursor_visible(true, Some(7), 7));
+        assert!(terminal_cursor_visible(true, Some(7), 8));
+        assert!(terminal_cursor_visible(true, None, 7));
+        assert!(!terminal_cursor_visible(false, None, 7));
+        assert!(!terminal_cursor_visible(false, Some(8), 7));
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {

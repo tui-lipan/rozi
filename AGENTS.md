@@ -212,7 +212,9 @@ Major module map:
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
   reconciler (`apply_shared_layout`).
 - `profiles.rs` / `ops/profile.rs` - Named profile serialization, restore, picker, default profile.
-- `config/` / `ops/config.rs` / `ops/theme.rs` - Config loading/reload, themes, terminal colors.
+- `config/` / `ops/config.rs` / `ops/theme.rs` - Serde file models and load orchestration in
+  `config/file.rs`, with rules, input, workbar, appearance, persistence, schema, and theme helpers
+  in flat sibling modules; runtime reload and terminal-color reactions live under `ops/`.
 - `platform/` - Cross-platform abstraction layer. Nothing above it references `std::os::unix`,
   `/proc`, `SO_PEERCRED`, XDG/AppData env vars, Unix permission bits, named-pipe APIs, or Unix
   signals directly. Submodules: `paths` (config/state/cache/runtime directories, reported-cwd

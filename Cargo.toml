@@ -19,6 +19,25 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 notify = "6"
 regex-lite = "0.1"
 
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "terminal_ingest"
+harness = false
+
+[[bench]]
+name = "snapshot_rebuild"
+harness = false
+
+[[bench]]
+name = "protocol_framing"
+harness = false
+
+[[bench]]
+name = "session_pipeline"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

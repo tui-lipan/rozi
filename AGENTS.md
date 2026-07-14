@@ -204,8 +204,8 @@ Major module map:
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.
 - `key_routing.rs` / `keymap.rs` / `input.rs` - Input modes, bindings, actions, and command ids.
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
-- `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move.rs` / `anim.rs` - Window-manager
-  layout, placement, movement, resizing, and animations.
+- `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move/` / `anim.rs` - Window-manager
+  layout, placement, floating and tiled movement, split dragging, keyboard resizing, and animations.
 - `session/` / `ops/session.rs` - Multi-client session protocol (v8), server/client, discovery,
   bootstrap, attach/kill, and layout-control lease.
 - `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.

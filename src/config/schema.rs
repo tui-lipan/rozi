@@ -467,7 +467,7 @@ pub struct HyprmuxConfig {
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
     pub rules: Vec<HyprmuxRuleConfig>,
-    pub hooks: HashMap<String, String>,
+    pub hooks: Vec<HyprmuxHookConfig>,
     pub logging: HyprmuxLoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
@@ -477,6 +477,12 @@ pub struct HyprmuxConfig {
     /// User-defined `[keys]` entries keyed by a literal trigger binding (rather than a built-in
     /// action id): each becomes its own generated command (see `crate::commands`).
     pub user_commands: Vec<UserCommand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HyprmuxHookConfig {
+    pub event: crate::events::EventKind,
+    pub run: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -572,7 +578,7 @@ impl Default for HyprmuxConfig {
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
             rules: Vec::new(),
-            hooks: HashMap::new(),
+            hooks: Vec::new(),
             logging: HyprmuxLoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),

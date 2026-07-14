@@ -101,12 +101,24 @@ impl EventHub {
 
 pub fn emit(state: &crate::state::State, event: Event) {
     state.event_hub.publish(&event);
-    if let Some(command) = state.config.hooks.get(event.kind.id()).cloned() {
-        let env = hook_env(&event);
-        let runner = crate::platform::command::resolve_command_shell(
-            state.config.command_shell.as_deref(),
-            &crate::platform::command::ShellEnv::from_process(),
-        );
+    let commands: Vec<_> = state
+        .config
+        .hooks
+        .iter()
+        .filter(|hook| hook.event == event.kind)
+        .map(|hook| hook.run.clone())
+        .collect();
+    if commands.is_empty() {
+        return;
+    }
+    let env = hook_env(&event, state.control_socket_path.as_deref());
+    let runner = crate::platform::command::resolve_command_shell(
+        state.config.command_shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
+    for command in commands {
+        let env = env.clone();
+        let runner = runner.clone();
         std::thread::spawn(move || {
             let _ = std::process::Command::new(runner.program)
                 .args(runner.args)
@@ -117,8 +129,11 @@ pub fn emit(state: &crate::state::State, event: Event) {
     }
 }
 
-fn hook_env(event: &Event) -> Vec<(String, String)> {
+fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec<(String, String)> {
     let mut env = vec![("HYPRMUX_EVENT".to_string(), event.kind.id().to_string())];
+    if let Some(path) = control_socket_path {
+        env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
+    }
     env.extend(event.fields.iter().map(|(key, value)| {
         (
             format!("HYPRMUX_{}", key.to_ascii_uppercase()),
@@ -131,6 +146,13 @@ fn hook_env(event: &Event) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_kind_ids_round_trip() {
+        for kind in EventKind::ALL {
+            assert_eq!(EventKind::parse(kind.id()), Some(kind));
+        }
+    }
 
     #[test]
     fn event_json_is_stable() {
@@ -164,11 +186,65 @@ mod tests {
 
     #[test]
     fn hook_environment_uses_public_names() {
-        let env = hook_env(&Event::new(
-            EventKind::WorkspaceSwitched,
-            vec![("workspace", "2".into())],
-        ));
+        let env = hook_env(
+            &Event::new(
+                EventKind::WorkspaceSwitched,
+                vec![("workspace", "2".into())],
+            ),
+            Some(std::path::Path::new("/tmp/hyprmux.sock")),
+        );
         assert!(env.contains(&("HYPRMUX_EVENT".into(), "workspace-switched".into())));
         assert!(env.contains(&("HYPRMUX_WORKSPACE".into(), "2".into())));
+        assert!(env.contains(&("HYPRMUX_SOCKET".into(), "/tmp/hyprmux.sock".into())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emit_fans_out_all_matching_hooks() {
+        use crate::config::{HyprmuxConfig, HyprmuxHookConfig};
+        use std::time::{Duration, Instant};
+
+        let dir = std::env::temp_dir().join(format!("hyprmux-hook-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = dir.join("first");
+        let second = dir.join("second");
+        let socket = dir.join("control.sock");
+        let config = HyprmuxConfig {
+            hooks: vec![
+                HyprmuxHookConfig {
+                    event: EventKind::PaneExited,
+                    run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", first.display()),
+                },
+                HyprmuxHookConfig {
+                    event: EventKind::PaneExited,
+                    run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", second.display()),
+                },
+                HyprmuxHookConfig {
+                    event: EventKind::PaneSpawned,
+                    run: format!("touch '{}'", dir.join("wrong-event").display()),
+                },
+            ],
+            ..HyprmuxConfig::default()
+        };
+        let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
+        state.control_socket_path = Some(socket.clone());
+
+        emit(&state, Event::new(EventKind::PaneExited, vec![]));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while (!first.exists() || !second.exists()) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            std::fs::read_to_string(first).unwrap(),
+            socket.display().to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(second).unwrap(),
+            socket.display().to_string()
+        );
+        assert!(!dir.join("wrong-event").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

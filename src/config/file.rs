@@ -60,9 +60,16 @@ struct FileConfig {
     scratchpad: ScratchpadFileConfig,
     workbar: WorkbarFileConfig,
     rules: Vec<RuleFileConfig>,
-    hooks: HashMap<String, String>,
+    hooks: Vec<HookFileConfig>,
     logging: LoggingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HookFileConfig {
+    event: String,
+    run: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -319,12 +326,8 @@ pub fn load_config() -> LoadedConfig {
     };
     note_config_text(Some(text.clone()));
 
-    let parsed = match toml::from_str::<FileConfig>(&text) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            warnings.push(format!("Config parse failed for {}: {err}", path.display()));
-            return LoadedConfig { config, warnings };
-        }
+    let Some(parsed) = parse_file_config(&text, &path, &mut warnings) else {
+        return LoadedConfig { config, warnings };
     };
 
     if let Some(shell) = non_empty_argv(parsed.shell) {
@@ -496,21 +499,7 @@ pub fn load_config() -> LoadedConfig {
 
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     config.rules = build_rules(parsed.rules, &mut warnings);
-    config.hooks = parsed
-        .hooks
-        .into_iter()
-        .filter_map(|(kind, command)| {
-            if crate::events::EventKind::parse(&kind).is_none() {
-                warnings.push(format!("Ignored unknown hook event `{kind}`"));
-                None
-            } else if command.trim().is_empty() {
-                warnings.push(format!("Ignored empty hook for `{kind}`"));
-                None
-            } else {
-                Some((kind, command))
-            }
-        })
-        .collect();
+    config.hooks = build_hooks(parsed.hooks, &mut warnings);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(
         parsed.keys,
@@ -521,6 +510,47 @@ pub fn load_config() -> LoadedConfig {
     config.user_commands = user_commands;
 
     LoadedConfig { config, warnings }
+}
+
+fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Option<FileConfig> {
+    match toml::from_str::<FileConfig>(text) {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            let legacy_hooks = toml::from_str::<toml::Value>(text)
+                .ok()
+                .and_then(|value| value.get("hooks").cloned())
+                .is_some_and(|hooks| hooks.is_table());
+            if legacy_hooks {
+                warnings.push(
+                    "Legacy [hooks] is no longer supported; migrate each command to `[[hooks]]` with `event = \"...\"` and `run = \"...\"`"
+                        .to_string(),
+                );
+            } else {
+                warnings.push(format!("Config parse failed for {}: {err}", path.display()));
+            }
+            None
+        }
+    }
+}
+
+fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<HyprmuxHookConfig> {
+    hooks
+        .into_iter()
+        .filter_map(|hook| {
+            let Some(event) = crate::events::EventKind::parse(&hook.event) else {
+                warnings.push(format!("Ignored unknown hook event `{}`", hook.event));
+                return None;
+            };
+            if hook.run.trim().is_empty() {
+                warnings.push(format!("Ignored empty hook for `{}`", hook.event));
+                return None;
+            }
+            Some(HyprmuxHookConfig {
+                event,
+                run: hook.run,
+            })
+        })
+        .collect()
 }
 
 pub fn config_path() -> PathBuf {
@@ -581,6 +611,87 @@ fn non_empty_argv(value: Option<ShellFileValue>) -> Option<Vec<String>> {
 #[cfg(test)]
 mod file_tests {
     use super::*;
+
+    #[test]
+    fn structured_hooks_parse_and_keep_multiple_entries() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [[hooks]]
+            event = "pane-exited"
+            run = "first"
+
+            [[hooks]]
+            event = "pane-exited"
+            run = "second"
+            "#,
+        )
+        .expect("config parses");
+        let hooks = build_hooks(parsed.hooks, &mut Vec::new());
+        assert_eq!(hooks.len(), 2);
+        assert!(
+            hooks
+                .iter()
+                .all(|hook| hook.event == crate::events::EventKind::PaneExited)
+        );
+        assert_eq!(hooks[0].run, "first");
+        assert_eq!(hooks[1].run, "second");
+    }
+
+    #[test]
+    fn unknown_and_empty_hooks_are_dropped_with_warnings() {
+        let parsed: FileConfig = toml::from_str(
+            r#"
+            [[hooks]]
+            event = "future-event"
+            run = "ignored"
+
+            [[hooks]]
+            event = "pane-exited"
+            run = "  "
+
+            [[hooks]]
+            event = "pane-spawned"
+            run = "kept"
+            "#,
+        )
+        .expect("config parses");
+        let mut warnings = Vec::new();
+        let hooks = build_hooks(parsed.hooks, &mut warnings);
+        assert_eq!(
+            hooks,
+            vec![HyprmuxHookConfig {
+                event: crate::events::EventKind::PaneSpawned,
+                run: "kept".into(),
+            }]
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("future-event"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("empty hook"))
+        );
+    }
+
+    #[test]
+    fn legacy_flat_hooks_report_migration_warning() {
+        let mut warnings = Vec::new();
+        let parsed = parse_file_config(
+            "[hooks]\npane-exited = \"notify-send exited\"",
+            Path::new("hyprmux.toml"),
+            &mut warnings,
+        );
+        assert!(parsed.is_none());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("Legacy [hooks]"));
+        assert!(warnings[0].contains("[[hooks]]"));
+        assert!(warnings[0].contains("event"));
+        assert!(warnings[0].contains("run"));
+    }
 
     #[test]
     fn layout_split_width_multiplier_is_configurable() {

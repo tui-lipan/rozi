@@ -8,7 +8,6 @@ mod common;
 use std::process::{Command, Stdio};
 
 use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::platform::ipc::EndpointRegistry;
 use hyprmux::session::protocol::{
     ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
@@ -17,7 +16,7 @@ use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{
     ServerGuard, TestConnection, connect_when_ready, contains, private_temp_dir, read_until,
-    unique_session_name,
+    subprocess_endpoint, unique_session_name,
 };
 
 const PANE_ID: u32 = 41;
@@ -28,7 +27,7 @@ const OUTPUT_MARKER: &[u8] = b"hyprmux-session-smoke-output";
 fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     let session = unique_session_name();
     let runtime_base = private_temp_dir();
-    let endpoint = EndpointRegistry::session_endpoint(&runtime_base.join("hyprmux"), &session);
+    let endpoint = subprocess_endpoint(&runtime_base, &session);
     let child = Command::new(env!("CARGO_BIN_EXE_hyprmux"))
         .args(["--server", &session])
         .env("XDG_RUNTIME_DIR", &runtime_base)

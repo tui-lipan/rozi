@@ -227,6 +227,8 @@ Major module map:
 
 - Unit tests live mostly inside `src/*.rs` modules and run with `cargo test`.
 - Integration/smoke tests live under `tests/`, for example `tests/border_merge_smoke.rs`.
+- Session integration tests use `tests/common` and the real typed protocol/platform IPC helpers;
+  never reimplement session framing or use raw Unix sockets in cross-platform tests.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and
   terminal behavior when changing those areas.
 - For app-only Rust changes, run at least:

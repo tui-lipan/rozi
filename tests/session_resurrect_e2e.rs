@@ -1,0 +1,239 @@
+mod common;
+
+use std::fs;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
+use hyprmux::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
+use hyprmux::shared_layout::{
+    SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
+    SharedWorkspace,
+};
+use tui_lipan::prelude::TerminalColorPalette;
+
+use common::{
+    ServerGuard, attach_message, connect_when_ready, contains, private_temp_dir, read_until,
+    subprocess_endpoint, unique_session_name,
+};
+
+const PANE_ID: u32 = 81;
+const PANE_GENERATION: u64 = 1;
+const REPLAY_MARKER: &[u8] = b"hyprmux-resurrect-replay-marker";
+
+#[test]
+fn subprocess_restart_restores_layout_and_pane_replay() {
+    let session = unique_session_name();
+    let test_root = private_temp_dir();
+    let runtime_base = test_root.join("runtime");
+    let state_base = test_root.join("state");
+    let config_base = test_root.join("config");
+    fs::create_dir_all(&runtime_base).expect("create runtime base");
+    fs::create_dir_all(&state_base).expect("create state base");
+    fs::create_dir_all(&config_base).expect("create config base");
+    let config_path = config_base.join("hyprmux.toml");
+    fs::write(&config_path, "[session]\nresurrect = true\n").expect("write test config");
+    let endpoint = subprocess_endpoint(&runtime_base, &session);
+
+    let child = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    let mut server = ServerGuard::new(child, test_root.clone());
+    let mut client = connect_when_ready(&endpoint, server.child_mut());
+    client.write_control(&attach_message(&session, "snapshot-writer"));
+    read_until(&mut client, |frame| {
+        matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
+    });
+
+    let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
+    client.write_control(&ClientMessage::SpawnPane {
+        pane_id: PANE_ID,
+        generation: PANE_GENERATION,
+        command: None,
+        cwd: None,
+        cols: 80,
+        rows: 24,
+        keep_open: false,
+        env: Vec::new(),
+        title: Some("resurrected pane".to_string()),
+        palette: WirePalette::from(TerminalColorPalette::default()),
+        shell,
+        command_shell,
+    });
+    read_until(&mut client, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::SpawnResult {
+                pane_id: PANE_ID,
+                generation: PANE_GENERATION,
+                ok: true,
+                ..
+            })
+        )
+    });
+    client.write_pane_input(
+        PANE_ID,
+        PANE_GENERATION,
+        b"echo hyprmux-resurrect-replay-marker\r",
+    );
+    let mut live_output = Vec::new();
+    read_until(&mut client, |frame| {
+        if let Frame::PaneBytes { bytes, .. } = frame {
+            live_output.extend_from_slice(bytes);
+        }
+        contains(&live_output, REPLAY_MARKER)
+    });
+
+    let layout = pane_layout();
+    client.write_control(&ClientMessage::CommitLayout {
+        base_rev: 0,
+        layout: layout.clone(),
+    });
+    read_until(&mut client, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::LayoutCommitted { rev: 1, .. })
+        )
+    });
+    client.write_control(&ClientMessage::Detach);
+    drop(client);
+
+    let snapshot = state_base.join("hyprmux").join("sessions").join(&session);
+    wait_for_snapshot(&snapshot);
+    assert!(
+        contains(
+            &fs::read(snapshot.join("panes").join(format!("{PANE_ID}.replay")))
+                .expect("read replay snapshot"),
+            REPLAY_MARKER,
+        ),
+        "snapshot replay omitted marker"
+    );
+
+    server.kill_for_restart();
+    let restarted = spawn_server(
+        &session,
+        &runtime_base,
+        &state_base,
+        &config_base,
+        &config_path,
+    );
+    server.replace_child(restarted);
+
+    let mut restored = connect_when_ready(&endpoint, server.child_mut());
+    restored.write_control(&attach_message(&session, "snapshot-reader"));
+    let mut attached = None;
+    read_until(&mut restored, |frame| {
+        if let Frame::Control(message @ ServerMessage::Attached { .. }) = frame {
+            attached = Some(message.clone());
+            true
+        } else {
+            false
+        }
+    });
+    let ServerMessage::Attached {
+        panes,
+        layout_rev,
+        layout: restored_layout,
+        ..
+    } = attached.expect("restored attach response")
+    else {
+        unreachable!()
+    };
+    assert_eq!(layout_rev, 1);
+    let restored_layout = restored_layout.expect("restored shared layout");
+    assert_eq!(restored_layout.canvas_cols, layout.canvas_cols);
+    assert_eq!(restored_layout.workspaces.len(), 1);
+    assert!(panes.iter().any(|pane| pane.pane_id == PANE_ID));
+
+    let mut replay = Vec::new();
+    read_until(&mut restored, |frame| {
+        if let Frame::PaneBytes {
+            pane_id: PANE_ID,
+            bytes,
+            ..
+        } = frame
+        {
+            replay.extend_from_slice(bytes);
+        }
+        contains(&replay, REPLAY_MARKER)
+    });
+
+    restored.write_control(&ClientMessage::Shutdown);
+    drop(restored);
+    server.wait_for_exit();
+}
+
+fn spawn_server(
+    session: &str,
+    runtime_base: &std::path::Path,
+    state_base: &std::path::Path,
+    config_base: &std::path::Path,
+    config_path: &std::path::Path,
+) -> std::process::Child {
+    Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+        .args(["--server", session])
+        .env("HYPRMUX_CONFIG", config_path)
+        .env("XDG_RUNTIME_DIR", runtime_base)
+        .env("XDG_STATE_HOME", state_base)
+        .env("XDG_CONFIG_HOME", config_base)
+        .env("LOCALAPPDATA", state_base)
+        .env("APPDATA", config_base)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("launch real session server")
+}
+
+fn wait_for_snapshot(snapshot: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if snapshot.join("meta.json").is_file()
+            && snapshot.join("layout.json").is_file()
+            && snapshot
+                .join("panes")
+                .join(format!("{PANE_ID}.replay"))
+                .is_file()
+        {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "session snapshot was not completed at {}",
+        snapshot.display()
+    );
+}
+
+fn pane_layout() -> SharedLayout {
+    SharedLayout {
+        version: SHARED_LAYOUT_VERSION,
+        canvas_cols: 80,
+        canvas_rows: 23,
+        workspaces: vec![SharedWorkspace {
+            index: 0,
+            name: Some("resurrected".to_string()),
+            synchronized: true,
+            layout: SharedLayoutKind::Dwindle,
+            start_axis: SharedSplitAxis::Horizontal,
+            split_ratios: Vec::new(),
+            tree: Some(SharedTree::Leaf { pane: PANE_ID }),
+            panes: vec![SharedPane {
+                pane_id: PANE_ID,
+                generation: PANE_GENERATION,
+                title: Some("resurrected pane".to_string()),
+                profile_name: None,
+                cwd: None,
+                command: None,
+                keep_open: false,
+                floating: false,
+                fullscreen: false,
+                rect: None,
+            }],
+        }],
+    }
+}

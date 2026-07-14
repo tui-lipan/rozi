@@ -213,6 +213,14 @@ impl SessionServer {
     /// Remove a client, promoting the oldest surviving attached client to controller if the leaver
     /// held the lease, and broadcasting the resulting client/controller changes.
     pub(super) fn remove_client(&mut self, id: ClientId) {
+        self.remove_client_with_reason(id, ControllerChangeReason::Granted);
+    }
+
+    fn remove_client_with_reason(
+        &mut self,
+        id: ClientId,
+        promotion_reason: ControllerChangeReason,
+    ) {
         let Some(index) = self.clients.iter().position(|client| client.id == id) else {
             return;
         };
@@ -238,8 +246,10 @@ impl SessionServer {
             }
             messages.push(ServerMessage::ControllerChanged {
                 controller: self.controller,
-                reason: if self.controller.is_some() {
-                    ControllerChangeReason::Granted
+                reason: if promotion_reason == ControllerChangeReason::Expired {
+                    ControllerChangeReason::Expired
+                } else if self.controller.is_some() {
+                    promotion_reason
                 } else {
                     ControllerChangeReason::Released
                 },
@@ -259,7 +269,7 @@ impl SessionServer {
             if !client.attached {
                 continue;
             }
-            if now.duration_since(client.last_pong) >= HEARTBEAT_TIMEOUT {
+            if now.duration_since(client.last_pong) >= self.settings.heartbeat_timeout {
                 timed_out.push(client.id);
                 continue;
             }
@@ -273,7 +283,7 @@ impl SessionServer {
             self.enqueue(id, Target::Sender, ServerMessage::Ping { seq });
         }
         for id in timed_out {
-            self.remove_client(id);
+            self.remove_client_with_reason(id, ControllerChangeReason::Expired);
         }
     }
 

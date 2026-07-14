@@ -32,9 +32,9 @@ const DEFAULT_SCROLLBACK: usize = 5000;
 const EPHEMERAL_NO_CLIENT_GRACE: Duration = Duration::from_secs(45);
 /// How often the server pings each attached client.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// How long a client may go without a pong before it is disconnected (and its lease released). A
-/// wedged UI loses control deliberately; a merely busy one has ample slack.
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Default time a client may go without a pong before it is disconnected (and its lease released).
+/// A wedged UI loses control deliberately; a merely busy one has ample slack.
+const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Server work below this duration is ordinary scheduling overhead. Longer pauses are excluded from
 /// client heartbeat deadlines because the server itself could not exchange heartbeat frames.
 const HEARTBEAT_STALL_THRESHOLD: Duration = Duration::from_millis(100);
@@ -86,6 +86,8 @@ pub struct ServerSettings {
     pub resurrect: bool,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
+    /// Maximum time an attached client may go without a heartbeat pong.
+    pub heartbeat_timeout: Duration,
     /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
     /// which respawns panes with no controlling client yet connected to resolve them - the
     /// server's own config load is the only launch-policy source available at that point. Empty
@@ -106,6 +108,7 @@ impl Default for ServerSettings {
             resurrect: false,
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
+            heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
             shell: Vec::new(),
             command_shell: Vec::new(),
         }

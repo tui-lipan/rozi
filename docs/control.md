@@ -100,10 +100,13 @@ Popup dimensions are viewport fractions, clamped to `0.2`-`0.95`; omitted dimens
 `0.6`. Only one popup may exist at a time. It closes when its command exits, when its backdrop is
 clicked, or through the normal close action. Escape is sent to the popup application.
 
-Subscriptions support `pane-spawned`, `pane-exited`, `focus-changed`, and `workspace-switched`.
-An empty `events` list subscribes to all four. Event names and existing fields are stable; later
-versions may add events or fields. Slow subscribers are bounded and disconnected rather than
-blocking the UI. Example: `printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$HYPRMUX_SOCKET | jq`.
+Subscriptions support `pane-spawned`, `pane-exited`, `focus-changed`, `workspace-switched`,
+`session-attached`, `session-detached`, `session-renamed`, `controller-changed`, `client-joined`,
+`client-left`, `profile-loaded`, and `config-reloaded`. An empty `events` list subscribes to all 12.
+Event names and existing fields are stable; later versions may add events or fields. See
+[Hooks](hooks.md#events-and-fields) for the complete field table. Slow subscribers are bounded and
+disconnected rather than blocking the UI. Example:
+`printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$HYPRMUX_SOCKET | jq`.
 
 ## Pane logging
 

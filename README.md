@@ -65,6 +65,7 @@ Full docs live in [`docs/`](docs/):
 - [Project profiles & pane identity](docs/project-profiles.md) - save and restore layouts.
 - [Named profiles](docs/profiles.md) - profiles directory, CLI launch, keep-open, picker commands.
 - [Control socket](docs/control.md) - pane environment, JSON control protocol, and CLI automation.
+- [Hooks](docs/hooks.md) - event-triggered commands, environment fields, and control callbacks.
 - [Vim/Neovim navigator](integrations/vim-hyprmux-navigator/) - seamless editor split and hyprmux pane navigation.
 - [Sessions](docs/sessions.md) - always-server model, ephemeral vs named sessions, rename, and lifecycle.
 

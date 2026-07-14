@@ -262,10 +262,11 @@ Pane focus and chrome behavior.
 
 ## `[[rules]]`
 
-Window rules apply to command-carrying panes spawned through control `new-pane` and `[keys]`
-`run` commands. Matching is a case-sensitive command substring and the first matching rule wins.
-Plain shell-pane spawns, profile restoration, and scratchpads do not use rules. Rules are
-command-based only; terminal titles arrive after spawn and are not matched.
+Window rules apply to ordinary workspace panes spawned with an explicit command, including control
+`new-pane`, `[keys]` `run`, and other interactive command-spawn paths. Matching is a case-sensitive
+command substring and the first matching rule wins. Plain shell-pane spawns, profile restoration,
+scratchpads, and popups do not use rules. Rules are command-based only; terminal titles arrive after
+spawn and are not matched.
 
 ```toml
 [[rules]]
@@ -602,20 +603,29 @@ alt-t = { run = "btop" }
   though it has no stable action id. It still can't be rebound elsewhere or invoked via
 `hyprmux run-action` - only the trigger you configured runs it.
 
-## `[hooks]`
+## `[[hooks]]`
 
-Hooks map control event names to shell commands. Commands run detached through `$SHELL -c` and
-receive `HYPRMUX_EVENT` plus available event fields such as `HYPRMUX_PANE`, `HYPRMUX_CODE`,
-`HYPRMUX_WORKSPACE`, `HYPRMUX_COMMAND`, and `HYPRMUX_CWD`.
+> **Breaking change:** the former flat `[hooks]` table is no longer supported. Convert every old
+> key/value pair to a structured entry with `event` and `run`. A leftover `[hooks]` table prevents
+> the config from loading and produces a migration warning.
 
 ```toml
-[hooks]
-pane-exited = "notify-send 'pane exited'"
-workspace-switched = "logger workspace=$HYPRMUX_WORKSPACE"
+[[hooks]]
+event = "pane-exited"
+run = "notify-send 'pane exited'"
+
+[[hooks]]
+event = "workspace-switched"
+run = "logger workspace=$HYPRMUX_WORKSPACE"
 ```
 
-Valid names are `pane-spawned`, `pane-exited`, `focus-changed`, and `workspace-switched`.
-Unknown names are warned and ignored.
+Multiple entries may target the same event; each command is launched asynchronously through
+`command_shell`. Hooks receive `HYPRMUX_EVENT`, event-specific `HYPRMUX_*` fields, and
+`HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
+are warned and ignored.
+
+See [Hooks](hooks.md) for all 12 events and fields, the complete environment contract, command
+lifecycle and client-side semantics, migration examples, and control-socket callbacks.
 
 ## Pane synchronization
 

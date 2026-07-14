@@ -339,8 +339,11 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `HYPRMUX_CONFIG` selects an alternate config file.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
+- `[[hooks]]` runs client-side commands for 12 UI events and injects `HYPRMUX_EVENT`, event fields,
+  and `HYPRMUX_SOCKET`; see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
-- `[[rules]]` applies first-match command substring placement to control and `[keys] run` spawns.
+- `[[rules]]` applies first-match command substring placement to interactive command-carrying pane
+  spawns, including control `new-pane` and `[keys] run`.
 - `[workbar]` supports built-in segments, text placeholders, and timed shell command segments; each
  segment renders as a themed badge whose color can be overridden by theme role via a segment table,
  and `[pane].workbar_powerline` toggles trailing-badge chaining.
@@ -365,4 +368,5 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/project-profiles.md](docs/project-profiles.md) - Profile format and pane identity.
 - [docs/sessions.md](docs/sessions.md) - Local vs attached sessions and detach/reattach semantics.
 - [docs/control.md](docs/control.md) - Control socket CLI and JSON protocol.
+- [docs/hooks.md](docs/hooks.md) - Hook syntax, event fields, environment, and execution semantics.
 - [docs/themes.md](docs/themes.md) - Themes, hot reload, and terminal color palette.

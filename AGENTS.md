@@ -11,6 +11,7 @@ server-backed named sessions for detach/reattach workflows.
 - `.claude/` - Local Claude/agent helper material; preserve unless explicitly asked.
 - `.github/` - GitHub metadata such as funding configuration.
 - `.superpowers/` - Historical planning and execution notes; do not treat as live product docs.
+- `benches/` - Criterion benchmarks and deterministic generated terminal/protocol corpora.
 - `docs/` - User-facing documentation and internal design notes.
 - `examples/` - Example profiles and runnable/user-copyable configuration snippets.
 - `src/` - Rust application source, grouped by runtime, layout, panes, input, and features.
@@ -123,7 +124,21 @@ Debug locally:
 cargo run
 ```
 
-> TODO: Add documented debugger/profiler commands if a standard project workflow is chosen.
+Benchmark:
+
+```bash
+cargo bench
+cargo bench --bench terminal_ingest -- 'sgr_heavy/200x60'
+```
+
+Profile an optimized build with debug symbols:
+
+```bash
+cargo build --profile release-debug
+samply record ./target/release-debug/hyprmux --attach profile
+```
+
+See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, and hot-path notes.
 
 ## Code Style & Conventions
 
@@ -226,6 +241,8 @@ Major module map:
   ConPTY availability), `shell_integration` (per-shell injection), `process/*` (`ProcessInspector`;
   Linux/macOS only by design), and `notifications`. See `platform/mod.rs` for per-submodule status.
 - `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
+- `benches/` - Criterion targets for terminal ingest, snapshot rebuilding, protocol framing, and
+  the end-to-end session pipeline; `benches/support/mod.rs` generates deterministic corpora.
 
 ## Testing Strategy
 
@@ -235,6 +252,9 @@ Major module map:
   never reimplement session framing or use raw Unix sockets in cross-platform tests.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and
   terminal behavior when changing those areas.
+- Benchmarks are local performance evidence, not timing tests: `cargo check --all-targets` compiles
+  them, while `cargo bench` runs them on a stable, idle machine. Keep corpora deterministic and
+  generated; never add captured terminal output. See `docs/benchmarks.md`.
 - For app-only Rust changes, run at least:
 
 ```bash
@@ -249,25 +269,14 @@ git diff --check
 cargo build
 ```
 
-- To develop against a local `tui-lipan` (framework and app changing together), add a gitignored
-  `.cargo/config.toml` overriding the crates.io dependency with the sibling checkout:
-
-```toml
-[patch.crates-io]
-tui-lipan = { path = "../tui-lipan" }
-```
-
-  The sibling's declared version must satisfy `Cargo.toml`'s requirement.
-
-  **A `Cargo.lock` generated with this patch active is not valid for CI.** The patched crate is
-  recorded as a path package with no `source`/`checksum`, so `cargo check --locked` on a plain
-  checkout rejects it. Once the framework version this depends on is published, regenerate the lock
-  with the patch out of the way and commit that:
-
-```bash
-mv .cargo/config.toml .cargo/config.toml.off && cargo generate-lockfile
-mv .cargo/config.toml.off .cargo/config.toml
-```
+- `Cargo.toml` currently uses `tui-lipan = { path = "../tui-lipan/", ... }` directly. Local builds,
+  tests, and benchmarks therefore require that sibling checkout; do not add a redundant
+  `[patch.crates-io]` override.
+- The current `Cargo.lock` path-package entry has no `source` or `checksum`, which matches the
+  manifest. Before standalone CI or release builds can use crates.io, publish the required
+  framework version, replace the path dependency with a registry version requirement, and
+  regenerate `Cargo.lock` without a path override. Do not claim a planned registry version is in use
+  before that manifest change lands.
 
 - For framework terminal changes in `../tui-lipan`, verify both sides:
 
@@ -279,11 +288,11 @@ cargo clippy --features terminal
   Then rerun the relevant `hyprmux` tests and lints, and publish the framework before the hyprmux
   change that needs it can go green in CI.
 
-CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check`, `clippy -D warnings`, `test`, and a
-release build natively on `ubuntu-latest`, `macos-latest`, and `windows-latest`, plus `cargo audit`
-in a separate Linux job. It builds from a plain checkout: `tui-lipan` resolves from crates.io at the
-version pinned in `Cargo.toml`, so a framework bump is an explicit `Cargo.toml`/`Cargo.lock` commit
-here rather than a silent drift.
+CI (`.github/workflows/ci.yml`) runs `fmt --check`, `check --all-targets` (which compiles benches),
+`clippy -D warnings`, `test`, and a release build natively on `ubuntu-latest`, `macos-latest`, and
+`windows-latest`, plus `cargo audit` in a separate Linux job. The workflow checks out only this
+repository, so it requires the path dependency to be replaced by a published registry dependency
+before it can pass from a standalone checkout.
 
 Windows code cannot be run in this workspace. Type-check it before pushing - CI is the first thing
 that actually executes it:
@@ -352,8 +361,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `--attach <NAME>` / `--session <NAME>` connects to persistent named session servers.
-- Cargo feature flags are inherited from the `tui-lipan` dependency (crates.io); this crate
-  currently uses `terminal`, `terminal-serde`, and `theme-reload`.
+- Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
+  crate uses `terminal`, `terminal-serde`, and `theme-reload`.
 
 ## Further Reading
 
@@ -369,4 +378,5 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/sessions.md](docs/sessions.md) - Local vs attached sessions and detach/reattach semantics.
 - [docs/control.md](docs/control.md) - Control socket CLI and JSON protocol.
 - [docs/hooks.md](docs/hooks.md) - Hook syntax, event fields, environment, and execution semantics.
+- [docs/benchmarks.md](docs/benchmarks.md) - Benchmarks, baselines, live stress, and profiling.
 - [docs/themes.md](docs/themes.md) - Themes, hot reload, and terminal color palette.

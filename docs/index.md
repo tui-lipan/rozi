@@ -23,6 +23,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; `
 | [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
 | [Hooks](hooks.md) | Event-triggered commands, event fields, environment variables, and control-socket callbacks. |
+| [Benchmarks & profiling](benchmarks.md) | Criterion targets, baseline comparisons, live stress recipes, and Samply profiling. |
 | [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) | Seamless navigation between editor splits and hyprmux panes. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
 

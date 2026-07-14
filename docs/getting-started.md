@@ -5,23 +5,16 @@
 - A Rust toolchain of at least **1.88** (edition 2024; this is the MSRV, and CI builds on it).
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
 
-A plain `git clone` builds: `tui-lipan` is a regular crates.io dependency.
+The current `Cargo.toml` uses the sibling `../tui-lipan/` checkout directly, with the `terminal`,
+`terminal-serde`, and `theme-reload` features. Clone or place `tui-lipan` next to this repository
+before building. `terminal` brings in `portable-pty` + `alacritty_terminal` for the PTY-backed
+terminal widget; `theme-reload` enables live theme hot-reload.
 
-> **Dependency note.** `tui-lipan` is pulled from crates.io at the version pinned in `Cargo.toml`,
-> with the `terminal`, `terminal-serde`, and `theme-reload` features. `terminal` brings in
-> `portable-pty` + `alacritty_terminal` for the PTY-backed terminal widget; `theme-reload` enables
-> live theme hot-reload.
->
-> **Developing against a local `tui-lipan`.** To build hyprmux against a sibling checkout instead of
-> the published crate - the loop for changing the framework and hyprmux together - add a
-> `.cargo/config.toml` (gitignored, so it never reaches CI or a standalone clone):
->
-> ```toml
-> [patch.crates-io]
-> tui-lipan = { path = "../tui-lipan" }
-> ```
->
-> The sibling's declared version must satisfy the requirement in `Cargo.toml`.
+> **Publish/lock note.** The current path dependency produces a `Cargo.lock` entry without a
+> registry source or checksum. Before standalone clones, CI, or releases can build without the
+> sibling checkout, publish the required `tui-lipan` version, replace the path dependency with its
+> registry version requirement, and regenerate `Cargo.lock` in that registry configuration. Do not
+> treat a planned registry version as the dependency currently selected by this manifest.
 
 ## Platform support
 

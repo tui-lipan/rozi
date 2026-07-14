@@ -251,13 +251,20 @@ pub(crate) fn pane_element(
 
     let snapshot = terminal_snapshot_for_pane(ctx, pane);
     let terminal_ready = pane.terminal_active && !pane.opening && !pane.closing;
+    let show_cursor =
+        terminal_cursor_visible(ctx.state.hint_mode.as_ref().map(|hints| hints.target), id);
     let mut selection_style = theme.text_selection;
-    if ctx.state.copy_flash.is_some_and(|flash| flash.target == id) {
+    if ctx
+        .state
+        .copy_flash
+        .is_some_and(|flash| flash.target == id && !flash.clearing)
+    {
         selection_style = selection_style.patch(ClipboardConfig::default().copy_feedback_style);
     }
 
     let mut terminal_widget = Terminal::new()
         .snapshot(snapshot)
+        .show_cursor(show_cursor)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(selection_style)
         .focus_style(Style::default())
@@ -287,9 +294,15 @@ pub(crate) fn pane_element(
             )
             .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
     }
-    if let Some(selection) = copy_mode_selection(ctx, id).or_else(|| copy_flash_selection(ctx, id))
+    let controlled_selection =
+        copy_mode_selection(ctx, id).or_else(|| copy_flash_selection(ctx, id));
+    if controlled_selection.is_some()
+        || ctx
+            .state
+            .copy_flash
+            .is_some_and(|flash| flash.target == id && flash.clearing)
     {
-        terminal_widget = terminal_widget.selection(Some(selection));
+        terminal_widget = terminal_widget.selection(controlled_selection);
     }
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane_terminal_key(id));
@@ -401,6 +414,7 @@ fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> Termina
             &hints.matches,
             &hints.labels,
             &hints.input,
+            ctx.state.theme.text_selection,
             active_search_match_style(),
         );
     }
@@ -708,7 +722,10 @@ fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<Terminal
 }
 
 fn copy_flash_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
-    let flash = ctx.state.copy_flash.filter(|flash| flash.target == id)?;
+    let flash = ctx
+        .state
+        .copy_flash
+        .filter(|flash| flash.target == id && !flash.clearing)?;
     Some(selection_from_points(flash.selection.0, flash.selection.1))
 }
 
@@ -727,9 +744,20 @@ fn selection_from_points(a: (usize, usize), b: (usize, usize)) -> TerminalSelect
     }
 }
 
+fn terminal_cursor_visible(hint_target: Option<PaneId>, id: PaneId) -> bool {
+    hint_target != Some(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hint_mode_hides_only_the_target_terminal_cursor() {
+        assert!(!terminal_cursor_visible(Some(7), 7));
+        assert!(terminal_cursor_visible(Some(7), 8));
+        assert!(terminal_cursor_visible(None, 7));
+    }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {
         FloatRect { x, y, w, h }

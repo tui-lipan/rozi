@@ -42,4 +42,6 @@ pub struct CopyFlashState {
     pub id: u64,
     pub target: PaneId,
     pub selection: ((usize, usize), (usize, usize)),
+    pub return_to_live: bool,
+    pub clearing: bool,
 }

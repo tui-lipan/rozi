@@ -103,18 +103,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         }
     }
 
-    let flash_id = copied_selection.map(|selection| {
-        let id = ctx.state.next_copy_flash_id;
-        ctx.state.next_copy_flash_id = ctx.state.next_copy_flash_id.saturating_add(1);
-        ctx.state.copy_flash = Some(CopyFlashState {
-            id,
-            target: state.target,
-            selection,
-        });
-        id
-    });
-
-    if flash_id.is_none()
+    if copied_selection.is_none()
         && let Some(pane) = find_pane_mut(&mut ctx.state, state.target)
     {
         pane.terminal.set_scrollback(0);
@@ -123,9 +112,27 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     ctx.state.mode = Mode::Normal;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
-    flash_id.map_or_else(Update::full, |flash_id| {
-        Update::with_command(copy_flash_timer(state.target, flash_id))
+    copied_selection.map_or_else(Update::full, |selection| {
+        start_copy_flash(ctx, state.target, selection, true)
     })
+}
+
+pub(crate) fn start_copy_flash(
+    ctx: &mut Context<HyprmuxApp>,
+    target: PaneId,
+    selection: ((usize, usize), (usize, usize)),
+    return_to_live: bool,
+) -> Update {
+    let id = ctx.state.next_copy_flash_id;
+    ctx.state.next_copy_flash_id = ctx.state.next_copy_flash_id.saturating_add(1);
+    ctx.state.copy_flash = Some(CopyFlashState {
+        id,
+        target,
+        selection,
+        return_to_live,
+        clearing: false,
+    });
+    Update::with_command(copy_flash_timer(target, id))
 }
 
 pub(crate) fn expire_flash(ctx: &mut Context<HyprmuxApp>, target: PaneId, id: u64) -> Update {
@@ -136,8 +143,14 @@ pub(crate) fn expire_flash(ctx: &mut Context<HyprmuxApp>, target: PaneId, id: u6
     {
         return Update::none();
     }
-    ctx.state.copy_flash = None;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
+    let return_to_live = ctx
+        .state
+        .copy_flash
+        .is_some_and(|flash| flash.return_to_live);
+    if let Some(flash) = ctx.state.copy_flash.as_mut() {
+        flash.clearing = true;
+    }
+    if return_to_live && let Some(pane) = find_pane_mut(&mut ctx.state, target) {
         pane.terminal.set_scrollback(0);
     }
     Update::full()

@@ -15,6 +15,13 @@ pub(super) fn close_popup(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+    if ctx
+        .state
+        .copy_flash
+        .is_some_and(|flash| flash.target == id && flash.clearing)
+    {
+        ctx.state.copy_flash = None;
+    }
     focus(&mut ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         pane.activity.has_unseen_output = false;

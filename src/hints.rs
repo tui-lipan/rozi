@@ -150,6 +150,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     let Some(state) = ctx.state.hint_mode.as_mut() else {
         return (true, exit(ctx));
     };
+    let target = state.target;
     state.input.push(lower);
     let candidates: Vec<usize> = state
         .labels
@@ -170,6 +171,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
             .copy(&matched.text)
             .map_err(|err| err.to_string())
     };
+    let copied = result.is_ok() && !open;
     match result {
         Ok(()) => ctx.toast().push(crate::pty_events::info_toast(
             &ctx.state.theme,
@@ -181,7 +183,21 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
             error,
         )),
     };
-    (true, exit(ctx))
+    let update = exit(ctx);
+    if copied {
+        let end_col = matched.end_col.saturating_sub(1);
+        (
+            true,
+            crate::copy_mode::start_copy_flash(
+                ctx,
+                target,
+                ((matched.row, matched.start_col), (matched.row, end_col)),
+                false,
+            ),
+        )
+    } else {
+        (true, update)
+    }
 }
 
 #[cfg(test)]

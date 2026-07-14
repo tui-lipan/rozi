@@ -254,11 +254,12 @@ impl TerminalPane {
         matches: &[crate::hints::HintMatch],
         labels: &[String],
         input: &str,
-        style: Style,
+        match_style: Style,
+        label_style: Style,
     ) -> TerminalRenderSnapshot {
         let mut snapshot = self.snapshot.clone();
         let mut lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
-        for (index, matched) in matches.iter().enumerate() {
+        for (index, matched) in matches.iter().enumerate().rev() {
             let Some(label) = labels.get(index) else {
                 continue;
             };
@@ -269,23 +270,9 @@ impl TerminalPane {
                 continue;
             };
             let range = [(matched.start_col, matched.end_col)];
-            *spans = highlight_span_ranges(matched.row, spans, &range, style, style, None);
-            let mut col = 0;
-            for span in spans.iter_mut() {
-                let len = span.content.chars().count();
-                if matched.start_col >= col && matched.start_col < col + len {
-                    let mut chars: Vec<char> = span.content.chars().collect();
-                    let start = matched.start_col - col;
-                    for (offset, ch) in label.chars().enumerate() {
-                        if start + offset < chars.len() {
-                            chars[start + offset] = ch;
-                        }
-                    }
-                    span.content = chars.into_iter().collect::<String>().into();
-                    break;
-                }
-                col += len;
-            }
+            *spans =
+                highlight_span_ranges(matched.row, spans, &range, match_style, match_style, None);
+            insert_styled_span(spans, matched.end_col, label, label_style);
         }
         snapshot.color_lines = lines.into();
         snapshot
@@ -523,6 +510,38 @@ fn push_span_segment(
     out.push(span);
 }
 
+fn insert_styled_span(spans: &mut Vec<Span>, col: usize, content: &str, style: Style) {
+    let inserted = Span::new(content).style(style);
+    let mut span_start = 0usize;
+
+    for index in 0..spans.len() {
+        let chars: Vec<char> = spans[index].content.chars().collect();
+        let span_end = span_start + chars.len();
+        if col > span_end {
+            span_start = span_end;
+            continue;
+        }
+        if col == span_start {
+            spans.insert(index, inserted);
+            return;
+        }
+        if col == span_end {
+            spans.insert(index + 1, inserted);
+            return;
+        }
+
+        let split = col - span_start;
+        let mut right = spans[index].clone();
+        spans[index].content = chars[..split].iter().collect::<String>().into();
+        right.content = chars[split..].iter().collect::<String>().into();
+        spans.insert(index + 1, inserted);
+        spans.insert(index + 2, right);
+        return;
+    }
+
+    spans.push(inserted);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,5 +657,59 @@ mod tests {
         let line = &snapshot.color_lines[0];
         assert_eq!(line[0].style, base_style.patch(highlight_style));
         assert_eq!(line[2].style, base_style.patch(active_highlight_style));
+    }
+
+    #[test]
+    fn hint_snapshot_appends_distinct_labels_without_replacing_match_text() {
+        let mut pane = TerminalPane::new(100);
+        let base_style = Style::new().fg(Color::Green);
+        let match_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
+        let label_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
+        pane.snapshot = TerminalRenderSnapshot {
+            text: std::sync::Arc::from("go https://x.test then ./src/main.rs"),
+            color_lines: std::sync::Arc::from([vec![
+                Span::new("go https://x.test then ./src/main.rs").style(base_style),
+            ]]),
+            ..TerminalRenderSnapshot::default()
+        };
+        let matches = [
+            crate::hints::HintMatch {
+                row: 0,
+                start_col: 3,
+                end_col: 17,
+                text: "https://x.test".to_string(),
+                kind: crate::hints::HintKind::Url,
+            },
+            crate::hints::HintMatch {
+                row: 0,
+                start_col: 23,
+                end_col: 36,
+                text: "./src/main.rs".to_string(),
+                kind: crate::hints::HintKind::Path,
+            },
+        ];
+
+        let snapshot = pane.hint_snapshot(
+            &matches,
+            &["a".to_string(), "s".to_string()],
+            "",
+            match_style,
+            label_style,
+        );
+        let line = &snapshot.color_lines[0];
+        assert_eq!(
+            line.iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "go https://x.testa then ./src/main.rss"
+        );
+        assert_eq!(line[1].content.as_ref(), "https://x.test");
+        assert_eq!(line[1].style, base_style.patch(match_style));
+        assert_eq!(line[2].content.as_ref(), "a");
+        assert_eq!(line[2].style, label_style);
+        assert_eq!(line[4].content.as_ref(), "./src/main.rs");
+        assert_eq!(line[4].style, base_style.patch(match_style));
+        assert_eq!(line[5].content.as_ref(), "s");
+        assert_eq!(line[5].style, label_style);
     }
 }

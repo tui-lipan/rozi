@@ -1,0 +1,135 @@
+use std::collections::HashMap;
+
+use tui_lipan::prelude::TerminalColorPalette;
+
+use super::PaneId;
+
+pub struct PendingSessionAttach {
+    pub epoch: u64,
+    pub name: String,
+    pub client: Option<crate::session::client::SessionClient>,
+    /// Whether a failed connect should autostart a `--server` process. Ephemeral sessions
+    /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
+    pub autostart: bool,
+    pub read_only: bool,
+}
+
+/// Per-run maximum orphan bytes buffered per pane before oldest data is dropped (see
+/// [`SharedSessionState::orphan_output`]).
+pub const ORPHAN_OUTPUT_CAP: usize = 256 * 1024;
+
+/// Client-side state for an attached shared session: the layout-control lease, revision
+/// bookkeeping for optimistic commits, the controller's canonical canvas, and the buffers the
+/// reconciler needs. Present whenever [`super::State::session_attached`] is true under protocol v6.
+pub struct SharedSessionState {
+    /// This client's server-assigned id.
+    pub client_id: crate::shared_layout::ClientId,
+    /// The last layout revision this client has applied.
+    pub layout_rev: u64,
+    /// Optimistic base for the next commit: bumped locally on each commit so pipelined commits
+    /// carry increasing base revs without waiting for each echo.
+    pub assumed_rev: u64,
+    /// The current layout controller, or `None` between promotions.
+    pub controller: Option<crate::shared_layout::ClientId>,
+    /// How many clients are attached to the session (including this one).
+    pub clients: Vec<crate::session::protocol::ClientInfo>,
+    pub input_locked: bool,
+    pub read_only: bool,
+    /// The controller's canonical pane canvas in cells (excluding the workbar). Followers letterbox
+    /// to this; `None` until the first layout with a canvas is seen.
+    pub canonical_canvas: Option<(u16, u16)>,
+    /// The last layout this client committed/applied, used as the dirty detector for the commit
+    /// chokepoint (cheaper than re-serializing).
+    pub last_committed_layout: Option<crate::shared_layout::SharedLayout>,
+    /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
+    /// `(pane_id, generation)`; drained into the pane once the reconciler adds it. Capped per pane.
+    pub orphan_output: HashMap<(PaneId, u64), Vec<u8>>,
+    /// Latest pending resize per pane while the controller debounces resize storms.
+    pub pending_resizes: HashMap<PaneId, (u16, u16)>,
+    /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
+    /// schedules only one flush timer.
+    pub resize_flush_scheduled: bool,
+    /// Whether a trailing-edge `Msg::FlushLayoutCommit` is already in flight.
+    pub layout_commit_scheduled: bool,
+}
+
+impl SharedSessionState {
+    pub fn new(client_id: crate::shared_layout::ClientId) -> Self {
+        Self {
+            client_id,
+            layout_rev: 0,
+            assumed_rev: 0,
+            controller: None,
+            clients: Vec::new(),
+            input_locked: false,
+            read_only: false,
+            canonical_canvas: None,
+            last_committed_layout: None,
+            orphan_output: HashMap::new(),
+            pending_resizes: HashMap::new(),
+            resize_flush_scheduled: false,
+            layout_commit_scheduled: false,
+        }
+    }
+
+    /// True when this client currently holds the layout-control lease.
+    pub fn is_controller(&self) -> bool {
+        self.controller == Some(self.client_id)
+    }
+
+    /// Whether any other client has an outstanding request for the control lease (badge fodder for
+    /// the controller's workbar and the session-clients view).
+    pub fn has_pending_control_requests(&self) -> bool {
+        self.clients
+            .iter()
+            .any(|client| client.requesting_control && Some(client.id) != self.controller)
+    }
+
+    /// Buffer pane output that arrived before its pane exists locally, enforcing the per-pane cap
+    /// by dropping the oldest bytes.
+    pub fn buffer_orphan_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        let buffer = self.orphan_output.entry((pane_id, generation)).or_default();
+        buffer.extend_from_slice(bytes);
+        if buffer.len() > ORPHAN_OUTPUT_CAP {
+            let overflow = buffer.len() - ORPHAN_OUTPUT_CAP;
+            buffer.drain(..overflow);
+        }
+    }
+}
+
+/// A pane spawn deferred until a session client is available (see [`super::State::pending_spawns`]).
+#[derive(Clone, Debug)]
+pub struct PendingPaneSpawn {
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub command: Option<String>,
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub keep_open: bool,
+    pub env: Vec<(String, String)>,
+    pub title: Option<String>,
+    pub palette: TerminalColorPalette,
+    pub shell: Vec<String>,
+    pub command_shell: Vec<String>,
+}
+
+/// The prefix that marks an auto-named ephemeral session. Ephemeral servers shut down on a clean
+/// quit but survive a UI crash for reattach; user-typed names may not use this prefix.
+pub const EPHEMERAL_SESSION_PREFIX: &str = "eph-";
+
+/// Whether `name` denotes an auto-managed ephemeral session.
+pub fn is_ephemeral_session_name(name: &str) -> bool {
+    name.starts_with(EPHEMERAL_SESSION_PREFIX)
+}
+
+/// The ephemeral session name for this UI process (`eph-<pid>`).
+pub fn ephemeral_session_name() -> String {
+    format!("{EPHEMERAL_SESSION_PREFIX}{}", std::process::id())
+}
+
+/// A fresh ephemeral name that will not collide with a still-running ephemeral server left behind
+/// by a prior detach (`eph-<pid>-<salt>`).
+pub fn fresh_ephemeral_session_name(salt: u64) -> String {
+    format!("{EPHEMERAL_SESSION_PREFIX}{}-{salt}", std::process::id())
+}

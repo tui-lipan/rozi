@@ -154,7 +154,7 @@ CLI / thin main.rs
   |
   v
 lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
-  |-- State / Msg model in state.rs + msg.rs
+  |-- State / Msg model in state/ + msg.rs
   |-- update::handle_msg dispatches messages to ops/* feature modules
   |-- key_routing routes prefix/held-modifier/terminal keys
   |-- actions dispatches Action values
@@ -198,7 +198,8 @@ Major module map:
 - `app.rs` / `msg.rs` / `cli.rs` - Root component, message model, command-line parsing, transition
   policies, startup orchestration, and runtime wiring.
 - `update.rs` - Flat message router and post-update synchronization.
-- `state.rs` - Runtime model, pane/workspace/session/profile state, and constants.
+- `state/` - Central runtime `State` plus focused layout, appearance, drag, mode, search, identity,
+  picker, pane, workspace, and shared-session state modules.
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.
 - `key_routing.rs` / `keymap.rs` / `input.rs` - Input modes, bindings, actions, and command ids.
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.

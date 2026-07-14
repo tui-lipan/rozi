@@ -9,7 +9,7 @@ use crate::ops::focus::{
     focus_pane, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
     switch_workspace,
 };
-use crate::pane_lifecycle::{find_pane_mut, spawn_pane_in_workspace};
+use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane};
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
 #[derive(Serialize)]
@@ -268,12 +268,6 @@ fn new_pane(
             return Update::full();
         }
     };
-    let (rule_workspace, placement) = command
-        .as_deref()
-        .map(|command| crate::rules::placement_for_command(&ctx.state.config.rules, command))
-        .unwrap_or_default();
-    let workspace_index = rule_workspace.unwrap_or(source_workspace);
-    let previous_focused = source.or(ctx.state.workspaces[workspace_index].focused_pane);
     let mut identity = PaneIdentity {
         command,
         cwd,
@@ -283,8 +277,7 @@ fn new_pane(
     if let Some(title) = title {
         identity.set_custom_title(title);
     }
-    let (id, update) =
-        spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement);
+    let (id, update) = spawn_interactive_pane(ctx, source_workspace, source, identity);
     let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
         id,
         accepted: true,

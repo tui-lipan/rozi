@@ -16,7 +16,7 @@ use crate::ops::resize_move::{
 };
 use crate::ops::search::open_search;
 use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
-use crate::pane_lifecycle::{find_pane, spawn_pane, spawn_pane_in_workspace};
+use crate::pane_lifecycle::{find_pane, spawn_pane};
 use crate::state::{Direction, Mode, PaneIdentity, ToastChannel};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
@@ -76,15 +76,17 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     };
     match command.action {
         UserCommandAction::Run(command) => {
-            let (rule_workspace, placement) =
-                crate::rules::placement_for_command(&ctx.state.config.rules, &command);
-            let workspace_index = rule_workspace.unwrap_or(ctx.state.active_workspace);
-            let previous_focused = ctx.state.workspaces[workspace_index].focused_pane;
             let identity = PaneIdentity {
                 command: Some(command),
                 ..PaneIdentity::default()
             };
-            spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement).1
+            crate::pane_lifecycle::spawn_interactive_pane(
+                ctx,
+                ctx.state.active_workspace,
+                None,
+                identity,
+            )
+            .1
         }
         UserCommandAction::Send(text) => {
             let Some(id) = ctx.state.focused_pane else {

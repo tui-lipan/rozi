@@ -4,7 +4,6 @@ use std::time::Duration;
 use notify::Watcher;
 use tui_lipan::prelude::*;
 
-use crate::pane_lifecycle::spawn_pane_in_workspace;
 use crate::state::{PaneIdentity, ThemePreset};
 use crate::{HyprmuxApp, Msg};
 
@@ -201,20 +200,11 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
 
-    let workspace_index = ctx.state.active_workspace;
-    let previous_focused = ctx.state.workspaces[workspace_index].focused_pane;
     let identity = PaneIdentity {
         command: Some(command),
         ..PaneIdentity::default()
     };
-    spawn_pane_in_workspace(
-        ctx,
-        workspace_index,
-        previous_focused,
-        identity,
-        Default::default(),
-    )
-    .1
+    crate::pane_lifecycle::spawn_interactive_pane(ctx, ctx.state.active_workspace, None, identity).1
 }
 
 /// Single-quotes a shell argument so a config path containing spaces (or other shell

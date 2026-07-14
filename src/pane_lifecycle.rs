@@ -27,14 +27,7 @@ pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         identity.cwd = Some(cwd);
     }
 
-    spawn_pane_in_workspace(
-        ctx,
-        ctx.state.active_workspace,
-        previous_focused,
-        identity,
-        SpawnPlacement::default(),
-    )
-    .1
+    spawn_interactive_pane(ctx, ctx.state.active_workspace, previous_focused, identity).1
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -58,6 +51,35 @@ impl Default for SpawnPlacement {
             focus: true,
         }
     }
+}
+
+pub(crate) fn spawn_interactive_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    source_workspace: usize,
+    source: Option<PaneId>,
+    identity: PaneIdentity,
+) -> (PaneId, Update) {
+    let (workspace_index, previous_focused, placement) = interactive_spawn_target(
+        &ctx.state,
+        source_workspace,
+        source,
+        identity.command.as_deref(),
+    );
+    spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement)
+}
+
+fn interactive_spawn_target(
+    state: &State,
+    source_workspace: usize,
+    source: Option<PaneId>,
+    command: Option<&str>,
+) -> (usize, Option<PaneId>, SpawnPlacement) {
+    let (rule_workspace, placement) = command
+        .map(|command| crate::rules::placement_for_command(&state.config.rules, command))
+        .unwrap_or_default();
+    let workspace_index = rule_workspace.unwrap_or(source_workspace);
+    let previous_focused = source.or(state.workspaces[workspace_index].focused_pane);
+    (workspace_index, previous_focused, placement)
 }
 
 pub(crate) fn spawn_pane_in_workspace(
@@ -655,6 +677,18 @@ pub(crate) fn prune_closed_batch_command(
 mod tests {
     use super::*;
 
+    fn rule(matches: &str) -> crate::config::HyprmuxRuleConfig {
+        crate::config::HyprmuxRuleConfig {
+            matches: matches.to_string(),
+            float: false,
+            width: None,
+            height: None,
+            workspace: None,
+            focus: true,
+            fullscreen: false,
+        }
+    }
+
     #[test]
     fn stale_prune_token_does_not_match_reused_pane_id() {
         use crate::config::HyprmuxConfig;
@@ -688,5 +722,48 @@ mod tests {
         apply_spawn_focus(&mut state, 2, 8, SpawnPlacement::default());
         assert_eq!(state.active_workspace, 2);
         assert_eq!(state.focused_pane, Some(8));
+    }
+
+    #[test]
+    fn interactive_command_spawn_applies_configured_rule() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        let mut configured = rule("btop");
+        configured.workspace = Some(2);
+        configured.float = true;
+        configured.width = Some(0.7);
+        configured.height = Some(0.8);
+        configured.fullscreen = true;
+        configured.focus = false;
+        config.rules.push(configured);
+        let mut state = State::new(config, Theme::default());
+        state.workspaces[2].focused_pane = Some(7);
+
+        let (workspace, previous_focused, placement) =
+            interactive_spawn_target(&state, 0, None, Some("exec btop"));
+
+        assert_eq!(workspace, 2);
+        assert_eq!(previous_focused, Some(7));
+        assert_eq!(
+            placement,
+            SpawnPlacement {
+                float: Some(SpawnFloat {
+                    width: 0.7,
+                    height: 0.8,
+                }),
+                fullscreen: true,
+                focus: false,
+            }
+        );
+    }
+
+    #[test]
+    fn interactive_spawn_without_command_keeps_source_and_default_placement() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        config.rules.push(rule("btop"));
+        let state = State::new(config, Theme::default());
+
+        let target = interactive_spawn_target(&state, 0, Some(1), None);
+
+        assert_eq!(target, (0, Some(1), SpawnPlacement::default()));
     }
 }

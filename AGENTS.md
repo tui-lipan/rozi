@@ -150,11 +150,11 @@ cargo run
 ## Architecture Notes
 
 ```text
-CLI/main
+CLI / thin main.rs
   |
   v
-HyprmuxApp (tui-lipan Component)
-  |-- State / Msg model in state.rs + main.rs
+lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
+  |-- State / Msg model in state.rs + msg.rs
   |-- update::handle_msg dispatches messages to ops/* feature modules
   |-- key_routing routes prefix/held-modifier/terminal keys
   |-- actions dispatches Action values
@@ -194,7 +194,9 @@ Important data flow:
 
 Major module map:
 
-- `main.rs` / `cli.rs` - App shell, command-line parsing, transition policies, and runtime wiring.
+- `main.rs` / `lib.rs` - Thin binary entry point and shared library module/re-export surface.
+- `app.rs` / `msg.rs` / `cli.rs` - Root component, message model, command-line parsing, transition
+  policies, startup orchestration, and runtime wiring.
 - `update.rs` - Flat message router and post-update synchronization.
 - `state.rs` - Runtime model, pane/workspace/session/profile state, and constants.
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.

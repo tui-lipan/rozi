@@ -385,7 +385,7 @@ pub fn load_config() -> LoadedConfig {
         match SessionStartup::parse(&startup) {
             Some(value) => config.session.startup = value,
             None => warnings.push(format!(
-                "Ignored unknown session.startup \"{startup}\" (expected `ephemeral` or `picker`)"
+                "Ignored unknown session.startup \"{startup}\" (expected `ephemeral`, `picker`, or `last`)"
             )),
         }
     }

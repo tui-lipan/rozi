@@ -20,6 +20,7 @@ mod connection;
 mod lease;
 mod panes;
 mod resurrect;
+pub(crate) use resurrect::list_snapshot_names_by_recency;
 mod runtime;
 
 const DEFAULT_COLS: u16 = 120;

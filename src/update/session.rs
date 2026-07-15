@@ -132,6 +132,9 @@ pub(super) fn attached(
     ctx.state.session_client = Some(client);
     ctx.state.session_name = Some(session.clone());
     ctx.state.session_attached = true;
+    if !crate::state::is_ephemeral_session_name(&session) {
+        crate::session::record_last_named_session(&session);
+    }
 
     let mut shared = crate::state::SharedSessionState::new(client_id);
     shared.layout_rev = layout_rev;
@@ -732,6 +735,7 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
         .session_name
         .replace(session.clone())
         .unwrap_or_default();
+    crate::session::record_last_named_session(&session);
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(

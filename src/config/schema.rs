@@ -167,6 +167,8 @@ pub enum SessionStartup {
     /// Show the session picker first (when any named session exists), so the user can reattach to a
     /// named session or start a fresh ephemeral one. Equivalent to passing `--pick`.
     Picker,
+    /// Attach or create the most recently used named session.
+    Last,
 }
 
 impl SessionStartup {
@@ -174,6 +176,7 @@ impl SessionStartup {
         match value.trim().to_ascii_lowercase().as_str() {
             "ephemeral" | "default" | "attach" => Some(Self::Ephemeral),
             "picker" | "pick" | "choose" => Some(Self::Picker),
+            "last" => Some(Self::Last),
             _ => None,
         }
     }
@@ -768,6 +771,7 @@ mod tests {
             SessionStartup::parse(" pick "),
             Some(SessionStartup::Picker)
         );
+        assert_eq!(SessionStartup::parse("last"), Some(SessionStartup::Last));
         assert_eq!(SessionStartup::parse("nonsense"), None);
     }
 

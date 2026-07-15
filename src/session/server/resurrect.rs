@@ -264,3 +264,24 @@ fn default_snapshot_dir() -> Option<PathBuf> {
     }
     Some(crate::platform::paths::state_dir(&env).join("sessions"))
 }
+
+pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
+    let Some(root) = default_snapshot_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut snapshots = entries
+        .flatten()
+        .filter_map(|entry| {
+            let meta: SnapshotMeta =
+                serde_json::from_slice(&fs::read(entry.path().join("meta.json")).ok()?).ok()?;
+            (meta.version == SNAPSHOT_VERSION
+                && crate::session::discovery::valid_session_name(&meta.session))
+            .then_some((meta.saved_at, meta.session))
+        })
+        .collect::<Vec<_>>();
+    snapshots.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    snapshots.into_iter().map(|(_, name)| name).collect()
+}

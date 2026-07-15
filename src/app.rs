@@ -461,8 +461,18 @@ pub fn run() -> Result<()> {
 
     let loaded = config::load_config();
     let mut startup_messages = loaded.warnings;
-    let mut startup_profile = cli.profile.as_ref().and_then(|name| {
+    let mut attach_session = cli.attach_session.clone();
+    if attach_session.is_none()
+        && !cli.pick
+        && loaded.config.session.startup == config::SessionStartup::Last
+    {
+        attach_session = Some(resolve_last_session_target());
+    }
+    let mut startup_profile = attach_session.as_ref().and_then(|name| {
         let path = config::profile_path_for_name(name);
+        if !path.exists() {
+            return None;
+        }
         match profiles::load_profile(&path) {
             Ok(profile) => Some(StartupProfile {
                 profile,
@@ -476,7 +486,8 @@ pub fn run() -> Result<()> {
         }
     });
 
-    if startup_profile.is_none()
+    if attach_session.is_none()
+        && startup_profile.is_none()
         && let Some(name) = &loaded.config.profile.default
     {
         let path = config::profile_path_for_name(name);
@@ -495,7 +506,8 @@ pub fn run() -> Result<()> {
     }
 
     // With no explicit profile, restore the autosaved session if one exists.
-    if startup_profile.is_none()
+    if attach_session.is_none()
+        && startup_profile.is_none()
         && loaded.config.session.autosave
         && let Some(path) = profiles::session_path(&loaded.config)
         && path.exists()
@@ -516,7 +528,6 @@ pub fn run() -> Result<()> {
         }
     }
     let config = loaded.config;
-    let attach_session = cli.attach_session.clone();
     // Open the picker at startup only for a bare launch (no explicit attach target). The
     // "any named session exists" gate is checked in `init` so it reflects live state at mount.
     let want_startup_picker = attach_session.is_none()
@@ -569,6 +580,23 @@ pub fn run() -> Result<()> {
         want_startup_picker,
     ))
     .run()
+}
+
+fn resolve_last_session_target() -> String {
+    crate::session::read_last_named_session()
+        .or_else(|| {
+            crate::session::server::list_snapshot_names_by_recency()
+                .into_iter()
+                .next()
+        })
+        .or_else(|| {
+            crate::session::discovery::discover_sessions()
+                .ok()?
+                .into_iter()
+                .find(|row| !row.ephemeral)
+                .map(|row| row.name)
+        })
+        .unwrap_or_else(|| "main".to_string())
 }
 
 #[cfg(test)]

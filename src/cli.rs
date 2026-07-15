@@ -437,7 +437,7 @@ USAGE:
 OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
-    --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
+        --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout

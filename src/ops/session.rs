@@ -462,22 +462,12 @@ pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) 
 pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
-    let theme_watcher = ctx.state.theme_watcher.take();
-    let system_theme = ctx.state.system_theme.clone();
-    let control_socket_path = ctx.state.control_socket_path.clone();
-    let command_link = ctx.state.command_link.clone();
     let old_epoch = ctx.state.runtime_epoch;
     let epoch = old_epoch.saturating_add(1);
     let name = crate::state::fresh_ephemeral_session_name(epoch);
-    let mut fresh = crate::state::State::new(config, theme);
-    fresh.theme_watcher = theme_watcher;
-    fresh.system_theme = system_theme;
-    fresh.control_socket_path = control_socket_path;
-    fresh.command_link = command_link;
-    // Keep the pre-attach epoch so stale messages from the just-closed connection are filtered
-    // out; `Msg::SessionAttached` advances it to `epoch` once the fresh ephemeral is live.
-    fresh.runtime_epoch = old_epoch;
-    fresh.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    let fresh = crate::state::State::new(config, theme);
+    swap_state_for_attach(ctx, fresh);
+    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -486,9 +476,6 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         intent: crate::state::AttachIntent::Plain,
         left: None,
     });
-    ctx.state = fresh;
-    ctx.state.commands_dirty = true;
-    crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)

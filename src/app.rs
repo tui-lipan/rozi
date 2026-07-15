@@ -172,11 +172,12 @@ impl Component for HyprmuxApp {
                 .clone()
                 .unwrap_or_else(state::ephemeral_session_name);
             let epoch = ctx.state.runtime_epoch;
+            let autostart = !self.read_only;
             ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
                 epoch,
                 name: name.clone(),
                 client: None,
-                autostart: true,
+                autostart,
                 read_only: self.read_only,
                 intent: self.startup_profile.as_ref().map_or(
                     crate::state::AttachIntent::Plain,
@@ -187,7 +188,11 @@ impl Component for HyprmuxApp {
                 ),
                 left: None,
             });
-            SessionStart::Attach { epoch, name }
+            SessionStart::Attach {
+                epoch,
+                name,
+                autostart,
+            }
         };
 
         let startup_read_only = self.read_only;
@@ -213,10 +218,20 @@ impl Component for HyprmuxApp {
                 });
             }
             match start {
-                SessionStart::Attach { epoch, name } => {
+                SessionStart::Attach {
+                    epoch,
+                    name,
+                    autostart,
+                } => {
                     let session_link = link.clone();
                     std::thread::spawn(move || {
-                        attach_session_client(epoch, name, true, startup_read_only, session_link)
+                        attach_session_client(
+                            epoch,
+                            name,
+                            autostart,
+                            startup_read_only,
+                            session_link,
+                        )
                     });
                 }
                 SessionStart::Picker { epoch } => {

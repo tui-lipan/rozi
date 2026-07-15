@@ -7,7 +7,6 @@ use crate::config::{
 };
 use crate::ops::focus::request_profile_picker_focus;
 use crate::ops::focus::request_save_profile_focus;
-use crate::ops::theme;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
 use crate::state::{Mode, ProfilePickerState, SaveProfileState, State};
@@ -304,6 +303,12 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
         }
     };
     crate::popup::kill_if_open(ctx);
+    crate::ops::exit::clear_pending(ctx);
+    ctx.state.copy_mode = None;
+    ctx.state.hint_mode = None;
+    ctx.state.copy_flash = None;
+    ctx.state.search = None;
+    ctx.state.mode = Mode::Normal;
     let Some(client) = ctx.state.session_client.clone() else {
         return Update::full();
     };
@@ -585,26 +590,15 @@ fn load_profile_into_fresh_ephemeral(
     // a fresh ephemeral.
     crate::ops::session::release_current_session(ctx);
 
-    let theme_watcher = ctx.state.theme_watcher.take();
-    let system_theme = ctx.state.system_theme.clone();
-    let control_socket_path = ctx.state.control_socket_path.clone();
-    let command_link = ctx.state.command_link.clone();
     let old_epoch = ctx.state.runtime_epoch;
     let epoch = old_epoch.saturating_add(1);
     let name = crate::state::fresh_ephemeral_session_name(epoch);
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
 
-    let mut new_state = State::from_profile(config, theme, profile);
-    new_state.theme_watcher = theme_watcher;
-    new_state.system_theme = system_theme;
-    new_state.control_socket_path = control_socket_path;
-    new_state.command_link = command_link;
-    // The control listener holds a clone of the original hub; a fresh default here would
-    // silently disconnect every event subscriber.
-    new_state.event_hub = ctx.state.event_hub.clone();
-    new_state.runtime_epoch = old_epoch;
-    new_state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    let new_state = State::from_profile(config, theme, profile);
+    crate::ops::session::swap_state_for_attach(ctx, new_state);
+    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -616,23 +610,6 @@ fn load_profile_into_fresh_ephemeral(
         },
         left: None,
     });
-    ctx.state = new_state;
-    ctx.state.commands_dirty = true;
-    theme::apply_terminal_palette_to_state(&mut ctx.state);
-    crate::events::emit(
-        &ctx.state,
-        crate::events::Event::new(
-            crate::events::EventKind::ProfileLoaded,
-            vec![
-                ("profile", entry.name.clone()),
-                ("path", entry.path.display().to_string()),
-            ],
-        ),
-    );
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
-        format!("Loaded profile `{}`", entry.name),
-    ));
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     // The theme-tick, workbar-tick, and workbar-command loops started at app launch are

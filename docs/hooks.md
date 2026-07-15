@@ -44,7 +44,7 @@ an uppercase `HYPRMUX_` prefix, for example the `client_id` field becomes
 | `controller-changed` | The shared session's layout controller changes or is released. | `controller`: new controller client id, or empty if none; `self_controller`: `true` when this client is now controller; `reason`: `released`, `expired`, or `granted`. |
 | `client-joined` | A client appears in the attached session roster. | `client_id`: joined client id; `client_name`: its display label; `count`: roster size after the change. |
 | `client-left` | A client disappears from the attached session roster. | `client_id`: departed client id; `client_name`: its last display label; `count`: roster size after the change. |
-| `profile-loaded` | A profile launches a named session or is applied in place. | `profile`: profile name; `path`: profile file path; `session`: destination session; `mode`: `in-place` when applied without switching, otherwise omitted. |
+| `profile-loaded` | A profile successfully seeds an empty session or is applied in place. | `profile`: profile name; `path`: profile file path; `session`: destination session; `mode`: `in-place` when applied without switching, otherwise omitted. |
 | `profile-saved` | A profile is saved or overwritten. | `profile`: profile name; `path`: profile file path. |
 | `config-reloaded` | A live config reload completes without warnings. | `path`: config file path. |
 

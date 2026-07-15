@@ -7,8 +7,14 @@ use super::protocol::{Frame, ServerMessage};
 /// How a launch begins its session: either attach straight to a session, or show the startup
 /// picker and defer attaching until the user chooses.
 pub(crate) enum SessionStart {
-    Attach { epoch: u64, name: String },
-    Picker { epoch: u64 },
+    Attach {
+        epoch: u64,
+        name: String,
+        autostart: bool,
+    },
+    Picker {
+        epoch: u64,
+    },
 }
 
 /// Whether any *named* (non-ephemeral) session is currently discoverable. Used to gate the startup

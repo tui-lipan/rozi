@@ -13,7 +13,7 @@ use crate::state::{PendingDestructive, PendingDestructiveConfirmation, State};
 /// for the same duration, so the toast disappearing means the confirmation expired.
 pub(crate) const CONFIRM_WINDOW_SECS: f64 = 3.0;
 
-fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
     if let Some(pending) = ctx.state.pending_destructive.take() {
         ctx.toast().dismiss(pending.toast_id);
     }

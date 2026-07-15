@@ -211,56 +211,55 @@ pub(super) fn attached(
         }
     };
 
-    if !crate::state::is_ephemeral_session_name(&session) {
-        let suffix = pending
-            .left
-            .as_ref()
-            .map(|left| {
-                if left.was_ephemeral_shutdown {
-                    " - ended temporary session".to_string()
-                } else {
-                    format!(" - detached from `{}` (still running)", left.name)
-                }
-            })
-            .unwrap_or_default();
+    let named = !crate::state::is_ephemeral_session_name(&session);
+    let suffix = pending
+        .left
+        .as_ref()
+        .map(|left| {
+            if left.was_ephemeral_shutdown {
+                " - ended temporary session".to_string()
+            } else {
+                format!(" - detached from `{}` (still running)", left.name)
+            }
+        })
+        .unwrap_or_default();
+    if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
+    {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::ProfileLoaded,
+                vec![
+                    ("profile", profile.clone()),
+                    ("path", path.display().to_string()),
+                    ("session", session.clone()),
+                ],
+            ),
+        );
+        if named {
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                format!("Launched `{session}` from profile{suffix}"),
+            ));
+        }
+    } else if named {
         if populated {
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
                 format!("Attached to `{session}`{suffix}"),
             ));
-        } else {
-            match pending.intent {
-                crate::state::AttachIntent::ProfileSeed { profile, path } => {
-                    crate::events::emit(
-                        &ctx.state,
-                        crate::events::Event::new(
-                            crate::events::EventKind::ProfileLoaded,
-                            vec![
-                                ("profile", profile),
-                                ("path", path.display().to_string()),
-                                ("session", session.clone()),
-                            ],
-                        ),
-                    );
-                    ctx.toast().push(crate::pty_events::info_toast(
-                        &ctx.state.theme,
-                        format!("Launched `{session}` from profile{suffix}"),
-                    ));
-                }
-                crate::state::AttachIntent::Plain => {
-                    crate::events::emit(
-                        &ctx.state,
-                        crate::events::Event::new(
-                            crate::events::EventKind::SessionCreated,
-                            vec![("session", session.clone())],
-                        ),
-                    );
-                    ctx.toast().push(crate::pty_events::info_toast(
-                        &ctx.state.theme,
-                        format!("Created session `{session}`{suffix}"),
-                    ));
-                }
-            }
+        } else if matches!(pending.intent, crate::state::AttachIntent::Plain) {
+            crate::events::emit(
+                &ctx.state,
+                crate::events::Event::new(
+                    crate::events::EventKind::SessionCreated,
+                    vec![("session", session.clone())],
+                ),
+            );
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                format!("Created session `{session}`{suffix}"),
+            ));
         }
     }
     update
@@ -800,6 +799,11 @@ fn roster_diff_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Msg;
+    use crate::session::client::SessionClient;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use tui_lipan::TestBackend;
 
     #[test]
     fn hold_on_exit_excludes_disabled_scratch_and_closing_panes() {
@@ -845,5 +849,65 @@ mod tests {
                 ("count", "2".into()),
             ]
         );
+    }
+
+    #[test]
+    fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let (client, _rx) = SessionClient::test_channel();
+                let path = PathBuf::from("legacy profile.toml");
+                backend.state_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "eph-test".into(),
+                        client: Some(client),
+                        autostart: true,
+                        read_only: false,
+                        intent: crate::state::AttachIntent::ProfileSeed {
+                            profile: "legacy profile".into(),
+                            path: path.clone(),
+                        },
+                        left: None,
+                    });
+                let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+                    crate::events::EventKind::ProfileLoaded,
+                ])));
+
+                backend
+                    .dispatch(Msg::SessionAttached {
+                        epoch: 1,
+                        session: "eph-test".into(),
+                        client_id: 1,
+                        panes: Vec::new(),
+                        layout_rev: 0,
+                        layout: None,
+                        controller: Some(1),
+                        clients: Vec::new(),
+                        input_locked: false,
+                        read_only: false,
+                    })
+                    .expect("dispatch attach");
+
+                let event: serde_json::Value =
+                    serde_json::from_str(&events.try_recv().expect("profile-loaded event"))
+                        .expect("event json");
+                assert_eq!(
+                    event,
+                    serde_json::json!({
+                        "event": "profile-loaded",
+                        "data": {
+                            "profile": "legacy profile",
+                            "path": path.display().to_string(),
+                            "session": "eph-test"
+                        }
+                    })
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 }

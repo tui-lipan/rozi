@@ -89,4 +89,5 @@ silently pretends to have loaded.
 
 Open a persistent session with `hyprmux dev` (or `hyprmux --session dev`). It attaches when running,
 launches from profile `dev` when present, or creates an empty session. Add `--read-only` to attach
-as a viewer without terminal input or layout-control authority.
+as a viewer without terminal input or layout-control authority. Read-only targets must already be
+running; viewers never autostart a session they cannot seed.

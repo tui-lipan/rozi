@@ -106,7 +106,12 @@ fn normalize_profile_name(name: &str) -> Option<String> {
 
 pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     let entries = list_profiles();
-    ctx.state.profile_picker = Some(ProfilePickerState::new(entries));
+    ctx.state.profile_picker_epoch = ctx.state.profile_picker_epoch.wrapping_add(1);
+    let epoch = ctx.state.profile_picker_epoch;
+    let rows = profile_session_rows(ctx);
+    let mut picker = ProfilePickerState::new(entries);
+    picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
+    ctx.state.profile_picker = Some(picker);
     ctx.state.show_profile_picker = true;
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
@@ -115,7 +120,82 @@ pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.save_profile_prompt = None;
     ctx.state.mode = Mode::Normal;
     request_profile_picker_focus(ctx);
-    Update::full()
+    Update::with_command(profile_session_watch_command(
+        epoch,
+        ctx.state.session_name.clone(),
+    ))
+}
+
+fn profile_session_rows(
+    ctx: &Context<HyprmuxApp>,
+) -> Vec<crate::session::discovery::DiscoveredSession> {
+    let current = ctx.state.session_name.as_deref();
+    let mut rows =
+        crate::session::discovery::discover_sessions_excluding(current).unwrap_or_default();
+    rows.retain(|row| !row.ephemeral);
+    if let Some(name) = &ctx.state.session_name {
+        rows.push(crate::session::discovery::DiscoveredSession {
+            name: name.clone(),
+            ephemeral: ctx.state.is_ephemeral_session(),
+            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                panes: ctx
+                    .state
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.panes.len())
+                    .sum(),
+                clients: ctx.state.attached_client_count(),
+                has_layout: true,
+            },
+        });
+    }
+    rows
+}
+
+fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command {
+    Command::spawn(move |link: CommandLink<crate::Msg>| {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        if let Ok(mut rows) =
+            crate::session::discovery::discover_sessions_excluding(current.as_deref())
+        {
+            rows.retain(|row| !row.ephemeral);
+            link.send(crate::Msg::ProfileSessionsDiscovered { epoch, rows });
+        }
+    })
+}
+
+pub(crate) fn apply_profile_sessions(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    mut rows: Vec<crate::session::discovery::DiscoveredSession>,
+) -> Update {
+    if !ctx.state.show_profile_picker || epoch != ctx.state.profile_picker_epoch {
+        return Update::none();
+    }
+    if let Some(name) = &ctx.state.session_name {
+        rows.retain(|row| row.name != *name);
+        rows.push(crate::session::discovery::DiscoveredSession {
+            name: name.clone(),
+            ephemeral: ctx.state.is_ephemeral_session(),
+            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                panes: ctx
+                    .state
+                    .workspaces
+                    .iter()
+                    .map(|workspace| workspace.panes.len())
+                    .sum(),
+                clients: ctx.state.attached_client_count(),
+                has_layout: true,
+            },
+        });
+    }
+    if let Some(picker) = ctx.state.profile_picker.as_mut() {
+        picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
+    }
+    Update::with_command(profile_session_watch_command(
+        epoch,
+        ctx.state.session_name.clone(),
+    ))
 }
 
 pub(crate) fn cancel_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {

@@ -61,6 +61,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ProfilePickerSetDefault => prompts::profile_picker_set_default(ctx),
         Msg::ProfilePickerDelete => prompts::profile_picker_delete(ctx),
         Msg::SelectProfile(index) => prompts::select_profile(ctx, index),
+        Msg::ProfileSessionsDiscovered { epoch, rows } => {
+            prompts::profile_sessions_discovered(ctx, epoch, rows)
+        }
         Msg::CloseSessionPicker => prompts::close_session_picker(ctx),
         Msg::SessionsDiscovered { epoch, rows } => prompts::sessions_discovered(ctx, epoch, rows),
         Msg::SessionPickerQueryChanged(query) => prompts::session_picker_query_changed(ctx, query),

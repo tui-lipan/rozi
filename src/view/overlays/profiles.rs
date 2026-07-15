@@ -23,7 +23,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     hint_row()
         .justify(Justify::SpaceBetween)
         .gap(2)
-        .child(hint_pill(theme, "open", "enter"))
+        .child(hint_pill(theme, "attach/launch", "enter"))
         .child(hint_pill(theme, "default", "ctrl+f"))
         .child(hint_pill(theme, "delete", "ctrl+d"))
         .into()
@@ -44,9 +44,22 @@ fn profile_picker_palette(
         .map(|(index, entry)| {
             let mut item =
                 SearchEntry::item(entry.name.clone(), index).active(index == picker.selected);
-            if default_name == Some(entry.name.as_str()) {
-                item = item.description(ItemDescription::new().right("default"));
-            }
+            let status = if ctx.state.session_name.as_deref() == Some(entry.name.as_str()) {
+                "* attached"
+            } else if matches!(
+                picker.running.get(&entry.name),
+                Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
+            ) {
+                "* running"
+            } else {
+                "launch"
+            };
+            let description = if default_name == Some(entry.name.as_str()) {
+                format!("default  {status}")
+            } else {
+                status.to_string()
+            };
+            item = item.description(ItemDescription::new().right(description));
             item
         })
         .collect::<Vec<_>>();

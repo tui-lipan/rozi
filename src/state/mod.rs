@@ -86,6 +86,7 @@ pub struct State {
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
+    pub profile_picker_epoch: u64,
     pub copy_mode: Option<CopyModeState>,
     pub hint_mode: Option<HintModeState>,
     pub copy_flash: Option<CopyFlashState>,
@@ -188,6 +189,7 @@ impl State {
             last_blocked_input_toast: None,
             replaceable_toasts: HashMap::new(),
             session_picker_epoch: 0,
+            profile_picker_epoch: 0,
             copy_mode: None,
             hint_mode: None,
             copy_flash: None,

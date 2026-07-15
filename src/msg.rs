@@ -57,6 +57,10 @@ pub enum Msg {
     ProfilePickerSetDefault,
     ProfilePickerDelete,
     SelectProfile(usize),
+    ProfileSessionsDiscovered {
+        epoch: u64,
+        rows: Vec<crate::session::discovery::DiscoveredSession>,
+    },
     CloseSessionPicker,
     /// Off-thread auto-refresh results for the open session picker, tagged with the opening's epoch.
     SessionsDiscovered {

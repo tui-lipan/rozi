@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
 use tui_lipan::prelude::{OverlayId, TextInput};
 
 use crate::config::ProfileEntry;
-use crate::session::discovery::DiscoveredSession;
+use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 
 use super::PaneId;
 
@@ -20,6 +21,7 @@ pub struct ProfilePickerState {
     /// Entry index awaiting a second Ctrl+D to confirm deletion.
     pub pending_delete: Option<usize>,
     pub pending_open: Option<usize>,
+    pub running: HashMap<String, DiscoveredSessionStatus>,
 }
 
 pub struct SessionPickerState {
@@ -85,6 +87,7 @@ impl ProfilePickerState {
             selected: 0,
             pending_delete: None,
             pending_open: None,
+            running: HashMap::new(),
         }
     }
 }

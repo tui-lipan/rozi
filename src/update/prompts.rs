@@ -119,6 +119,14 @@ pub(super) fn close_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     update
 }
 
+pub(super) fn profile_sessions_discovered(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    rows: Vec<crate::session::discovery::DiscoveredSession>,
+) -> Update {
+    crate::ops::profile::apply_profile_sessions(ctx, epoch, rows)
+}
+
 pub(super) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
     change_profile_query(ctx, query)
 }

@@ -55,13 +55,14 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
             ));
         }
         hints = hints.child(hint_pill(theme, "open as", "ctrl+o"));
-        hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
-        hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
         hints = hints.child(hint_pill(theme, "replace", "ctrl+r"));
+        hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
     }
-    hints
-        .child(hint_pill(theme, "new", "ctrl+n"))
-        .into()
+    hints = hints.child(hint_pill(theme, "new", "ctrl+n"));
+    if selected.is_some() {
+        hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
+    }
+    hints.into()
 }
 
 fn profile_picker_palette(
@@ -77,8 +78,7 @@ fn profile_picker_palette(
         .enumerate()
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
-            let mut item =
-                SearchEntry::item(entry.name.clone(), index).active(index == picker.selected);
+            let mut item = SearchEntry::item(entry.name.clone(), index);
             let status = if ctx.state.session_name.as_deref() == Some(entry.name.as_str()) {
                 Some("• attached")
             } else if matches!(

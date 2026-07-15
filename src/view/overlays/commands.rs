@@ -79,6 +79,7 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "focused border",
             "focused background",
         ]),
+        "new-temporary-session" => alias_list(&["ephemeral"]),
         _ => Vec::new(),
     }
 }

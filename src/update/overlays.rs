@@ -66,6 +66,7 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
         Action::OpenAppearance | Action::OpenThemePicker => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
+        | Action::ApplyProfile
         | Action::OpenSessionPicker
         | Action::OpenClientList => {}
         // The scratchpad manages its own focus (the scratch terminal on show, the previously

@@ -384,14 +384,6 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
-                if unset {
-                    format!("Cleared default profile `{}`", entry.name)
-                } else {
-                    format!("Default profile `{}`", entry.name)
-                },
-            ));
         }
         Err(message) => {
             ctx.toast().push(error_toast(

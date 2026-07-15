@@ -43,9 +43,9 @@ binding. Launch the recipe under another name explicitly with:
 hyprmux new review --profile dev
 ```
 
-Open **Profiles** to use the canonical flow with `Enter`, open the recipe as a newly named session
-with `Ctrl+O`, capture a new profile with `Ctrl+N`, replace the current session with `Ctrl+R`
-twice, delete profiles, or toggle one as the ephemeral startup default:
+Open **Profiles** to use the canonical flow with `Enter`, open the recipe under another name or as
+an ephemeral session with `Ctrl+O`, capture a new profile with `Ctrl+N`, replace the current session
+with `Ctrl+R` twice, delete profiles, or toggle one as the ephemeral startup default:
 
 ```toml
 [profile]

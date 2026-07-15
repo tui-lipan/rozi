@@ -717,7 +717,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             Update::full()
         }
         NamingMode::CreateSession | NamingMode::OpenProfileAs => {
-            if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
+            let open_ephemeral = rename_state.mode == NamingMode::OpenProfileAs && name.is_empty();
+            if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
                     "Sessions",
@@ -756,6 +757,20 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 }
                 None => crate::ops::profile::OpenNamedIntent::CreateFresh,
             };
+            if open_ephemeral {
+                let crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path } =
+                    intent
+                else {
+                    return Update::none();
+                };
+                return crate::ops::profile::load_profile_into_fresh_ephemeral(
+                    ctx,
+                    crate::config::ProfileEntry {
+                        name: profile,
+                        path,
+                    },
+                );
+            }
             crate::ops::profile::open_named_target(ctx, name, intent)
         }
         NamingMode::NameEphemeralSession => {

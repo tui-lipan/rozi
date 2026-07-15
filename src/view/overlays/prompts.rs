@@ -152,7 +152,10 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ("Create session".to_string(), "Session name".to_string())
         }
         crate::state::NamingMode::OpenProfileAs => {
-            ("Open profile as".to_string(), "Session name".to_string())
+            (
+                "Open profile as".to_string(),
+                "Name (empty: ephemeral)".to_string(),
+            )
         }
         // The same ephemeral-naming prompt serves in-place naming and detach-and-name; the latter
         // keeps the server running for reattach, so it names the action to make that clear.

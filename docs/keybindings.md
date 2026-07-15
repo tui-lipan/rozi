@@ -301,11 +301,11 @@ While an overlay is open (command palette, help, theme picker, search, rename):
   program's terminal title, then the pane's default label).
 
 In the **Profiles** picker, `Enter` attaches to or launches the highlighted profile's canonical
-same-name session. `Ctrl+O` opens that recipe as a new independently named session, `Ctrl+N`
-captures the current session as a new profile, and `Ctrl+F` toggles the selected startup default. `Ctrl+R`
-twice runs **Replace session with profile...**, closing every pane and running process while
-keeping the session name and attached clients. The row status describes only the canonical
-same-name session, not every session created from that recipe.
+same-name session. `Ctrl+O` opens that recipe under a new name, or as an ephemeral session when the
+name is left empty. `Ctrl+N` captures the current session as a new profile, and `Ctrl+F` toggles the
+selected startup default. `Ctrl+R` twice runs **Replace session with profile...**, closing every
+pane and running process while keeping the session name and attached clients. The row status
+describes only the canonical same-name session, not every session created from that recipe.
 
 ## Session collaboration
 

@@ -642,7 +642,7 @@ pub(crate) fn open_selected_profile_as(ctx: &mut Context<HyprmuxApp>) -> Update 
     Update::full()
 }
 
-fn load_profile_into_fresh_ephemeral(
+pub(crate) fn load_profile_into_fresh_ephemeral(
     ctx: &mut Context<HyprmuxApp>,
     entry: crate::config::ProfileEntry,
 ) -> Update {
@@ -908,6 +908,39 @@ mod tests {
 
             let pending = backend.state().pending_session_attach.as_ref().unwrap();
             assert_eq!(pending.name, "work-copy");
+            assert_eq!(
+                pending.intent,
+                crate::state::AttachIntent::ProfileSeed {
+                    profile: "rust-dev".to_string(),
+                    path: path.clone(),
+                }
+            );
+            std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    #[test]
+    fn open_as_without_name_queues_ephemeral_profile_seed() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![entry(
+                "rust-dev",
+                path.clone(),
+            )]));
+            backend.state_mut().show_profile_picker = true;
+            backend.state_mut().pending_session_attach = None;
+
+            backend
+                .dispatch(Msg::ProfilePickerOpenAs)
+                .expect("open session-name prompt");
+            backend
+                .dispatch(Msg::SubmitRenameSession)
+                .expect("queue ephemeral profile attach");
+
+            let pending = backend.state().pending_session_attach.as_ref().unwrap();
+            assert!(pending.name.starts_with("eph-"));
             assert_eq!(
                 pending.intent,
                 crate::state::AttachIntent::ProfileSeed {

@@ -127,7 +127,7 @@ pub(super) fn apply_attached_panes(
 /// Spawn the panes the client already holds in state onto the freshly attached session, returning
 /// their `(pane_id, generation)` so the caller can schedule the open/activate reveal timers (these
 /// panes start with `opening = true` and would otherwise stay invisible).
-pub(super) fn spawn_state_panes_on_session(
+pub(crate) fn spawn_state_panes_on_session(
     ctx: &mut Context<HyprmuxApp>,
 ) -> Vec<(crate::state::PaneId, u64)> {
     let Some(client) = ctx.state.session_client.clone() else {

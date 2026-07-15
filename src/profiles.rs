@@ -253,6 +253,43 @@ pub fn restore_state_from_profile(
     }
 }
 
+pub fn replace_layout_from_profile(
+    state: &mut State,
+    mut profile: HyprmuxProfile,
+    first_pane_id: PaneId,
+) {
+    if first_pane_id > 1
+        && profile
+            .workspaces
+            .iter()
+            .all(|workspace| workspace.panes.is_empty())
+    {
+        profile.workspaces = vec![WorkspaceProfile {
+            index: 0,
+            panes: vec![PaneProfile {
+                id: 0,
+                pane_id: Some(first_pane_id),
+                ..PaneProfile::default()
+            }],
+            ..WorkspaceProfile::default()
+        }];
+    }
+    if first_pane_id > 1 {
+        let mut next = first_pane_id;
+        for workspace in &mut profile.workspaces {
+            for pane in &mut workspace.panes {
+                pane.pane_id = Some(next);
+                next = next.saturating_add(1);
+            }
+        }
+    }
+    let restored = restore_state_from_profile(state.config.clone(), state.theme.clone(), profile);
+    state.workspaces = restored.workspaces;
+    state.active_workspace = restored.active_workspace;
+    state.focused_pane = restored.focused_pane;
+    state.next_pane_id = restored.next_pane_id.max(first_pane_id);
+}
+
 fn restore_dwindle_tree(
     tree: &ProfileTree,
     profile_pane_ids: &HashMap<PaneId, PaneId>,
@@ -862,6 +899,52 @@ mod tests {
         pane.terminal.foreground_program = Some("bash".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("cargo test"));
+    }
+
+    #[test]
+    fn in_place_profile_replacement_remaps_ids_and_preserves_session_runtime() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.session_name = Some("work".to_string());
+        state.session_attached = true;
+        state.runtime_epoch = 9;
+        state.next_pty_generation = 42;
+        state.next_pane_id = 20;
+        let profile = HyprmuxProfile {
+            version: 1,
+            active_workspace: 0,
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                panes: vec![
+                    PaneProfile {
+                        id: 0,
+                        pane_id: Some(2),
+                        ..PaneProfile::default()
+                    },
+                    PaneProfile {
+                        id: 1,
+                        pane_id: Some(3),
+                        ..PaneProfile::default()
+                    },
+                ],
+                ..WorkspaceProfile::default()
+            }],
+        };
+
+        replace_layout_from_profile(&mut state, profile, 20);
+
+        assert_eq!(
+            state.workspaces[0]
+                .panes
+                .iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            vec![20, 21]
+        );
+        assert_eq!(state.next_pane_id, 22);
+        assert_eq!(state.next_pty_generation, 42);
+        assert_eq!(state.runtime_epoch, 9);
+        assert_eq!(state.session_name.as_deref(), Some("work"));
+        assert!(state.session_attached);
     }
 
     #[test]

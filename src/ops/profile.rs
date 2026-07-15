@@ -105,11 +105,20 @@ fn normalize_profile_name(name: &str) -> Option<String> {
 }
 
 pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+    open_profile_picker_mode(ctx, false)
+}
+
+pub(crate) fn open_apply_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+    open_profile_picker_mode(ctx, true)
+}
+
+fn open_profile_picker_mode(ctx: &mut Context<HyprmuxApp>, apply_mode: bool) -> Update {
     let entries = list_profiles();
     ctx.state.profile_picker_epoch = ctx.state.profile_picker_epoch.wrapping_add(1);
     let epoch = ctx.state.profile_picker_epoch;
     let rows = profile_session_rows(ctx);
     let mut picker = ProfilePickerState::new(entries);
+    picker.apply_mode = apply_mode;
     picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
     ctx.state.profile_picker = Some(picker);
     ctx.state.show_profile_picker = true;
@@ -214,6 +223,7 @@ pub(crate) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
         picker.selected = 0;
         picker.pending_delete = None;
         picker.pending_open = None;
+        picker.pending_apply = None;
     }
     request_profile_picker_focus(ctx);
     Update::full()
@@ -234,8 +244,117 @@ pub(crate) fn profile_picker_selection_changed(
         if picker.pending_open.is_some_and(|pending| pending != index) {
             picker.pending_open = None;
         }
+        if picker.pending_apply.is_some_and(|pending| pending != index) {
+            picker.pending_apply = None;
+        }
     }
     Update::full()
+}
+
+pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(entry) = selected_profile_entry(ctx) else {
+        return Update::none();
+    };
+    if !ctx.state.session_attached {
+        ctx.toast().push(error_toast(
+            &ctx.state.theme,
+            "Apply Profile",
+            "Attach to a session before applying a profile",
+        ));
+        return Update::full();
+    }
+    if ctx
+        .state
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.read_only)
+    {
+        ctx.toast().push(error_toast(
+            &ctx.state.theme,
+            "Apply Profile",
+            "Read-only clients cannot replace session panes",
+        ));
+        return Update::full();
+    }
+    if crate::ops::session::nudge_if_follower(ctx) {
+        return Update::full();
+    }
+    let index = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .map_or(0, |picker| picker.selected);
+    let armed = ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .is_some_and(|picker| picker.pending_apply == Some(index));
+    if !armed {
+        if let Some(picker) = ctx.state.profile_picker.as_mut() {
+            picker.pending_apply = Some(index);
+        }
+        return Update::full();
+    }
+    let profile = match load_profile(&entry.path) {
+        Ok(profile) => profile,
+        Err(message) => {
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Apply Profile", message));
+            return Update::full();
+        }
+    };
+    crate::popup::kill_if_open(ctx);
+    let Some(client) = ctx.state.session_client.clone() else {
+        return Update::full();
+    };
+    if let Some(scratch) = ctx.state.scratch.take() {
+        client.kill(scratch.id, scratch.pty_generation);
+    }
+    ctx.state.scratch_visible = false;
+    ctx.state.pending_spawns.clear();
+    for pane in ctx
+        .state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .filter(|pane| !pane.closing)
+    {
+        client.kill(pane.id, pane.pty_generation);
+    }
+    let first_pane_id = ctx.state.next_pane_id;
+    crate::profiles::replace_layout_from_profile(&mut ctx.state, profile, first_pane_id);
+    let spawned = crate::update::spawn_state_panes_on_session(ctx);
+    crate::update::flush_layout_commit(ctx);
+    let session = ctx.state.session_name.clone().unwrap_or_default();
+    crate::events::emit(
+        &ctx.state,
+        crate::events::Event::new(
+            crate::events::EventKind::ProfileLoaded,
+            vec![
+                ("profile", entry.name.clone()),
+                ("path", entry.path.display().to_string()),
+                ("mode", "in-place".to_string()),
+                ("session", session.clone()),
+            ],
+        ),
+    );
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Applied `{}` into session `{session}`", entry.name),
+    ));
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
+    ctx.state.commands_dirty = true;
+    if spawned.is_empty() {
+        Update::full()
+    } else {
+        Update::with_command(crate::pane_lifecycle::open_timers_batch_command(
+            ctx.state.runtime_epoch,
+            spawned,
+            crate::anim::open_delay(ctx.state.config.animations),
+            crate::anim::activation_delay(ctx.state.config.animations),
+        ))
+    }
 }
 
 pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Update {

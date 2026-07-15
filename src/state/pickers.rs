@@ -22,6 +22,8 @@ pub struct ProfilePickerState {
     pub pending_delete: Option<usize>,
     pub pending_open: Option<usize>,
     pub running: HashMap<String, DiscoveredSessionStatus>,
+    pub pending_apply: Option<usize>,
+    pub apply_mode: bool,
 }
 
 pub struct SessionPickerState {
@@ -88,6 +90,8 @@ impl ProfilePickerState {
             pending_delete: None,
             pending_open: None,
             running: HashMap::new(),
+            pending_apply: None,
+            apply_mode: false,
         }
     }
 }

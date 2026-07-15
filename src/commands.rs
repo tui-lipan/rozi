@@ -332,6 +332,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ApplyProfile,
+        label: "Apply profile into session...",
+        category: "Profile",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::OpenSessionPicker,
         label: "Sessions…",
         category: "Session",

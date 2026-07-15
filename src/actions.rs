@@ -351,6 +351,7 @@ fn execute_action_inner(
         Action::OpenSearch => open_search(ctx),
         Action::SaveProfile => open_save_profile_prompt(ctx),
         Action::OpenProfilePicker => open_profile_picker(ctx),
+        Action::ApplyProfile => crate::ops::profile::open_apply_profile_picker(ctx),
         Action::OpenSessionPicker => crate::ops::session::open_session_picker(ctx),
         Action::OpenClientList => crate::ops::session::open_client_list(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),

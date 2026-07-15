@@ -10,7 +10,11 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     action_palette(
         ctx,
-        "Profiles",
+        if picker.apply_mode {
+            "Apply profile"
+        } else {
+            "Profiles"
+        },
         profile_picker_key(),
         Msg::CloseProfilePicker,
         body,
@@ -20,6 +24,19 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
 fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
+    if ctx
+        .state
+        .profile_picker
+        .as_ref()
+        .is_some_and(|picker| picker.apply_mode)
+    {
+        return hint_row()
+            .justify(Justify::SpaceBetween)
+            .gap(2)
+            .child(hint_pill(theme, "apply", "enter"))
+            .child(hint_pill(theme, "cancel", "esc"))
+            .into();
+    }
     hint_row()
         .justify(Justify::SpaceBetween)
         .gap(2)
@@ -74,10 +91,15 @@ fn profile_picker_palette(
 
     let pending_delete = picker.pending_delete;
     let pending_open = picker.pending_open;
+    let pending_apply = picker.pending_apply;
     let error_bg = theme.status.error;
     let warn_bg = theme.status.warning;
-    let selection_style =
-        picker_selection_style(theme, pending_delete.is_some().then_some(error_bg).or_else(|| pending_open.is_some().then_some(warn_bg)));
+    let selection_style = picker_selection_style(
+        theme,
+        pending_delete.is_some().then_some(error_bg).or_else(|| {
+            (pending_open.is_some() || pending_apply.is_some()).then_some(warn_bg)
+        }),
+    );
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -97,10 +119,16 @@ fn profile_picker_palette(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::ProfilePickerSelect(event.item.value)),
         )
-        .on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::SelectProfile(event.item.value)),
-        );
+        .on_activate(ctx.link().callback({
+            let apply_mode = picker.apply_mode;
+            move |event: SearchEvent<usize>| {
+                if apply_mode {
+                    Msg::ProfilePickerApply
+                } else {
+                    Msg::SelectProfile(event.item.value)
+                }
+            }
+        }));
 
     if pending_delete.is_some() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
@@ -116,6 +144,14 @@ fn profile_picker_palette(
             (pending_open == Some(item.value)).then(|| render_pending_open_item(item, warn_bg))
         }));
     }
+    if pending_apply.is_some() {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            (pending_apply == Some(item.value)).then(|| {
+                render_pending_open_item(item, warn_bg)
+                    .description("again to confirm - replaces all panes")
+            })
+        }));
+    }
 
     palette
 }
@@ -126,6 +162,8 @@ fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             Some(Msg::ProfilePickerDelete)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
             Some(Msg::ProfilePickerSetDefault)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+            Some(Msg::ProfilePickerApply)
         } else {
             None
         }

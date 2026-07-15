@@ -5,7 +5,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
+use hyprmux::session::protocol::{
+    ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
+};
 use hyprmux::shared_layout::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
     SharedWorkspace,
@@ -44,11 +46,15 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     );
     let mut server = ServerGuard::new(child, test_root.clone());
     let mut client = connect_when_ready(&endpoint, server.child_mut());
-    client.write_control(&attach_message(&session, "snapshot-writer"));
+    client.write_control(&ClientMessage::Attach {
+        session: session.clone(),
+        protocol_version: PROTOCOL_VERSION,
+        label: "snapshot-writer".into(),
+        read_only: false,
+    });
     read_until(&mut client, |frame| {
         matches!(frame, Frame::Control(ServerMessage::Attached { .. }))
     });
-
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
         pane_id: PANE_ID,
@@ -74,6 +80,9 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
                 ..
             })
         )
+    });
+    client.write_control(&ClientMessage::SetSessionOrigin {
+        profile: "work".into(),
     });
     client.write_pane_input(
         PANE_ID,
@@ -138,12 +147,14 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         panes,
         layout_rev,
         layout: restored_layout,
+        created_from_profile,
         ..
     } = attached.expect("restored attach response")
     else {
         unreachable!()
     };
     assert_eq!(layout_rev, 1);
+    assert_eq!(created_from_profile.as_deref(), Some("work"));
     let restored_layout = restored_layout.expect("restored shared layout");
     assert_eq!(restored_layout.canvas_cols, layout.canvas_cols);
     assert_eq!(restored_layout.workspaces.len(), 1);

@@ -56,8 +56,8 @@ switch workspaces, and lay them out as described in [Keybindings](keybindings.md
 
 - **`prefix d`** (default) **detaches**: it leaves the TUI back to your shell (tmux-style) while the
   session server keeps running for later reattach. Detaching an *anonymous* ephemeral session first
-  prompts you to name it (confirm to detach durably under that name; cancel to quit and shut the
-  ephemeral server down). An already-named session detaches immediately.
+  prompts you to name it (confirm to detach durably under that name; cancel returns to the
+  ephemeral session). An already-named session detaches immediately.
 - **`prefix q`** / **`Alt+q`** (default) **quit**: exits the client. Quitting shuts down the current
   server only when it is an ephemeral session; named servers keep running.
 - Closing the **last pane in a workspace** leaves an empty workspace panel; the app stays running.
@@ -78,16 +78,22 @@ layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 ## First-run configuration
 
 `hyprmux` runs with sensible defaults and no config file. To customize the shell, keybinding
-modifier, prefix, animations, theme, or to enable a project profile, create a config file at
+modifier, prefix, animations, theme, or to select a default launch profile, create a config file at
 `~/.config/hyprmux/hyprmux.toml` (or point `$HYPRMUX_CONFIG` at one). See
 [Configuration](configuration.md) for the full reference.
 
 On startup, `hyprmux` shows toast notifications reporting whether the config file, theme file,
-and project profile were loaded - and any parse/read warnings - so a broken config never
+and launch profile were loaded - and any parse/read warnings - so a broken config never
 silently pretends to have loaded.
+
 ## Read-only sessions
 
-Open a persistent session with `hyprmux dev` (or `hyprmux --session dev`). It attaches when running,
-launches from profile `dev` when present, or creates an empty session. Add `--read-only` to attach
-as a viewer without terminal input or layout-control authority. Read-only targets must already be
-running; viewers never autostart a session they cannot seed.
+Open a persistent session with `hyprmux dev` (or `hyprmux --session dev`). It attaches when running
+or launches canonical profile `dev`; it errors if neither exists. Create one explicitly with
+`hyprmux new dev`, or use `hyprmux new review --profile dev` to launch recipe `dev` under an
+independent session name. Unknown targets never silently create sessions.
+
+Use `hyprmux attach dev [--read-only]` when attachment must not launch anything. `--read-only`
+attaches as a viewer without terminal input or layout-control authority and requires the target to
+already be running. The words `attach` and `new` are reserved as subcommands; use `--session attach`
+or `--session new` to address those names through positional target resolution.

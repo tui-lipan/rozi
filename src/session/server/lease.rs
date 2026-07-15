@@ -221,6 +221,9 @@ impl SessionServer {
         id: ClientId,
         promotion_reason: ControllerChangeReason,
     ) {
+        if self.origin_seed_client == Some(id) {
+            self.origin_seed_client = None;
+        }
         let Some(index) = self.clients.iter().position(|client| client.id == id) else {
             return;
         };

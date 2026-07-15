@@ -627,7 +627,7 @@ Multiple entries may target the same event; each command is launched asynchronou
 `HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
 are warned and ignored.
 
-See [Hooks](hooks.md) for all 14 events and fields, the complete environment contract, command
+See [Hooks](hooks.md) for all 15 events and fields, the complete environment contract, command
 lifecycle and client-side semantics, migration examples, and control-socket callbacks.
 
 ## Pane synchronization

@@ -8,6 +8,7 @@ use crate::{control, session};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
+    pub(crate) session_command: SessionCommand,
     pub(crate) profile: Option<String>,
     pub(crate) config_path: Option<String>,
     pub(crate) attach_session: Option<String>,
@@ -16,6 +17,14 @@ pub(crate) struct CliArgs {
     /// given or no named session exists.
     pub(crate) pick: bool,
     pub(crate) read_only: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SessionCommand {
+    #[default]
+    Dwim,
+    Attach,
+    New,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -30,7 +39,7 @@ pub(crate) enum ParsedCli {
     Version,
     Run(CliArgs),
     Control(ControlCli),
-    Server { name: String },
+    Server { name: String, fresh: bool },
     ListSessions,
     KillSession { name: String },
 }
@@ -39,6 +48,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let mut cli = CliArgs::default();
     let mut socket: Option<PathBuf> = None;
     let mut socket_flag_seen = false;
+    let mut session_flag_target = false;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -55,36 +65,67 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 reject_trailing_control_args(&mut iter, "kill-session")?;
                 return Ok(ParsedCli::KillSession { name });
             }
+            "attach" => {
+                if cli.attach_session.is_some() {
+                    return Err("session target specified more than once".to_string());
+                }
+                cli.attach_session = Some(
+                    iter.next()
+                        .ok_or_else(|| "attach requires a session name".to_string())?,
+                );
+                cli.session_command = SessionCommand::Attach;
+            }
+            "new" => {
+                if cli.attach_session.is_some() {
+                    return Err("session target specified more than once".to_string());
+                }
+                cli.attach_session = Some(
+                    iter.next()
+                        .ok_or_else(|| "new requires a session name".to_string())?,
+                );
+                cli.session_command = SessionCommand::New;
+            }
             "--server" => {
+                if let Some(name) = cli.attach_session.take() {
+                    if !session_flag_target || cli.session_command != SessionCommand::Dwim {
+                        return Err("--server must follow --session <NAME>".to_string());
+                    }
+                    reject_trailing_control_args(&mut iter, "--server")?;
+                    return Ok(ParsedCli::Server { name, fresh: false });
+                }
                 let name = iter
                     .next()
                     .ok_or_else(|| "--server requires a session name".to_string())?;
                 reject_trailing_control_args(&mut iter, "--server")?;
-                return Ok(ParsedCli::Server { name });
+                return Ok(ParsedCli::Server { name, fresh: false });
+            }
+            "--fresh-server" => {
+                let Some(name) = cli.attach_session.take() else {
+                    return Err("--fresh-server must follow --session <NAME>".to_string());
+                };
+                if !session_flag_target || cli.session_command != SessionCommand::Dwim {
+                    return Err("--fresh-server must follow --session <NAME>".to_string());
+                }
+                reject_trailing_control_args(&mut iter, "--fresh-server")?;
+                return Ok(ParsedCli::Server { name, fresh: true });
             }
             "--session" => {
                 let name = iter
                     .next()
                     .ok_or_else(|| "--session requires a session name".to_string())?;
-                match iter.next().as_deref() {
-                    Some("--server") => {
-                        reject_trailing_control_args(&mut iter, "--server")?;
-                        return Ok(ParsedCli::Server { name });
-                    }
-                    Some("--read-only") => {
-                        cli.attach_session = Some(name);
-                        cli.profile = cli.attach_session.clone();
-                        cli.read_only = true;
-                    }
-                    Some(other) => {
-                        return Err(format!(
-                            "unexpected argument `{other}` after --session <NAME>"
-                        ));
-                    }
-                    None => {
-                        cli.attach_session = Some(name);
-                        cli.profile = cli.attach_session.clone();
-                    }
+                if cli.attach_session.is_some() {
+                    return Err("session target specified more than once".to_string());
+                }
+                cli.attach_session = Some(name);
+                cli.session_command = SessionCommand::Dwim;
+                session_flag_target = true;
+            }
+            "--profile" => {
+                let profile = iter
+                    .next()
+                    .ok_or_else(|| "--profile requires a profile name".to_string())?;
+                if cli.profile.replace(profile).is_some() {
+                    return Err("--profile specified more than once".to_string());
                 }
             }
             "--pick" => {
@@ -236,11 +277,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         "--socket requires a control command before `{name}`"
                     ));
                 }
-                if cli.profile.is_some() {
+                if cli.attach_session.is_some() {
                     return Err(format!("unexpected argument `{name}`"));
                 }
-                cli.profile = Some(name.to_string());
                 cli.attach_session = Some(name.to_string());
+                cli.session_command = SessionCommand::Dwim;
             }
         }
     }
@@ -249,6 +290,12 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     }
     if cli.read_only && cli.attach_session.is_none() {
         return Err("--read-only requires a target or --session".to_string());
+    }
+    if cli.read_only && cli.session_command == SessionCommand::New {
+        return Err("--read-only cannot be used with new".to_string());
+    }
+    if cli.profile.is_some() && cli.session_command != SessionCommand::New {
+        return Err("--profile can only be used with new".to_string());
     }
     Ok(ParsedCli::Run(cli))
 }
@@ -340,8 +387,8 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_server_cli(name: &str) -> Result<()> {
-    session::server::run_named_session(name)?;
+pub(crate) fn run_server_cli(name: &str, fresh: bool) -> Result<()> {
+    session::server::run_named_session_mode(name, fresh)?;
     Ok(())
 }
 
@@ -352,6 +399,7 @@ pub(crate) fn run_list_sessions_cli() -> Result<()> {
                 panes,
                 clients,
                 has_layout,
+                ..
             } => println!(
                 "{}\trunning\tpanes={}\tclients={}\tlayout={}",
                 session.name,
@@ -419,6 +467,8 @@ hyprmux - Hyprland-style tiling terminal multiplexer
 
 USAGE:
     hyprmux [TARGET] [--read-only]
+    hyprmux attach <NAME> [--read-only]
+    hyprmux new <NAME> [--profile <RECIPE>]
     hyprmux [--socket PATH] list|list-panes
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
@@ -441,10 +491,11 @@ OPTIONS:
         --socket <PATH>   Connect CLI control command to this endpoint
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
+        --profile <NAME>  Seed an explicit new session from this profile
 
 {endpoint_help}
 
-TARGET attaches to a running named session, launches it from a same-named profile, or creates it.
+TARGET attaches to a running named session or launches it from a same-named profile.
 Leave the running app with prefix d (detach) or a configured quit binding."
     );
 }
@@ -481,7 +532,8 @@ mod tests {
     #[test]
     fn cli_parses_positional_target_and_rejects_removed_flags() {
         let positional = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
-        assert_eq!(positional.profile.as_deref(), Some("dev"));
+        assert_eq!(positional.session_command, SessionCommand::Dwim);
+        assert_eq!(positional.profile, None);
         assert_eq!(positional.attach_session.as_deref(), Some("dev"));
         assert!(parse_cli_args(vec!["--profile".into(), "dev".into()]).is_err());
         assert!(parse_cli_args(vec!["--attach".into(), "dev".into()]).is_err());
@@ -507,7 +559,10 @@ mod tests {
         let profile = expect_run(
             parse_cli_args(vec!["--session".into(), "list-panes".into()]).expect("parses"),
         );
-        assert_eq!(profile.profile.as_deref(), Some("list-panes"));
+        assert_eq!(profile.attach_session.as_deref(), Some("list-panes"));
+        let reserved =
+            expect_run(parse_cli_args(vec!["--session".into(), "attach".into()]).expect("parses"));
+        assert_eq!(reserved.attach_session.as_deref(), Some("attach"));
     }
 
     #[test]
@@ -618,10 +673,35 @@ mod tests {
         ));
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
+        assert_eq!(attached.session_command, SessionCommand::Dwim);
+        let attached = expect_run(
+            parse_cli_args(vec!["attach".into(), "dev".into(), "--read-only".into()])
+                .expect("parses"),
+        );
+        assert_eq!(attached.attach_session.as_deref(), Some("dev"));
+        assert_eq!(attached.session_command, SessionCommand::Attach);
+        assert!(attached.read_only);
+        let created = expect_run(
+            parse_cli_args(vec![
+                "new".into(),
+                "work".into(),
+                "--profile".into(),
+                "rust-dev".into(),
+            ])
+            .expect("parses"),
+        );
+        assert_eq!(created.attach_session.as_deref(), Some("work"));
+        assert_eq!(created.session_command, SessionCommand::New);
+        assert_eq!(created.profile.as_deref(), Some("rust-dev"));
         let session =
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
         assert_eq!(session.attach_session.as_deref(), Some("dev"));
         assert!(parse_cli_args(vec!["kill-session".into()]).is_err());
+        assert!(parse_cli_args(vec!["attach".into()]).is_err());
+        assert!(parse_cli_args(vec!["new".into()]).is_err());
+        assert!(parse_cli_args(vec!["new".into(), "dev".into(), "--read-only".into()]).is_err());
+        assert!(parse_cli_args(vec!["attach".into(), "dev".into(), "--server".into()]).is_err());
+        assert!(parse_cli_args(vec!["new".into(), "dev".into(), "--server".into()]).is_err());
     }
 
     #[test]
@@ -654,7 +734,7 @@ mod tests {
         let with_profile =
             expect_run(parse_cli_args(vec!["--pick".into(), "dev".into()]).expect("parses"));
         assert!(with_profile.pick);
-        assert_eq!(with_profile.profile.as_deref(), Some("dev"));
+        assert_eq!(with_profile.attach_session.as_deref(), Some("dev"));
     }
 
     fn expect_run(parsed: ParsedCli) -> CliArgs {

@@ -43,13 +43,20 @@ Run:
 cargo run
 ```
 
-Open a named profile-backed session:
+Resolve a named session or its canonical same-name profile:
 
 ```bash
 cargo run -- dev
 ```
 
-Explicit equivalent spelling:
+Attach to an already-running named session:
+
+```bash
+hyprmux attach dev
+cargo run -- attach dev
+```
+
+Equivalent target spelling:
 
 ```bash
 cargo run -- --session dev
@@ -185,12 +192,13 @@ floating geometry, focus, input routing, profiles, sessions, and terminal palett
 
 `hyprmux` is always-server: the session server owns every PTY and the client always attaches,
 parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
-ephemeral session (`eph-<pid>`); a positional target / `--session` opens a persistent named session.
+ephemeral session (`eph-<pid>`); a positional target / `--session` attaches to a named session or
+launches its canonical same-name profile, while `new` creates a session explicitly.
 Detach leaves the server running for later reattach; a clean quit shuts an ephemeral server down.
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
-share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v8). One client holds the
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v9). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -219,7 +227,7 @@ Major module map:
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move/` / `anim.rs` - Window-manager
   layout, placement, floating and tiled movement, split dragging, keyboard resizing, and animations.
-- `session/` / `ops/session.rs` - Multi-client session protocol (v8), server/client, discovery,
+- `session/` / `ops/session.rs` - Multi-client session protocol (v9), server/client, discovery,
   bootstrap, attach/kill, and layout-control lease.
 - `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
@@ -346,7 +354,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `HYPRMUX_CONFIG` selects an alternate config file.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
-- `[[hooks]]` runs client-side commands for 12 UI events and injects `HYPRMUX_EVENT`, event fields,
+- `[[hooks]]` runs client-side commands for 15 UI events and injects `HYPRMUX_EVENT`, event fields,
   and `HYPRMUX_SOCKET`; see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
 - `[[rules]]` applies first-match command substring placement to interactive command-carrying pane
@@ -358,7 +366,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
-- `<NAME>` / `--session <NAME>` attaches, launches from a profile, or creates a named session.
+- `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
+  <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
   crate uses `terminal`, `terminal-serde`, and `theme-reload`.
 

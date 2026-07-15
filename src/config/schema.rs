@@ -158,7 +158,7 @@ pub struct ProfileEntry {
     pub path: PathBuf,
 }
 
-/// What a bare launch (no `--attach`/`--session`) does before opening the UI.
+/// What a bare launch (no target/`--session`) does before opening the UI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SessionStartup {
     /// Silently attach to this process's ephemeral session (the historical behavior).

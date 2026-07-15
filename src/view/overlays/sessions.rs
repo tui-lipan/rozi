@@ -250,7 +250,12 @@ fn session_description(
 ) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
-        DiscoveredSessionStatus::Running { panes, clients, .. } => {
+        DiscoveredSessionStatus::Running {
+            panes,
+            clients,
+            created_from_profile,
+            ..
+        } => {
             let panes_label = if *panes == 1 {
                 "1 pane".to_string()
             } else {
@@ -260,11 +265,14 @@ fn session_description(
             // already there and a new attach will join as a follower. The current row is built
             // locally and includes this UI in its count, so only surface clients besides us.
             let other_clients = clients.saturating_sub(u32::from(is_current));
-            let label = match other_clients {
+            let mut label = match other_clients {
                 0 => panes_label,
                 1 => format!("{panes_label} · 1 other client"),
                 count => format!("{panes_label} · {count} other clients"),
             };
+            if let Some(profile) = created_from_profile {
+                label.push_str(&format!(" · from {profile}"));
+            }
             ItemDescription::new().right(label)
         }
         DiscoveredSessionStatus::Busy => ItemDescription::new().right("busy"),

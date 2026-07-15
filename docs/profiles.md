@@ -1,19 +1,21 @@
 # Named profiles
 
-Named profiles are saved workspace layouts stored as TOML files in:
+Named profiles are reusable launch recipes stored as TOML files in:
 
 ```
 ~/.config/hyprmux/profiles/<name>.toml
 ```
 
 Each version-1 profile records workspaces, pane titles, layout metadata, and optional launch
-identity (`cwd`, `command`, `keep_open`, floating geometry). Profiles do **not** save live
-PTY state. Launching a session from one starts fresh shells or commands; applying one in place
-replaces the destination session's panes after an unconditional two-press confirmation.
+identity (`cwd`, `command`, `keep_open`, floating geometry). Profiles do **not** save live PTY
+state. Launching from one starts fresh shells or commands.
 
-Profiles are recipes for named sessions. Opening `dev` attaches to a running session named `dev`,
-or launches that session from `profiles/dev.toml`, or creates an empty named session when neither
-exists. Existing version-1 profile files remain compatible.
+A profile and a session are independent objects. The same-name session is only the profile's
+canonical default binding: opening profile `dev` uses session `dev`, while `hyprmux new review
+--profile dev` launches the same recipe as an independent session named `review`. A session created
+from a profile may record that recipe as `created_from_profile`, but it does not remain linked to
+the file and later profile edits do not alter the running session. Existing version-1 profile files
+remain compatible.
 
 ## Profile fields
 
@@ -57,18 +59,31 @@ command = "nvim"
 
 A commented copy lives at [`examples/profiles/dev.toml`](../examples/profiles/dev.toml).
 
-## Open a profile-backed session
+## Launch a profile
 
-Launch a named profile from the command line:
+Use the profile's canonical same-name session:
 
 ```bash
 hyprmux dev
 hyprmux --session dev
 ```
 
-An explicit target always uses attach-or-launch-or-create semantics. A bare `hyprmux` still starts
-an ephemeral scratch session unless `[session] startup = "last"` is configured. In ephemeral mode,
-`[profile] default` remains the first layout seed, followed by session autosave.
+These spellings attach to running session `dev`; if it is not running, they launch it from
+`profiles/dev.toml`. If neither the session nor profile exists, hyprmux reports an error and tells
+you to create the session explicitly. An unknown target never silently creates an empty session.
+
+To create an independent session, optionally from any recipe, use:
+
+```bash
+hyprmux new review
+hyprmux new review --profile dev
+```
+
+`attach` and `new` are reserved CLI command words. Use `hyprmux --session attach` or
+`hyprmux --session new` when a session or canonical profile binding actually has one of those
+names. A bare `hyprmux` still starts an ephemeral scratch session unless `[session] startup =
+"last"` is configured. In ephemeral mode, `[profile] default` remains the first launch seed,
+followed by session autosave.
 
 Set a default profile in config:
 
@@ -80,16 +95,17 @@ default = "dev"
 Or use the in-app **Profiles** command (command palette): highlight a profile and press
 `Ctrl+f` to set it as the startup default.
 
-If a profile file is missing or fails to parse, hyprmux shows a startup warning and falls
-through to the next source (or a fresh layout).
+If a configured default profile is missing or fails to parse, hyprmux shows a startup warning and
+falls through to the next bare-launch source (or a fresh layout). An explicit canonical target with
+a missing or invalid profile reports an error instead.
 
 ## In-app commands
 
 | Command | Action |
 | --- | --- |
-| **Save profile** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. Named sessions prefill their own name; overwriting requires a second **Enter**. |
+| **Capture session as profile...** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. The creating profile is preferred as the initial name, then the session name; overwriting requires a second **Enter**. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
-| **Apply profile into session...** | Replaces the current session's panes from a profile without changing its name. |
+| **Replace session with profile...** | Destructively replaces every pane in the current session from a profile without changing the session name or disconnecting its clients. |
 
 ### Profile picker actions
 
@@ -97,15 +113,19 @@ Open **Profiles** from the command palette, then:
 
 | Key | Action |
 | --- | --- |
-| **Enter** | Attach to the running same-named session, or launch it from the profile. Destructive replacement of a live ephemeral session requires a second press. |
-| **Ctrl+r** | Apply the highlighted profile into the current session. Press twice to replace every pane. |
+| **Enter** | Attach to the running canonical same-name session, or launch that canonical session from the profile. Leaving a live ephemeral session may require a second press. |
+| **Ctrl+Enter** | **Open as**: launch the highlighted recipe as a new session under a name you enter. The name must not already be running. |
+| **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
 | **Ctrl+f** | Set the highlighted profile as `[profile] default` in `hyprmux.toml`. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 
-Profiles marked **default** in the list match your current `[profile] default` setting.
-Deleting the default profile clears that config entry when the file is removed.
+The status beside a profile refers only to its canonical same-name session: **attached**,
+**running**, or **launch**. It does not count independent sessions created from that profile under
+other names. Profiles marked **default** match your current `[profile] default` setting. Deleting
+the default profile clears that config entry when the file is removed.
 
-Profile names use letters, numbers, `_`, or `-` because the same names can identify sessions.
+Profile names use letters, numbers, `_`, or `-` because their canonical binding can identify a
+same-named session.
 
 ## Command lifetime
 

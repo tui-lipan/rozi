@@ -181,7 +181,7 @@ name. Names are saved with profiles and session autosave.
 | Search scrollback | `/` |
 | Toggle scratchpad | `` ` `` (backtick) |
 | Open profiles picker | `o` |
-| Save profile | `O` (`Shift+o`) |
+| Capture session as profile | `O` (`Shift+o`) |
 
 ### Leaving and lifecycle
 
@@ -200,7 +200,7 @@ second confirmation.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted session; typing a name + `Ctrl+N` creates and switches to a new one; `Ctrl+D` detaches the current named session and exits the client; `Ctrl+K` (twice) kills the selected named session or resets a selected ephemeral session. Killing or resetting the current session shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
+| Sessions… | `s` | Open the session picker. `Enter` attaches to the highlighted running session; typing a name + `Ctrl+N` explicitly creates and switches to a fresh empty session, failing if that name is already running; `Ctrl+D` detaches the current named session and exits the client; `Ctrl+K` (twice) kills the selected named session or resets a selected ephemeral session. Killing or resetting the current session shuts its server down and hops the UI onto a fresh ephemeral session instead of quitting. The list auto-refreshes while open and shows `from <profile>` when creation-origin metadata is available. Launch with `--pick` (or `[session] startup = "picker"`) to open this picker at startup when a named session exists; `Esc` there starts a fresh ephemeral session. |
 | Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from *Detach*, which names if needed and then leaves. See [Sessions](sessions.md). |
 | New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded and its panes are killed. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls confirmation before discarding an ephemeral session. |
 | Request layout control | `g` | Ask the current controller for the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. It **requests** rather than steals: the controller sees a toast and a `wants control` badge in *Session clients* and grants (or declines) it there; if no client currently holds the lease the request is auto-granted. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
@@ -216,7 +216,7 @@ overlay (under "Custom") and command palette with a generated label, but are con
 have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard - save profile, change appearance, promote to master, plus discoverable extras (search,
+keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (search,
 copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
 palette groups theme, titlebar, workbar, animation, and border controls.
 Frequent single-key actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the
@@ -299,6 +299,13 @@ While an overlay is open (command palette, help, theme picker, search, rename):
   in another pane (or workspace) switches focus there.
 - In **rename**, submitting an empty name clears the custom title (falling back to the
   program's terminal title, then the pane's default label).
+
+In the **Profiles** picker, `Enter` attaches to or launches the highlighted profile's canonical
+same-name session. `Ctrl+Enter` opens that recipe as a new independently named session. `Ctrl+R`
+twice runs **Replace session with profile...**, closing every pane and running process while
+keeping the session name and attached clients. The row status describes only the canonical
+same-name session, not every session created from that recipe.
+
 ## Session collaboration
 
 The command palette exposes `session-clients` to inspect attached clients and grant control, and

@@ -113,6 +113,30 @@ impl SessionServer {
                 label,
                 read_only,
             } => self.handle_attach(client_id, session, protocol_version, label, read_only),
+            ClientMessage::SetSessionOrigin { profile } => {
+                if self.created_from_profile.is_none()
+                    && self.origin_seed_client == Some(client_id)
+                    && !self.panes.is_empty()
+                    && crate::session::discovery::valid_session_name(&profile)
+                    && self
+                        .client_mut(client_id)
+                        .is_some_and(|client| !client.read_only)
+                {
+                    self.created_from_profile = Some(profile);
+                    self.origin_seed_client = None;
+                    self.dirty = true;
+                    return vec![(
+                        Target::Broadcast,
+                        ServerMessage::SessionOriginSet {
+                            created_from_profile: self
+                                .created_from_profile
+                                .clone()
+                                .expect("origin set above"),
+                        },
+                    )];
+                }
+                Vec::new()
+            }
             ClientMessage::Query {
                 session,
                 protocol_version,
@@ -167,23 +191,28 @@ impl SessionServer {
                         },
                     )];
                 }
-                vec![(
-                    Target::Sender,
-                    self.spawn_pane(SpawnRequest {
-                        pane_id,
-                        generation,
-                        command,
-                        cwd,
-                        title,
-                        cols,
-                        rows,
-                        keep_open,
-                        env,
-                        palette,
-                        shell,
-                        command_shell,
-                    }),
-                )]
+                let initial_seed = self.created_from_profile.is_none()
+                    && self.origin_seed_client.is_none()
+                    && self.panes.is_empty()
+                    && self.layout.is_none();
+                let message = self.spawn_pane(SpawnRequest {
+                    pane_id,
+                    generation,
+                    command,
+                    cwd,
+                    title,
+                    cols,
+                    rows,
+                    keep_open,
+                    env,
+                    palette,
+                    shell,
+                    command_shell,
+                });
+                if initial_seed && matches!(message, ServerMessage::SpawnResult { ok: true, .. }) {
+                    self.origin_seed_client = Some(client_id);
+                }
+                vec![(Target::Sender, message)]
             }
             ClientMessage::Resize {
                 pane_id,
@@ -263,7 +292,15 @@ impl SessionServer {
                 Vec::new()
             }
             ClientMessage::CommitLayout { base_rev, layout } => {
-                self.handle_commit_layout(client_id, base_rev, layout)
+                let responses = self.handle_commit_layout(client_id, base_rev, layout);
+                if self.created_from_profile.is_none()
+                    && responses.iter().any(|(_, message)| {
+                        matches!(message, ServerMessage::LayoutCommitted { .. })
+                    })
+                {
+                    self.origin_seed_client = None;
+                }
+                responses
             }
             ClientMessage::RequestControl => self.handle_request_control(client_id),
             ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
@@ -359,6 +396,7 @@ impl SessionServer {
             controller: self.controller,
             clients,
             input_locked: self.input_locked,
+            created_from_profile: self.created_from_profile.clone(),
         };
         let mut responses = vec![(Target::Sender, attached)];
         responses.push((Target::Broadcast, self.clients_changed()));
@@ -414,6 +452,7 @@ impl SessionServer {
                 panes,
                 clients: self.attached_count(),
                 has_layout: self.layout.is_some(),
+                created_from_profile: self.created_from_profile.clone(),
             },
         )]
     }

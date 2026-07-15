@@ -661,6 +661,7 @@ mod reconciler_tests {
                     clients: Vec::new(),
                     input_locked: false,
                     read_only: false,
+                    created_from_profile: None,
                 })
                 .expect("dispatch attach");
 

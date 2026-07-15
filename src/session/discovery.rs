@@ -11,6 +11,7 @@ pub enum DiscoveredSessionStatus {
         panes: usize,
         clients: u32,
         has_layout: bool,
+        created_from_profile: Option<String>,
     },
     Busy,
     Unknown,
@@ -42,6 +43,12 @@ pub fn valid_session_name(name: &str) -> bool {
 
 pub fn discover_sessions() -> std::io::Result<Vec<DiscoveredSession>> {
     discover_sessions_excluding(None)
+}
+
+/// Probe one named session without scanning or mutating unrelated discovery entries.
+pub fn discover_session(name: &str) -> std::io::Result<Option<DiscoveredSession>> {
+    let endpoint = crate::session::server::session_endpoint(name)?;
+    Ok(query_session_endpoint(name, &endpoint))
 }
 
 pub fn discover_sessions_excluding(
@@ -94,11 +101,13 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
                         panes,
                         clients,
                         has_layout,
+                        created_from_profile,
                         ..
                     }) => DiscoveredSessionStatus::Running {
                         panes,
                         clients,
                         has_layout,
+                        created_from_profile,
                     },
                     Err(err)
                         if matches!(

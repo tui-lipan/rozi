@@ -1,7 +1,7 @@
 # Project profiles and pane identity
 
-Project profiles let `hyprmux` restore a workspace layout for a project. A profile is a TOML file
-that records workspaces, pane names, layout metadata, and optional launch identity for each pane.
+Project profiles are reusable launch recipes. A profile is a TOML file that records workspaces,
+pane names, layout metadata, and optional launch identity for each pane.
 
 Profiles do **not** save or restore live PTY state. Restoring a profile starts fresh shells or commands in new PTYs; it does not resurrect the shell processes, scrollback, environment, or running programs from an earlier `hyprmux` process.
 
@@ -21,13 +21,13 @@ The titlebar shows the custom title if set, otherwise the program's terminal tit
 the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
 for the full precedence, and [Keybindings](keybindings.md) for the rename flow.
 
-## Save and load profiles
+## Capture and launch profiles
 
-Named profiles live in `~/.config/hyprmux/profiles/<name>.toml`. Save the current layout with
-the **Save profile** command in the command palette; it prompts for the profile name and writes
-that file.
+Named profiles live in `~/.config/hyprmux/profiles/<name>.toml`. Capture the current session with
+the **Capture session as profile...** command in the command palette; it prompts for the profile
+name and writes that file.
 
-Open its same-named session from the command line:
+Open its canonical same-name session from the command line:
 
 ```bash
 hyprmux dev
@@ -35,8 +35,17 @@ hyprmux --session dev
 ```
 
 The target attaches when `dev` is already running, otherwise launches named session `dev` from the
-profile. Open **Profiles** to use the same flow, apply a recipe into the current session with
-`Ctrl+R` twice, delete profiles, or mark one as the ephemeral startup default:
+profile. It reports an error rather than silently creating an empty session when neither exists.
+The profile and session remain independent; the same-name session is only the canonical default
+binding. Launch the recipe under another name explicitly with:
+
+```bash
+hyprmux new review --profile dev
+```
+
+Open **Profiles** to use the canonical flow with `Enter`, open the recipe as a newly named session
+with `Ctrl+Enter`, replace the current session with `Ctrl+R` twice, delete profiles, or mark one as
+the ephemeral startup default:
 
 ```toml
 [profile]
@@ -46,6 +55,12 @@ default = "dev"
 Explicit targets take precedence. On a bare ephemeral launch, `[profile] default` precedes local
 session autosave; `[session] startup = "last"` instead opens a named session. See
 [Named profiles](profiles.md) for picker controls.
+
+Replacing a session from the picker is destructive: it closes all panes and running processes,
+then launches the recipe while retaining the session name and attached clients. A session created
+from a profile can retain `created_from_profile` as historical origin metadata. The session picker
+displays it as `from <profile>`, and resurrection snapshots persist it; applying a different profile
+later does not rewrite that origin.
 
 ## Profile shape
 
@@ -108,14 +123,15 @@ keep_open = true
 
 ## Session auto-save
 
-Beyond explicit named profiles, local `hyprmux` launches can **auto-save the live layout on
+Beyond explicit profile capture, local `hyprmux` launches can **auto-save the live layout on
 quit** and restore it on the next launch. Enable it with `[session] autosave = true` (see
 [Configuration](configuration.md#session)). It reuses the profile format and the same honesty
-caveats: it restores layout and launch intent, not live PTY state. A CLI profile or
-`[profile] default` takes precedence over the autosaved session.
+caveats: it restores layout and launch intent, not live PTY state. `[profile] default` takes
+precedence over the autosaved session.
 
-For live PTY persistence across detach/reattach, use a named attached session instead:
-`hyprmux <name>` (see [Sessions](sessions.md)).
+For live PTY persistence across detach/reattach, use a named attached session instead. Use
+`hyprmux attach <name>` for attach-only behavior, `hyprmux <name>` for attach-or-canonical-profile
+resolution, or `hyprmux new <name>` for explicit creation (see [Sessions](sessions.md)).
 
 ## Saving limitations
 

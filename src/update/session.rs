@@ -113,6 +113,7 @@ pub(super) fn attached(
     clients: Vec<ClientInfo>,
     input_locked: bool,
     read_only: bool,
+    created_from_profile: Option<String>,
 ) -> Update {
     let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
         return Update::none();
@@ -131,7 +132,9 @@ pub(super) fn attached(
     ctx.state.runtime_epoch = epoch;
     ctx.state.session_client = Some(client);
     ctx.state.session_name = Some(session.clone());
+    ctx.state.created_from_profile = created_from_profile;
     ctx.state.session_attached = true;
+    ctx.state.deferred_profile_seed = None;
     if !crate::state::is_ephemeral_session_name(&session) {
         crate::session::record_last_named_session(&session);
     }
@@ -225,17 +228,10 @@ pub(super) fn attached(
         .unwrap_or_default();
     if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
     {
-        crate::events::emit(
-            &ctx.state,
-            crate::events::Event::new(
-                crate::events::EventKind::ProfileLoaded,
-                vec![
-                    ("profile", profile.clone()),
-                    ("path", path.display().to_string()),
-                    ("session", session.clone()),
-                ],
-            ),
-        );
+        if let Some(client) = ctx.state.session_client.as_ref() {
+            client.set_session_origin(profile.clone());
+        }
+        ctx.state.pending_profile_loaded = Some((profile.clone(), path.clone(), session.clone()));
         if named {
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
@@ -262,7 +258,41 @@ pub(super) fn attached(
             ));
         }
     }
+    if let Some(origin) = ctx.state.created_from_profile.clone() {
+        confirm_profile_origin(ctx, origin);
+    }
     update
+}
+
+pub(super) fn origin_set(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    created_from_profile: String,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
+    }
+    confirm_profile_origin(ctx, created_from_profile);
+    Update::full()
+}
+
+fn confirm_profile_origin(ctx: &mut Context<HyprmuxApp>, created_from_profile: String) {
+    ctx.state.created_from_profile = Some(created_from_profile.clone());
+    if let Some((profile, path, session)) = ctx.state.pending_profile_loaded.take()
+        && profile == created_from_profile
+    {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::ProfileLoaded,
+                vec![
+                    ("profile", profile),
+                    ("path", path.display().to_string()),
+                    ("session", session),
+                ],
+            ),
+        );
+    }
 }
 
 pub(super) fn layout_committed(
@@ -857,8 +887,8 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(crate::HyprmuxApp::default());
-                let (client, _rx) = SessionClient::test_channel();
-                let path = PathBuf::from("legacy profile.toml");
+                let (client, rx) = SessionClient::test_channel();
+                let path = PathBuf::from("legacy-profile.toml");
                 backend.state_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
@@ -867,7 +897,7 @@ mod tests {
                         autostart: true,
                         read_only: false,
                         intent: crate::state::AttachIntent::ProfileSeed {
-                            profile: "legacy profile".into(),
+                            profile: "legacy-profile".into(),
                             path: path.clone(),
                         },
                         left: None,
@@ -888,8 +918,28 @@ mod tests {
                         clients: Vec::new(),
                         input_locked: false,
                         read_only: false,
+                        created_from_profile: None,
                     })
                     .expect("dispatch attach");
+
+                assert_eq!(backend.state().created_from_profile, None);
+                assert!(rx.try_iter().any(|message| matches!(
+                    message,
+                    crate::session::client::ClientOutbound::Control(
+                        crate::session::protocol::ClientMessage::SetSessionOrigin { profile }
+                    ) if profile == "legacy-profile"
+                )));
+                assert!(events.try_recv().is_err());
+                backend
+                    .dispatch(Msg::SessionOriginSet {
+                        epoch: 1,
+                        created_from_profile: "legacy-profile".to_string(),
+                    })
+                    .expect("acknowledge session origin");
+                assert_eq!(
+                    backend.state().created_from_profile.as_deref(),
+                    Some("legacy-profile")
+                );
 
                 let event: serde_json::Value =
                     serde_json::from_str(&events.try_recv().expect("profile-loaded event"))
@@ -899,7 +949,7 @@ mod tests {
                     serde_json::json!({
                         "event": "profile-loaded",
                         "data": {
-                            "profile": "legacy profile",
+                            "profile": "legacy-profile",
                             "path": path.display().to_string(),
                             "session": "eph-test"
                         }

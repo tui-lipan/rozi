@@ -14,6 +14,8 @@ struct SnapshotMeta {
     session: String,
     saved_at: u64,
     layout_rev: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    created_from_profile: Option<String>,
     panes: Vec<SnapshotPane>,
 }
 
@@ -121,6 +123,7 @@ impl SessionServer {
                 .unwrap_or_default()
                 .as_secs(),
             layout_rev: self.layout_rev,
+            created_from_profile: self.created_from_profile.clone(),
             panes,
         };
         write_secure(
@@ -169,6 +172,7 @@ impl SessionServer {
                 "unsupported or mismatched session snapshot",
             ));
         }
+        self.created_from_profile = meta.created_from_profile.clone();
         let mut layout: Option<SharedLayout> = fs::read(path.join("layout.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok());
@@ -284,4 +288,23 @@ pub(crate) fn list_snapshot_names_by_recency() -> Vec<String> {
         .collect::<Vec<_>>();
     snapshots.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     snapshots.into_iter().map(|(_, name)| name).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_without_profile_origin_remains_readable() {
+        let meta: SnapshotMeta = serde_json::from_value(serde_json::json!({
+            "version": SNAPSHOT_VERSION,
+            "session": "dev",
+            "saved_at": 0,
+            "layout_rev": 0,
+            "panes": []
+        }))
+        .unwrap();
+
+        assert_eq!(meta.created_from_profile, None);
+    }
 }

@@ -17,12 +17,13 @@ pub enum EventKind {
     ClientJoined,
     ClientLeft,
     ProfileLoaded,
+    ProfileApplied,
     ProfileSaved,
     ConfigReloaded,
 }
 
 impl EventKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::PaneSpawned,
         Self::PaneExited,
         Self::FocusChanged,
@@ -35,6 +36,7 @@ impl EventKind {
         Self::ClientJoined,
         Self::ClientLeft,
         Self::ProfileLoaded,
+        Self::ProfileApplied,
         Self::ProfileSaved,
         Self::ConfigReloaded,
     ];
@@ -53,6 +55,7 @@ impl EventKind {
             Self::ClientJoined => "client-joined",
             Self::ClientLeft => "client-left",
             Self::ProfileLoaded => "profile-loaded",
+            Self::ProfileApplied => "profile-applied",
             Self::ProfileSaved => "profile-saved",
             Self::ConfigReloaded => "config-reloaded",
         }
@@ -179,7 +182,7 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
-        assert_eq!(EventKind::ALL.len(), 14);
+        assert_eq!(EventKind::ALL.len(), 15);
         let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));

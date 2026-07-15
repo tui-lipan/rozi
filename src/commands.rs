@@ -319,7 +319,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::SaveProfile,
-        label: "Save profile",
+        label: "Capture session as profile…",
         category: "Profile",
         default_keys: &["shift-o"],
         palette: true,
@@ -333,7 +333,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::ApplyProfile,
-        label: "Apply profile into session...",
+        label: "Replace session with profile…",
         category: "Profile",
         default_keys: &[],
         palette: true,

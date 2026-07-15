@@ -56,6 +56,9 @@ pub struct SessionServer {
     next_generation: u64,
     layout: Option<SharedLayout>,
     layout_rev: u64,
+    /// Immutable origin metadata claimed by the profile client that first seeds an empty session.
+    created_from_profile: Option<String>,
+    origin_seed_client: Option<ClientId>,
     controller: Option<ClientId>,
     input_locked: bool,
     clients: Vec<ClientConn>,
@@ -261,6 +264,8 @@ impl SessionServer {
             next_generation: 1,
             layout: None,
             layout_rev: 0,
+            created_from_profile: None,
+            origin_seed_client: None,
             controller: None,
             input_locked: false,
             clients: Vec::new(),
@@ -474,6 +479,10 @@ pub fn bind_session_socket(name: &str) -> io::Result<(IpcListener, IpcEndpoint)>
 }
 
 pub fn run_named_session(name: &str) -> io::Result<()> {
+    run_named_session_mode(name, false)
+}
+
+pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
     if !crate::session::discovery::valid_attach_target(name) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -512,7 +521,9 @@ pub fn run_named_session(name: &str) -> io::Result<()> {
         },
     );
     server.endpoint = Some(endpoint);
-    if server.settings.resurrect
+    if fresh {
+        delete_snapshot(name)?;
+    } else if server.settings.resurrect
         && let Err(err) = server.restore()
     {
         eprintln!("hyprmux: could not restore session {name:?}: {err}");

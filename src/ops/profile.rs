@@ -14,9 +14,13 @@ use crate::state::{Mode, ProfilePickerState, SaveProfileState, State};
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     let initial = ctx
         .state
-        .session_name
+        .created_from_profile
         .as_deref()
-        .filter(|name| ctx.state.session_attached && !crate::state::is_ephemeral_session_name(name))
+        .or_else(|| {
+            ctx.state.session_name.as_deref().filter(|name| {
+                ctx.state.session_attached && !crate::state::is_ephemeral_session_name(name)
+            })
+        })
         .unwrap_or("");
     ctx.state.save_profile_prompt = Some(SaveProfileState::new(initial));
     ctx.state.show_palette = false;
@@ -44,7 +48,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     else {
         ctx.toast().push(error_toast(
             &ctx.state.theme,
-            "Save Profile",
+            "Capture Session",
             "Use letters, numbers, _ or - for profile names",
         ));
         request_save_profile_focus(ctx);
@@ -83,13 +87,13 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
                 &ctx.state.theme,
                 format!(
                     "{} profile `{name}`",
-                    if existed { "Overwrote" } else { "Saved" }
+                    if existed { "Overwrote" } else { "Captured" }
                 ),
             ));
         }
         Err(message) => {
             ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Save Profile", message));
+                .push(error_toast(&ctx.state.theme, "Capture Session", message));
         }
     }
 
@@ -154,6 +158,7 @@ fn profile_session_rows(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
+                created_from_profile: ctx.state.created_from_profile.clone(),
             },
         });
     }
@@ -194,6 +199,7 @@ pub(crate) fn apply_profile_sessions(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
+                created_from_profile: ctx.state.created_from_profile.clone(),
             },
         });
     }
@@ -257,8 +263,8 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     if !ctx.state.session_attached {
         ctx.toast().push(error_toast(
             &ctx.state.theme,
-            "Apply Profile",
-            "Attach to a session before applying a profile",
+            "Replace Session",
+            "Attach to a session before replacing it from a profile",
         ));
         return Update::full();
     }
@@ -270,7 +276,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     {
         ctx.toast().push(error_toast(
             &ctx.state.theme,
-            "Apply Profile",
+            "Replace Session",
             "Read-only clients cannot replace session panes",
         ));
         return Update::full();
@@ -298,7 +304,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
         Ok(profile) => profile,
         Err(message) => {
             ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Apply Profile", message));
+                .push(error_toast(&ctx.state.theme, "Replace Session", message));
             return Update::full();
         }
     };
@@ -334,18 +340,17 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(
-            crate::events::EventKind::ProfileLoaded,
+            crate::events::EventKind::ProfileApplied,
             vec![
                 ("profile", entry.name.clone()),
                 ("path", entry.path.display().to_string()),
-                ("mode", "in-place".to_string()),
                 ("session", session.clone()),
             ],
         ),
     );
     ctx.toast().push(info_toast(
         &ctx.state.theme,
-        format!("Applied `{}` into session `{session}`", entry.name),
+        format!("Replaced session `{session}` with `{}`.", entry.name),
     ));
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
@@ -482,21 +487,36 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
     }
 
     if crate::session::discovery::valid_session_name(&entry.name) {
-        return open_named_target_with_path(ctx, entry.name, Some(entry.path));
+        return open_named_target(
+            ctx,
+            entry.name.clone(),
+            OpenNamedIntent::ResolveProfile {
+                profile: entry.name,
+                path: entry.path,
+            },
+        );
     }
 
     load_profile_into_fresh_ephemeral(ctx, entry)
 }
 
-#[allow(dead_code)]
-pub(crate) fn open_named_target(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
-    open_named_target_with_path(ctx, name, None)
+#[derive(Clone, Debug)]
+pub(crate) enum OpenNamedIntent {
+    ResolveProfile {
+        profile: String,
+        path: std::path::PathBuf,
+    },
+    CreateFresh,
+    CreateFromProfile {
+        profile: String,
+        path: std::path::PathBuf,
+    },
 }
 
-fn open_named_target_with_path(
+pub(crate) fn open_named_target(
     ctx: &mut Context<HyprmuxApp>,
     name: String,
-    profile_path: Option<std::path::PathBuf>,
+    intent: OpenNamedIntent,
 ) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
         ctx.toast().push(error_toast(
@@ -505,6 +525,25 @@ fn open_named_target_with_path(
             "Invalid profile/session name",
         ));
         return Update::full();
+    }
+    let exists = crate::session::discovery::discover_session(&name)
+        .ok()
+        .flatten()
+        .is_some();
+    let explicit_create = matches!(
+        intent,
+        OpenNamedIntent::CreateFresh | OpenNamedIntent::CreateFromProfile { .. }
+    );
+    if explicit_create && exists {
+        ctx.toast().push(error_toast(
+            &ctx.state.theme,
+            "Sessions",
+            format!("Session `{name}` is already running"),
+        ));
+        return Update::full();
+    }
+    if !explicit_create && exists {
+        return crate::ops::session::attach_session_by_name(ctx, name, false);
     }
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(name.as_str()) {
         ctx.toast().push(info_toast(
@@ -519,8 +558,22 @@ fn open_named_target_with_path(
         return Update::full();
     }
 
-    let path = profile_path.unwrap_or_else(|| profile_path_for_name(&name));
-    let (replacement, intent) = if path.exists() {
+    let seed = match intent {
+        OpenNamedIntent::ResolveProfile { profile, path } => {
+            if !path.exists() {
+                ctx.toast().push(error_toast(
+                    &ctx.state.theme,
+                    "Profiles",
+                    format!("No session or profile named `{name}`"),
+                ));
+                return Update::full();
+            }
+            Some((profile, path))
+        }
+        OpenNamedIntent::CreateFresh => None,
+        OpenNamedIntent::CreateFromProfile { profile, path } => Some((profile, path)),
+    };
+    let (replacement, attach_intent) = if let Some((profile_name, path)) = seed {
         let profile = match load_profile(&path) {
             Ok(profile) => profile,
             Err(message) => {
@@ -532,7 +585,7 @@ fn open_named_target_with_path(
         (
             State::from_profile(ctx.state.config.clone(), ctx.state.theme.clone(), profile),
             crate::state::AttachIntent::ProfileSeed {
-                profile: name.clone(),
+                profile: profile_name,
                 path,
             },
         )
@@ -559,14 +612,32 @@ fn open_named_target_with_path(
         client: None,
         autostart: true,
         read_only: false,
-        intent,
+        intent: attach_intent.clone(),
         left,
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+            if explicit_create {
+                crate::session::bootstrap::create_session_client(epoch, name, false, link)
+            } else {
+                crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+            }
         });
     }))
+}
+
+pub(crate) fn open_selected_profile_as(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(entry) = selected_profile_entry(ctx) else {
+        return Update::none();
+    };
+    ctx.state.rename_session = Some(crate::state::SessionRenameState::new_open_profile_as(
+        entry.name, entry.path,
+    ));
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
+    ctx.state.mode = Mode::Normal;
+    crate::ops::focus::request_rename_session_focus(ctx);
+    Update::full()
 }
 
 fn load_profile_into_fresh_ephemeral(
@@ -709,6 +780,23 @@ mod tests {
             );
 
             backend.state_mut().save_profile_prompt = None;
+            backend.state_mut().created_from_profile = Some("rust-dev".to_string());
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
+                .expect("reopen save prompt with origin");
+            assert_eq!(
+                backend
+                    .state()
+                    .save_profile_prompt
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                "rust-dev"
+            );
+
+            backend.state_mut().save_profile_prompt = None;
+            backend.state_mut().created_from_profile = None;
             backend.state_mut().session_name = Some("eph-123".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
@@ -790,6 +878,81 @@ mod tests {
                 }
             );
 
+            std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    #[test]
+    fn open_as_queues_entered_session_with_selected_profile_seed() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![entry(
+                "rust-dev",
+                path.clone(),
+            )]));
+            backend.state_mut().show_profile_picker = true;
+            backend.state_mut().pending_session_attach = None;
+
+            backend
+                .dispatch(Msg::ProfilePickerOpenAs)
+                .expect("open session-name prompt");
+            let rename = backend.state_mut().rename_session.as_mut().unwrap();
+            rename.input.set_text("work-copy");
+            backend
+                .dispatch(Msg::SubmitRenameSession)
+                .expect("queue seeded attach");
+
+            let pending = backend.state().pending_session_attach.as_ref().unwrap();
+            assert_eq!(pending.name, "work-copy");
+            assert_eq!(
+                pending.intent,
+                crate::state::AttachIntent::ProfileSeed {
+                    profile: "rust-dev".to_string(),
+                    path: path.clone(),
+                }
+            );
+            std::fs::remove_file(path).expect("remove profile");
+        });
+    }
+
+    #[test]
+    fn replacing_session_emits_profile_applied_not_profile_loaded() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let (client, _rx) = crate::session::client::SessionClient::test_channel();
+            {
+                let state = backend.state_mut();
+                state.session_attached = true;
+                state.session_name = Some("work".to_string());
+                state.session_client = Some(client);
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(1);
+                state.shared = Some(shared);
+                state.profile_picker = Some(ProfilePickerState::new(vec![entry(
+                    "rust-dev",
+                    path.clone(),
+                )]));
+                state.show_profile_picker = true;
+            }
+            let events = backend.state().event_hub.subscribe(None);
+
+            backend
+                .dispatch(Msg::ProfilePickerApply)
+                .expect("arm replacement");
+            backend
+                .dispatch(Msg::ProfilePickerApply)
+                .expect("replace session");
+
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().expect("profile-applied event")).unwrap();
+            assert_eq!(event["event"], "profile-applied");
+            assert_eq!(event["data"]["profile"], "rust-dev");
+            assert_eq!(event["data"]["session"], "work");
+            assert!(events.try_recv().is_err());
             std::fs::remove_file(path).expect("remove profile");
         });
     }

@@ -62,6 +62,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ProfilePickerSetDefault => prompts::profile_picker_set_default(ctx),
         Msg::ProfilePickerDelete => prompts::profile_picker_delete(ctx),
         Msg::ProfilePickerApply => prompts::profile_picker_apply(ctx),
+        Msg::ProfilePickerOpenAs => prompts::profile_picker_open_as(ctx),
         Msg::SelectProfile(index) => prompts::select_profile(ctx, index),
         Msg::ProfileSessionsDiscovered { epoch, rows } => {
             prompts::profile_sessions_discovered(ctx, epoch, rows)
@@ -137,6 +138,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             clients,
             input_locked,
             read_only,
+            created_from_profile,
         } => session::attached(
             ctx,
             epoch,
@@ -149,7 +151,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             clients,
             input_locked,
             read_only,
+            created_from_profile,
         ),
+        Msg::SessionOriginSet {
+            epoch,
+            created_from_profile,
+        } => session::origin_set(ctx, epoch, created_from_profile),
         Msg::SessionLayoutCommitted {
             epoch,
             rev,

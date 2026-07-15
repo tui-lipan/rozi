@@ -11,7 +11,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     action_palette(
         ctx,
         if picker.apply_mode {
-            "Apply profile"
+            "Replace session with profile"
         } else {
             "Profiles"
         },
@@ -33,7 +33,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         return hint_row()
             .justify(Justify::SpaceBetween)
             .gap(2)
-            .child(hint_pill(theme, "apply", "enter"))
+            .child(hint_pill(theme, "replace", "enter"))
             .child(hint_pill(theme, "cancel", "esc"))
             .into();
     }
@@ -41,6 +41,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         .justify(Justify::SpaceBetween)
         .gap(2)
         .child(hint_pill(theme, "attach/launch", "enter"))
+        .child(hint_pill(theme, "open as", "ctrl+enter"))
         .child(hint_pill(theme, "default", "ctrl+f"))
         .child(hint_pill(theme, "delete", "ctrl+d"))
         .into()
@@ -148,7 +149,9 @@ fn profile_picker_palette(
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             (pending_apply == Some(item.value)).then(|| {
                 render_pending_open_item(item, warn_bg)
-                    .description("again to confirm - replaces all panes")
+                    .description(
+                        "again to confirm — closes all panes and running processes; session name and clients are kept",
+                    )
             })
         }));
     }
@@ -158,7 +161,9 @@ fn profile_picker_palette(
 
 fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     ctx.link().key_handler(|key| {
-        if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
+        if key.mods.ctrl && key.code == KeyCode::Enter {
+            Some(Msg::ProfilePickerOpenAs)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
             Some(Msg::ProfilePickerDelete)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
             Some(Msg::ProfilePickerSetDefault)

@@ -57,6 +57,7 @@ pub enum Msg {
     ProfilePickerSetDefault,
     ProfilePickerDelete,
     ProfilePickerApply,
+    ProfilePickerOpenAs,
     SelectProfile(usize),
     ProfileSessionsDiscovered {
         epoch: u64,
@@ -135,6 +136,11 @@ pub enum Msg {
         clients: Vec<session::protocol::ClientInfo>,
         input_locked: bool,
         read_only: bool,
+        created_from_profile: Option<String>,
+    },
+    SessionOriginSet {
+        epoch: u64,
+        created_from_profile: String,
     },
     SessionLayoutCommitted {
         epoch: u64,

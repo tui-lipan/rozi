@@ -68,7 +68,7 @@ An OSC 7 report carrying a *remote* host (an SSH session with the integration in
 side) is displayed but never used as a spawn directory — the path is real, but not on this machine.
 A host hyprmux cannot resolve is treated as remote, which is the safe direction to be wrong in.
 
-The live cwd is also what *Save profile* records (see [Project profiles](project-profiles.md)).
+The live cwd is also what *Capture session as profile* records (see [Project profiles](project-profiles.md)).
 
 ## Mouse support
 

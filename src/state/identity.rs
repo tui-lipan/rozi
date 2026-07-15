@@ -40,6 +40,7 @@ impl PaneRenameState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NamingMode {
     CreateSession,
+    OpenProfileAs,
     NameEphemeralSession,
     RenameSession,
     RenameWorkspace { index: usize },
@@ -55,6 +56,7 @@ pub struct SessionRenameState {
     /// second Enter commits. Cleared when the name is edited so the guard re-arms. Only meaningful
     /// for [`NamingMode::CreateSession`] while attached to an ephemeral session.
     pub pending_confirm: bool,
+    pub profile_seed: Option<(String, std::path::PathBuf)>,
 }
 
 impl SessionRenameState {
@@ -64,6 +66,7 @@ impl SessionRenameState {
             mode,
             detach_after: false,
             pending_confirm: false,
+            profile_seed: None,
         }
     }
 
@@ -74,11 +77,18 @@ impl SessionRenameState {
             mode: NamingMode::NameEphemeralSession,
             detach_after: true,
             pending_confirm: false,
+            profile_seed: None,
         }
     }
 
     pub fn new_create() -> Self {
         Self::new("", NamingMode::CreateSession)
+    }
+
+    pub fn new_open_profile_as(profile: String, path: std::path::PathBuf) -> Self {
+        let mut state = Self::new("", NamingMode::OpenProfileAs);
+        state.profile_seed = Some((profile, path));
+        state
     }
 
     pub fn new_name_ephemeral() -> Self {

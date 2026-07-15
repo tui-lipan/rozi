@@ -7,7 +7,7 @@ animated geometry, and tmux-style prefix commands.
 
 `hyprmux` runs an always-server model: a background session server owns every PTY and the UI
 attaches to it. A bare launch uses a disposable per-process ephemeral session; a named target or
-`--session` attaches, launches from a same-named profile, or creates a persistent session.
+`--session` attaches or launches from a same-named profile; use `new` to create explicitly.
 
 ## Contents
 

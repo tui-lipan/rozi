@@ -11,6 +11,7 @@ pub(crate) enum SessionStart {
         epoch: u64,
         name: String,
         autostart: bool,
+        create_only: bool,
     },
     Picker {
         epoch: u64,
@@ -33,6 +34,26 @@ pub(crate) fn attach_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, link);
+}
+
+pub(crate) fn create_session_client(
+    epoch: u64,
+    name: String,
+    read_only: bool,
+    link: CommandLink<Msg>,
+) {
+    attach_session_client_with_profile(epoch, name, true, read_only, true, link);
+}
+
+fn attach_session_client_with_profile(
+    epoch: u64,
+    name: String,
+    autostart: bool,
+    read_only: bool,
+    create_only: bool,
+    link: CommandLink<Msg>,
+) {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -52,6 +73,25 @@ pub(crate) fn attach_session_client(
         match super::client::SessionClient::connect_attached(&endpoint, name.clone(), tx, read_only)
         {
             Ok((client, attached)) => {
+                if create_only && !spawned {
+                    client.detach();
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("Session `{name}` is already running"),
+                    });
+                    return;
+                }
+                if create_only {
+                    let expected = server_child.as_ref().map(std::process::Child::id);
+                    if expected.is_none() || client.server_pid() != expected {
+                        client.detach();
+                        link.send(Msg::SessionAttachFailed {
+                            epoch,
+                            message: format!("Session `{name}` was created by another process"),
+                        });
+                        return;
+                    }
+                }
                 link.send(Msg::SessionConnected {
                     epoch,
                     name: name.clone(),
@@ -103,7 +143,11 @@ pub(crate) fn attach_session_client(
                             return;
                         }
                     };
-                    match crate::platform::server_lifecycle::spawn_detached_server(&exe, &name) {
+                    match crate::platform::server_lifecycle::spawn_detached_server(
+                        &exe,
+                        &name,
+                        create_only,
+                    ) {
                         Ok(child) => server_child = Some(child),
                         Err(spawn_err) => {
                             link.send(Msg::SessionAttachFailed {
@@ -179,6 +223,7 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                 controller,
                 clients,
                 input_locked,
+                created_from_profile,
                 ..
             } => Msg::SessionAttached {
                 epoch,
@@ -194,10 +239,17 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                     .is_some_and(|client| client.read_only),
                 clients,
                 input_locked,
+                created_from_profile,
             },
             ServerMessage::SessionInfo { .. } => Msg::SessionError {
                 epoch,
                 message: String::new(),
+            },
+            ServerMessage::SessionOriginSet {
+                created_from_profile,
+            } => Msg::SessionOriginSet {
+                epoch,
+                created_from_profile,
             },
             ServerMessage::LayoutCommitted {
                 rev,

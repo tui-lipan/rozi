@@ -186,6 +186,7 @@ fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discovered
                 panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
                 has_layout: true,
                 clients: ctx.state.attached_client_count(),
+                created_from_profile: ctx.state.created_from_profile.clone(),
             },
         });
         rows.sort_by(|a, b| a.name.cmp(&b.name));
@@ -607,13 +608,20 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.commands_dirty = true;
     let epoch = ctx.state.runtime_epoch;
     let name = crate::state::ephemeral_session_name();
+    let intent = ctx
+        .state
+        .deferred_profile_seed
+        .take()
+        .map_or(crate::state::AttachIntent::Plain, |(profile, path)| {
+            crate::state::AttachIntent::ProfileSeed { profile, path }
+        });
     ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
         autostart: true,
         read_only: false,
-        intent: crate::state::AttachIntent::Plain,
+        intent,
         left: None,
     });
     Update::with_command(Command::spawn(move |link| {
@@ -708,7 +716,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             request_current_pane_focus(ctx);
             Update::full()
         }
-        NamingMode::CreateSession => {
+        NamingMode::CreateSession | NamingMode::OpenProfileAs => {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
@@ -736,9 +744,19 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 request_rename_session_focus(ctx);
                 return Update::full();
             }
+            let profile_seed = ctx
+                .state
+                .rename_session
+                .as_ref()
+                .and_then(|rename| rename.profile_seed.clone());
             ctx.state.rename_session = None;
-
-            attach_session_by_name(ctx, name, true)
+            let intent = match profile_seed {
+                Some((profile, path)) => {
+                    crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
+                }
+                None => crate::ops::profile::OpenNamedIntent::CreateFresh,
+            };
+            crate::ops::profile::open_named_target(ctx, name, intent)
         }
         NamingMode::NameEphemeralSession => {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
@@ -1001,6 +1019,57 @@ mod tests {
                     )),
                     "requesting must never steal the lease"
                 );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
+    fn create_session_starts_fresh_instead_of_carrying_current_panes() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::state::SessionRenameState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                // A profile name unlikely to exist on disk, so resolution must fall through to a
+                // fresh empty session rather than a profile seed.
+                let name = format!("create-fresh-{}", std::process::id());
+                {
+                    let state = backend.state_mut();
+                    state.session_name = Some("eph-test".to_string());
+                    state.session_attached = true;
+                    state.pending_session_attach = None;
+                    // Simulate a profile-seeded session: the current pane carries a command.
+                    state.workspaces[0].panes[0].identity.command = Some("nvim".to_string());
+                    let mut rename = SessionRenameState::new(&name, NamingMode::CreateSession);
+                    rename.pending_confirm = true;
+                    state.rename_session = Some(rename);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::SubmitRenameSession)
+                    .expect("dispatch create session");
+
+                let state = backend.state();
+                let pending = state
+                    .pending_session_attach
+                    .as_ref()
+                    .expect("create queues an attach");
+                assert_eq!(pending.name, name);
+                assert_eq!(pending.intent, crate::state::AttachIntent::Plain);
+                assert_eq!(
+                    pending.left.as_ref().map(|left| left.name.as_str()),
+                    Some("eph-test")
+                );
+                // The new session must not inherit the current layout: the swapped state is a
+                // fresh single-pane default with no launch command to respawn.
+                assert_eq!(state.workspaces[0].panes.len(), 1);
+                assert_eq!(state.workspaces[0].panes[0].identity.command, None);
             })
             .expect("spawn test thread")
             .join()

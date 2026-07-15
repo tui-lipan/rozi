@@ -3,7 +3,7 @@
 //! Everything the app needs in order to *start*, *stop*, and *survive the death of* a session
 //! server, expressed without Unix signal APIs or Win32 handles leaking into higher-level modules:
 //!
-//! - [`spawn_detached_server`] - background server spawn on `--attach`/`--session` bootstrap. Unix
+//! - [`spawn_detached_server`] - background server spawn during session bootstrap. Unix
 //!   detaches by closing all three stdio streams; Windows additionally passes
 //!   `DETACHED_PROCESS | CREATE_NO_WINDOW` so the server never inherits (or pops up) a console.
 //! - [`on_hangup`] - the *client* half of console-control handling. Unix installs a `SIGHUP`/
@@ -44,12 +44,16 @@ pub fn shutdown_requested() -> bool {
 
 /// Spawn a background session server for `name` (`hyprmux --session <name> --server`), fully
 /// detached from this process's terminal so it outlives the client that started it.
-pub fn spawn_detached_server(exe: &Path, name: &str) -> io::Result<std::process::Child> {
+pub fn spawn_detached_server(
+    exe: &Path,
+    name: &str,
+    fresh: bool,
+) -> io::Result<std::process::Child> {
     let mut command = std::process::Command::new(exe);
     command
         .arg("--session")
         .arg(name)
-        .arg("--server")
+        .arg(if fresh { "--fresh-server" } else { "--server" })
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

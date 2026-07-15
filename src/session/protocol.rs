@@ -8,7 +8,7 @@ use crate::state::PaneId;
 
 /// Protocol version shared by clients and session servers. Spawn requests carry resolved launch
 /// policy, and pane metadata includes server-authoritative runtime state.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
@@ -157,6 +157,11 @@ pub enum ClientMessage {
         label: String,
         read_only: bool,
     },
+    /// Record the reusable profile that supplied this session's initial panes. Sent only after the
+    /// profile seed requests have been queued successfully.
+    SetSessionOrigin {
+        profile: String,
+    },
     /// Picker probe: report session status without registering the connection as a client and
     /// without any replay seeding. Cheap enough to run against many sockets concurrently.
     Query {
@@ -278,6 +283,8 @@ pub enum ServerMessage {
         controller: Option<ClientId>,
         clients: Vec<ClientInfo>,
         input_locked: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        created_from_profile: Option<String>,
     },
     /// Reply to a [`ClientMessage::Query`] probe.
     SessionInfo {
@@ -285,6 +292,11 @@ pub enum ServerMessage {
         panes: usize,
         clients: u32,
         has_layout: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        created_from_profile: Option<String>,
+    },
+    SessionOriginSet {
+        created_from_profile: String,
     },
     Resized {
         pane_id: PaneId,
@@ -677,12 +689,9 @@ mod tests {
     }
 
     #[test]
-    fn protocol_attach_shape_round_trips() {
-        let msg = ClientMessage::Attach {
-            session: "dev".into(),
-            protocol_version: PROTOCOL_VERSION,
-            label: "alice".into(),
-            read_only: true,
+    fn session_origin_shape_round_trips() {
+        let msg = ClientMessage::SetSessionOrigin {
+            profile: "work".into(),
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &msg).unwrap();
@@ -756,7 +765,14 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":8,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":9,"label":"alice","read_only":true})
+        );
+        assert_eq!(
+            serde_json::to_value(ClientMessage::SetSessionOrigin {
+                profile: "work".into()
+            })
+            .unwrap(),
+            serde_json::json!({"type":"set-session-origin","profile":"work"})
         );
     }
 
@@ -769,7 +785,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":8})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":9})
         );
     }
 
@@ -839,9 +855,10 @@ mod tests {
                 panes: 2,
                 clients: 1,
                 has_layout: true,
+                created_from_profile: Some("work".into()),
             })
             .unwrap(),
-            serde_json::json!({"type":"session-info","session":"dev","panes":2,"clients":1,"has_layout":true})
+            serde_json::json!({"type":"session-info","session":"dev","panes":2,"clients":1,"has_layout":true,"created_from_profile":"work"})
         );
     }
 

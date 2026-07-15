@@ -7,7 +7,8 @@ framework and was ported from that project's `window_manager` example.
 
 hyprmux runs an always-server model: a background session server owns every PTY and the UI always
 attaches to it. A bare launch uses a disposable per-process ephemeral session; `hyprmux dev` or
-`--session dev` attaches, launches from profile `dev`, or creates a persistent named session.
+`--session dev` attaches to session `dev` or launches canonical profile `dev`. Create a session
+explicitly with `hyprmux new <name>`; unknown targets do not silently create one.
 
 It builds natively on Linux, macOS, and Windows. See the
 [platform support matrix](docs/getting-started.md#platform-support).
@@ -32,9 +33,10 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 - **Pane identity** - rename panes (`n`); titles also follow the program's OSC title.
 - **Named workspaces** - rename a workspace to show `<number>:<name>` in the tabs, usable in the
   `{workspace}` workbar placeholder, saved with profiles and session autosave.
-- **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
-- **Named sessions** - open persistent server-backed sessions with `hyprmux dev`
-  (or add `--read-only` for a viewer),
+- **Named profiles** - capture reusable launch recipes to `~/.config/hyprmux/profiles/`, launch the
+  canonical same-name session or open one under another name, and set a default profile in config.
+- **Named sessions** - attach to persistent server-backed sessions with `hyprmux attach dev`
+  (or add `--read-only` for a viewer), create them with `hyprmux new dev`,
   detach/reattach later, and shut them down explicitly when done.
 - **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.
 - **Copy mode** - vi-style scrollback review with `hjkl`, word/WORD (`w`/`b`/`e`) and line

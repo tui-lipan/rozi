@@ -16,6 +16,7 @@ use crate::state::PaneId;
 #[derive(Clone)]
 pub struct SessionClient {
     tx: mpsc::Sender<ClientOutbound>,
+    server_pid: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -39,7 +40,13 @@ impl SessionClient {
     #[cfg(test)]
     pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientOutbound>) {
         let (tx, rx) = mpsc::channel();
-        (Self { tx }, rx)
+        (
+            Self {
+                tx,
+                server_pid: None,
+            },
+            rx,
+        )
     }
 
     pub fn connect(
@@ -70,11 +77,13 @@ impl SessionClient {
     }
 
     pub fn from_stream_attached(
-        mut stream: IpcConnection,
+        stream: IpcConnection,
         session: impl Into<String>,
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
+        let mut stream = stream;
+        let server_pid = stream.peer_pid();
         let mut reader = stream.try_clone()?;
         reader.set_read_timeout(Some(Duration::from_secs(2)))?;
         protocol::write_frame(
@@ -113,7 +122,11 @@ impl SessionClient {
         });
         let heartbeat_tx = tx.clone();
         thread::spawn(move || forward_inbound(&mut reader, &inbound, Some(&heartbeat_tx)));
-        Ok((Self { tx }, attached))
+        Ok((Self { tx, server_pid }, attached))
+    }
+
+    pub fn server_pid(&self) -> Option<u32> {
+        self.server_pid
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -201,6 +214,10 @@ impl SessionClient {
     }
     pub fn set_input_lock(&self, locked: bool) {
         self.send_control(ClientMessage::SetInputLock { locked });
+    }
+
+    pub fn set_session_origin(&self, profile: String) {
+        self.send_control(ClientMessage::SetSessionOrigin { profile });
     }
     /// Reply to a server heartbeat.
     pub fn pong(&self, seq: u64) {
@@ -304,6 +321,7 @@ mod tests {
             controller: Some(7),
             clients: Vec::new(),
             input_locked: false,
+            created_from_profile: None,
         }
     }
 

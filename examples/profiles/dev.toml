@@ -1,7 +1,7 @@
-# Example named profile for hyprmux.
+# Example reusable launch profile for hyprmux.
 # Copy to ~/.config/hyprmux/profiles/dev.toml, then:
-#   hyprmux dev
-#   hyprmux --profile dev
+#   hyprmux dev                         # canonical session "dev"
+#   hyprmux new review --profile dev    # independent session "review"
 #
 # lazygit on the left keeps an interactive shell when you quit lazygit (keep_open).
 # nvim on the right runs normally and closes the pane when you exit vim.

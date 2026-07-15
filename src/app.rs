@@ -22,9 +22,11 @@ pub struct HyprmuxApp {
     control_listener: Option<crate::platform::ipc::IpcListener>,
     control_guard: Option<control::ControlSocketGuard>,
     attach_session: Option<String>,
+    startup_autostart: bool,
+    startup_create_only: bool,
     read_only: bool,
     /// Whether a bare launch should open the session picker before attaching (`--pick` or
-    /// `[session] startup = "picker"`). Only honored when there is no `--attach`/`--session` and at
+    /// `[session] startup = "picker"`). Only honored when there is no target/`--session` and at
     /// least one named session exists at startup.
     want_startup_picker: bool,
     /// Whether to install the process-global terminal-hangup handler
@@ -41,6 +43,7 @@ struct StartupProfile {
     profile: profiles::HyprmuxProfile,
     name: String,
     path: PathBuf,
+    records_origin: bool,
 }
 
 impl Default for HyprmuxApp {
@@ -55,6 +58,8 @@ impl Default for HyprmuxApp {
             control_listener: None,
             control_guard: None,
             attach_session: None,
+            startup_autostart: true,
+            startup_create_only: false,
             read_only: false,
             want_startup_picker: false,
             watch_hangup: false,
@@ -74,6 +79,8 @@ impl HyprmuxApp {
         control_listener: Option<crate::platform::ipc::IpcListener>,
         control_guard: Option<control::ControlSocketGuard>,
         attach_session: Option<String>,
+        startup_autostart: bool,
+        startup_create_only: bool,
         read_only: bool,
         want_startup_picker: bool,
     ) -> Self {
@@ -86,6 +93,8 @@ impl HyprmuxApp {
             control_listener,
             control_guard,
             attach_session,
+            startup_autostart,
+            startup_create_only,
             read_only,
             want_startup_picker,
             watch_hangup: true,
@@ -115,6 +124,11 @@ impl Component for HyprmuxApp {
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
         state.event_hub = self.event_hub.clone();
+        state.deferred_profile_seed = self.startup_profile.as_ref().and_then(|profile| {
+            profile
+                .records_origin
+                .then(|| (profile.name.clone(), profile.path.clone()))
+        });
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -145,7 +159,7 @@ impl Component for HyprmuxApp {
             }
         }
 
-        // Always-server model: with no explicit `--attach`, attach to this process's ephemeral
+        // Always-server model: with no explicit target, attach to this process's ephemeral
         // session (`eph-<pid>`), autostarting its server. Restored/initial panes are spawned on
         // the server once `Msg::SessionAttached` reports an empty session. Opt-in `--pick` /
         // `[session] startup = "picker"` instead opens the session picker first when a named
@@ -172,7 +186,7 @@ impl Component for HyprmuxApp {
                 .clone()
                 .unwrap_or_else(state::ephemeral_session_name);
             let epoch = ctx.state.runtime_epoch;
-            let autostart = !self.read_only;
+            let autostart = self.startup_autostart && !self.read_only;
             ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
                 epoch,
                 name: name.clone(),
@@ -181,9 +195,15 @@ impl Component for HyprmuxApp {
                 read_only: self.read_only,
                 intent: self.startup_profile.as_ref().map_or(
                     crate::state::AttachIntent::Plain,
-                    |profile| crate::state::AttachIntent::ProfileSeed {
-                        profile: profile.name.clone(),
-                        path: profile.path.clone(),
+                    |profile| {
+                        if profile.records_origin {
+                            crate::state::AttachIntent::ProfileSeed {
+                                profile: profile.name.clone(),
+                                path: profile.path.clone(),
+                            }
+                        } else {
+                            crate::state::AttachIntent::Plain
+                        }
                     },
                 ),
                 left: None,
@@ -192,6 +212,7 @@ impl Component for HyprmuxApp {
                 epoch,
                 name,
                 autostart,
+                create_only: self.startup_create_only,
             }
         };
 
@@ -222,16 +243,26 @@ impl Component for HyprmuxApp {
                     epoch,
                     name,
                     autostart,
+                    create_only,
                 } => {
                     let session_link = link.clone();
                     std::thread::spawn(move || {
-                        attach_session_client(
-                            epoch,
-                            name,
-                            autostart,
-                            startup_read_only,
-                            session_link,
-                        )
+                        if create_only {
+                            crate::session::bootstrap::create_session_client(
+                                epoch,
+                                name,
+                                startup_read_only,
+                                session_link,
+                            )
+                        } else {
+                            attach_session_client(
+                                epoch,
+                                name,
+                                autostart,
+                                startup_read_only,
+                                session_link,
+                            )
+                        }
                     });
                 }
                 SessionStart::Picker { epoch } => {
@@ -457,7 +488,7 @@ pub fn run() -> Result<()> {
             return Ok(());
         }
         Ok(cli::ParsedCli::Control(command)) => return cli::run_control_cli(command),
-        Ok(cli::ParsedCli::Server { name }) => return cli::run_server_cli(&name),
+        Ok(cli::ParsedCli::Server { name, fresh }) => return cli::run_server_cli(&name, fresh),
         Ok(cli::ParsedCli::ListSessions) => return cli::run_list_sessions_cli(),
         Ok(cli::ParsedCli::KillSession { name }) => return cli::run_kill_session_cli(&name),
         Ok(cli::ParsedCli::Run(args)) => args,
@@ -476,30 +507,81 @@ pub fn run() -> Result<()> {
 
     let loaded = config::load_config();
     let mut startup_messages = loaded.warnings;
+    let explicit_target = cli.attach_session.is_some();
     let mut attach_session = cli.attach_session.clone();
+    let mut startup_autostart = attach_session.is_none();
+    let mut startup_create_only = false;
     if attach_session.is_none()
         && !cli.pick
         && loaded.config.session.startup == config::SessionStartup::Last
     {
         attach_session = Some(resolve_last_session_target());
+        startup_autostart = true;
     }
-    let mut startup_profile = attach_session.as_ref().and_then(|name| {
-        let path = config::profile_path_for_name(name);
-        if !path.exists() {
-            return None;
+    let mut startup_profile = None;
+    if let Some(name) = attach_session.as_ref() {
+        if !crate::session::discovery::valid_session_name(name) {
+            startup_fatal(format!("Invalid session name `{name}`."));
         }
-        match profiles::load_profile(&path) {
-            Ok(profile) => Some(StartupProfile {
-                profile,
-                name: name.clone(),
-                path,
-            }),
-            Err(err) => {
-                startup_messages.push(format!("Profile `{name}` load failed: {err}"));
-                None
+        let running = crate::session::discovery::discover_session(name)
+            .ok()
+            .flatten()
+            .is_some();
+        let canonical_path = config::profile_path_for_name(name);
+        match cli.session_command {
+            cli::SessionCommand::Attach => {
+                if !running {
+                    let hint = canonical_path
+                        .exists()
+                        .then(|| format!("\nStart it with: hyprmux {name}"));
+                    startup_fatal(format!(
+                        "Session `{name}` is not running.{}",
+                        hint.unwrap_or_default()
+                    ));
+                }
+                startup_autostart = false;
+            }
+            cli::SessionCommand::New => {
+                if running {
+                    startup_fatal(format!(
+                        "Session `{name}` is already running.\nAttach with: hyprmux attach {name}"
+                    ));
+                }
+                startup_autostart = true;
+                startup_create_only = true;
+                if let Some(profile_name) = cli.profile.as_ref() {
+                    if !crate::session::discovery::valid_session_name(profile_name) {
+                        startup_fatal(format!("Invalid profile name `{profile_name}`."));
+                    }
+                    let path = config::profile_path_for_name(profile_name);
+                    if !path.exists() {
+                        startup_fatal(format!("Profile `{profile_name}` does not exist."));
+                    }
+                    startup_profile = Some(load_startup_profile(profile_name, path));
+                }
+            }
+            cli::SessionCommand::Dwim if explicit_target => {
+                if running {
+                    startup_autostart = false;
+                } else if cli.read_only {
+                    startup_fatal(format!("Session `{name}` is not running."));
+                } else if canonical_path.exists() {
+                    startup_profile = Some(load_startup_profile(name, canonical_path));
+                    startup_autostart = true;
+                } else {
+                    startup_fatal(format!(
+                        "No session or profile named `{name}`.\nCreate it with: hyprmux new {name}"
+                    ));
+                }
+            }
+            cli::SessionCommand::Dwim => {
+                startup_autostart = true;
+                if !running && canonical_path.exists() {
+                    startup_profile = Some(load_startup_profile(name, canonical_path));
+                }
             }
         }
-    });
+    }
 
     if attach_session.is_none()
         && startup_profile.is_none()
@@ -512,6 +594,7 @@ pub fn run() -> Result<()> {
                     profile,
                     name: name.clone(),
                     path,
+                    records_origin: true,
                 })
             }
             Err(err) => {
@@ -537,6 +620,7 @@ pub fn run() -> Result<()> {
                         .unwrap_or("session")
                         .to_string(),
                     path,
+                    records_origin: false,
                 });
             }
             Err(err) => startup_messages.push(format!("Session restore failed: {err}")),
@@ -591,26 +675,56 @@ pub fn run() -> Result<()> {
         control_listener,
         control_guard,
         attach_session,
+        startup_autostart,
+        startup_create_only,
         cli.read_only,
         want_startup_picker,
     ))
     .run()
 }
 
+fn load_startup_profile(name: &str, path: PathBuf) -> StartupProfile {
+    match profiles::load_profile(&path) {
+        Ok(profile) => StartupProfile {
+            profile,
+            name: name.to_string(),
+            path,
+            records_origin: true,
+        },
+        Err(err) => startup_fatal(format!("Profile `{name}` load failed: {err}")),
+    }
+}
+
+fn startup_fatal(message: String) -> ! {
+    eprintln!("{message}");
+    std::process::exit(1);
+}
+
 fn resolve_last_session_target() -> String {
-    crate::session::read_last_named_session()
-        .or_else(|| {
+    select_last_session_target(
+        crate::session::read_last_named_session(),
+        {
             crate::session::server::list_snapshot_names_by_recency()
                 .into_iter()
                 .next()
-        })
-        .or_else(|| {
-            crate::session::discovery::discover_sessions()
-                .ok()?
-                .into_iter()
-                .find(|row| !row.ephemeral)
-                .map(|row| row.name)
-        })
+        },
+        crate::session::discovery::discover_sessions()
+            .ok()
+            .and_then(|rows| {
+                rows.into_iter()
+                    .find(|row| !row.ephemeral)
+                    .map(|row| row.name)
+            }),
+    )
+}
+
+fn select_last_session_target(
+    last: Option<String>,
+    snapshot: Option<String>,
+    live: Option<String>,
+) -> String {
+    last.or(snapshot)
+        .or(live)
         .unwrap_or_else(|| "main".to_string())
 }
 
@@ -618,6 +732,11 @@ fn resolve_last_session_target() -> String {
 mod tests {
     use super::*;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
+
+    #[test]
+    fn startup_last_falls_back_to_explicit_main_creation_target() {
+        assert_eq!(select_last_session_target(None, None, None), "main");
+    }
 
     #[test]
     fn command_palette_modal_is_capped_to_sixty_five_percent_of_viewport() {
@@ -973,6 +1092,7 @@ mod tests {
                                 panes: 1,
                                 clients: 1,
                                 has_layout: true,
+                                created_from_profile: None,
                             },
                         },
                         crate::session::discovery::DiscoveredSession {
@@ -982,6 +1102,7 @@ mod tests {
                                 panes: 2,
                                 clients: 1,
                                 has_layout: true,
+                                created_from_profile: None,
                             },
                         },
                     ]));

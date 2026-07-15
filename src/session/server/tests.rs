@@ -125,6 +125,84 @@ fn first_attacher_is_granted_control() {
 }
 
 #[test]
+fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _stream) = attach_client(&mut server);
+    server.handle_message(
+        first,
+        ClientMessage::SetSessionOrigin {
+            profile: "too-early".into(),
+        },
+    );
+    assert_eq!(server.created_from_profile, None);
+    server.handle_message(
+        first,
+        ClientMessage::SpawnPane {
+            pane_id: 1,
+            generation: 1,
+            command: None,
+            cwd: None,
+            cols: 20,
+            rows: 5,
+            keep_open: false,
+            env: Vec::new(),
+            title: None,
+            palette: test_palette(),
+            shell: test_shell(),
+            command_shell: test_command_shell(),
+        },
+    );
+    server.handle_message(
+        first,
+        ClientMessage::SetSessionOrigin {
+            profile: "work".into(),
+        },
+    );
+    assert_eq!(server.created_from_profile.as_deref(), Some("work"));
+    assert!(server.dirty);
+
+    let (second, _stream) = attach_client(&mut server);
+    server.handle_message(
+        second,
+        ClientMessage::SetSessionOrigin {
+            profile: "other".into(),
+        },
+    );
+    assert_eq!(server.created_from_profile.as_deref(), Some("work"));
+
+    let query = server.handle_query("dev".into(), PROTOCOL_VERSION);
+    assert!(matches!(
+        query.as_slice(),
+        [(
+            Target::Sender,
+            ServerMessage::SessionInfo {
+                created_from_profile: Some(profile),
+                ..
+            }
+        )] if profile == "work"
+    ));
+}
+
+#[test]
+fn profile_origin_claim_is_ignored_without_seeded_panes() {
+    let mut server = SessionServer::new_named("dev");
+    server.layout = Some(SharedLayout {
+        version: 1,
+        canvas_cols: 80,
+        canvas_rows: 24,
+        workspaces: Vec::new(),
+    });
+    let (client, _stream) = attach_client(&mut server);
+    server.handle_message(
+        client,
+        ClientMessage::SetSessionOrigin {
+            profile: "too-late".into(),
+        },
+    );
+    assert_eq!(server.created_from_profile, None);
+}
+
+#[test]
 fn second_attacher_is_a_follower() {
     let mut server = SessionServer::new_named("dev");
     let (first, _s1) = attach_client(&mut server);
@@ -797,6 +875,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         ..ServerSettings::default()
     };
     let mut server = SessionServer::new_named_with_settings("dev", settings.clone());
+    server.created_from_profile = Some("work".into());
     for (id, exited) in [(1, None), (2, Some(0)), (crate::state::POPUP_PANE_ID, None)] {
         let mut screen = TerminalScreen::new(5, 20, 100);
         screen.process_bytes(format!("marker-{id}").as_bytes());
@@ -856,6 +935,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
             .contains("marker-1")
     );
     assert_eq!(restored.layout_rev, 1);
+    assert_eq!(restored.created_from_profile.as_deref(), Some("work"));
     restored.delete_snapshot().unwrap();
     assert!(!root.join("dev").exists());
     let _ = fs::remove_dir_all(root);

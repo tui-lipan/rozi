@@ -8,8 +8,9 @@ its own terminal screens. There is no in-process ("local") PTY mode.
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
   disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail -
   the workbar shows no session badge for it, and the picker lists it as `ephemeral`.
-- **Named target** (`hyprmux dev` or `hyprmux --session dev`) attaches to a persistent session,
-  launches it from profile `dev`, or creates it empty.
+- **Named target** (`hyprmux dev` or `hyprmux --session dev`) attaches to a running persistent
+  session, or launches its canonical same-name profile. It errors when neither exists; empty
+  sessions are created explicitly with `hyprmux new <name>`.
 
 Because the server owns PTYs from startup, naming a session is a **rename** in place (no pane
 movement): the running shells and their scrollback are untouched. See
@@ -19,7 +20,7 @@ movement): the running shells and their scrollback are untouched. See
 
 | | Ephemeral | Named (`dev`) |
 |---|---|---|
-| Created by | bare `hyprmux` launch | positional target/`--session`, or *Rename session* |
+| Created by | bare `hyprmux` launch | profile launch, explicit `new`, or *Rename session* |
 | Clean quit (`prefix q` / `Alt+q`) | server shuts down | server keeps running |
 | Detach (`prefix d`) | prompts for a name first (see below) | server left running (reattachable) |
 | Attach-elsewhere | server shuts down (disposable) | server left running |
@@ -36,21 +37,37 @@ entry stands for the named pipe `\\.\pipe\hyprmux.<user-sid>.session-<name>` —
 [Control](control.md#endpoints-per-platform)). Names are sanitized when constructing the endpoint.
 
 ```bash
-hyprmux dev                     # attach, launch from profile, or create "dev"
-hyprmux --session dev           # explicit equivalent form
-hyprmux dev --read-only         # attach as a viewer without input authority
+hyprmux dev                     # attach "dev", or launch canonical profile "dev"
+hyprmux --session dev           # equivalent target spelling
+hyprmux attach dev              # attach only; error unless "dev" is running
+hyprmux attach dev --read-only  # attach as a viewer without input authority
+hyprmux new dev                 # create a fresh empty session; error if running
+hyprmux new review --profile dev # create "review" from profile "dev"
 hyprmux --session dev --server  # run the server process directly
 hyprmux list-sessions           # list connectable sessions with pane/layout status
 hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
 ```
+
+The positional target performs exactly three steps: attach if that session is running; otherwise
+launch the canonical same-name profile; otherwise report an error suggesting `hyprmux new <name>`.
+It never silently creates an unknown target. `hyprmux attach <name> [--read-only]` is attach-only,
+and `hyprmux new <name> [--profile <recipe>]` is create-only. `attach` and `new` are reserved command
+words; use the `--session` spelling to target a session or canonical profile binding literally named
+`attach` or `new`.
+
+Sessions and profiles are independent. A profile is a reusable launch recipe, and its same-name
+session is only its default canonical binding. A newly seeded session optionally records
+`created_from_profile`; this is origin metadata, not a live link or the session's identity.
+Explicit `new` means fresh creation: if an old resurrection snapshot exists for that name, hyprmux
+removes it before starting the new server rather than restoring it.
 
 `kill-session` only talks to hyprmux's session endpoint and sends the protocol `Shutdown` message;
 it does not kill arbitrary processes or remove unrelated files.
 
 ## How a server starts and stops
 
-A server is started in the background by whichever client first needs it (a target/`--session`
-with no server running), fully detached from that client's terminal — `DETACHED_PROCESS` with no
+A server is started in the background by whichever client first needs it (a profile-backed target,
+explicit `new`, or configured startup policy), fully detached from that client's terminal — `DETACHED_PROCESS` with no
 inherited console on Windows.
 
 Stopping one is **always** the authenticated protocol `Shutdown` message first. That is the
@@ -86,7 +103,8 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
 **separate** session - it never renames the one you're in:
 
 - Highlight an existing session and press `Enter` to attach to it.
-- Type a new name and press `Ctrl+N` to create and attach to a brand-new named session.
+- Type a new name and press `Ctrl+N` to create a fresh empty session under that name. Creation is
+  explicit and fails if the name is already running.
 - Press `Ctrl+D` to detach the current named session and exit the client, leaving its server running
   for later reattach.
 - Press `Ctrl+K` twice to kill the highlighted named session or reset a highlighted ephemeral one.
@@ -115,7 +133,10 @@ ephemeral session, so the client stays alive rather than quitting.
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
 disappear on their own), so there is no manual refresh key. A session row also reports attached
 clients besides the current UI (for example, `2 panes · 1 other client`), making it clear before
-you attach that you will initially join that session as a follower.
+you attach that you will initially join that session as a follower. When available, it also shows
+the creation recipe as `from <profile>`. This `created_from_profile` value survives detach,
+reattach, and resurrection snapshots; replacing the session with another profile does not rewrite
+its historical creation origin.
 
 ### Opening the picker at startup
 
@@ -254,7 +275,8 @@ fresh launch can restore it after the server is gone.
 Named sessions are periodically snapshotted when `[session] resurrect = true` (the default), and
 also immediately when their last client detaches after a change. Snapshots live under
 `$XDG_STATE_HOME/hyprmux/sessions/<name>/` (or `~/.local/state/hyprmux/sessions/<name>/`) and use
-versioned JSON metadata plus per-pane terminal replay files. Writes replace the complete snapshot
+versioned JSON metadata plus per-pane terminal replay files. The metadata includes the optional
+`created_from_profile` origin. Writes replace the complete snapshot
 atomically with private directory (`0700`) and file (`0600`) permissions.
 
 Starting a named server restores its layout, pane commands, working directories, titles, palette,
@@ -266,9 +288,11 @@ loading. Unsupported or malformed snapshots are left on disk and reported withou
 `kill-session` and a clean in-protocol session shutdown mean **forget**: they remove the snapshot as
 well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it for resurrection.
 
-Profiles are named-session launch recipes: `hyprmux dev` attaches to `dev` when running, otherwise
-loads `~/.config/hyprmux/profiles/dev.toml` into a fresh named `dev` session. See
-[profiles.md](profiles.md).
+Profiles are reusable launch recipes. `hyprmux dev` attaches to `dev` when running, otherwise loads
+`~/.config/hyprmux/profiles/dev.toml` into a fresh canonical session named `dev`; use `hyprmux new
+review --profile dev` to create an independently named session from the same recipe. Session
+resurrection, local autosave, and `[session] startup = "last"` retain their existing precedence and
+lifecycle behavior. See [profiles.md](profiles.md).
 
 ## Stale sockets and limits
 
@@ -277,5 +301,5 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
-The session wire protocol is version 8. After upgrading hyprmux, restart existing named session
+The session wire protocol is version 9. After upgrading hyprmux, restart existing named session
 servers before attaching with the new client.

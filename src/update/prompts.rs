@@ -131,6 +131,10 @@ pub(super) fn profile_picker_apply(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::profile::apply_selected_profile_in_place(ctx)
 }
 
+pub(super) fn profile_picker_open_as(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::profile::open_selected_profile_as(ctx)
+}
+
 pub(super) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
     change_profile_query(ctx, query)
 }

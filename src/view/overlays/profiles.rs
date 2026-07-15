@@ -24,26 +24,50 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
 fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    if ctx
-        .state
-        .profile_picker
-        .as_ref()
-        .is_some_and(|picker| picker.apply_mode)
-    {
-        return hint_row()
-            .justify(Justify::SpaceBetween)
-            .gap(2)
-            .child(hint_pill(theme, "replace", "enter"))
+    let Some(picker) = ctx.state.profile_picker.as_ref() else {
+        return Text::new("").into();
+    };
+    let query = picker.input.text().trim().to_ascii_lowercase();
+    let selected = picker.entries.get(picker.selected).filter(|entry| {
+        query.is_empty() || entry.name.to_ascii_lowercase().contains(&query)
+    });
+    if picker.apply_mode {
+        let mut hints = hint_row();
+        if selected.is_some() {
+            hints = hints.child(hint_pill(theme, "replace", "enter"));
+        }
+        return hints
             .child(hint_pill(theme, "cancel", "esc"))
             .into();
     }
-    hint_row()
-        .justify(Justify::SpaceBetween)
-        .gap(2)
-        .child(hint_pill(theme, "attach/launch", "enter"))
-        .child(hint_pill(theme, "open as", "ctrl+enter"))
-        .child(hint_pill(theme, "default", "ctrl+f"))
-        .child(hint_pill(theme, "delete", "ctrl+d"))
+    let mut hints = hint_row();
+    if let Some(entry) = selected {
+        let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
+        if !current {
+            let running = matches!(
+                picker.running.get(&entry.name),
+                Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
+            );
+            hints = hints.child(hint_pill(
+                theme,
+                if running { "attach" } else { "launch" },
+                "enter",
+            ));
+        }
+        hints = hints.child(hint_pill(theme, "open as", "ctrl+enter"));
+        hints = hints.child(hint_pill(
+            theme,
+            if ctx.state.config.profile.default.as_deref() == Some(entry.name.as_str()) {
+                "unset default"
+            } else {
+                "set default"
+            },
+            "ctrl+f",
+        ));
+        hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
+    }
+    hints
+        .child(hint_pill(theme, "new", "ctrl+n"))
         .into()
 }
 
@@ -163,6 +187,8 @@ fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     ctx.link().key_handler(|key| {
         if key.mods.ctrl && key.code == KeyCode::Enter {
             Some(Msg::ProfilePickerOpenAs)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
+            Some(Msg::ProfilePickerNew)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
             Some(Msg::ProfilePickerDelete)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {

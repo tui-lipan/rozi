@@ -93,7 +93,7 @@ default = "dev"
 ```
 
 Or use the in-app **Profiles** command (command palette): highlight a profile and press
-`Ctrl+f` to set it as the startup default.
+`Ctrl+f` to toggle it as the startup default.
 
 If a configured default profile is missing or fails to parse, hyprmux shows a startup warning and
 falls through to the next bare-launch source (or a fresh layout). An explicit canonical target with
@@ -115,14 +115,17 @@ Open **Profiles** from the command palette, then:
 | --- | --- |
 | **Enter** | Attach to the running canonical same-name session, or launch that canonical session from the profile. Leaving a live ephemeral session may require a second press. |
 | **Ctrl+Enter** | **Open as**: launch the highlighted recipe as a new session under a name you enter. The name must not already be running. |
+| **Ctrl+n** | Capture the current session as a new profile. |
 | **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
-| **Ctrl+f** | Set the highlighted profile as `[profile] default` in `hyprmux.toml`. |
+| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `hyprmux.toml`; pressing it on the current default clears the setting. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 
 The status beside a profile refers only to its canonical same-name session: **attached**,
 **running**, or **launch**. It does not count independent sessions created from that profile under
 other names. Profiles marked **default** match your current `[profile] default` setting. Deleting
 the default profile clears that config entry when the file is removed.
+The footer hints follow the selected row, showing **attach** or **launch** and **set default** or
+**unset default** as appropriate.
 
 Profile names use letters, numbers, `_`, or `-` because their canonical binding can identify a
 same-named session.

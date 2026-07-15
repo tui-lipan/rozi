@@ -58,6 +58,7 @@ pub enum Msg {
     ProfilePickerDelete,
     ProfilePickerApply,
     ProfilePickerOpenAs,
+    ProfilePickerNew,
     SelectProfile(usize),
     ProfileSessionsDiscovered {
         epoch: u64,

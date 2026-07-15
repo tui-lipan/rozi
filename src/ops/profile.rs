@@ -372,15 +372,25 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
         return Update::none();
     };
 
-    match persist_default_profile(&entry.name) {
+    let unset = ctx.state.config.profile.default.as_deref() == Some(entry.name.as_str());
+    let result = if unset {
+        clear_default_profile(&entry.name).map(|_| ())
+    } else {
+        persist_default_profile(&entry.name).map(|_| ())
+    };
+    match result {
         Ok(_) => {
-            ctx.state.config.profile.default = Some(entry.name.clone());
+            ctx.state.config.profile.default = (!unset).then(|| entry.name.clone());
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
             ctx.toast().push(info_toast(
                 &ctx.state.theme,
-                format!("Default profile `{}`", entry.name),
+                if unset {
+                    format!("Cleared default profile `{}`", entry.name)
+                } else {
+                    format!("Default profile `{}`", entry.name)
+                },
             ));
         }
         Err(message) => {

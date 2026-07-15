@@ -4,19 +4,26 @@ fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
         .gap(1)
         .width(Length::Auto)
         .height(Length::Auto)
-        .child(Text::new(label).style(fg_only(&theme.primary).bold()))
-        .child(Text::new(key).style(fg_only(&theme.muted)))
+        .child(
+            Text::new(label)
+                .overflow(Overflow::Clip)
+                .style(fg_only(&theme.primary).bold()),
+        )
+        .child(
+            Text::new(key)
+                .overflow(Overflow::Clip)
+                .style(fg_only(&theme.muted)),
+        )
         .into()
 }
 
 /// The base footer row shared by every overlay hint bar: content-height with a leading gap above
 /// it. Callers add [`hint_pill`] children and may override justify/gap.
-fn hint_row() -> HStack {
-    HStack::new()
-        .height(Length::Auto)
+fn hint_row() -> Flow {
+    Flow::new()
         .padding((1, 1, 0, 1))
-        .justify(Justify::Start)
         .gap(3)
+        .row_gap(0)
 }
 
 /// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save

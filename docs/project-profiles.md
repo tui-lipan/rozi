@@ -44,8 +44,8 @@ hyprmux new review --profile dev
 ```
 
 Open **Profiles** to use the canonical flow with `Enter`, open the recipe as a newly named session
-with `Ctrl+Enter`, replace the current session with `Ctrl+R` twice, delete profiles, or mark one as
-the ephemeral startup default:
+with `Ctrl+Enter`, capture a new profile with `Ctrl+N`, replace the current session with `Ctrl+R`
+twice, delete profiles, or toggle one as the ephemeral startup default:
 
 ```toml
 [profile]

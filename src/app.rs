@@ -734,6 +734,51 @@ mod tests {
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
 
     #[test]
+    fn profile_picker_hints_reflow_without_splitting_pills() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 52,
+                    h: 18,
+                });
+                let mut picker =
+                    crate::state::ProfilePickerState::new(vec![crate::config::ProfileEntry {
+                        name: "rust-dev".to_string(),
+                        path: PathBuf::from("rust-dev.toml"),
+                    }]);
+                picker.running.insert(
+                    "rust-dev".to_string(),
+                    crate::session::discovery::DiscoveredSessionStatus::Running {
+                        panes: 2,
+                        clients: 1,
+                        has_layout: true,
+                        created_from_profile: None,
+                    },
+                );
+                backend.state_mut().config.profile.default = Some("rust-dev".to_string());
+                backend.state_mut().profile_picker = Some(picker);
+                backend.state_mut().show_profile_picker = true;
+                backend.render();
+
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                assert!(lines.iter().any(|line| line.contains("attach enter")));
+                assert!(
+                    lines
+                        .iter()
+                        .any(|line| line.contains("unset default ctrl+f"))
+                );
+                assert!(lines.iter().any(|line| line.contains("new ctrl+n")));
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
     fn startup_last_falls_back_to_explicit_main_creation_target() {
         assert_eq!(select_last_session_target(None, None, None), "main");
     }

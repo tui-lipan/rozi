@@ -135,6 +135,10 @@ pub(super) fn profile_picker_open_as(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::profile::open_selected_profile_as(ctx)
 }
 
+pub(super) fn profile_picker_new(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::profile::open_save_profile_prompt(ctx)
+}
+
 pub(super) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
     change_profile_query(ctx, query)
 }

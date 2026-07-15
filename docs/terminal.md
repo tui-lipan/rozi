@@ -161,7 +161,7 @@ rendered terminal lines rather than relying on an in-terminal highlight search.
   pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
   byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it
   through the same parser it uses for live output - one code path, exact reconstruction.
-- **Named sessions persist across detach.** `hyprmux --attach <name>` connects to a named server
+- **Named sessions persist across detach.** `hyprmux <name>` connects to a named server
   whose PTYs survive client detach/quit and can be reattached later.
 - **Profiles restore layout and launch intent, not live state.** Restoring a
   [project profile](project-profiles.md) starts fresh shells/commands - it does not resurrect

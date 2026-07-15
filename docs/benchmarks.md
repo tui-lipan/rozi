@@ -109,17 +109,17 @@ one of the output producers in a pane. Both clients receive and parse the pane o
 
 ```bash
 # Terminal 1
-cargo run --release -- --attach stress
+cargo run --release -- stress
 
 # Terminal 2
-cargo run --release -- --attach stress
+cargo run --release -- stress
 ```
 
 Use the same terminal dimensions for controlled comparisons. A follower may be read-only, but it
 still receives output:
 
 ```bash
-cargo run --release -- --attach stress --read-only
+cargo run --release -- stress --read-only
 ```
 
 ## Profiling with Samply
@@ -129,11 +129,11 @@ stripping. Install Samply separately, build once, then record the binary directl
 
 ```bash
 cargo build --profile release-debug
-samply record ./target/release-debug/hyprmux --attach profile
+samply record ./target/release-debug/hyprmux profile
 ```
 
 Generate a representative workload in the recorded session, then detach or quit to finish the
-recording. For a self-contained ephemeral session, omit `--attach profile`.
+recording. For a self-contained ephemeral session, omit the `profile` target.
 
 ## Known hot-path shape
 

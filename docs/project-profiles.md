@@ -13,11 +13,9 @@ shell:
 - **Custom title** - a name you set with the `n` keybinding (or *Rename pane* in the command
   palette). It overrides the program's terminal title. Submitting an empty name clears it.
 - **Profile name** - the name a pane was restored with from a profile.
-- **cwd / command** - the working directory and launch command. On Linux the **live** working
-  directory of the pane's shell is discovered on demand (from `/proc/<pid>/cwd`), so a save
-  records where the shell actually is, not just where it was launched. The command is known for
-  panes launched from a profile. These appear as the pane's subtitle and are what *Save project
-  profile* writes back.
+- **cwd / command** - the local working directory and launch command. Saves use live server runtime
+  metadata, reject remote-host cwd reports, and capture a non-shell foreground executable basename
+  when no explicit launch command exists.
 
 The titlebar shows the custom title if set, otherwise the program's terminal title, otherwise
 the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
@@ -29,24 +27,25 @@ Named profiles live in `~/.config/hyprmux/profiles/<name>.toml`. Save the curren
 the **Save profile** command in the command palette; it prompts for the profile name and writes
 that file.
 
-Load a named profile from the command line:
+Open its same-named session from the command line:
 
 ```bash
 hyprmux dev
-hyprmux --profile dev
-hyprmux -p dev
+hyprmux --session dev
 ```
 
-Or open **Profiles** from the command palette to load, delete, or mark a profile as the startup
-default. The default profile is stored in config as:
+The target attaches when `dev` is already running, otherwise launches named session `dev` from the
+profile. Open **Profiles** to use the same flow, apply a recipe into the current session with
+`Ctrl+R` twice, delete profiles, or mark one as the ephemeral startup default:
 
 ```toml
 [profile]
 default = "dev"
 ```
 
-Startup priority is CLI profile, then `[profile] default`, then local session autosave when
-enabled. See [Named profiles](profiles.md) for the picker controls.
+Explicit targets take precedence. On a bare ephemeral launch, `[profile] default` precedes local
+session autosave; `[session] startup = "last"` instead opens a named session. See
+[Named profiles](profiles.md) for picker controls.
 
 ## Profile shape
 
@@ -116,7 +115,7 @@ caveats: it restores layout and launch intent, not live PTY state. A CLI profile
 `[profile] default` takes precedence over the autosaved session.
 
 For live PTY persistence across detach/reattach, use a named attached session instead:
-`hyprmux --attach <name>` (see [Sessions](sessions.md)).
+`hyprmux <name>` (see [Sessions](sessions.md)).
 
 ## Saving limitations
 

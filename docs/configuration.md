@@ -126,11 +126,12 @@ kill_workspace = true          # confirm killing all panes on a workspace (defau
 kill_session = true            # confirm shutting down the attached session (default: true)
 quit_ephemeral = true          # confirm quitting an ephemeral session that still has a live pane (default: true)
 new_temporary_session = true   # confirm discarding the current ephemeral session for a fresh one (default: true)
+load_profile = true            # confirm replacing a live ephemeral session from Profiles (default: true)
 
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 resurrect = true             # snapshot named sessions for restart after server loss (default: true)
-startup = "picker"           # "ephemeral" (default) attaches directly; "picker" shows the session picker
+startup = "picker"           # "ephemeral" (default), "picker", or "last"
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
 
 [scratchpad]
@@ -330,7 +331,7 @@ active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Name of a profile in `~/.config/hyprmux/profiles/` to load on startup (unless overridden by a CLI profile). Also writable via **Ctrl+f** in the **Profiles** picker. |
+| `default` | _none_ | Profile used to seed a bare ephemeral launch. Explicit named targets and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
@@ -391,6 +392,7 @@ it from a searchable list is already a deliberate choice.
 | `kill_session` | `true` | Shutting down the attached named session. |
 | `quit_ephemeral` | `true` | Quitting while on an ephemeral session with a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
 | `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
+| `load_profile` | `true` | Replacing a live disposable session by opening a profile-backed named target. |
 
 **Not covered by `[confirm]`:** the session picker and the session-naming prompt carry their own
 built-in confirmations that are **always on** and cannot be disabled here, because they read off the
@@ -405,16 +407,17 @@ Optional **local** session auto-save: persist the live layout when a local `hypr
 and restore it on the next local launch. Like profiles, this restores *layout and launch intent*,
 not live PTY state.
 
-This is separate from named attached sessions (`hyprmux --attach <name>`), which run PTYs in a
+This is separate from named sessions (`hyprmux <name>`), which run PTYs in a
 background session server and can be detached/reattached with live terminal state intact.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
-| `startup` | `"ephemeral"` | Startup session behavior. `"ephemeral"` attaches directly to a fresh ephemeral session; `"picker"` opens the session picker first (equivalent to `--pick`). |
+| `startup` | `"ephemeral"` | `"ephemeral"` starts scratch state; `"picker"` opens the picker; `"last"` opens the last named session, then the newest resurrection snapshot, any running named session, or `main`. |
 | `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 
-A CLI profile or `[profile] default` takes precedence over the autosaved session at startup.
+An explicit target takes precedence over startup configuration. `startup = "last"` takes precedence
+over `[profile] default` and autosave; those remain ephemeral-layout seeders.
 
 With `startup = "picker"` (or `--pick`), the session picker is shown at launch **only when at least
 one named session already exists**; otherwise the launch attaches to an ephemeral session as usual.
@@ -624,7 +627,7 @@ Multiple entries may target the same event; each command is launched asynchronou
 `HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
 are warned and ignored.
 
-See [Hooks](hooks.md) for all 12 events and fields, the complete environment contract, command
+See [Hooks](hooks.md) for all 14 events and fields, the complete environment contract, command
 lifecycle and client-side semantics, migration examples, and control-socket callbacks.
 
 ## Pane synchronization

@@ -43,17 +43,15 @@ Run:
 cargo run
 ```
 
-Run a named profile:
+Open a named profile-backed session:
 
 ```bash
 cargo run -- dev
-cargo run -- --profile dev
 ```
 
-Attach to a named session:
+Explicit equivalent spelling:
 
 ```bash
-cargo run -- --attach dev
 cargo run -- --session dev
 ```
 
@@ -135,7 +133,7 @@ Profile an optimized build with debug symbols:
 
 ```bash
 cargo build --profile release-debug
-samply record ./target/release-debug/hyprmux --attach profile
+samply record ./target/release-debug/hyprmux profile
 ```
 
 See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, and hot-path notes.
@@ -187,7 +185,7 @@ floating geometry, focus, input routing, profiles, sessions, and terminal palett
 
 `hyprmux` is always-server: the session server owns every PTY and the client always attaches,
 parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
-ephemeral session (`eph-<pid>`); `--attach` / `--session` connects to a persistent named session.
+ephemeral session (`eph-<pid>`); a positional target / `--session` opens a persistent named session.
 Detach leaves the server running for later reattach; a clean quit shuts an ephemeral server down.
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
@@ -360,7 +358,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
-- `--attach <NAME>` / `--session <NAME>` connects to persistent named session servers.
+- `<NAME>` / `--session <NAME>` attaches, launches from a profile, or creates a named session.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
   crate uses `terminal`, `terminal-serde`, and `theme-reload`.
 

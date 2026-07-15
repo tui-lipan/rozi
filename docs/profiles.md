@@ -6,17 +6,14 @@ Named profiles are saved workspace layouts stored as TOML files in:
 ~/.config/hyprmux/profiles/<name>.toml
 ```
 
-Each profile records workspaces, pane titles, layout metadata, and optional launch
+Each version-1 profile records workspaces, pane titles, layout metadata, and optional launch
 identity (`cwd`, `command`, `keep_open`, floating geometry). Profiles do **not** save live
-PTY state - loading a profile tears down existing panes and starts fresh shells or commands.
+PTY state. Launching a session from one starts fresh shells or commands; applying one in place
+replaces the destination session's panes after an unconditional two-press confirmation.
 
-This is separate from **session autosave** (`[session] autosave`), which silently persists
-your last layout on quit. Named profiles are explicit, shareable layouts you choose to save
-and load.
-
-It is also separate from **attached named sessions** (`hyprmux --attach <name>`), which keep live
-PTYs in a background server for detach/reattach. Profiles always start fresh PTYs from saved
-launch intent.
+Profiles are recipes for named sessions. Opening `dev` attaches to a running session named `dev`,
+or launches that session from `profiles/dev.toml`, or creates an empty named session when neither
+exists. Existing version-1 profile files remain compatible.
 
 ## Profile fields
 
@@ -60,21 +57,18 @@ command = "nvim"
 
 A commented copy lives at [`examples/profiles/dev.toml`](../examples/profiles/dev.toml).
 
-## Startup: CLI and default profile
+## Open a profile-backed session
 
 Launch a named profile from the command line:
 
 ```bash
 hyprmux dev
-hyprmux --profile dev
-hyprmux -p dev
+hyprmux --session dev
 ```
 
-Startup priority:
-
-1. CLI profile (`dev` above)
-2. `[profile] default = "dev"` in `hyprmux.toml`
-3. Session autosave (when enabled)
+An explicit target always uses attach-or-launch-or-create semantics. A bare `hyprmux` still starts
+an ephemeral scratch session unless `[session] startup = "last"` is configured. In ephemeral mode,
+`[profile] default` remains the first layout seed, followed by session autosave.
 
 Set a default profile in config:
 
@@ -95,6 +89,7 @@ through to the next source (or a fresh layout).
 | --- | --- |
 | **Save profile** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. Named sessions prefill their own name; overwriting requires a second **Enter**. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
+| **Apply profile into session...** | Replaces the current session's panes from a profile without changing its name. |
 
 ### Profile picker actions
 
@@ -102,7 +97,8 @@ Open **Profiles** from the command palette, then:
 
 | Key | Action |
 | --- | --- |
-| **Enter** | Load the highlighted profile (replaces all panes). |
+| **Enter** | Attach to the running same-named session, or launch it from the profile. Destructive replacement of a live ephemeral session requires a second press. |
+| **Ctrl+r** | Apply the highlighted profile into the current session. Press twice to replace every pane. |
 | **Ctrl+f** | Set the highlighted profile as `[profile] default` in `hyprmux.toml`. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 

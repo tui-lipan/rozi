@@ -6,8 +6,8 @@ arranged with dwindle (or master) tiling, with floating windows, fullscreen, 9 w
 animated geometry, and tmux-style prefix commands.
 
 `hyprmux` runs an always-server model: a background session server owns every PTY and the UI
-attaches to it. A bare launch uses a disposable per-process ephemeral session; `--attach` /
-`--session` connects to a persistent named session.
+attaches to it. A bare launch uses a disposable per-process ephemeral session; a named target or
+`--session` attaches, launches from a same-named profile, or creates a persistent session.
 
 ## Contents
 
@@ -34,8 +34,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; `
 - **Layouts** - dwindle tiling by default, master/stack per workspace, plus floating and
   fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
 - **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
-- **Named sessions** - `hyprmux --attach <name>` creates/connects to a persistent PTY server;
-  local launches remain single-process.
+- **Named sessions** - `hyprmux <name>` creates/connects to a persistent PTY server.
 - **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
   [Configuration](configuration.md).
 - **Architecture / internals** - see [AGENTS.md](../AGENTS.md) at the repo root.

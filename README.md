@@ -6,8 +6,8 @@ prefix commands. It is built on the [`tui-lipan`](https://crates.io/crates/tui-l
 framework and was ported from that project's `window_manager` example.
 
 hyprmux runs an always-server model: a background session server owns every PTY and the UI always
-attaches to it. A bare launch uses a disposable per-process ephemeral session; explicit `--attach` /
-`--session` connects to a persistent named session for detach/reattach-style workflows.
+attaches to it. A bare launch uses a disposable per-process ephemeral session; `hyprmux dev` or
+`--session dev` attaches, launches from profile `dev`, or creates a persistent named session.
 
 It builds natively on Linux, macOS, and Windows. See the
 [platform support matrix](docs/getting-started.md#platform-support).
@@ -33,7 +33,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 - **Named workspaces** - rename a workspace to show `<number>:<name>` in the tabs, usable in the
   `{workspace}` workbar placeholder, saved with profiles and session autosave.
 - **Named profiles** - save layouts to `~/.config/hyprmux/profiles/`, load via CLI (`hyprmux dev`) or the in-app picker, and set a default profile in config.
-- **Named sessions** - attach to persistent server-backed sessions with `hyprmux --attach dev`
+- **Named sessions** - open persistent server-backed sessions with `hyprmux dev`
   (or add `--read-only` for a viewer),
   detach/reattach later, and shut them down explicitly when done.
 - **Scrollback search** - search a pane's scrollback (`/`) and jump between matches.

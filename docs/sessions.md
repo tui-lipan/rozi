@@ -4,12 +4,12 @@
 owns every PTY; the UI client always attaches to a session and parses the raw PTY byte stream into
 its own terminal screens. There is no in-process ("local") PTY mode.
 
-- **Bare launch** (`hyprmux`, `hyprmux dev`, `hyprmux --profile dev`) attaches to a per-process
+- **Bare launch** (`hyprmux`) attaches to a per-process
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
   disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail -
   the workbar shows no session badge for it, and the picker lists it as `ephemeral`.
-- **Named session** (`hyprmux --attach dev` or `hyprmux --session dev`) attaches to a persistent,
-  user-named session, starting `hyprmux --session dev --server` if it is not already running.
+- **Named target** (`hyprmux dev` or `hyprmux --session dev`) attaches to a persistent session,
+  launches it from profile `dev`, or creates it empty.
 
 Because the server owns PTYs from startup, naming a session is a **rename** in place (no pane
 movement): the running shells and their scrollback are untouched. See
@@ -19,7 +19,7 @@ movement): the running shells and their scrollback are untouched. See
 
 | | Ephemeral | Named (`dev`) |
 |---|---|---|
-| Created by | bare `hyprmux` launch | `--attach`/`--session`, or *Rename session* on the current one |
+| Created by | bare `hyprmux` launch | positional target/`--session`, or *Rename session* |
 | Clean quit (`prefix q` / `Alt+q`) | server shuts down | server keeps running |
 | Detach (`prefix d`) | prompts for a name first (see below) | server left running (reattachable) |
 | Attach-elsewhere | server shuts down (disposable) | server left running |
@@ -36,9 +36,9 @@ entry stands for the named pipe `\\.\pipe\hyprmux.<user-sid>.session-<name>` —
 [Control](control.md#endpoints-per-platform)). Names are sanitized when constructing the endpoint.
 
 ```bash
-hyprmux --attach dev            # attach UI to session "dev", starting it if needed
-hyprmux --session dev           # equivalent attach form
-hyprmux --attach dev --read-only # attach as a viewer without input authority
+hyprmux dev                     # attach, launch from profile, or create "dev"
+hyprmux --session dev           # explicit equivalent form
+hyprmux dev --read-only         # attach as a viewer without input authority
 hyprmux --session dev --server  # run the server process directly
 hyprmux list-sessions           # list connectable sessions with pane/layout status
 hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
@@ -49,7 +49,7 @@ it does not kill arbitrary processes or remove unrelated files.
 
 ## How a server starts and stops
 
-A server is started in the background by whichever client first needs it (`--attach`/`--session`
+A server is started in the background by whichever client first needs it (a target/`--session`
 with no server running), fully detached from that client's terminal — `DETACHED_PROCESS` with no
 inherited console on Windows.
 
@@ -125,6 +125,10 @@ attach to instead, launch with `--pick` or set `[session] startup = "picker"` (s
 session already exists; otherwise the launch falls through to a normal ephemeral attach. Dismissing
 the picker with `Esc` attaches a fresh ephemeral session, so a launch is never left without a
 terminal.
+
+Set `[session] startup = "last"` to reopen the most recently attached named session. Without MRU
+history, hyprmux tries the newest resurrection snapshot, any running named session, then `main`.
+Explicit targets and `--pick` take precedence.
 
 ## Attach, detach, and quit
 
@@ -226,7 +230,7 @@ server never self-reaps from client absence: it stays alive until explicitly kil
 ## Ephemeral session lifecycle
 
 ```text
-UI start (no --attach) ── spawn+attach ──▶ ATTACHED-EPHEMERAL(eph-<pid>)
+UI start (no target) ── spawn+attach ──▶ ATTACHED-EPHEMERAL(eph-<pid>)
 ATTACHED-EPHEMERAL: quit                 ⇒ Shutdown ⇒ server exits (panes die)
                     Rename / detach+name ⇒ ATTACHED-NAMED (same server, same panes)
                     attach-elsewhere     ⇒ Shutdown ⇒ server exits (disposable)
@@ -262,8 +266,8 @@ loading. Unsupported or malformed snapshots are left on disk and reported withou
 `kill-session` and a clean in-protocol session shutdown mean **forget**: they remove the snapshot as
 well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it for resurrection.
 
-Named profiles are separate startup layouts: `hyprmux dev` / `hyprmux --profile dev` load
-`~/.config/hyprmux/profiles/dev.toml` into a fresh ephemeral session. See
+Profiles are named-session launch recipes: `hyprmux dev` attaches to `dev` when running, otherwise
+loads `~/.config/hyprmux/profiles/dev.toml` into a fresh named `dev` session. See
 [profiles.md](profiles.md).
 
 ## Stale sockets and limits

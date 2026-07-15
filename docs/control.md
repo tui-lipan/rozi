@@ -62,7 +62,7 @@ toast and a second matching call within the toast window confirms it.
 Session lifecycle commands are separate from the per-run control socket:
 
 ```bash
-hyprmux --attach dev        # attach to/start a persistent named session
+hyprmux dev                 # attach, launch, or create a persistent named session
 hyprmux list-sessions       # list connectable named sessions
 hyprmux kill-session dev    # request clean shutdown of a named session
 ```
@@ -102,7 +102,8 @@ clicked, or through the normal close action. Escape is sent to the popup applica
 
 Subscriptions support `pane-spawned`, `pane-exited`, `focus-changed`, `workspace-switched`,
 `session-attached`, `session-detached`, `session-renamed`, `controller-changed`, `client-joined`,
-`client-left`, `profile-loaded`, and `config-reloaded`. An empty `events` list subscribes to all 12.
+`client-left`, `profile-loaded`, `profile-saved`, `session-created`, and `config-reloaded`. An empty
+`events` list subscribes to all 14.
 Event names and existing fields are stable; later versions may add events or fields. See
 [Hooks](hooks.md#events-and-fields) for the complete field table. Slow subscribers are bounded and
 disconnected rather than blocking the UI. Example:

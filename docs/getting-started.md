@@ -87,5 +87,6 @@ and project profile were loaded - and any parse/read warnings - so a broken conf
 silently pretends to have loaded.
 ## Read-only sessions
 
-Attach to a persistent session with `hyprmux --attach dev` (or `hyprmux --session dev`). Add
-`--read-only` to attach as a viewer without terminal input or layout-control authority.
+Open a persistent session with `hyprmux dev` (or `hyprmux --session dev`). It attaches when running,
+launches from profile `dev` when present, or creates an empty session. Add `--read-only` to attach
+as a viewer without terminal input or layout-control authority.

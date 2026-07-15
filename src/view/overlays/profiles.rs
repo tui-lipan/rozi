@@ -54,7 +54,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
                 "enter",
             ));
         }
-        hints = hints.child(hint_pill(theme, "open as", "ctrl+enter"));
+        hints = hints.child(hint_pill(theme, "open as", "ctrl+o"));
         hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
         hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
     }
@@ -79,19 +79,20 @@ fn profile_picker_palette(
             let mut item =
                 SearchEntry::item(entry.name.clone(), index).active(index == picker.selected);
             let status = if ctx.state.session_name.as_deref() == Some(entry.name.as_str()) {
-                "* attached"
+                Some("• attached")
             } else if matches!(
                 picker.running.get(&entry.name),
                 Some(crate::session::discovery::DiscoveredSessionStatus::Running { .. })
             ) {
-                "* running"
+                Some("• running")
             } else {
-                "launch"
+                None
             };
-            let description = if default_name == Some(entry.name.as_str()) {
-                format!("default  {status}")
-            } else {
-                status.to_string()
+            let description = match (default_name == Some(entry.name.as_str()), status) {
+                (true, Some(status)) => format!("default  {status}"),
+                (true, None) => "default".to_string(),
+                (false, Some(status)) => status.to_string(),
+                (false, None) => String::new(),
             };
             item = item.description(ItemDescription::new().right(description));
             item
@@ -177,7 +178,7 @@ fn profile_picker_palette(
 
 fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     ctx.link().key_handler(|key| {
-        if key.mods.ctrl && key.code == KeyCode::Enter {
+        if key.mods.ctrl && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O')) {
             Some(Msg::ProfilePickerOpenAs)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
             Some(Msg::ProfilePickerNew)

@@ -766,7 +766,9 @@ mod tests {
 
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 assert!(lines.iter().any(|line| line.contains("attach enter")));
+                assert!(lines.iter().any(|line| line.contains("open as ctrl+o")));
                 assert!(lines.iter().any(|line| line.contains("default ctrl+f")));
+                assert!(lines.iter().any(|line| line.contains("• running")));
                 assert!(lines.iter().any(|line| line.contains("new ctrl+n")));
             })
             .expect("spawn test thread")

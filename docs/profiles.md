@@ -114,7 +114,7 @@ Open **Profiles** from the command palette, then:
 | Key | Action |
 | --- | --- |
 | **Enter** | Attach to the running canonical same-name session, or launch that canonical session from the profile. Leaving a live ephemeral session may require a second press. |
-| **Ctrl+Enter** | **Open as**: launch the highlighted recipe as a new session under a name you enter. The name must not already be running. |
+| **Ctrl+o** | **Open as**: launch the highlighted recipe as a new session under a name you enter. The name must not already be running. |
 | **Ctrl+n** | Capture the current session as a new profile. |
 | **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
 | **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `hyprmux.toml`; pressing it on the current default clears the setting. |

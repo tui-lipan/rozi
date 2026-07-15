@@ -135,6 +135,8 @@ pub(super) fn attached(
     ctx.state.created_from_profile = created_from_profile;
     ctx.state.session_attached = true;
     ctx.state.deferred_profile_seed = None;
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
     if !crate::state::is_ephemeral_session_name(&session) {
         crate::session::record_last_named_session(&session);
     }
@@ -902,6 +904,9 @@ mod tests {
                         },
                         left: None,
                     });
+                backend.state_mut().show_profile_picker = true;
+                backend.state_mut().profile_picker =
+                    Some(crate::state::ProfilePickerState::new(Vec::new()));
                 let events = backend.state().event_hub.subscribe(Some(HashSet::from([
                     crate::events::EventKind::ProfileLoaded,
                 ])));
@@ -923,6 +928,8 @@ mod tests {
                     .expect("dispatch attach");
 
                 assert_eq!(backend.state().created_from_profile, None);
+                assert!(!backend.state().show_profile_picker);
+                assert!(backend.state().profile_picker.is_none());
                 assert!(rx.try_iter().any(|message| matches!(
                     message,
                     crate::session::client::ClientOutbound::Control(

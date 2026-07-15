@@ -124,8 +124,8 @@ The status beside a profile refers only to its canonical same-name session: **at
 **running**, or **launch**. It does not count independent sessions created from that profile under
 other names. Profiles marked **default** match your current `[profile] default` setting. Deleting
 the default profile clears that config entry when the file is removed.
-The footer hints follow the selected row, showing **attach** or **launch** and **set default** or
-**unset default** as appropriate.
+The footer hints follow the selected row, showing **attach** or **launch** as appropriate; the
+**default** hint remains a toggle.
 
 Profile names use letters, numbers, `_`, or `-` because their canonical binding can identify a
 same-named session.

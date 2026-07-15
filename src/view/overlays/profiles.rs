@@ -55,15 +55,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
             ));
         }
         hints = hints.child(hint_pill(theme, "open as", "ctrl+enter"));
-        hints = hints.child(hint_pill(
-            theme,
-            if ctx.state.config.profile.default.as_deref() == Some(entry.name.as_str()) {
-                "unset default"
-            } else {
-                "set default"
-            },
-            "ctrl+f",
-        ));
+        hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
         hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
     }
     hints

@@ -57,6 +57,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         hints = hints.child(hint_pill(theme, "open as", "ctrl+o"));
         hints = hints.child(hint_pill(theme, "default", "ctrl+f"));
         hints = hints.child(hint_pill(theme, "delete", "ctrl+d"));
+        hints = hints.child(hint_pill(theme, "replace", "ctrl+r"));
     }
     hints
         .child(hint_pill(theme, "new", "ctrl+n"))
@@ -166,9 +167,7 @@ fn profile_picker_palette(
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             (pending_apply == Some(item.value)).then(|| {
                 render_pending_open_item(item, warn_bg)
-                    .description(
-                        "again to confirm — closes all panes and running processes; session name and clients are kept",
-                    )
+                    .description("again to confirm (replaces ephemeral)")
             })
         }));
     }

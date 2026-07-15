@@ -40,6 +40,7 @@ an uppercase `HYPRMUX_` prefix, for example the `client_id` field becomes
 | `session-attached` | This client finishes attaching to an ephemeral or named session. | `session`: session name; `client_id`: this client's numeric id; `controller`: controller client id, or empty if none; `read_only`: `true` or `false`. |
 | `session-detached` | This client intentionally leaves or switches away from its current session. | `session`: session name. |
 | `session-renamed` | The attached session is renamed. | `session`: new name; `previous`: previous name. |
+| `session-created` | A named session is created from an empty target. | `session`: session name. |
 | `controller-changed` | The shared session's layout controller changes or is released. | `controller`: new controller client id, or empty if none; `self_controller`: `true` when this client is now controller; `reason`: `released`, `expired`, or `granted`. |
 | `client-joined` | A client appears in the attached session roster. | `client_id`: joined client id; `client_name`: its display label; `count`: roster size after the change. |
 | `client-left` | A client disappears from the attached session roster. | `client_id`: departed client id; `client_name`: its last display label; `count`: roster size after the change. |

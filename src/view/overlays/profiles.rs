@@ -60,9 +60,11 @@ fn profile_picker_palette(
     };
 
     let pending_delete = picker.pending_delete;
+    let pending_open = picker.pending_open;
     let error_bg = theme.status.error;
+    let warn_bg = theme.status.warning;
     let selection_style =
-        picker_selection_style(theme, pending_delete.is_some().then_some(error_bg));
+        picker_selection_style(theme, pending_delete.is_some().then_some(error_bg).or_else(|| pending_open.is_some().then_some(warn_bg)));
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
@@ -94,6 +96,11 @@ fn profile_picker_palette(
             } else {
                 None
             }
+        }));
+    }
+    if pending_open.is_some() {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            (pending_open == Some(item.value)).then(|| render_pending_open_item(item, warn_bg))
         }));
     }
 

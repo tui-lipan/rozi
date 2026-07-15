@@ -644,6 +644,8 @@ mod reconciler_tests {
                 client: Some(client),
                 autostart: false,
                 read_only: false,
+                intent: crate::state::AttachIntent::Plain,
+                left: None,
             });
             backend.render();
 

@@ -115,18 +115,6 @@ impl Component for HyprmuxApp {
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
         state.event_hub = self.event_hub.clone();
-        if let Some(startup) = &self.startup_profile {
-            events::emit(
-                &state,
-                events::Event::new(
-                    events::EventKind::ProfileLoaded,
-                    vec![
-                        ("profile", startup.name.clone()),
-                        ("path", startup.path.display().to_string()),
-                    ],
-                ),
-            );
-        }
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -190,6 +178,14 @@ impl Component for HyprmuxApp {
                 client: None,
                 autostart: true,
                 read_only: self.read_only,
+                intent: self.startup_profile.as_ref().map_or(
+                    crate::state::AttachIntent::Plain,
+                    |profile| crate::state::AttachIntent::ProfileSeed {
+                        profile: profile.name.clone(),
+                        path: profile.path.clone(),
+                    },
+                ),
+                left: None,
             });
             SessionStart::Attach { epoch, name }
         };

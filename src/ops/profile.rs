@@ -133,6 +133,7 @@ pub(crate) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
         picker.input.set_anchor(None);
         picker.selected = 0;
         picker.pending_delete = None;
+        picker.pending_open = None;
     }
     request_profile_picker_focus(ctx);
     Update::full()
@@ -149,6 +150,9 @@ pub(crate) fn profile_picker_selection_changed(
             .is_some_and(|pending| pending != index)
         {
             picker.pending_delete = None;
+        }
+        if picker.pending_open.is_some_and(|pending| pending != index) {
+            picker.pending_open = None;
         }
     }
     Update::full()
@@ -256,6 +260,115 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         return Update::none();
     };
 
+    let needs_confirm = ctx.state.config.confirm.load_profile
+        && crate::ops::session::may_shutdown_ephemeral(&ctx.state)
+        && crate::ops::exit::any_pane_live(&ctx.state);
+    if needs_confirm {
+        let armed = ctx
+            .state
+            .profile_picker
+            .as_ref()
+            .is_some_and(|picker| picker.pending_open == Some(index));
+        if !armed {
+            if let Some(picker) = ctx.state.profile_picker.as_mut() {
+                picker.pending_open = Some(index);
+            }
+            return Update::full();
+        }
+    }
+
+    if crate::session::discovery::valid_session_name(&entry.name) {
+        return open_named_target_with_path(ctx, entry.name, Some(entry.path));
+    }
+
+    load_profile_into_fresh_ephemeral(ctx, entry)
+}
+
+#[allow(dead_code)]
+pub(crate) fn open_named_target(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
+    open_named_target_with_path(ctx, name, None)
+}
+
+fn open_named_target_with_path(
+    ctx: &mut Context<HyprmuxApp>,
+    name: String,
+    profile_path: Option<std::path::PathBuf>,
+) -> Update {
+    if !crate::session::discovery::valid_session_name(&name) {
+        ctx.toast().push(error_toast(
+            &ctx.state.theme,
+            "Profiles",
+            "Invalid profile/session name",
+        ));
+        return Update::full();
+    }
+    if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(name.as_str()) {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Already attached to `{name}`"),
+        ));
+        return Update::full();
+    }
+    if ctx.state.pending_session_attach.is_some() {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Attach already in progress"));
+        return Update::full();
+    }
+
+    let path = profile_path.unwrap_or_else(|| profile_path_for_name(&name));
+    let (replacement, intent) = if path.exists() {
+        let profile = match load_profile(&path) {
+            Ok(profile) => profile,
+            Err(message) => {
+                ctx.toast()
+                    .push(error_toast(&ctx.state.theme, "Load Profile", message));
+                return Update::full();
+            }
+        };
+        (
+            State::from_profile(ctx.state.config.clone(), ctx.state.theme.clone(), profile),
+            crate::state::AttachIntent::ProfileSeed {
+                profile: name.clone(),
+                path,
+            },
+        )
+    } else {
+        (
+            State::new(ctx.state.config.clone(), ctx.state.theme.clone()),
+            crate::state::AttachIntent::Plain,
+        )
+    };
+    let left = ctx
+        .state
+        .session_name
+        .clone()
+        .map(|left_name| crate::state::LeftSession {
+            name: left_name,
+            was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
+        });
+    crate::ops::session::release_current_session(ctx);
+    let epoch = ctx.state.runtime_epoch.saturating_add(1);
+    crate::ops::session::swap_state_for_attach(ctx, replacement);
+    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+        epoch,
+        name: name.clone(),
+        client: None,
+        autostart: true,
+        read_only: false,
+        intent,
+        left,
+    });
+    Update::with_command(Command::spawn(move |link| {
+        std::thread::spawn(move || {
+            crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
+        });
+    }))
+}
+
+fn load_profile_into_fresh_ephemeral(
+    ctx: &mut Context<HyprmuxApp>,
+    entry: crate::config::ProfileEntry,
+) -> Update {
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
@@ -298,6 +411,11 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
         client: None,
         autostart: true,
         read_only: false,
+        intent: crate::state::AttachIntent::ProfileSeed {
+            profile: entry.name.clone(),
+            path: entry.path.clone(),
+        },
+        left: None,
     });
     ctx.state = new_state;
     ctx.state.commands_dirty = true;
@@ -462,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn selecting_profile_dispatches_restore_and_fresh_session_attach() {
+    fn selecting_profile_dispatches_named_profile_seed_attach() {
         on_large_stack(|| {
             let path = temp_profile_path();
             save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
@@ -471,13 +589,7 @@ mod tests {
             backend.state_mut().profile_picker =
                 Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
             backend.state_mut().show_profile_picker = true;
-            let events =
-                backend
-                    .state()
-                    .event_hub
-                    .subscribe(Some(std::collections::HashSet::from([
-                        crate::events::EventKind::ProfileLoaded,
-                    ])));
+            backend.state_mut().pending_session_attach = None;
             let old_epoch = backend.state().runtime_epoch;
 
             backend
@@ -493,15 +605,13 @@ mod tests {
                 .expect("fresh session attach queued");
             assert_eq!(pending.epoch, old_epoch.saturating_add(1));
             assert!(pending.autostart);
-            assert!(pending.name.starts_with("eph-"));
-            let event: serde_json::Value =
-                serde_json::from_str(&events.try_recv().expect("profile-loaded event")).unwrap();
+            assert_eq!(pending.name, "empty");
             assert_eq!(
-                event,
-                serde_json::json!({
-                    "event": "profile-loaded",
-                    "data": {"profile": "empty", "path": path.display().to_string()}
-                })
+                pending.intent,
+                crate::state::AttachIntent::ProfileSeed {
+                    profile: "empty".to_string(),
+                    path: path.clone(),
+                }
             );
 
             std::fs::remove_file(path).expect("remove profile");

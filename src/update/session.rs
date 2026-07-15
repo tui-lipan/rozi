@@ -69,6 +69,8 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
         client: None,
         autostart,
         read_only,
+        intent: crate::state::AttachIntent::Plain,
+        left: None,
     });
     ctx.toast().push(crate::pty_events::info_toast(
         &ctx.state.theme,
@@ -166,7 +168,8 @@ pub(super) fn attached(
         .collect();
     let had_panes = !panes.is_empty();
 
-    if let Some(layout) = layout {
+    let populated = layout.is_some() || had_panes;
+    let update = if let Some(layout) = layout {
         // Shared attach: seed the whole window-manager structure from the authoritative layout via
         // the one reconciler code path, then bind server backends and sizes from the pane metadata
         // before the replay seed frames arrive.
@@ -203,7 +206,61 @@ pub(super) fn attached(
                 activate_delay,
             ))
         }
+    };
+
+    if !crate::state::is_ephemeral_session_name(&session) {
+        let suffix = pending
+            .left
+            .as_ref()
+            .map(|left| {
+                if left.was_ephemeral_shutdown {
+                    " - ended temporary session".to_string()
+                } else {
+                    format!(" - detached from `{}` (still running)", left.name)
+                }
+            })
+            .unwrap_or_default();
+        if populated {
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                format!("Attached to `{session}`{suffix}"),
+            ));
+        } else {
+            match pending.intent {
+                crate::state::AttachIntent::ProfileSeed { profile, path } => {
+                    crate::events::emit(
+                        &ctx.state,
+                        crate::events::Event::new(
+                            crate::events::EventKind::ProfileLoaded,
+                            vec![
+                                ("profile", profile),
+                                ("path", path.display().to_string()),
+                                ("session", session.clone()),
+                            ],
+                        ),
+                    );
+                    ctx.toast().push(crate::pty_events::info_toast(
+                        &ctx.state.theme,
+                        format!("Launched `{session}` from profile{suffix}"),
+                    ));
+                }
+                crate::state::AttachIntent::Plain => {
+                    crate::events::emit(
+                        &ctx.state,
+                        crate::events::Event::new(
+                            crate::events::EventKind::SessionCreated,
+                            vec![("session", session.clone())],
+                        ),
+                    );
+                    ctx.toast().push(crate::pty_events::info_toast(
+                        &ctx.state.theme,
+                        format!("Created session `{session}`{suffix}"),
+                    ));
+                }
+            }
+        }
     }
+    update
 }
 
 pub(super) fn layout_committed(

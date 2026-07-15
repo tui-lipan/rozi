@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalColorPalette;
 
@@ -12,6 +13,20 @@ pub struct PendingSessionAttach {
     /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
     pub autostart: bool,
     pub read_only: bool,
+    pub intent: AttachIntent,
+    pub left: Option<LeftSession>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AttachIntent {
+    Plain,
+    ProfileSeed { profile: String, path: PathBuf },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeftSession {
+    pub name: String,
+    pub was_ephemeral_shutdown: bool,
 }
 
 /// Per-run maximum orphan bytes buffered per pane before oldest data is dropped (see

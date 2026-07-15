@@ -19,6 +19,7 @@ pub struct ProfilePickerState {
     pub selected: usize,
     /// Entry index awaiting a second Ctrl+D to confirm deletion.
     pub pending_delete: Option<usize>,
+    pub pending_open: Option<usize>,
 }
 
 pub struct SessionPickerState {
@@ -83,6 +84,7 @@ impl ProfilePickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_delete: None,
+            pending_open: None,
         }
     }
 }

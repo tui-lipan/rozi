@@ -12,7 +12,7 @@ pub(crate) struct CliArgs {
     pub(crate) config_path: Option<String>,
     pub(crate) attach_session: Option<String>,
     /// Open the session picker at startup instead of silently attaching to an ephemeral session
-    /// (also enabled by `[session] startup = "picker"`). Ignored when `--attach`/`--session` is
+    /// (also enabled by `[session] startup = "picker"`). Ignored when a target is
     /// given or no named session exists.
     pub(crate) pick: bool,
     pub(crate) read_only: bool,
@@ -73,6 +73,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                     Some("--read-only") => {
                         cli.attach_session = Some(name);
+                        cli.profile = cli.attach_session.clone();
                         cli.read_only = true;
                     }
                     Some(other) => {
@@ -82,29 +83,15 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                     None => {
                         cli.attach_session = Some(name);
+                        cli.profile = cli.attach_session.clone();
                     }
                 }
-            }
-            "--attach" => {
-                cli.attach_session = Some(
-                    iter.next()
-                        .ok_or_else(|| "--attach requires a session name".to_string())?,
-                );
             }
             "--pick" => {
                 cli.pick = true;
             }
             "--read-only" => {
                 cli.read_only = true;
-            }
-            "--profile" | "-p" => {
-                let name = iter
-                    .next()
-                    .ok_or_else(|| "--profile requires a profile name".to_string())?;
-                if cli.profile.is_some() {
-                    return Err("profile name specified more than once".to_string());
-                }
-                cli.profile = Some(name);
             }
             "--config" => {
                 let path = iter
@@ -253,6 +240,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     return Err(format!("unexpected argument `{name}`"));
                 }
                 cli.profile = Some(name.to_string());
+                cli.attach_session = Some(name.to_string());
             }
         }
     }
@@ -260,7 +248,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         return Err("--socket requires a control command".to_string());
     }
     if cli.read_only && cli.attach_session.is_none() {
-        return Err("--read-only requires --attach or --session".to_string());
+        return Err("--read-only requires a target or --session".to_string());
     }
     Ok(ParsedCli::Run(cli))
 }
@@ -424,18 +412,13 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
 }
 
 pub(crate) fn print_help() {
-    let profiles_dir = crate::config::profile_path_for_name("<NAME>")
-        .display()
-        .to_string();
     let endpoint_help = endpoint_help();
     println!(
         "\
 hyprmux - Hyprland-style tiling terminal multiplexer
 
 USAGE:
-    hyprmux [PROFILE]
-    hyprmux --profile <NAME>
-    hyprmux -p <NAME>
+    hyprmux [TARGET] [--read-only]
     hyprmux [--socket PATH] list|list-panes
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
@@ -444,7 +427,6 @@ USAGE:
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
     hyprmux [--socket PATH] switch-workspace <1-9>
     hyprmux [--socket PATH] move-to-workspace <1-9>
-    hyprmux --attach <NAME> [--read-only]
     hyprmux --session <NAME> [--read-only]
     hyprmux --pick
     hyprmux list-sessions
@@ -455,15 +437,14 @@ USAGE:
 OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
-    -p, --profile <NAME>  Load a named profile from {profiles_dir}
-        --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
+    --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
 
 {endpoint_help}
 
-A bare PROFILE positional is equivalent to --profile PROFILE.
+TARGET attaches to a running named session, launches it from a same-named profile, or creates it.
 Leave the running app with prefix d (detach) or a configured quit binding."
     );
 }
@@ -498,13 +479,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_parses_profile_flag_and_positional() {
-        let flag =
-            expect_run(parse_cli_args(vec!["--profile".into(), "dev".into()]).expect("parses"));
-        assert_eq!(flag.profile.as_deref(), Some("dev"));
-
+    fn cli_parses_positional_target_and_rejects_removed_flags() {
         let positional = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(positional.profile.as_deref(), Some("dev"));
+        assert_eq!(positional.attach_session.as_deref(), Some("dev"));
+        assert!(parse_cli_args(vec!["--profile".into(), "dev".into()]).is_err());
+        assert!(parse_cli_args(vec!["--attach".into(), "dev".into()]).is_err());
     }
 
     #[test]
@@ -525,7 +505,7 @@ mod tests {
         assert!(matches!(parsed, ParsedCli::Control(_)));
 
         let profile = expect_run(
-            parse_cli_args(vec!["--profile".into(), "list-panes".into()]).expect("parses"),
+            parse_cli_args(vec!["--session".into(), "list-panes".into()]).expect("parses"),
         );
         assert_eq!(profile.profile.as_deref(), Some("list-panes"));
     }
@@ -636,8 +616,7 @@ mod tests {
             parse_cli_args(vec!["kill-session".into(), "dev".into()]).expect("parses"),
             ParsedCli::KillSession { name } if name == "dev"
         ));
-        let attached =
-            expect_run(parse_cli_args(vec!["--attach".into(), "dev".into()]).expect("parses"));
+        let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));
         let session =
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
@@ -648,10 +627,8 @@ mod tests {
     #[test]
     fn cli_read_only_requires_attach_target() {
         assert!(parse_cli_args(vec!["--read-only".into()]).is_err());
-        let args = expect_run(
-            parse_cli_args(vec!["--attach".into(), "dev".into(), "--read-only".into()])
-                .expect("parses"),
-        );
+        let args =
+            expect_run(parse_cli_args(vec!["dev".into(), "--read-only".into()]).expect("parses"));
         assert_eq!(args.attach_session.as_deref(), Some("dev"));
         assert!(args.read_only);
     }

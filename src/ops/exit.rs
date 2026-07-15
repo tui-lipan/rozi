@@ -113,7 +113,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Whether any tiled/floating pane still has a running process. Used to decide whether quitting
 /// an ephemeral session (which shuts the server down and kills its PTYs) warrants a confirmation.
-fn any_pane_live(state: &State) -> bool {
+pub(crate) fn any_pane_live(state: &State) -> bool {
     state
         .workspaces
         .iter()

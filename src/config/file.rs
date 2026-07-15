@@ -126,6 +126,7 @@ struct ConfirmFileConfig {
     kill_session: Option<bool>,
     quit_ephemeral: Option<bool>,
     new_temporary_session: Option<bool>,
+    load_profile: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -482,6 +483,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(new_temporary_session) = parsed.confirm.new_temporary_session {
         config.confirm.new_temporary_session = new_temporary_session;
+    }
+    if let Some(load_profile) = parsed.confirm.load_profile {
+        config.confirm.load_profile = load_profile;
     }
 
     config.scratchpad.command = non_empty(parsed.scratchpad.command);

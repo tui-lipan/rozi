@@ -366,6 +366,8 @@ pub struct HyprmuxConfirmConfig {
     /// Confirm before discarding the current ephemeral session to start a fresh one (its panes
     /// are killed). Named sessions are detached safely and do not need confirmation.
     pub new_temporary_session: bool,
+    /// Confirm before replacing a live disposable session from the profile picker.
+    pub load_profile: bool,
 }
 
 impl Default for HyprmuxConfirmConfig {
@@ -376,6 +378,7 @@ impl Default for HyprmuxConfirmConfig {
             kill_session: true,
             quit_ephemeral: true,
             new_temporary_session: true,
+            load_profile: true,
         }
     }
 }

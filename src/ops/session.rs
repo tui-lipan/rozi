@@ -417,6 +417,21 @@ pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
         && state.shared.as_ref().is_none_or(|shared| !shared.read_only)
 }
 
+pub(crate) fn swap_state_for_attach(
+    ctx: &mut Context<HyprmuxApp>,
+    mut replacement: crate::state::State,
+) {
+    replacement.theme_watcher = ctx.state.theme_watcher.take();
+    replacement.system_theme = ctx.state.system_theme.clone();
+    replacement.control_socket_path = ctx.state.control_socket_path.clone();
+    replacement.command_link = ctx.state.command_link.clone();
+    replacement.event_hub = ctx.state.event_hub.clone();
+    replacement.runtime_epoch = ctx.state.runtime_epoch;
+    ctx.state = replacement;
+    ctx.state.commands_dirty = true;
+    crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
+}
+
 /// Detach the current named session and exit the client, leaving the server running for reattach.
 pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_session_arms(ctx);
@@ -468,6 +483,8 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         client: None,
         autostart: true,
         read_only: false,
+        intent: crate::state::AttachIntent::Plain,
+        left: None,
     });
     ctx.state = fresh;
     ctx.state.commands_dirty = true;
@@ -506,6 +523,14 @@ pub(crate) fn attach_session_by_name(
     }
     // Attach-elsewhere: release the current session (a named one is parked for reattach; an
     // ephemeral one is torn down so it does not leak an orphan server), then attach to the target.
+    let left = ctx
+        .state
+        .session_name
+        .clone()
+        .map(|left_name| crate::state::LeftSession {
+            name: left_name,
+            was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
+        });
     release_current_session(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
@@ -517,6 +542,8 @@ pub(crate) fn attach_session_by_name(
         client: None,
         autostart,
         read_only: false,
+        intent: crate::state::AttachIntent::Plain,
+        left,
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
@@ -599,6 +626,8 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
         client: None,
         autostart: true,
         read_only: false,
+        intent: crate::state::AttachIntent::Plain,
+        left: None,
     });
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {

@@ -25,8 +25,8 @@ Each pane entry supports:
 | Field | Notes |
 | --- | --- |
 | `name` | Pane title shown in the titlebar. |
-| `cwd` | Working directory when the pane launches. `~` expands to `$HOME`. |
-| `command` | Run through the configured `command_shell` when the pane opens. |
+| `cwd` | Local working directory when the pane launches. `~` expands to `$HOME`; remote SSH paths are not captured as local paths. |
+| `command` | Run through the configured `command_shell` when the pane opens. Saving keeps an explicit launch command, or captures a detected non-shell foreground executable basename. |
 | `keep_open` | When `true`, drop into an interactive shell when the command exits instead of closing the pane. |
 | `floating` | Start as a floating pane instead of tiled. |
 | `fullscreen` | Start fullscreen. |

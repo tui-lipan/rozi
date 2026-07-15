@@ -121,8 +121,12 @@ For live PTY persistence across detach/reattach, use a named attached session in
 ## Saving limitations
 
 Saving preserves pane names, workspace layout, split tree/ratios, floating state, fullscreen
-state, floating geometry, and (on Linux) each pane's live working directory.
+state, floating geometry, and each pane's detected local working directory. A cwd reported by a
+remote host, such as an SSH session, is never saved as a local path; hyprmux falls back to the
+pane's original local launch directory instead.
 
-It still cannot recover a running program's original argument list: `command` is saved only for
-panes whose identity already knows it (such as panes launched from a profile). Rename panes
-explicitly when you want stable profile titles.
+When the server can identify a foreground executable, saving records its basename as `command`.
+Interactive shells are filtered out, and an explicit launch command always takes precedence.
+hyprmux cannot reconstruct the foreground program's original arguments, so a detected `nvim`
+process is saved as `command = "nvim"`, not its full invocation. Rename panes explicitly when you
+want stable profile titles.

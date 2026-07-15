@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,7 @@ fn persist_session_to_disk(state: &State) {
 }
 
 pub fn profile_from_state(state: &State) -> HyprmuxProfile {
+    let shells = shell_basenames(&state.config);
     HyprmuxProfile {
         version: 1,
         active_workspace: state.active_workspace,
@@ -87,7 +88,7 @@ pub fn profile_from_state(state: &State) -> HyprmuxProfile {
             .iter()
             .enumerate()
             .filter(|(_, workspace)| workspace.panes.iter().any(|pane| !pane.closing))
-            .map(|(index, workspace)| workspace_profile_from_state(index, workspace))
+            .map(|(index, workspace)| workspace_profile_from_state(index, workspace, &shells))
             .collect(),
     }
 }
@@ -258,7 +259,11 @@ fn restore_dwindle_tree(
     to_dwindle(tree, &|pane| profile_pane_ids.get(pane).copied(), false)
 }
 
-fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> WorkspaceProfile {
+fn workspace_profile_from_state(
+    index: usize,
+    workspace: &Workspace,
+    shells: &HashSet<String>,
+) -> WorkspaceProfile {
     let pane_indices: HashMap<PaneId, usize> = workspace
         .panes
         .iter()
@@ -295,12 +300,13 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
                     .clone()
                     .or_else(|| pane.identity.profile_name.clone()),
                 title: pane.identity.custom_title.clone(),
-                // Prefer the shell's real live cwd; fall back to the launch identity cwd.
-                cwd: pane
-                    .live_cwd()
-                    .or_else(|| pane.identity.cwd.clone())
-                    .map(PathBuf::from),
-                command: pane.identity.command.clone(),
+                cwd: pane.local_cwd().map(PathBuf::from),
+                command: pane.identity.command.clone().or_else(|| {
+                    pane.terminal
+                        .foreground_program
+                        .clone()
+                        .filter(|program| !shells.contains(&normalize_executable(program)))
+                }),
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
@@ -308,6 +314,44 @@ fn workspace_profile_from_state(index: usize, workspace: &Workspace) -> Workspac
             })
             .collect(),
     }
+}
+
+fn shell_basenames(config: &crate::config::HyprmuxConfig) -> HashSet<String> {
+    let mut shells: HashSet<String> = [
+        "bash",
+        "zsh",
+        "fish",
+        "sh",
+        "dash",
+        "ksh",
+        "tcsh",
+        "csh",
+        "nu",
+        "pwsh",
+        "powershell",
+        "cmd",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    let resolved = crate::platform::command::resolve_interactive_shell(
+        config.shell.as_deref(),
+        &crate::platform::command::ShellEnv::from_process(),
+    );
+    shells.insert(normalize_executable(&resolved.program));
+    shells
+}
+
+fn normalize_executable(program: &str) -> String {
+    let basename = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    let normalized = basename.to_ascii_lowercase();
+    normalized
+        .strip_suffix(".exe")
+        .unwrap_or(&normalized)
+        .to_string()
 }
 
 fn profile_tree_from_dwindle(
@@ -788,6 +832,35 @@ mod tests {
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
         assert!(restored.workspaces[0].synchronized);
+    }
+
+    #[test]
+    fn save_captures_local_runtime_identity_without_remote_paths_or_shells() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let pane = &mut state.workspaces[0].panes[0];
+        pane.identity.cwd = Some("/local/fallback".to_string());
+        pane.terminal.cwd = Some("/remote/project".to_string());
+        pane.terminal.cwd_host = Some("server.example".to_string());
+        pane.terminal.foreground_program = Some("nvim".to_string());
+
+        let profile = profile_from_state(&state);
+        let saved = &profile.workspaces[0].panes[0];
+        assert_eq!(saved.cwd.as_deref(), Some(Path::new("/local/fallback")));
+        assert_eq!(saved.command.as_deref(), Some("nvim"));
+
+        let pane = &mut state.workspaces[0].panes[0];
+        pane.terminal.cwd = Some("/local/project".to_string());
+        pane.terminal.cwd_host = None;
+        pane.terminal.foreground_program = Some("ZSH.EXE".to_string());
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.cwd.as_deref(), Some(Path::new("/local/project")));
+        assert_eq!(saved.command, None);
+
+        let pane = &mut state.workspaces[0].panes[0];
+        pane.identity.command = Some("cargo test".to_string());
+        pane.terminal.foreground_program = Some("bash".to_string());
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.command.as_deref(), Some("cargo test"));
     }
 
     #[test]

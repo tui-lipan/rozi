@@ -11,6 +11,7 @@ pub struct TerminalPane {
     pub status: ManagedTerminalStatus,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub cwd_host: Option<String>,
     pub child_pid: Option<u32>,
     /// Normalized foreground-executable basename, server-authoritative (cross-platform plan
     /// Phase 6/7): pushed down via [`crate::session::protocol::PaneMeta::runtime`] and
@@ -63,6 +64,7 @@ impl TerminalPane {
             status: ManagedTerminalStatus::Starting,
             title: None,
             cwd: None,
+            cwd_host: None,
             child_pid: None,
             foreground_program: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
@@ -360,6 +362,11 @@ impl TerminalPane {
     /// server, not necessarily this client's host, owns the PTY and process identity.
     pub fn working_directory(&self) -> Option<String> {
         self.cwd.clone()
+    }
+
+    /// Return the working directory only when it belongs to this client's host.
+    pub fn local_working_directory(&self) -> Option<String> {
+        self.cwd.clone().filter(|_| self.cwd_host.is_none())
     }
 
     /// The command name of the process currently in the foreground of the pane's terminal

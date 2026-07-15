@@ -38,6 +38,7 @@ pub(super) fn bind_attached_pane_backends(
                 .bind_server_backend(meta.pane_id, meta.generation);
             pane.terminal.title = meta.title.filter(|title| !title.trim().is_empty());
             pane.terminal.cwd = meta.runtime.cwd.clone();
+            pane.terminal.cwd_host = meta.runtime.cwd_host.clone();
             pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
             pane.terminal.command_phase = meta.runtime.command_phase;
             pane.terminal.last_exit_status = meta.runtime.last_exit_status;
@@ -94,6 +95,7 @@ pub(super) fn apply_attached_panes(
                 .bind_server_backend(attached.pane_id, attached.generation);
             pane.terminal.title = attached.title.filter(|title| !title.trim().is_empty());
             pane.terminal.cwd = attached.runtime.cwd.clone();
+            pane.terminal.cwd_host = attached.runtime.cwd_host.clone();
             pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
             pane.terminal.command_phase = attached.runtime.command_phase;
             pane.terminal.last_exit_status = attached.runtime.last_exit_status;

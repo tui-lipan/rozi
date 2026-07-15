@@ -17,12 +17,11 @@ use crate::{HyprmuxApp, Msg};
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
     let previous_focused = workspace.focused_pane;
-    // A new pane opens in the focused pane's live working directory (falling back to the
-    // configured cwd when the focused pane is floating or its cwd is unknown).
+    // A new pane opens in the focused pane's local working directory, never a remote SSH path.
     let mut identity = PaneIdentity::default();
     if let Some(cwd) = previous_focused
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
-        .and_then(|pane| pane.live_cwd())
+        .and_then(|pane| pane.local_cwd())
     {
         identity.cwd = Some(cwd);
     }

@@ -94,6 +94,13 @@ impl Pane {
     pub fn live_cwd(&self) -> Option<String> {
         self.terminal.working_directory()
     }
+
+    /// A local working directory safe to reuse for spawning, falling back to launch identity.
+    pub fn local_cwd(&self) -> Option<String> {
+        self.terminal
+            .local_working_directory()
+            .or_else(|| self.identity.cwd.clone())
+    }
 }
 
 fn title_contains_cwd(title: &str, cwd: &str) -> bool {

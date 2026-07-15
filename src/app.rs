@@ -842,6 +842,73 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_search_uses_footer_hints_and_highlights_matches() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 120,
+                    h: 24,
+                });
+
+                let mut search = crate::state::ScrollbackSearchState::new(1);
+                search.input.set_text("master");
+                search.input.set_cursor(6);
+                search.matches.push(crate::state::ScrollbackMatch {
+                    offset: 0,
+                    line: 1,
+                    start_col: 8,
+                    end_col: 14,
+                    text: "hyprmux master • prompt".to_string(),
+                    pane: 1,
+                });
+                backend.state_mut().search = Some(search);
+                let match_fg = backend.state().theme.status.info;
+                backend.render();
+
+                let snapshot =
+                    backend.capture_ui_snapshot_with_options(&UiSnapshotOptions::default());
+                let modal = snapshot
+                    .widgets
+                    .iter()
+                    .find(|widget| {
+                        widget.kind == UiWidgetKind::Frame
+                            && widget.title.as_deref() == Some("Search scrollback")
+                    })
+                    .expect("scrollback search modal");
+                assert_eq!(modal.rect.w, 90);
+                assert!(!modal.title.as_deref().unwrap().contains("Tab"));
+
+                let frame = backend.capture_frame();
+                let lines = frame.to_fixed_grid_lines();
+                let rendered = lines.join("\n");
+                assert!(rendered.contains("next ctrl+n"), "{rendered}");
+                assert!(rendered.contains("previous ctrl+p"), "{rendered}");
+                assert!(rendered.contains("pane tab"), "{rendered}");
+                assert!(!rendered.contains("scope:"), "{rendered}");
+
+                let row = lines
+                    .iter()
+                    .position(|line| line.contains("hyprmux master"))
+                    .expect("matching result row") as u16;
+                let matched = lines[row as usize].find("master").expect("match column") as u16;
+                let plain = lines[row as usize].find("hyprmux").expect("plain column") as u16;
+                assert_ne!(
+                    frame.cell(matched, row).fg,
+                    frame.cell(plain, row).fg,
+                    "selected row must preserve the query-match foreground"
+                );
+                assert_eq!(frame.cell(matched, row).fg, match_fg);
+            })
+            .expect("spawn snapshot test thread")
+            .join()
+            .expect("snapshot test thread completes");
+    }
+
+    #[test]
     fn session_picker_shows_clients_on_other_sessions_and_aligns_descriptions() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)

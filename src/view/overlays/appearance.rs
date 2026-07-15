@@ -95,7 +95,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
 
     let pane_flags = ctx.state.config.pane;
     let disabled_style = fg_only(&ctx.state.theme.muted);
-    let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, true)
+    let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search appearance…")
         .description_placement(DescriptionPlacement::Right)
@@ -273,7 +273,7 @@ fn action_search_palette(
     entries: Vec<SearchEntry<Callback<()>>>,
     placeholder: &str,
 ) -> SearchPalette<Callback<()>> {
-    shared_search_palette::<Callback<()>>(ctx, Length::Auto, true)
+    shared_search_palette::<Callback<()>>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder(placeholder)
         // Score-order matches once the user types; category headers only show for an empty query.
@@ -305,7 +305,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .collect();
 
     // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
-    let palette = shared_search_palette::<usize>(ctx, Length::Auto, true)
+    let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search themes…")
         .initial_selected_item_index(initial_selected)

@@ -2,14 +2,24 @@ pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(search) = ctx.state.search.as_ref() else {
         return Text::new("").into();
     };
+    let body = VStack::new()
+        .height(Length::Auto)
+        .child(scrollback_search_palette(ctx, search))
+        .child(scrollback_search_hints(ctx, search));
 
-    action_palette_modal(
-        ctx,
-        &format!("Search · {} · Tab: scope", search.scope.label()),
-    )
-    .on_close(ctx.link().callback(|_| Msg::CloseSearch))
-    .child(action_palette_frame(scrollback_search_palette(ctx, search)))
-    .key(search_input_key())
+    action_palette_modal_with_width(ctx, "Search scrollback", 90)
+        .on_close(ctx.link().callback(|_| Msg::CloseSearch))
+        .child(action_palette_frame(body))
+        .key(search_input_key())
+}
+
+fn scrollback_search_hints(ctx: &Context<HyprmuxApp>, search: &ScrollbackSearchState) -> Element {
+    let theme = &ctx.state.theme;
+    hint_row()
+        .child(hint_pill(theme, "next", "ctrl+n"))
+        .child(hint_pill(theme, "previous", "ctrl+p"))
+        .child(hint_pill(theme, search.scope.label(), "tab"))
+        .into()
 }
 
 fn scrollback_search_palette(

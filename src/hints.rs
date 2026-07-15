@@ -173,15 +173,20 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     };
     let copied = result.is_ok() && !open;
     match result {
-        Ok(()) => ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            if open { "Opened hint" } else { "Copied hint" },
-        )),
-        Err(error) => ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Hint failed",
-            error,
-        )),
+        Ok(()) if open => {
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                "Opened hint",
+            ));
+        }
+        Ok(()) => {}
+        Err(error) => {
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Hint failed",
+                error,
+            ));
+        }
     };
     let update = exit(ctx);
     if copied {

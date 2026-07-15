@@ -436,10 +436,7 @@ fn search_palette_active_item_style() -> Style {
 }
 
 fn search_palette_item_match_style(theme: &Theme) -> Style {
-    Style::new()
-        .fg(theme.border_active)
-        .bold()
-        .contrast_policy(ContrastPolicy::BlackOrWhite)
+    Style::new().fg(theme.status.info).bold()
 }
 
 /// Shared modal chrome for every overlay: a rounded border, an accent title, and the

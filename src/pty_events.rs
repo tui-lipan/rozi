@@ -106,13 +106,18 @@ fn forward_key_to_targets(
             continue;
         };
         if let Some(client) = client.clone() {
-            let _ = send_key_to_session_client(
+            if send_key_to_session_client(
                 &client,
                 *id,
                 pane.pty_generation,
                 key,
                 pane.terminal.snapshot.key_modes,
-            );
+            )
+            .is_ok()
+                && pane.terminal.set_scrollback(0)
+            {
+                repaint = true;
+            }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             repaint = true;
@@ -196,6 +201,9 @@ pub(crate) fn handle_pane_input(
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, input.bytes.to_vec());
+            if matches!(input.kind, TerminalInputKind::Paste) && pane.terminal.set_scrollback(0) {
+                return Update::full();
+            }
         } else {
             pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
             return Update::full();
@@ -417,6 +425,64 @@ mod tests {
                 bytes: vec![3],
             }
         );
+    }
+
+    #[test]
+    fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
+        use crate::Msg;
+        use crate::session::client::SessionClient;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, _rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_client = Some(client);
+                    let pane = &mut state.workspaces[0].panes[0];
+                    pane.terminal
+                        .process_server_output("history\n".repeat(80).as_bytes());
+                    assert!(pane.terminal.set_scrollback(10));
+                }
+                backend.render();
+
+                backend
+                    .dispatch(Msg::PaneKey(1, key(KeyCode::Char('x'), KeyMods::NONE)))
+                    .expect("dispatch terminal key");
+                assert_eq!(
+                    backend.state().workspaces[0].panes[0]
+                        .terminal
+                        .scrollback_offset(),
+                    0
+                );
+
+                assert!(
+                    backend.state_mut().workspaces[0].panes[0]
+                        .terminal
+                        .set_scrollback(10)
+                );
+                backend
+                    .dispatch(Msg::PaneInput(
+                        1,
+                        TerminalInputEvent {
+                            kind: TerminalInputKind::Paste,
+                            key: None,
+                            bytes: b"pasted".to_vec().into(),
+                        },
+                    ))
+                    .expect("dispatch terminal paste");
+                assert_eq!(
+                    backend.state().workspaces[0].panes[0]
+                        .terminal
+                        .scrollback_offset(),
+                    0
+                );
+            })
+            .expect("spawn terminal input test thread")
+            .join()
+            .expect("terminal input test thread completes");
     }
 
     #[test]

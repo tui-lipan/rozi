@@ -93,7 +93,7 @@ through to the next source (or a fresh layout).
 
 | Command | Action |
 | --- | --- |
-| **Save profile** | Prompts for a name and writes `profiles/<name>.toml`. |
+| **Save profile** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. Named sessions prefill their own name; overwriting requires a second **Enter**. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
 
 ### Profile picker actions
@@ -108,6 +108,8 @@ Open **Profiles** from the command palette, then:
 
 Profiles marked **default** in the list match your current `[profile] default` setting.
 Deleting the default profile clears that config entry when the file is removed.
+
+Profile names use letters, numbers, `_`, or `-` because the same names can identify sessions.
 
 ## Command lifetime
 

@@ -44,6 +44,7 @@ an uppercase `HYPRMUX_` prefix, for example the `client_id` field becomes
 | `client-joined` | A client appears in the attached session roster. | `client_id`: joined client id; `client_name`: its display label; `count`: roster size after the change. |
 | `client-left` | A client disappears from the attached session roster. | `client_id`: departed client id; `client_name`: its last display label; `count`: roster size after the change. |
 | `profile-loaded` | A profile is restored at startup or selected in the profile picker. | `profile`: profile name; `path`: profile file path. |
+| `profile-saved` | A profile is saved or overwritten. | `profile`: profile name; `path`: profile file path. |
 | `config-reloaded` | A live config reload completes without warnings. | `path`: config file path. |
 
 The same event ids and fields are used by control-socket

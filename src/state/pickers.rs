@@ -7,6 +7,11 @@ use crate::session::discovery::DiscoveredSession;
 
 use super::PaneId;
 
+pub struct SaveProfileState {
+    pub input: TextInput,
+    pub pending_overwrite: bool,
+}
+
 pub struct ProfilePickerState {
     pub entries: Vec<ProfileEntry>,
     pub input: TextInput,
@@ -78,6 +83,15 @@ impl ProfilePickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_delete: None,
+        }
+    }
+}
+
+impl SaveProfileState {
+    pub fn new(initial: &str) -> Self {
+        Self {
+            input: TextInput::new(initial),
+            pending_overwrite: false,
         }
     }
 }

@@ -101,6 +101,7 @@ pub(super) fn save_profile_name_changed(
 ) -> Update {
     if let Some(prompt) = ctx.state.save_profile_prompt.as_mut() {
         event.apply_to(&mut prompt.input);
+        prompt.pending_overwrite = false;
     }
     request_save_profile_focus(ctx);
     Update::full()

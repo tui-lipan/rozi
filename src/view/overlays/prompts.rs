@@ -183,6 +183,12 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(prompt) = ctx.state.save_profile_prompt.as_ref() else {
         return Text::new("").into();
     };
+    let confirm = prompt.pending_overwrite.then(|| {
+        format!(
+            "`{}` exists - Enter again overwrites it",
+            prompt.input.text().trim()
+        )
+    });
     prompt_overlay(
         ctx,
         "Save profile",
@@ -192,7 +198,7 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::SaveProfileNameChanged,
         Msg::CloseSaveProfile,
         Msg::SubmitSaveProfile,
-        None,
+        confirm.as_deref(),
     )
 }
 

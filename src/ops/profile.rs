@@ -10,10 +10,16 @@ use crate::ops::focus::request_save_profile_focus;
 use crate::ops::theme;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
-use crate::state::{Mode, PaneRenameState, ProfilePickerState, State};
+use crate::state::{Mode, ProfilePickerState, SaveProfileState, State};
 
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
-    ctx.state.save_profile_prompt = Some(PaneRenameState::new(0, ""));
+    let initial = ctx
+        .state
+        .session_name
+        .as_deref()
+        .filter(|name| ctx.state.session_attached && !crate::state::is_ephemeral_session_name(name))
+        .unwrap_or("");
+    ctx.state.save_profile_prompt = Some(SaveProfileState::new(initial));
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;
@@ -37,18 +43,49 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
         .as_ref()
         .and_then(|prompt| normalize_profile_name(prompt.input.text()))
     else {
-        ctx.state.save_profile_prompt = None;
-        ctx.state.commands_dirty = true;
+        ctx.toast().push(error_toast(
+            &ctx.state.theme,
+            "Save Profile",
+            "Use letters, numbers, _ or - for profile names",
+        ));
+        request_save_profile_focus(ctx);
         return Update::full();
     };
 
     let path = profile_path_for_name(&name);
+    let existed = path.exists();
+    if existed
+        && !ctx
+            .state
+            .save_profile_prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.pending_overwrite)
+    {
+        if let Some(prompt) = ctx.state.save_profile_prompt.as_mut() {
+            prompt.pending_overwrite = true;
+        }
+        request_save_profile_focus(ctx);
+        return Update::full();
+    }
     let profile = profile_from_state(&ctx.state);
     match save_profile(&path, &profile) {
         Ok(()) => {
+            crate::events::emit(
+                &ctx.state,
+                crate::events::Event::new(
+                    crate::events::EventKind::ProfileSaved,
+                    vec![
+                        ("profile", name.clone()),
+                        ("path", path.display().to_string()),
+                    ],
+                ),
+            );
             ctx.toast().push(info_toast(
                 &ctx.state.theme,
-                format!("Saved profile `{name}`"),
+                format!(
+                    "{} profile `{name}`",
+                    if existed { "Overwrote" } else { "Saved" }
+                ),
             ));
         }
         Err(message) => {
@@ -64,13 +101,7 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 fn normalize_profile_name(name: &str) -> Option<String> {
     let name = name.trim();
-    if name.is_empty() {
-        return None;
-    }
-    if name.contains(['/', '\\']) {
-        return None;
-    }
-    Some(name.to_string())
+    crate::session::discovery::valid_session_name(name).then(|| name.to_string())
 }
 
 pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -359,6 +390,46 @@ mod tests {
         assert_eq!(normalize_profile_name("   "), None);
         assert_eq!(normalize_profile_name("team/dev"), None);
         assert_eq!(normalize_profile_name("team\\dev"), None);
+        assert_eq!(normalize_profile_name("team dev"), None);
+        assert_eq!(normalize_profile_name("eph-123"), None);
+    }
+
+    #[test]
+    fn save_prompt_prefills_named_session_but_not_ephemeral_session() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().session_attached = true;
+            backend.state_mut().session_name = Some("dev".to_string());
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
+                .expect("open save prompt");
+            assert_eq!(
+                backend
+                    .state()
+                    .save_profile_prompt
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                "dev"
+            );
+
+            backend.state_mut().save_profile_prompt = None;
+            backend.state_mut().session_name = Some("eph-123".to_string());
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
+                .expect("reopen save prompt");
+            assert_eq!(
+                backend
+                    .state()
+                    .save_profile_prompt
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .text(),
+                ""
+            );
+        });
     }
 
     #[test]

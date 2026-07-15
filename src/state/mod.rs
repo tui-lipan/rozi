@@ -75,7 +75,7 @@ pub struct State {
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
     pub rename_session: Option<SessionRenameState>,
-    pub save_profile_prompt: Option<PaneRenameState>,
+    pub save_profile_prompt: Option<SaveProfileState>,
     pub show_profile_picker: bool,
     pub profile_picker: Option<ProfilePickerState>,
     pub show_session_picker: bool,

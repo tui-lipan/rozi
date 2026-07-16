@@ -149,8 +149,9 @@ fn attach_session_client_with_profile(
                     if !exe.exists() {
                         link.send(Msg::SessionAttachFailed {
                             epoch,
-                            message: "hyprmux was updated on disk\nRestart it to start new sessions"
-                                .to_string(),
+                            message:
+                                "hyprmux was updated on disk\nRestart it to start new sessions"
+                                    .to_string(),
                         });
                         return;
                     }

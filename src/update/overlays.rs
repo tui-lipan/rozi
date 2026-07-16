@@ -244,11 +244,8 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
     if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
-            "Padding not saved",
-            error,
-        ));
+        ctx.toast()
+            .push(error_toast(&ctx.state.theme, "Padding not saved", error));
     }
     ctx.state.pane_padding_editor = None;
     if ctx.state.show_appearance {
@@ -294,8 +291,11 @@ pub(super) fn workbar_command_output(
 }
 
 pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Update {
-    ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Theme reload failed", message));
+    ctx.toast().push(error_toast(
+        &ctx.state.theme,
+        "Theme reload failed",
+        message,
+    ));
     Update::full()
 }
 

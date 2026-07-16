@@ -135,7 +135,7 @@ fn help_category_priority(category: &str) -> usize {
         "Workspaces" => 5,
         "Copy mode" => 6,
         "Profile" => 7,
-        "Theme" => 8,
+        "Appearance" => 8,
         "Mouse" => 9,
         "Custom" => 10,
         _ => 11,
@@ -246,13 +246,29 @@ mod palette_alias_tests {
     }
 
     #[test]
-    fn help_categories_put_session_immediately_after_app() {
-        let categories = ["Theme", "Layout", "Session", "App", "Panes", "Custom"];
+    fn help_categories_put_appearance_after_profiles() {
+        let categories = [
+            "Appearance",
+            "Layout",
+            "Session",
+            "App",
+            "Panes",
+            "Profile",
+            "Custom",
+        ];
         let mut sorted = categories;
         sorted.sort_by_key(|category| help_category_priority(category));
         assert_eq!(
             sorted,
-            ["App", "Session", "Panes", "Layout", "Theme", "Custom"]
+            [
+                "App",
+                "Session",
+                "Panes",
+                "Layout",
+                "Profile",
+                "Appearance",
+                "Custom",
+            ]
         );
     }
 }

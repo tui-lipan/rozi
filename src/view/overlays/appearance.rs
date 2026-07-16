@@ -4,34 +4,34 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
     // `render_item` below) rather than disappearing. Grouped so each control sits next to the
     // toggle it depends on.
-    let entries = vec![
-        appearance_entry("Theme", current_theme_label(ctx), AppearanceAction::Theme),
-        appearance_entry(
+    let rows = vec![
+        ("Theme", current_theme_label(ctx), AppearanceAction::Theme),
+        (
             "Terminal padding",
             padding_summary(pane.padding),
             AppearanceAction::EditPadding,
         ),
-        appearance_entry(
+        (
             "Titlebar",
             enabled_status(pane.show_titles),
             AppearanceAction::ToggleTitles,
         ),
-        appearance_entry(
+        (
             "Titlebar style",
             pane.title_style.label().to_string(),
             AppearanceAction::CycleTitleStyle,
         ),
-        appearance_entry(
+        (
             "Workbar",
             enabled_status(pane.show_workbar),
             AppearanceAction::ToggleWorkbar,
         ),
-        appearance_entry(
+        (
             "Workbar gap",
             enabled_status(pane.workbar_gap),
             AppearanceAction::ToggleWorkbarGap,
         ),
-        appearance_entry(
+        (
             "Workbar position",
             if pane.workbar_at_bottom {
                 "Bottom"
@@ -41,76 +41,99 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
             .to_string(),
             AppearanceAction::ToggleWorkbarPosition,
         ),
-        appearance_entry(
+        (
             "Workbar style",
             pane.workbar_style.label().to_string(),
             AppearanceAction::CycleWorkbarStyle,
         ),
-        appearance_entry(
+        (
             "Workbar badge style",
             pane.workbar_badge_style.label().to_string(),
             AppearanceAction::CycleWorkbarBadgeStyle,
         ),
-        appearance_entry(
+        (
             "Workbar powerline",
             enabled_status(pane.workbar_powerline),
             AppearanceAction::ToggleWorkbarPowerline,
         ),
-        appearance_entry(
+        (
             "Workbar tab style",
             pane.workbar_tab_style.label().to_string(),
             AppearanceAction::CycleWorkbarTabStyle,
         ),
-        appearance_entry(
+        (
             "Animations",
             enabled_status(ctx.state.config.animations.enabled),
             AppearanceAction::ToggleAnimations,
         ),
-        appearance_entry(
+        (
             "Focused pane background",
             enabled_status(pane.highlight_focused_background),
             AppearanceAction::ToggleHighlightFocusedBackground,
         ),
-        appearance_entry(
+        (
             "Focused pane border",
             enabled_status(pane.highlight_focused_border),
             AppearanceAction::ToggleHighlightFocusedBorder,
         ),
-        appearance_entry(
+        (
             "Border merging",
             enabled_status(pane.merge_borders),
             AppearanceAction::ToggleBorderMerge,
         ),
-        appearance_entry(
+        (
             "Border style",
             pane.border_style.label().to_string(),
             AppearanceAction::CycleBorderStyle,
         ),
-        appearance_entry(
+        (
             "Background follows terminal",
             enabled_status(pane.background_follows_terminal),
             AppearanceAction::ToggleBackgroundFollowsTerminal,
         ),
     ];
+    let entries: Vec<_> = rows
+        .into_iter()
+        .map(|(label, status, action)| {
+            SearchEntry::Item(
+                SearchItem::new(label, (action, status))
+                    .aliases(appearance_palette_aliases(action)),
+            )
+        })
+        .collect();
 
     let pane_flags = ctx.state.config.pane;
+    let item_style = fg_only(&ctx.state.theme.primary);
+    let description_style = fg_only(&ctx.state.theme.muted);
     let disabled_style = fg_only(&ctx.state.theme.muted);
-    let palette = shared_search_palette::<AppearanceAction>(ctx, Length::Auto, false)
+    let palette = shared_search_palette::<(AppearanceAction, String)>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search appearance…")
-        .description_placement(DescriptionPlacement::Right)
         .render_item(Arc::new(
-            move |item: &SearchItem<AppearanceAction>, _highlight| {
-                item.value.disabled_reason(&pane_flags).map(|reason| {
-                    ListItem::from_spans(vec![Span::new(item.label.as_ref()).style(disabled_style)])
-                        .description(reason)
-                        .description_style(disabled_style)
-                })
+            move |item: &SearchItem<(AppearanceAction, String)>, _highlight| {
+                let disabled_reason = item.value.0.disabled_reason(&pane_flags);
+                let status = disabled_reason.unwrap_or(&item.value.1);
+                let style = if disabled_reason.is_some() {
+                    disabled_style
+                } else {
+                    item_style
+                };
+                ListItem::from_spans(vec![Span::new(item.label.as_ref()).style(style)])
+                    .description(status)
+                    .description_style(if disabled_reason.is_some() {
+                        disabled_style
+                    } else {
+                        description_style
+                    })
+                    .into()
             },
         ))
-        .on_activate(ctx.link().callback(|event: SearchEvent<AppearanceAction>| {
-            Msg::AppearanceActivate(event.item.value)
-        }));
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<(AppearanceAction, String)>| {
+                    Msg::AppearanceActivate(event.item.value.0)
+                }),
+        );
 
     let panel: Element = Frame::new()
         .title("Change appearance")
@@ -244,15 +267,6 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .on_close(ctx.link().callback(|_| Msg::ClosePanePaddingEditor))
         .child(action_palette_frame(body))
         .into()
-}
-
-fn appearance_entry(
-    label: impl Into<Arc<str>>,
-    status: String,
-    action: AppearanceAction,
-) -> SearchEntry<AppearanceAction> {
-    SearchEntry::Item(SearchItem::new(label, action).aliases(appearance_palette_aliases(action)))
-        .description(ItemDescription::new().right(status))
 }
 
 fn enabled_status(enabled: bool) -> String {

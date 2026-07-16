@@ -389,11 +389,8 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
             }
         }
         Err(message) => {
-            ctx.toast().push(error_toast(
-                &ctx.state.theme,
-                "Default not set",
-                message,
-            ));
+            ctx.toast()
+                .push(error_toast(&ctx.state.theme, "Default not set", message));
         }
     }
     Update::full()
@@ -582,8 +579,11 @@ pub(crate) fn open_named_target(
         let profile = match load_profile(&path) {
             Ok(profile) => profile,
             Err(message) => {
-                ctx.toast()
-                    .push(error_toast(&ctx.state.theme, "Profile load failed", message));
+                ctx.toast().push(error_toast(
+                    &ctx.state.theme,
+                    "Profile load failed",
+                    message,
+                ));
                 return Update::full();
             }
         };
@@ -652,8 +652,11 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Profile load failed", message));
+            ctx.toast().push(error_toast(
+                &ctx.state.theme,
+                "Profile load failed",
+                message,
+            ));
             ctx.state.show_profile_picker = false;
             ctx.state.profile_picker = None;
             ctx.state.commands_dirty = true;

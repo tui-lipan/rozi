@@ -43,6 +43,37 @@ replacement if it disappeared. Incompatible sessions are rejected. Leaving a dis
 session requires clicking the target row a second time; this confirmation is independent from the
 session picker's confirmation.
 
+## User Tabs
+
+Launcher tabs render configured entries and reuse the same actions as user-defined `[keys]`
+commands. `run` opens a pane in the active workspace, `send` writes literal bytes to the focused
+pane after the normal input checks, and `popup` opens a transient popup. A queued click records the
+config generation, tab name, and entry index; if config reloads before it is handled, it is ignored
+instead of resolving to a different entry.
+
+Command-backed tabs run their `command` immediately when the tab becomes active and visible, then
+at the configured interval (minimum five seconds). They retain their last rows while inactive and
+refresh immediately when revisited. Only one run per tab may be active. Closing the sidebar,
+switching tabs, or reloading config invalidates pending runs and timers; stale results cannot repaint
+or restart polling. Each run has a five-second timeout, captures at most 64 KiB of stdout and stderr,
+stores at most 500 rows, and bounds both raw and displayed row lengths. ANSI/OSC escapes and control
+characters are removed. Timeouts, spawn failures, stderr, and non-zero exits appear as non-clickable
+error rows.
+
+An `on_click` action may use `{line}` only inside `send`. The sanitized raw row replaces every
+literal `{line}` occurrence and is written directly to the PTY; it is not shell-quoted or evaluated
+by hyprmux. `run` and `popup` actions are fixed commands and configurations containing `{line}` in
+either are rejected with a warning. Row clicks carry both the raw row and its output generation, so
+a click queued across a refresh cannot act on replaced output.
+
+### Security
+
+Sidebar commands and launcher actions are trusted local configuration and execute with the user's
+account through the resolved `command_shell`; hyprmux never chooses an extra `/bin/sh` fallback for
+polling. Command output is untrusted display data and is sanitized and bounded before storage.
+Because `{line}` can contain command syntax, use it only where literal terminal input is intended;
+the receiving program or shell still decides how that typed text is interpreted when submitted.
+
 ## Actions
 
 - `toggle-sidebar` shows or hides the sidebar for this client.
@@ -58,6 +89,7 @@ reconciles the selected tab by stable ID; if that tab was removed, the first con
 active. Runtime toggles are not written to disk. `toggle-sidebar` remains usable while the
 scratchpad is open. Closing the sidebar, changing tabs, attaching or detaching, and reloading config
 invalidate in-flight session discovery so an old result cannot repopulate or restart the tab.
+The same epoch policy applies independently to command-tab polling.
 
 ## Shared Sessions
 

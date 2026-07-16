@@ -74,10 +74,17 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     let Some(command) = ctx.state.config.user_commands.get(index).cloned() else {
         return Update::none();
     };
-    match command.action {
+    execute_user_command_action(ctx, &command.action)
+}
+
+pub(crate) fn execute_user_command_action(
+    ctx: &mut Context<HyprmuxApp>,
+    action: &UserCommandAction,
+) -> Update {
+    match action {
         UserCommandAction::Run(command) => {
             let identity = PaneIdentity {
-                command: Some(command),
+                command: Some(command.clone()),
                 ..PaneIdentity::default()
             };
             crate::pane_lifecycle::spawn_interactive_pane(
@@ -92,7 +99,8 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
             let Some(id) = ctx.state.focused_pane else {
                 return Update::full();
             };
-            if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.into_bytes()) {
+            if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
+            {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
                     "Command failed",
@@ -102,14 +110,16 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
             Update::full()
         }
         UserCommandAction::Popup(command) => {
-            crate::popup::open(ctx, command, None, None, None, None).unwrap_or_else(|error| {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Popup failed",
-                    error,
-                ));
-                Update::full()
-            })
+            crate::popup::open(ctx, command.clone(), None, None, None, None).unwrap_or_else(
+                |error| {
+                    ctx.toast().push(crate::pty_events::error_toast(
+                        &ctx.state.theme,
+                        "Popup failed",
+                        error,
+                    ));
+                    Update::full()
+                },
+            )
         }
     }
 }

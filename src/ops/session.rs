@@ -431,6 +431,8 @@ pub(crate) fn swap_state_for_attach(
     mut replacement: crate::state::State,
 ) {
     replacement.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
+    replacement.sidebar.command_epoch = ctx.state.sidebar.command_epoch.wrapping_add(1);
+    replacement.sidebar.config_epoch = ctx.state.sidebar.config_epoch.wrapping_add(1);
     replacement.theme_watcher = ctx.state.theme_watcher.take();
     replacement.system_theme = ctx.state.system_theme.clone();
     replacement.control_socket_path = ctx.state.control_socket_path.clone();
@@ -1099,6 +1101,8 @@ mod tests {
                     state.session_name = Some("eph-test".to_string());
                     state.session_attached = true;
                     state.pending_session_attach = None;
+                    state.sidebar.command_epoch = 7;
+                    state.sidebar.config_epoch = 11;
                     // Simulate a profile-seeded session: the current pane carries a command.
                     state.workspaces[0].panes[0].identity.command = Some("nvim".to_string());
                     let mut rename = SessionRenameState::new(&name, NamingMode::CreateSession);
@@ -1125,6 +1129,8 @@ mod tests {
                 // fresh single-pane default with no launch command to respawn.
                 assert_eq!(state.workspaces[0].panes.len(), 1);
                 assert_eq!(state.workspaces[0].panes[0].identity.command, None);
+                assert_eq!(state.sidebar.command_epoch, 8);
+                assert_eq!(state.sidebar.config_epoch, 12);
             })
             .expect("spawn test thread")
             .join()

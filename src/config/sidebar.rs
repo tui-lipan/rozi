@@ -82,7 +82,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                                     ));
                                     return None;
                                 }
-                                let action = parse_user_command_action(
+                                let action = parse_sidebar_action(
                                     entry.action(),
                                     &format!("Sidebar entry `{label}` in `{name}`"),
                                     warnings,
@@ -105,7 +105,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                             ));
                         }
                         let on_click = table.on_click.and_then(|action| {
-                            parse_user_command_action(
+                            parse_sidebar_action(
                                 action,
                                 &format!("Sidebar tab `{name}` on_click"),
                                 warnings,
@@ -136,6 +136,27 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
         tabs.push(tab);
     }
     tabs
+}
+
+fn parse_sidebar_action(
+    raw: super::file::UserCommandTableSpec,
+    context: &str,
+    warnings: &mut Vec<String>,
+) -> Option<super::schema::UserCommandAction> {
+    let action = parse_user_command_action(raw, context, warnings)?;
+    if matches!(
+        &action,
+        super::schema::UserCommandAction::Run(command)
+            | super::schema::UserCommandAction::Popup(command)
+            if command.contains("{line}")
+    ) {
+        warnings.push(format!(
+            "{context} uses `{{line}}` in run/popup; only send actions support this placeholder; skipped"
+        ));
+        None
+    } else {
+        Some(action)
+    }
 }
 
 #[cfg(test)]
@@ -228,5 +249,29 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn line_placeholder_is_allowed_only_for_send_actions() {
+        let (config, warnings) = parse(
+            r#"tabs = [{ name = "rows", label = "Rows", command = "printf x", on_click = { run = "show {line}" } }]"#,
+        );
+        assert!(matches!(
+            &config.tabs[0],
+            SidebarTab::Command { on_click: None, .. }
+        ));
+        assert!(warnings.iter().any(|warning| warning.contains("only send")));
+
+        let (config, warnings) = parse(
+            r#"tabs = [{ name = "rows", label = "Rows", command = "printf x", on_click = { send = "show {line}\n" } }]"#,
+        );
+        assert!(warnings.is_empty());
+        assert!(matches!(
+            &config.tabs[0],
+            SidebarTab::Command {
+                on_click: Some(crate::config::UserCommandAction::Send(_)),
+                ..
+            }
+        ));
     }
 }

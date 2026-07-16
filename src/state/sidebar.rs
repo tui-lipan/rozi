@@ -2,11 +2,27 @@ use std::collections::HashMap;
 
 use crate::config::{SidebarConfig, SidebarTabId};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarCommandRow {
+    pub raw: String,
+    pub display: String,
+    pub error: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarCommandOutput {
+    pub epoch: u64,
+    pub rows: Vec<SidebarCommandRow>,
+}
+
 #[derive(Default)]
 pub struct SidebarState {
     pub active_tab: Option<SidebarTabId>,
-    pub command_output: HashMap<SidebarTabId, Vec<String>>,
+    pub command_output: HashMap<SidebarTabId, SidebarCommandOutput>,
+    pub command_in_flight: HashMap<SidebarTabId, u64>,
     pub command_epoch: u64,
+    pub next_output_epoch: u64,
+    pub config_epoch: u64,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
     pub pending_session_open: Option<String>,
@@ -30,7 +46,8 @@ impl SidebarState {
             self.active_tab = ids.first().cloned();
         }
         self.command_output.retain(|id, _| ids.contains(id));
-        self.command_epoch = self.command_epoch.saturating_add(1);
+        self.invalidate_commands();
+        self.config_epoch = self.config_epoch.wrapping_add(1);
         self.invalidate_sessions();
     }
 
@@ -57,6 +74,10 @@ impl SidebarState {
         self.pending_session_open = None;
         self.sessions_epoch = self.sessions_epoch.wrapping_add(1);
     }
+
+    pub fn invalidate_commands(&mut self) {
+        self.command_epoch = self.command_epoch.wrapping_add(1);
+    }
 }
 
 #[cfg(test)]
@@ -72,9 +93,13 @@ mod tests {
         };
         let mut state = SidebarState::new(&old);
         state.active_tab = Some(SidebarTabId::new("panes"));
-        state
-            .command_output
-            .insert(SidebarTabId::new("removed"), vec!["old".into()]);
+        state.command_output.insert(
+            SidebarTabId::new("removed"),
+            SidebarCommandOutput {
+                epoch: 1,
+                rows: Vec::new(),
+            },
+        );
 
         let mut new = SidebarConfig {
             tabs: vec![SidebarTab::Sessions, SidebarTab::Panes],
@@ -106,5 +131,16 @@ mod tests {
         state.config.sidebar.position = crate::config::SidebarPosition::Right;
         assert_eq!(state.content_viewport(viewport).w, 68);
         assert_eq!(state.terminal_content_left_offset(viewport), 0);
+    }
+
+    #[test]
+    fn command_invalidation_preserves_running_process_marker() {
+        let mut state = SidebarState::default();
+        let id = SidebarTabId::new("rows");
+        state.command_in_flight.insert(id.clone(), 4);
+        state.command_epoch = 4;
+        state.invalidate_commands();
+        assert_eq!(state.command_epoch, 5);
+        assert_eq!(state.command_in_flight.get(&id), Some(&4));
     }
 }

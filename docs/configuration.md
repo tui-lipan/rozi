@@ -463,12 +463,12 @@ session sizing behavior.
 | `position` | `left` | Dock side: `left` or `right`. |
 | `tabs` | `["agents", "panes", "sessions"]` | Ordered tabs. Built-in names are reserved and each tab identity must be unique. |
 
-Custom launcher and command-backed table forms are accepted by the schema now so one config can
-be prepared ahead of the complete custom-tab renderer. Their rows remain explicit placeholders in
-this release. Each table needs a unique non-empty `name`, a non-empty display `label`, and exactly
-one of `entries` or `command`. Launcher entries require exactly one of `run`, `send`, or `popup`;
-command tabs may provide an `on_click` action with the same shape. Poll intervals have a five-second
-minimum.
+Each custom table needs a unique non-empty `name`, a non-empty display `label`, and exactly one of
+`entries` or `command`. Launcher entries require exactly one of `run`, `send`, or `popup` and execute
+with the same behavior as user-defined `[keys]` commands. Command tabs may provide an `on_click`
+action with the same shape. They poll only while active and visible, run immediately on activation,
+and have a five-second minimum interval. Output, runtime, rows, and row lengths are bounded; see the
+[Sidebar security policy](sidebar.md#security).
 
 ```toml
 [sidebar]
@@ -484,7 +484,9 @@ tabs = [
 
 Unknown built-ins, duplicate/reserved/empty names, tables with both or neither content form, and
 invalid launcher entries produce warnings and skip only the invalid item. Unknown table fields are
-strict parse errors.
+strict parse errors. `{line}` is replaced only for command-tab `on_click.send` actions and is sent
+as literal PTY text. It is rejected in sidebar `run` and `popup` actions; those commands are never
+constructed from command output.
 
 ## `[workbar]`
 

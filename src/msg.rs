@@ -37,6 +37,26 @@ pub enum Msg {
     WorkbarCommandOutput(String, String),
     SidebarTabSelected(crate::config::SidebarTabId),
     SidebarFocusPane(PaneId),
+    SidebarLauncherActivate {
+        config_epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+        entry_index: usize,
+    },
+    SidebarCommandPoll {
+        epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+    },
+    SidebarCommandOutput {
+        epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+        rows: Vec<crate::state::SidebarCommandRow>,
+    },
+    SidebarCommandRowActivate {
+        config_epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+        output_epoch: u64,
+        line: String,
+    },
     SidebarSessionsRefresh {
         epoch: u64,
     },

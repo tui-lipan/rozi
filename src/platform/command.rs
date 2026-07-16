@@ -30,6 +30,176 @@ pub struct ShellCommand {
     pub args: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommandOutput {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub status: Option<i32>,
+    pub timed_out: bool,
+}
+
+/// Run one command line through an already-resolved command shell. Output is drained to avoid
+/// pipe deadlocks but only `capture_limit` bytes from each stream are retained. The shell and its
+/// descendants are terminated on timeout and after the shell exits, so command tabs cannot leave
+/// background workers behind.
+pub fn run_bounded_shell_command(
+    shell: &ShellCommand,
+    command_line: &str,
+    timeout: std::time::Duration,
+    capture_limit: usize,
+) -> std::io::Result<CommandOutput> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut command = std::process::Command::new(&shell.program);
+    command
+        .args(&shell.args)
+        .arg(command_line)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_command_group(&mut command);
+    let mut child = command.spawn()?;
+    let group = match CommandGroup::new(&child) {
+        Ok(group) => group,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let capture = |mut stream: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut retained = Vec::with_capacity(capture_limit.min(8192));
+            let mut buffer = [0u8; 8192];
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        let keep = capture_limit.saturating_sub(retained.len()).min(read);
+                        retained.extend_from_slice(&buffer[..keep]);
+                    }
+                }
+            }
+            retained
+        })
+    };
+    let stdout_thread = capture(Box::new(stdout));
+    let stderr_thread = capture(Box::new(stderr));
+
+    let started = std::time::Instant::now();
+    let (status, timed_out) = loop {
+        if let Some(status) = child.try_wait()? {
+            break (Some(status), false);
+        }
+        if started.elapsed() >= timeout {
+            group.terminate(&mut child);
+            break (child.wait().ok(), true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    // Also stop descendants deliberately backgrounded by a command whose shell already exited.
+    group.terminate(&mut child);
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let stderr = stderr_thread.join().unwrap_or_default();
+    Ok(CommandOutput {
+        stdout,
+        stderr,
+        status: status.and_then(|status| status.code()),
+        timed_out,
+    })
+}
+
+#[cfg(unix)]
+fn configure_command_group(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+}
+
+#[cfg(windows)]
+fn configure_command_group(_command: &mut std::process::Command) {}
+
+#[cfg(unix)]
+struct CommandGroup(libc::pid_t);
+
+#[cfg(unix)]
+impl CommandGroup {
+    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+        Ok(Self(child.id() as libc::pid_t))
+    }
+
+    fn terminate(&self, child: &mut std::process::Child) {
+        unsafe {
+            libc::kill(-self.0, libc::SIGKILL);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+#[cfg(windows)]
+struct CommandGroup(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl CommandGroup {
+    fn new(child: &std::process::Child) -> std::io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            ) == 0
+                || AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0
+            {
+                windows_sys::Win32::Foundation::CloseHandle(job);
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(Self(job))
+        }
+    }
+
+    fn terminate(&self, child: &mut std::process::Child) {
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CommandGroup {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
 impl ShellCommand {
     pub fn new(program: impl Into<String>) -> Self {
         Self {
@@ -457,5 +627,36 @@ mod tests {
             windows_command_shell(&ShellEnv::default()),
             ShellCommand::new("cmd.exe").arg("/D").arg("/S").arg("/C")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_shell_command_enforces_capture_limit_and_status() {
+        let output = run_bounded_shell_command(
+            &ShellCommand::new("/bin/sh").arg("-c"),
+            "dd if=/dev/zero bs=1024 count=128 2>/dev/null; printf err >&2; exit 7",
+            std::time::Duration::from_secs(2),
+            64 * 1024,
+        )
+        .unwrap();
+        assert_eq!(output.stdout.len(), 64 * 1024);
+        assert_eq!(output.stderr, b"err");
+        assert_eq!(output.status, Some(7));
+        assert!(!output.timed_out);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_shell_command_times_out_and_terminates_its_group() {
+        let started = std::time::Instant::now();
+        let output = run_bounded_shell_command(
+            &ShellCommand::new("/bin/sh").arg("-c"),
+            "sleep 10 & wait",
+            std::time::Duration::from_millis(50),
+            1024,
+        )
+        .unwrap();
+        assert!(output.timed_out);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }

@@ -43,6 +43,23 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
+        Msg::SidebarLauncherActivate {
+            config_epoch,
+            tab_id,
+            entry_index,
+        } => sidebar::launcher_activate(ctx, config_epoch, tab_id, entry_index),
+        Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
+        Msg::SidebarCommandOutput {
+            epoch,
+            tab_id,
+            rows,
+        } => sidebar::command_output(ctx, epoch, tab_id, rows),
+        Msg::SidebarCommandRowActivate {
+            config_epoch,
+            tab_id,
+            output_epoch,
+            line,
+        } => sidebar::command_row_activate(ctx, config_epoch, tab_id, output_epoch, line),
         Msg::SidebarSessionsRefresh { epoch } => sidebar::refresh_sessions(ctx, epoch),
         Msg::SidebarSessionsDiscovered { epoch, rows } => {
             sidebar::sessions_discovered(ctx, epoch, rows)

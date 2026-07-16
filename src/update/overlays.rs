@@ -36,6 +36,7 @@ fn padding_error(ctx: &mut Context<HyprmuxApp>) {
 pub(super) fn command_link_ready(ctx: &mut Context<HyprmuxApp>, link: CommandLink<Msg>) -> Update {
     ctx.state.command_link = Some(link);
     crate::update::sidebar::request_sessions_refresh(ctx);
+    crate::update::sidebar::request_command_poll(ctx);
     Update::none()
 }
 

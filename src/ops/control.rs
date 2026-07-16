@@ -6,8 +6,7 @@ use crate::actions::execute_action;
 use crate::control::{ControlCommand, ControlEnvelope, ControlResponse};
 use crate::input::Action;
 use crate::ops::focus::{
-    focus_pane, move_focused_to_workspace, request_current_pane_focus, request_pane_focus,
-    switch_workspace,
+    focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
 };
 use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane};
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
@@ -202,21 +201,9 @@ fn set_status(
 }
 
 fn focus_target(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> ControlResponse {
-    let Some((workspace_index, _)) = ctx
-        .state
-        .workspaces
-        .iter()
-        .enumerate()
-        .find(|(_, ws)| ws.panes.iter().any(|p| p.id == target && !p.closing))
-    else {
+    if !focus_pane_anywhere(ctx, target) {
         return ControlResponse::error(format!("pane {target} not found"));
-    };
-    ctx.state.active_workspace = workspace_index;
-    focus_pane(&mut ctx.state, target);
-    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
-        pane.activity.has_unseen_output = false;
     }
-    request_pane_focus(ctx, target);
     ControlResponse::empty()
 }
 
@@ -262,6 +249,10 @@ fn run_action(
     if crate::actions::is_layout_mutating(&ctx.state, action) && !ctx.state.is_controller() {
         let _ = reply.send(ControlResponse::error("not controller"));
         return Update::full();
+    }
+    if crate::actions::is_blocked_by_scratchpad(&ctx.state, action) {
+        let _ = reply.send(ControlResponse::error("scratchpad is open"));
+        return Update::none();
     }
     let update = execute_action(ctx, action);
     let _ = reply.send(ControlResponse::empty());

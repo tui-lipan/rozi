@@ -17,6 +17,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Keybindings](keybindings.md) | Prefix mode, held modifier, mouse gestures, resize mode, and the full key table. |
 | [Configuration](configuration.md) | The complete `hyprmux.toml` reference: shell, input, animations, theme, profile, clipboard. |
 | [Layouts & panes](layouts-and-panes.md) | Dwindle vs master tiling, floating, fullscreen, split ratios, focus and movement. |
+| [Sidebar](sidebar.md) | Docked sidebar configuration, built-in tabs, navigation, and shared-session sizing. |
 | [Themes](themes.md) | The 10 built-in presets, the `system` theme, custom theme files, live hot-reload, and terminal ANSI colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |

@@ -136,6 +136,8 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     let had_workbar_tick = ctx.state.config.workbar.has_clock();
     let start_workbar_tick = !had_workbar_tick && new_config.workbar.has_clock();
 
+    ctx.state.sidebar_visible = new_config.sidebar.visible;
+    ctx.state.sidebar.reconcile(&new_config.sidebar);
     ctx.state.config = new_config;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 

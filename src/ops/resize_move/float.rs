@@ -53,6 +53,8 @@ pub(crate) fn begin_move(
     }
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
+    let content_left = ctx.state.terminal_content_left_offset(ctx.viewport());
+    let content_top = ctx.state.content_top_offset();
     let mut session = None;
     if let Some(pane) = active_pane_mut(&mut ctx.state, id) {
         pane.opening = false;
@@ -66,9 +68,11 @@ pub(crate) fn begin_move(
                 id,
                 was_floating,
                 drag_rect,
-                pointer_x: current_rect.x.round() as i32
+                pointer_x: i32::from(content_left)
+                    + current_rect.x.round() as i32
                     + i32::from(from_local_x.min(target_w.saturating_sub(1))),
-                pointer_y: current_rect.y.round() as i32
+                pointer_y: i32::from(content_top)
+                    + current_rect.y.round() as i32
                     + i32::from(from_local_y.min(target_h.saturating_sub(1))),
             });
         }
@@ -92,7 +96,9 @@ pub(crate) fn move_pane(
     if !modified {
         return Update::none();
     }
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let mut persisted_floating_rect = None;
     if let Some(session) = ctx
         .state
@@ -237,7 +243,7 @@ fn resize_pane_state(
     viewport: Rect,
 ) {
     focus_pane(state, id);
-    let bounds = state.canvas_bounds(viewport);
+    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
     let Some(pane) = active_pane_mut(state, id) else {
         return;
     };
@@ -268,7 +274,7 @@ fn resize_pane_state(
 
     let layout_kind = state.workspaces[state.active_workspace].layout_kind;
     if layout_kind == LayoutKind::Master {
-        let bounds = state.canvas_bounds(viewport);
+        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
         let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
         let focused_rect = {
             let placements = workspace_target_rects(
@@ -356,10 +362,16 @@ fn split_edge_for_corner(axis: state::SplitAxis, corner: ResizeCorner) -> SplitE
 
 fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: Rect) {
     state.animation = GeometryAnimation::TileFloat;
-    let bounds = state.canvas_bounds(viewport);
+    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
     let top_gap = state.workspace_top_gap();
     let tile_gap = state.tile_gap();
-    let drop_point = canvas_local_point_from_mouse(x, y, bounds, state.content_top_offset());
+    let drop_point = canvas_local_point_from_mouse(
+        x,
+        y,
+        bounds,
+        state.terminal_content_left_offset(viewport),
+        state.content_top_offset(),
+    );
     let target = {
         let workspace = &state.workspaces[state.active_workspace];
         let placements =

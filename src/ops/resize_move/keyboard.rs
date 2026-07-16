@@ -20,7 +20,9 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         return;
     }
     let workspace_index = ctx.state.active_workspace;
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace

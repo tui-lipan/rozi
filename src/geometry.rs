@@ -2,7 +2,21 @@ use tui_lipan::prelude::*;
 
 use crate::state::{OFFSCREEN_MIN_VISIBLE, PaneId, ResizeCorner, SplitAxis};
 
-pub fn canvas_bounds_from_viewport(viewport: Rect, top_chrome_height: u16) -> FloatRect {
+pub const MIN_CANVAS_COLS: u16 = 20;
+
+pub fn effective_sidebar_width(viewport_width: u16, configured_width: u16, visible: bool) -> u16 {
+    if !visible || viewport_width <= 1 {
+        return 0;
+    }
+    let available = if viewport_width > MIN_CANVAS_COLS {
+        viewport_width - MIN_CANVAS_COLS
+    } else {
+        viewport_width - 1
+    };
+    configured_width.min(available)
+}
+
+pub fn canvas_bounds_from_content_viewport(viewport: Rect, top_chrome_height: u16) -> FloatRect {
     FloatRect {
         x: 0.0,
         y: 0.0,
@@ -292,12 +306,45 @@ pub fn canvas_local_point_from_mouse(
     x: u16,
     y: u16,
     bounds: FloatRect,
+    content_left_offset: u16,
     top_offset: u16,
 ) -> (f32, f32) {
     (
-        f32::from(x).clamp(bounds.x, bounds.x + bounds.w),
+        f32::from(x.saturating_sub(content_left_offset)).clamp(bounds.x, bounds.x + bounds.w),
         f32::from(y.saturating_sub(top_offset)).clamp(bounds.y, bounds.y + bounds.h),
     )
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+
+    #[test]
+    fn sidebar_width_preserves_canvas_and_yields_on_narrow_terminals() {
+        assert_eq!(effective_sidebar_width(120, 32, false), 0);
+        assert_eq!(effective_sidebar_width(120, 32, true), 32);
+        assert_eq!(effective_sidebar_width(40, 80, true), 20);
+        assert_eq!(effective_sidebar_width(10, 32, true), 9);
+        assert_eq!(effective_sidebar_width(1, 32, true), 0);
+    }
+
+    #[test]
+    fn global_mouse_translation_applies_left_dock_once() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 23.0,
+        };
+        assert_eq!(
+            canvas_local_point_from_mouse(42, 8, bounds, 32, 1),
+            (10.0, 7.0)
+        );
+        assert_eq!(
+            canvas_local_point_from_mouse(10, 8, bounds, 0, 1),
+            (10.0, 7.0)
+        );
+    }
 }
 
 pub fn float_rect_contains_point(rect: FloatRect, point: (f32, f32)) -> bool {

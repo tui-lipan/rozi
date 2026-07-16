@@ -62,6 +62,7 @@ pub(crate) fn scratch_progress(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> f
 /// Toggle the scratchpad in/out of view. The first show spawns its shell; later shows reuse
 /// the same live PTY. Hiding keeps the PTY alive and restores the previously focused pane.
 pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.commands_dirty = true;
     if ctx.state.scratch_visible {
         ctx.state.scratch_visible = false;
         ctx.state.animation = GeometryAnimation::TileFloat;
@@ -79,7 +80,9 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.animation = GeometryAnimation::TileFloat;
 
     if ctx.state.scratch.is_none() {
-        let bounds = ctx.state.canvas_bounds(ctx.viewport());
+        let bounds = ctx
+            .state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport());
         let top_gap = ctx.state.workspace_top_gap();
         let rect = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
         let generation = ctx.state.next_pty_generation;
@@ -145,6 +148,7 @@ pub(crate) fn scratch_height_fraction(state: &crate::state::State) -> f32 {
 pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.scratch = None;
     ctx.state.scratch_visible = false;
+    ctx.state.commands_dirty = true;
     if let Some(prev) = ctx.state.scratch_return_focus.take() {
         crate::ops::focus::focus_pane(&mut ctx.state, prev);
         request_pane_focus(ctx, prev);
@@ -173,7 +177,9 @@ pub(crate) fn resize(ctx: &mut Context<HyprmuxApp>, from_y: u16, y: u16) -> Upda
         Some(start) => start,
         None => scratch_height_fraction(&ctx.state),
     };
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_h = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap()).h;
     if tile_h <= 0.0 {
         return Update::none();
@@ -200,7 +206,9 @@ pub(crate) fn scratch_backdrop(
     if progress <= SCRATCH_ANIM_EPSILON {
         return None;
     }
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     // A transparent full-canvas catcher: it swallows clicks meant for the dimmed panes and
     // dismisses the scratchpad when clicked. It paints nothing - an opaque scrim would occlude
     // the panes' text and borders, so the "focused layer" cue is the workspace layer dimming
@@ -237,7 +245,9 @@ pub(crate) fn scratch_placement(
         return None;
     }
     let pane = ctx.state.scratch.as_ref()?;
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let rect = scratch_slide_rect(
         bounds,
@@ -268,7 +278,9 @@ pub(crate) fn scratch_resize_strip(
         return None;
     }
     ctx.state.scratch.as_ref()?;
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let deployed = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
     // Title row (when shown) plus the frame's top border row.

@@ -43,6 +43,11 @@ pub(super) fn hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+    // Return before overlay cleanup and focus restoration: blocked actions must leave the
+    // scratchpad terminal as the focused layer.
+    if crate::actions::is_blocked_by_scratchpad(&ctx.state, action) {
+        return Update::none();
+    }
     if matches!(
         action,
         Action::OpenAppearance | Action::TogglePalette | Action::ToggleHelp

@@ -88,7 +88,9 @@ pub(crate) fn spawn_pane_in_workspace(
     identity: PaneIdentity,
     placement: SpawnPlacement,
 ) -> (PaneId, Update) {
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
@@ -369,7 +371,9 @@ pub(crate) fn begin_close_pane(
 /// one combined [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
 /// Returns `None` (no state change) if the pane was already closing.
 pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
@@ -405,7 +409,9 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
 /// Returns the pane's generation so the caller can schedule its delayed prune, or `None` when the
 /// pane is unknown or already closing.
 pub(crate) fn close_pane_remote(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {

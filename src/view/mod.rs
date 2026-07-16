@@ -1,6 +1,7 @@
 mod keys;
 mod overlays;
 mod pane;
+mod sidebar;
 mod workbar;
 
 pub use keys::{
@@ -34,11 +35,13 @@ use workbar::{empty_workspace_panel, workbar};
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
+    let content_viewport = ctx.state.content_viewport(viewport);
+    ctx.state.last_viewport.set(Some(viewport));
     let viewport_changed = ctx
         .state
-        .last_viewport
-        .replace(Some(viewport))
-        .is_some_and(|previous| previous != viewport);
+        .last_content_viewport
+        .replace(Some(content_viewport))
+        .is_some_and(|previous| previous != content_viewport);
     let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
     // A follower renders the controller's canonical pane canvas centered in its own viewport
     // (letterboxed); everyone else uses the full local canvas. Every downstream placement, float,
@@ -47,7 +50,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let top_offset = ctx.state.content_top_offset();
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
-    let root_bounds = viewport_bounds(viewport);
+    let root_bounds = viewport_bounds(content_viewport);
     let moving_tiled = ctx
         .state
         .moving_pane
@@ -341,8 +344,28 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         root = root.child(client_list_overlay(ctx));
     }
 
+    let content: Element = root.into();
+    let sidebar_width = ctx.state.effective_sidebar_width(viewport);
+    let shell: Element = if sidebar_width == 0 {
+        content
+    } else {
+        let sidebar = sidebar::sidebar(ctx, sidebar_width);
+        match ctx.state.config.sidebar.position {
+            crate::config::SidebarPosition::Left => HStack::new()
+                .child(sidebar)
+                .child(content)
+                .height(Length::Flex(1))
+                .into(),
+            crate::config::SidebarPosition::Right => HStack::new()
+                .child(content)
+                .child(sidebar)
+                .height(Length::Flex(1))
+                .into(),
+        }
+    };
+
     ThemeProvider::new(ctx.state.theme.clone())
-        .child(root)
+        .child(shell)
         .into()
 }
 
@@ -351,7 +374,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 /// canonical canvas is larger than the local one, clipping at the viewport edges). The controller
 /// and local/unattached sessions return their own full canvas.
 fn follower_letterbox_bounds(state: &crate::state::State, viewport: Rect) -> FloatRect {
-    let local = state.canvas_bounds(viewport);
+    let local = state.canvas_bounds_from_terminal_viewport(viewport);
     let Some((cols, rows)) = state.follower_canonical_canvas() else {
         return local;
     };

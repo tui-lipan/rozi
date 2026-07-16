@@ -151,6 +151,24 @@ pub(super) fn bind_user_command(
     table: UserCommandTableSpec,
     warnings: &mut Vec<String>,
 ) {
+    let Some(action) = parse_user_command_action(table, &format!("User command `{key}`"), warnings)
+    else {
+        return;
+    };
+    let Ok(binding) = KeyBinding::from_str(key) else {
+        warnings.push(format!(
+            "Could not parse binding `{key}` for a user command; skipped"
+        ));
+        return;
+    };
+    user_commands.push(UserCommand { action, binding });
+}
+
+pub(super) fn parse_user_command_action(
+    table: UserCommandTableSpec,
+    context: &str,
+    warnings: &mut Vec<String>,
+) -> Option<UserCommandAction> {
     // Preserve `send` byte-for-byte because trailing whitespace often submits the command.
     let run = table.run.map(|value| value.trim().to_string());
     let send = table.send.filter(|value| !value.is_empty());
@@ -167,24 +185,18 @@ pub(super) fn bind_user_command(
         1 => UserCommandAction::Popup(popup.unwrap()),
         0 => {
             warnings.push(format!(
-                "User command `{key}` needs a `run`, `send`, or `popup` value; skipped"
+                "{context} needs a `run`, `send`, or `popup` value; skipped"
             ));
-            return;
+            return None;
         }
         _ => {
             warnings.push(format!(
-                "User command `{key}` has both/conflicting `run`, `send`, or `popup` values; skipped"
+                "{context} has conflicting `run`, `send`, or `popup` values; skipped"
             ));
-            return;
+            return None;
         }
     };
-    let Ok(binding) = KeyBinding::from_str(key) else {
-        warnings.push(format!(
-            "Could not parse binding `{key}` for a user command; skipped"
-        ));
-        return;
-    };
-    user_commands.push(UserCommand { action, binding });
+    Some(action)
 }
 
 fn parse_modifier(value: &str) -> Option<WmModifier> {

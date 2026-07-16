@@ -468,6 +468,27 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleSidebar,
+        label: "Sidebar",
+        category: "Sidebar",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::SidebarNextTab,
+        label: "Next sidebar tab",
+        category: "Sidebar",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::SidebarPrevTab,
+        label: "Previous sidebar tab",
+        category: "Sidebar",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ToggleAnimations,
         label: "Animations",
         category: "Appearance",
@@ -569,11 +590,15 @@ const WORKSPACE_DIGITS: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"
 const WORKSPACE_SHIFT_SYMBOLS: [&str; 9] = ["!", "@", "#", "$", "%", "^", "&", "*", "("];
 
 /// Whether app command chords should currently match at all: only in `Mode::Normal` with no
-/// modal overlay focused. Disabling every command's shortcuts here (rather than special-casing
-/// each handler) means a leading `Ctrl+A` never even becomes a pending chord while, say, a
-/// rename prompt's `Input` wants that key for select-all, and `Resize`/`Copy` mode's own plain
-/// keys are never shadowed by a chord.
+/// modal overlay or scratchpad focused. Disabling every command's shortcuts here (rather than
+/// special-casing each handler) means a leading `Ctrl+A` never even becomes a pending chord while,
+/// say, a rename prompt's `Input` wants that key for select-all, and `Resize`/`Copy` mode's own
+/// plain keys are never shadowed by a chord.
 pub(crate) fn commands_active(state: &State) -> bool {
+    commands_active_without_scratchpad(state) && !state.scratch_visible
+}
+
+fn commands_active_without_scratchpad(state: &State) -> bool {
     state.mode == Mode::Normal
         && !state.show_help
         && !state.show_palette
@@ -617,6 +642,8 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
     let config = &state.config;
     let active = commands_active(state);
     let exit_active = exit_commands_active(state);
+    let scratchpad_toggle_active =
+        state.scratch_visible && commands_active_without_scratchpad(state);
 
     for command in BUILTIN_COMMANDS {
         let id = command
@@ -628,7 +655,11 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
         let label = resolved_label(command.action, command.label, state);
         let action = command.action;
         let enabled = command_available(action, state)
-            && if is_exit_command(action) {
+            && if matches!(action, Action::ToggleScratchpad | Action::ToggleSidebar)
+                && state.scratch_visible
+            {
+                scratchpad_toggle_active
+            } else if is_exit_command(action) {
                 exit_active
             } else {
                 active
@@ -922,6 +953,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleWorkbarPowerline => {
             enable_disable_label("workbar powerline", state.config.pane.workbar_powerline)
         }
+        Action::ToggleSidebar => enable_disable_label("sidebar", state.sidebar_visible),
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }

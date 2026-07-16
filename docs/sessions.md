@@ -189,7 +189,8 @@ layout - a jaw-dropping way to pair or mirror a session across terminals. The se
 authoritative layout as a revisioned `SharedLayout` document (workspace membership and order, tiling
 trees and ratios, layout kind, floating/fullscreen geometry, workspace names, the synchronized flag,
 and pane identity). Purely local view state - focus, active workspace, overlays, copy/search mode,
-scrollback position, and theme - is **never** shared, so each client browses independently.
+  scrollback position, theme, and sidebar visibility/active tab - is **never** shared, so each
+  client browses independently.
 
 - **Controller vs follower.** Exactly one attached client holds the layout-control **lease** (the
   *controller*); the rest are *followers*. The first client to attach is granted control; when the
@@ -219,7 +220,10 @@ scrollback position, and theme - is **never** shared, so each client browses ind
   resize the PTYs; instead they render the controller's canonical canvas centered in their own
   viewport (letterboxed), so a larger terminal shows a border of dead space and a smaller one clips
   at its edges. When control moves, the new controller's size becomes canonical in a single resize
-  wave, avoiding SIGWINCH thrash in the panes.
+  wave, avoiding SIGWINCH thrash in the panes. A controller showing or hiding its local sidebar
+  changes the content width and therefore publishes a new canonical size, reflowing PTYs for the
+  whole session. A follower's sidebar never commits or resizes PTYs; its remaining local content
+  area simply letterboxes or clips that same canonical canvas.
 - **Heartbeat.** The server pings each client and drops one that stops responding (≈15s), releasing
   its lease. Pongs are answered by the transport thread, and time the server itself spends blocked
   in a PTY or filesystem operation is excluded from the deadline. Slow clients that fall too far

@@ -218,8 +218,9 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::TogglePaneSynchronization
         | Action::RenamePane
         | Action::RenameWorkspace
-        | Action::KillWorkspace
-        | Action::ToggleScratchpad => true,
+        | Action::KillWorkspace => true,
+        // Showing can create the server-owned scratch PTY; hiding is a local overlay change.
+        Action::ToggleScratchpad => !state.scratch_visible,
         // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
         Action::RunUserCommand(index) => matches!(
             state.config.user_commands.get(index).map(|cmd| &cmd.action),
@@ -227,6 +228,12 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         ),
         _ => false,
     }
+}
+
+/// The scratchpad is a focused modal terminal: workspace and application actions must not run
+/// behind it. Its own toggle remains available so the same shortcut can dismiss it.
+pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Action) -> bool {
+    state.scratch_visible && !matches!(action, Action::ToggleScratchpad | Action::ToggleSidebar)
 }
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
@@ -242,6 +249,9 @@ fn execute_action_inner(
     action: Action,
     confirmations_enabled: bool,
 ) -> Update {
+    if is_blocked_by_scratchpad(&ctx.state, action) {
+        return Update::none();
+    }
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
     // `Msg::RunAction` path and control-socket `RunAction` requests
@@ -418,6 +428,26 @@ fn execute_action_inner(
         Action::ToggleWorkbarGap => toggle_pane_flag!(ctx, workbar_gap),
         Action::ToggleWorkbarPosition => toggle_pane_flag!(ctx, workbar_at_bottom),
         Action::ToggleWorkbarPowerline => toggle_pane_flag!(ctx, workbar_powerline),
+        Action::ToggleSidebar => {
+            ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
+            Update::full()
+        }
+        Action::SidebarNextTab => {
+            if ctx.state.sidebar_visible {
+                ctx.state.sidebar.cycle(&ctx.state.config.sidebar, true);
+                Update::full()
+            } else {
+                Update::none()
+            }
+        }
+        Action::SidebarPrevTab => {
+            if ctx.state.sidebar_visible {
+                ctx.state.sidebar.cycle(&ctx.state.config.sidebar, false);
+                Update::full()
+            } else {
+                Update::none()
+            }
+        }
         Action::ToggleAnimations => {
             ctx.state.config.animations.enabled = !ctx.state.config.animations.enabled;
             persist_animation_toggle(ctx, "enabled", ctx.state.config.animations.enabled);
@@ -527,6 +557,142 @@ mod tests {
                 "{action:?} should not be gated"
             );
         }
+    }
+
+    #[test]
+    fn scratchpad_allows_its_toggle_and_sidebar_toggle() {
+        let mut state =
+            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.scratch_visible = true;
+
+        for action in [
+            Action::Spawn,
+            Action::Close,
+            Action::Focus(Direction::Left),
+            Action::SwitchWorkspace(1),
+            Action::TogglePalette,
+            Action::RunUserCommand(0),
+            Action::Quit,
+        ] {
+            assert!(
+                is_blocked_by_scratchpad(&state, action),
+                "{action:?} should be blocked"
+            );
+        }
+        assert!(!is_blocked_by_scratchpad(&state, Action::ToggleScratchpad));
+        assert!(!is_blocked_by_scratchpad(&state, Action::ToggleSidebar));
+        assert!(is_blocked_by_scratchpad(&state, Action::SidebarNextTab));
+        assert!(!is_layout_mutating(&state, Action::ToggleScratchpad));
+        assert!(!is_layout_mutating(&state, Action::ToggleSidebar));
+    }
+
+    #[test]
+    fn scratchpad_blocks_spawn_without_changing_focus() {
+        use crate::Msg;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.state_mut().scratch_visible = true;
+                let before_panes = backend.state().workspaces[0].panes.len();
+                let before_focus = backend.state().focused_pane;
+
+                backend
+                    .dispatch(Msg::RunAction(Action::Spawn))
+                    .expect("dispatch blocked spawn");
+
+                assert_eq!(backend.state().workspaces[0].panes.len(), before_panes);
+                assert_eq!(backend.state().focused_pane, before_focus);
+            })
+            .expect("spawn scratchpad action test thread")
+            .join()
+            .expect("scratchpad action test thread completes");
+    }
+
+    #[test]
+    fn sidebar_actions_toggle_cycle_and_publish_only_controller_canvas() {
+        use crate::Msg;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::state::SharedSessionState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let viewport = Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                };
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(viewport);
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(1);
+                    state.shared = Some(shared);
+                }
+
+                backend
+                    .dispatch(Msg::RunAction(Action::ToggleSidebar))
+                    .expect("toggle controller sidebar");
+                assert!(backend.state().sidebar_visible);
+                assert_eq!(
+                    backend
+                        .state()
+                        .canvas_bounds_from_terminal_viewport(viewport)
+                        .w,
+                    68.0
+                );
+                backend
+                    .dispatch(Msg::RunAction(Action::SidebarNextTab))
+                    .expect("cycle sidebar tab");
+                assert_eq!(
+                    backend.state().sidebar.active_tab,
+                    Some(crate::config::SidebarTabId::new("panes"))
+                );
+                backend
+                    .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
+                    .expect("flush controller layout");
+                let committed = rx
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::Control(ClientMessage::CommitLayout { layout, .. }) => {
+                            Some((layout.canvas_cols, layout.canvas_rows))
+                        }
+                        _ => None,
+                    })
+                    .last();
+                assert_eq!(committed, Some((68, 29)));
+
+                let (follower_client, follower_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_client = Some(follower_client);
+                    state.sidebar_visible = false;
+                    state.shared.as_mut().unwrap().controller = Some(2);
+                }
+                backend
+                    .dispatch(Msg::RunAction(Action::ToggleSidebar))
+                    .expect("toggle follower sidebar");
+                backend
+                    .dispatch(Msg::FlushLayoutCommit { epoch: 0 })
+                    .expect("attempt follower flush");
+                assert!(follower_rx.try_iter().all(|message| !matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::CommitLayout { .. })
+                )));
+            })
+            .expect("spawn sidebar action test thread")
+            .join()
+            .expect("sidebar action test thread completes");
     }
 
     #[test]

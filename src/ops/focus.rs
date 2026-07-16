@@ -22,6 +22,25 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
 }
 
+/// Focus a live workspace pane regardless of which workspace currently owns the view.
+pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> bool {
+    let Some(workspace_index) = ctx.state.workspaces.iter().position(|workspace| {
+        workspace
+            .panes
+            .iter()
+            .any(|pane| pane.id == target && !pane.closing)
+    }) else {
+        return false;
+    };
+    ctx.state.active_workspace = workspace_index;
+    focus_pane(&mut ctx.state, target);
+    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, target) {
+        pane.activity.has_unseen_output = false;
+    }
+    request_pane_focus(ctx, target);
+    true
+}
+
 pub(crate) fn focus_in_direction(
     state: &mut State,
     direction: Direction,
@@ -44,7 +63,7 @@ fn focus_in_direction_with_wrap(
     viewport: Rect,
     wrap: bool,
 ) -> Option<PaneId> {
-    let bounds = state.canvas_bounds(viewport);
+    let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
     let workspace = &state.workspaces[state.active_workspace];
     let placements = workspace_target_rects(
         workspace,
@@ -470,7 +489,7 @@ pub(crate) fn visible_pane_placements(
     workspace: &Workspace,
 ) -> Vec<(PaneId, FloatRect)> {
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = state.canvas_bounds(viewport);
+        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
         let placements = workspace_target_rects(
             workspace,
             bounds,
@@ -503,7 +522,7 @@ pub(crate) fn reference_pane_rect(
         return Some(rect);
     }
     if let Some(viewport) = state.last_viewport.get() {
-        let bounds = state.canvas_bounds(viewport);
+        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
         let placements = workspace_target_rects(
             workspace,
             bounds,

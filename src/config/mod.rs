@@ -4,6 +4,7 @@ mod input;
 mod persist;
 mod rules;
 mod schema;
+mod sidebar;
 mod theme;
 mod workbar;
 

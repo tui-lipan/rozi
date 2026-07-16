@@ -12,6 +12,7 @@ use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
 use super::rules::build_rules;
 use super::schema::*;
+use super::sidebar::apply_sidebar_config;
 use super::workbar::{apply_workbar_config, apply_workbar_style_config};
 
 #[derive(Debug)]
@@ -58,6 +59,7 @@ struct FileConfig {
     navigation: NavigationFileConfig,
     confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
+    sidebar: SidebarFileConfig,
     workbar: WorkbarFileConfig,
     rules: Vec<RuleFileConfig>,
     hooks: Vec<HookFileConfig>,
@@ -116,6 +118,52 @@ pub(super) struct UserCommandTableSpec {
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct SidebarFileConfig {
+    pub(super) visible: Option<bool>,
+    pub(super) width: Option<u16>,
+    pub(super) position: Option<String>,
+    pub(super) tabs: Option<Vec<SidebarTabSpec>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum SidebarTabSpec {
+    Name(String),
+    Table(SidebarTabTableSpec),
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct SidebarTabTableSpec {
+    pub(super) name: String,
+    pub(super) label: String,
+    pub(super) entries: Option<Vec<SidebarLauncherEntrySpec>>,
+    pub(super) command: Option<String>,
+    pub(super) interval: Option<u64>,
+    pub(super) on_click: Option<UserCommandTableSpec>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct SidebarLauncherEntrySpec {
+    pub(super) label: String,
+    pub(super) run: Option<String>,
+    pub(super) send: Option<String>,
+    pub(super) popup: Option<String>,
+}
+
+impl SidebarLauncherEntrySpec {
+    pub(super) fn action(self) -> UserCommandTableSpec {
+        UserCommandTableSpec {
+            run: self.run,
+            send: self.send,
+            popup: self.popup,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -510,6 +558,7 @@ pub fn load_config() -> LoadedConfig {
     }
 
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
+    apply_sidebar_config(&mut config.sidebar, parsed.sidebar, &mut warnings);
     config.rules = build_rules(parsed.rules, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     let mut user_commands = Vec::new();

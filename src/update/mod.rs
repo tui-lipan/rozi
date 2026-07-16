@@ -4,6 +4,7 @@ mod overlays;
 mod panes;
 mod prompts;
 mod session;
+mod sidebar;
 
 use tui_lipan::prelude::*;
 
@@ -40,6 +41,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::WorkbarCommandOutput(command, output) => {
             overlays::workbar_command_output(ctx, command, output)
         }
+        Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
+        Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
         Msg::ThemeError(message) => overlays::theme_error(ctx, message),
         Msg::CloseSearch => prompts::close_search(ctx),
         Msg::SearchQueryChanged(query) => prompts::search_query_changed(ctx, query),
@@ -295,7 +298,9 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
     let Some(client) = ctx.state.session_client.clone() else {
         return;
     };
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let canvas = (
         bounds.w.round().max(1.0) as u16,
         bounds.h.round().max(1.0) as u16,

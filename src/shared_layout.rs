@@ -190,7 +190,9 @@ pub(crate) fn apply_shared_layout(
 
     let canvas_cols = layout.canvas_cols.max(1);
     let canvas_rows = layout.canvas_rows.max(1);
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
 
     // Index the incoming panes: id -> (workspace index, order within workspace, pane).
     let mut incoming: std::collections::HashMap<PaneId, (usize, usize, &SharedPane)> =
@@ -453,7 +455,7 @@ mod tests {
         let mut pane = Pane::new(2, state.config.scrollback, rect);
         pane.pty_generation = 7;
         state.workspaces[0].panes.push(pane);
-        let bounds = state.canvas_bounds(Rect {
+        let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
             x: 0,
             y: 0,
             w: 80,

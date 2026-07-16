@@ -197,6 +197,8 @@ pub fn restore_state_from_profile(
         return State::new(config, theme);
     }
 
+    let sidebar_visible = config.sidebar.visible;
+    let sidebar = crate::state::SidebarState::new(&config.sidebar);
     State {
         config,
         workspaces,
@@ -212,6 +214,9 @@ pub fn restore_state_from_profile(
         split_drag: None,
         animation: crate::anim::GeometryAnimation::None,
         last_viewport: std::cell::Cell::new(None),
+        last_content_viewport: std::cell::Cell::new(None),
+        sidebar_visible,
+        sidebar,
         show_palette: false,
         show_help: false,
         show_appearance: false,

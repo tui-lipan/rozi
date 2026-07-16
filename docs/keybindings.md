@@ -206,6 +206,18 @@ second confirmation.
 | Request layout control | `g` | Ask the current controller for the layout-control lease when several clients share a session, so you (not another client) drive splits, moves, resizes, and workspace edits. It **requests** rather than steals: the controller sees a toast and a `wants control` badge in *Session clients* and grants (or declines) it there; if no client currently holds the lease the request is auto-granted. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
 | Grant layout control | `e` | As the controller, hand the lease to the client that requested it (the earliest requester when several are waiting). Only active while a request is pending; when it arrives the request toast shows this key (following any rebind). You can also grant a specific client from *Session clients* (`Enter`/`g`). |
 
+### Sidebar
+
+| Command | Default keys | What it does |
+| --- | --- | --- |
+| Toggle sidebar (`toggle-sidebar`) | *(no default)* | Show or hide the current client's docked sidebar. It remains available while the scratchpad is open. |
+| Next sidebar tab (`sidebar-next-tab`) | *(no default)* | Cycle forward through configured tabs while the sidebar is visible. |
+| Previous sidebar tab (`sidebar-prev-tab`) | *(no default)* | Cycle backward through configured tabs while the sidebar is visible. |
+
+All three actions are available from the command palette and `hyprmux run-action`. Bind them under
+`[keys]` if desired. The Panes tab lists live panes by workspace; clicking a row switches workspace
+and focuses that pane. See [Sidebar](sidebar.md).
+
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
 
@@ -272,6 +284,10 @@ that slides in over the current workspace and out again with one key. Its shell 
 stay alive while hidden, and it follows you across workspace switches. It is not part of any
 workspace and is not saved in profiles. Configure its command / cwd / height under
 `[scratchpad]` in [Configuration](configuration.md).
+
+While the scratchpad is open, application actions are suspended so they cannot change the
+workspace or steal focus behind it. Press the scratchpad binding again to dismiss it. The local
+`toggle-sidebar` action remains available because it changes only the surrounding app shell.
 
 ## Mouse
 

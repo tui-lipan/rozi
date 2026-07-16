@@ -18,6 +18,7 @@ mod pane;
 mod pickers;
 mod search;
 mod session;
+mod sidebar;
 mod workspace;
 
 pub use appearance::*;
@@ -29,6 +30,7 @@ pub use pane::*;
 pub use pickers::*;
 pub use search::*;
 pub use session::*;
+pub use sidebar::*;
 pub use workspace::*;
 
 pub type PaneId = u32;
@@ -62,7 +64,12 @@ pub struct State {
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
+    /// Last terminal/root viewport, used by geometry helpers outside a render context.
     pub last_viewport: Cell<Option<Rect>>,
+    /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
+    pub last_content_viewport: Cell<Option<Rect>>,
+    pub sidebar_visible: bool,
+    pub sidebar: SidebarState,
     pub show_palette: bool,
     pub show_help: bool,
     pub show_appearance: bool,
@@ -147,6 +154,8 @@ pub struct State {
 
 impl State {
     pub fn new(config: HyprmuxConfig, theme: Theme) -> Self {
+        let sidebar_visible = config.sidebar.visible;
+        let sidebar = SidebarState::new(&config.sidebar);
         let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
         let initial_id = 1;
         let initial_rect = FloatRect {
@@ -178,6 +187,9 @@ impl State {
             split_drag: None,
             animation: GeometryAnimation::None,
             last_viewport: Cell::new(None),
+            last_content_viewport: Cell::new(None),
+            sidebar_visible,
+            sidebar,
             show_palette: false,
             show_help: false,
             show_appearance: false,
@@ -359,7 +371,39 @@ impl State {
         }
     }
 
-    pub fn canvas_bounds(&self, viewport: Rect) -> FloatRect {
-        crate::geometry::canvas_bounds_from_viewport(viewport, self.top_chrome_height())
+    pub fn canvas_bounds_from_terminal_viewport(&self, viewport: Rect) -> FloatRect {
+        crate::geometry::canvas_bounds_from_content_viewport(
+            self.content_viewport(viewport),
+            self.top_chrome_height(),
+        )
+    }
+
+    /// App-content viewport local to the non-sidebar child of the outer HStack.
+    pub fn content_viewport(&self, terminal_viewport: Rect) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            w: terminal_viewport
+                .w
+                .saturating_sub(self.effective_sidebar_width(terminal_viewport)),
+            h: terminal_viewport.h,
+        }
+    }
+
+    pub fn effective_sidebar_width(&self, terminal_viewport: Rect) -> u16 {
+        crate::geometry::effective_sidebar_width(
+            terminal_viewport.w,
+            self.config.sidebar.width,
+            self.sidebar_visible,
+        )
+    }
+
+    /// Terminal-space x offset of app content. Nested Canvas placements remain content-local.
+    pub fn terminal_content_left_offset(&self, terminal_viewport: Rect) -> u16 {
+        if self.config.sidebar.position == crate::config::SidebarPosition::Left {
+            self.effective_sidebar_width(terminal_viewport)
+        } else {
+            0
+        }
     }
 }

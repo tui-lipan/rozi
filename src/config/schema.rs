@@ -476,6 +476,7 @@ pub struct HyprmuxConfig {
     pub navigation: HyprmuxNavigationConfig,
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
+    pub sidebar: SidebarConfig,
     pub rules: Vec<HyprmuxRuleConfig>,
     pub hooks: Vec<HyprmuxHookConfig>,
     pub logging: HyprmuxLoggingConfig,
@@ -519,6 +520,104 @@ pub enum UserCommandAction {
     Run(String),
     Send(String),
     Popup(String),
+}
+
+pub const SIDEBAR_MIN_WIDTH: u16 = 16;
+pub const SIDEBAR_MAX_WIDTH: u16 = 80;
+pub const SIDEBAR_MIN_COMMAND_INTERVAL_SECS: u64 = 5;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarPosition {
+    #[default]
+    Left,
+    Right,
+}
+
+impl SidebarPosition {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SidebarTabId(String);
+
+impl SidebarTabId {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarLauncherEntry {
+    pub label: String,
+    pub action: UserCommandAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SidebarTab {
+    Agents,
+    Panes,
+    Sessions,
+    Launcher {
+        name: SidebarTabId,
+        label: String,
+        entries: Vec<SidebarLauncherEntry>,
+    },
+    Command {
+        name: SidebarTabId,
+        label: String,
+        command: String,
+        interval_secs: u64,
+        on_click: Option<UserCommandAction>,
+    },
+}
+
+impl SidebarTab {
+    pub fn id(&self) -> SidebarTabId {
+        match self {
+            Self::Agents => SidebarTabId::new("agents"),
+            Self::Panes => SidebarTabId::new("panes"),
+            Self::Sessions => SidebarTabId::new("sessions"),
+            Self::Launcher { name, .. } | Self::Command { name, .. } => name.clone(),
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Agents => "Agents",
+            Self::Panes => "Panes",
+            Self::Sessions => "Sessions",
+            Self::Launcher { label, .. } | Self::Command { label, .. } => label,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarConfig {
+    pub visible: bool,
+    pub width: u16,
+    pub position: SidebarPosition,
+    pub tabs: Vec<SidebarTab>,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            width: 32,
+            position: SidebarPosition::Left,
+            tabs: vec![SidebarTab::Agents, SidebarTab::Panes, SidebarTab::Sessions],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -587,6 +686,7 @@ impl Default for HyprmuxConfig {
             navigation: HyprmuxNavigationConfig::default(),
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),
+            sidebar: SidebarConfig::default(),
             rules: Vec::new(),
             hooks: Vec::new(),
             logging: HyprmuxLoggingConfig::default(),

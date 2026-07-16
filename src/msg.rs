@@ -35,6 +35,8 @@ pub enum Msg {
     ConfigFileChanged,
     /// A `WorkbarSegment::Command` poller produced fresh output: (command string, first output line).
     WorkbarCommandOutput(String, String),
+    SidebarTabSelected(crate::config::SidebarTabId),
+    SidebarFocusPane(PaneId),
     ThemeError(String),
     CloseSearch,
     SearchQueryChanged(String),

@@ -37,7 +37,8 @@ pub(crate) fn open(
         return Err("popup command must not be empty".to_string());
     }
     let rect = popup_rect(
-        ctx.state.canvas_bounds(ctx.viewport()),
+        ctx.state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport()),
         ctx.state.workspace_top_gap(),
         width.unwrap_or(0.6),
         height.unwrap_or(0.6),
@@ -152,7 +153,8 @@ pub(crate) fn backdrop(ctx: &Context<HyprmuxApp>) -> Option<(FloatRect, Element)
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into();
     Some((
-        ctx.state.canvas_bounds(ctx.viewport()),
+        ctx.state
+            .canvas_bounds_from_terminal_viewport(ctx.viewport()),
         region.key("hyprmux-popup-scrim"),
     ))
 }

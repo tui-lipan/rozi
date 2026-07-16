@@ -450,6 +450,42 @@ Drag the scratchpad's top edge (its title/top-border row) up or down to resize i
 open. The dragged height overrides `height` for the rest of the session; it resets to `height` on
 restart.
 
+## `[sidebar]`
+
+The optional sidebar is a fixed-width local navigation surface docked beside the app content.
+See [Sidebar](sidebar.md) for the built-in Panes tab, tab configuration, interaction, and shared
+session sizing behavior.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `visible` | `false` | Initial visibility. `toggle-sidebar` changes only the current client until the next config reload; reload reapplies this value. |
+| `width` | `32` | Requested width in columns, clamped to `16..=80`. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
+| `position` | `left` | Dock side: `left` or `right`. |
+| `tabs` | `["agents", "panes", "sessions"]` | Ordered tabs. Built-in names are reserved and each tab identity must be unique. |
+
+Custom launcher and command-backed table forms are accepted by the schema now so one config can
+be prepared ahead of the complete custom-tab renderer. Their rows remain explicit placeholders in
+this release. Each table needs a unique non-empty `name`, a non-empty display `label`, and exactly
+one of `entries` or `command`. Launcher entries require exactly one of `run`, `send`, or `popup`;
+command tabs may provide an `on_click` action with the same shape. Poll intervals have a five-second
+minimum.
+
+```toml
+[sidebar]
+visible = true
+width = 32
+position = "right"
+tabs = [
+  "panes",
+  { name = "deploy", label = "Deploy", entries = [{ label = "Build", run = "cargo build" }, { label = "Test", send = "cargo test\n" }, { label = "Logs", popup = "journalctl -f" }] },
+  { name = "todos", label = "Todos", command = "task list --plain", interval = 30, on_click = { send = "task view {line}\n" } },
+]
+```
+
+Unknown built-ins, duplicate/reserved/empty names, tables with both or neither content form, and
+invalid launcher entries produce warnings and skip only the invalid item. Unknown table fields are
+strict parse errors.
+
 ## `[workbar]`
 
 Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge and the
@@ -577,7 +613,8 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-workbar-powerline`, `toggle-animations`, `toggle-focus-on-hover`,
+`toggle-workbar-powerline`, `toggle-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
+`toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket

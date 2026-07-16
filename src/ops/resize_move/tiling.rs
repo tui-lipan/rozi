@@ -22,7 +22,9 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     let Some(id) = ctx.state.focused_pane else {
         return;
     };
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let current_rect = {
@@ -73,7 +75,9 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(id) = ctx.state.focused_pane else {
         return Update::full();
     };
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
@@ -217,7 +221,9 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
 }
 
 fn reorder_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let workspace_index = ctx.state.active_workspace;
@@ -483,7 +489,7 @@ mod tests {
                 state.focused_pane = Some(1);
                 state.workspaces[state.active_workspace].focused_pane = Some(1);
 
-                let bounds = state.canvas_bounds(TEST_VIEWPORT);
+                let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
                 let top_gap = state.workspace_top_gap();
                 let tile_gap = state.tile_gap();
                 let top_offset = state.content_top_offset();

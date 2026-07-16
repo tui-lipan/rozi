@@ -132,7 +132,9 @@ fn apply_resize_split_pixels(
     };
 
     let workspace_index = ctx.state.active_workspace;
-    let bounds = ctx.state.canvas_bounds(ctx.viewport());
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let workspace = &mut ctx.state.workspaces[workspace_index];
     if !workspace
@@ -280,7 +282,7 @@ mod tests {
                 }
                 workspace.tile_tree = Some(balanced_grid_tree());
 
-                let bounds = state.canvas_bounds(TEST_VIEWPORT);
+                let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
                 let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
                 let tree = state.workspaces[state.active_workspace]
                     .tile_tree

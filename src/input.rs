@@ -14,6 +14,7 @@ pub enum Action {
     /// single `Ctrl-h/j/k/l` binding navigate hyprmux panes and vim/neovim splits seamlessly
     /// (vim-tmux-navigator style).
     SmartFocus(Direction),
+    FocusNextBlockedPane,
     Move(Direction),
     SwitchWorkspace(usize),
     MoveToWorkspace(usize),
@@ -98,6 +99,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::SmartFocus(Direction::Down),
     Action::SmartFocus(Direction::Up),
     Action::SmartFocus(Direction::Right),
+    Action::FocusNextBlockedPane,
     Action::Move(Direction::Left),
     Action::Move(Direction::Down),
     Action::Move(Direction::Up),
@@ -187,6 +189,7 @@ impl Action {
             Action::SmartFocus(Down) => "smart-focus-down",
             Action::SmartFocus(Up) => "smart-focus-up",
             Action::SmartFocus(Right) => "smart-focus-right",
+            Action::FocusNextBlockedPane => "focus-next-blocked-pane",
             Action::Move(Left) => "move-left",
             Action::Move(Down) => "move-down",
             Action::Move(Up) => "move-up",

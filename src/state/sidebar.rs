@@ -9,6 +9,7 @@ pub struct SidebarState {
     pub command_epoch: u64,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
+    pub pending_session_open: Option<String>,
 }
 
 impl SidebarState {
@@ -30,8 +31,7 @@ impl SidebarState {
         }
         self.command_output.retain(|id, _| ids.contains(id));
         self.command_epoch = self.command_epoch.saturating_add(1);
-        self.sessions.clear();
-        self.sessions_epoch = self.sessions_epoch.saturating_add(1);
+        self.invalidate_sessions();
     }
 
     pub fn cycle(&mut self, config: &SidebarConfig, forward: bool) {
@@ -50,6 +50,12 @@ impl SidebarState {
             current.checked_sub(1).unwrap_or(config.tabs.len() - 1)
         };
         self.active_tab = Some(config.tabs[next].id());
+    }
+
+    pub fn invalidate_sessions(&mut self) {
+        self.sessions.clear();
+        self.pending_session_open = None;
+        self.sessions_epoch = self.sessions_epoch.wrapping_add(1);
     }
 }
 

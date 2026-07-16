@@ -1,4 +1,6 @@
+mod agents;
 mod panes;
+mod sessions;
 
 use tui_lipan::prelude::*;
 
@@ -29,8 +31,8 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
         || placeholder(ctx, "No sidebar tabs configured"),
         |tab| match tab {
             SidebarTab::Panes => panes::panes_tab(ctx),
-            SidebarTab::Agents => placeholder(ctx, "No agent status yet"),
-            SidebarTab::Sessions => placeholder(ctx, "Session discovery arrives in Phase 3"),
+            SidebarTab::Agents => agents::agents_tab(ctx),
+            SidebarTab::Sessions => sessions::sessions_tab(ctx),
             SidebarTab::Launcher { .. } => placeholder(ctx, "Launcher tabs arrive in Phase 4"),
             SidebarTab::Command { .. } => placeholder(ctx, "Command tabs arrive in Phase 4"),
         },

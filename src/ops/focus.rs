@@ -41,6 +41,40 @@ pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId)
     true
 }
 
+/// Find the next blocked live workspace pane in deterministic workspace/pane order. The focused
+/// pane is skipped, so a sole blocked focus is a no-op; with no valid focus, the first blocked pane
+/// is selected.
+pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
+    let panes = state
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.panes.iter())
+        .filter(|pane| {
+            !pane.closing
+                && pane.id != crate::state::SCRATCH_PANE_ID
+                && pane.id != crate::state::POPUP_PANE_ID
+        })
+        .collect::<Vec<_>>();
+    if panes.is_empty() {
+        return None;
+    }
+    let start = state
+        .focused_pane
+        .and_then(|focused| panes.iter().position(|pane| pane.id == focused))
+        .map_or(0, |index| index + 1);
+    (0..panes.len())
+        .map(|offset| &panes[(start + offset) % panes.len()])
+        .find(|pane| {
+            Some(pane.id) != state.focused_pane
+                && pane
+                    .terminal
+                    .reported_status
+                    .as_ref()
+                    .is_some_and(|status| status.value.trim().eq_ignore_ascii_case("blocked"))
+        })
+        .map(|pane| pane.id)
+}
+
 pub(crate) fn focus_in_direction(
     state: &mut State,
     direction: Direction,
@@ -753,5 +787,50 @@ mod tests {
 
         // Already the master → no-op.
         assert!(!promote_focused_to_master(&mut state));
+    }
+
+    fn set_reported_status(pane: &mut Pane, value: &str) {
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: value.to_string(),
+            reason: None,
+            set_at: 1,
+        });
+    }
+
+    #[test]
+    fn next_blocked_pane_wraps_across_workspaces_and_skips_closing() {
+        let mut state = state_with_tiled(&[1, 2]);
+        set_reported_status(&mut state.workspaces[0].panes[0], "blocked");
+        set_reported_status(&mut state.workspaces[0].panes[1], "BLOCKED");
+        state.workspaces[0].panes[1].closing = true;
+        state.workspaces[1].panes.push(Pane::new(
+            3,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        ));
+        set_reported_status(&mut state.workspaces[1].panes[0], " blocked ");
+
+        state.focused_pane = Some(1);
+        assert_eq!(next_blocked_pane(&state), Some(3));
+        state.focused_pane = Some(3);
+        assert_eq!(next_blocked_pane(&state), Some(1));
+    }
+
+    #[test]
+    fn next_blocked_pane_handles_no_focus_and_no_other_match() {
+        let mut state = state_with_tiled(&[1, 2]);
+        set_reported_status(&mut state.workspaces[0].panes[1], "blocked");
+        state.focused_pane = None;
+        assert_eq!(next_blocked_pane(&state), Some(2));
+
+        state.focused_pane = Some(2);
+        assert_eq!(next_blocked_pane(&state), None);
+        state.workspaces[0].panes[1].terminal.reported_status = None;
+        assert_eq!(next_blocked_pane(&state), None);
     }
 }

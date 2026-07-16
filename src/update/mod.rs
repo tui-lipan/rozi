@@ -4,7 +4,7 @@ mod overlays;
 mod panes;
 mod prompts;
 mod session;
-mod sidebar;
+pub(crate) mod sidebar;
 
 use tui_lipan::prelude::*;
 
@@ -43,6 +43,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
+        Msg::SidebarSessionsRefresh { epoch } => sidebar::refresh_sessions(ctx, epoch),
+        Msg::SidebarSessionsDiscovered { epoch, rows } => {
+            sidebar::sessions_discovered(ctx, epoch, rows)
+        }
+        Msg::SidebarSessionActivate(entry) => sidebar::activate_session(ctx, entry),
         Msg::ThemeError(message) => overlays::theme_error(ctx, message),
         Msg::CloseSearch => prompts::close_search(ctx),
         Msg::SearchQueryChanged(query) => prompts::search_query_changed(ctx, query),

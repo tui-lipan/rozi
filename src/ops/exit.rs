@@ -89,6 +89,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Opti
         ),
     );
     ctx.state.session_attached = false;
+    crate::update::sidebar::invalidate_sessions(ctx);
 }
 
 /// The controlling terminal/console went away (Unix `SIGHUP`/`SIGTERM`, Windows console close,

@@ -42,6 +42,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
         return Update::full();
     }
     ctx.state.session_attached = false;
+    crate::update::sidebar::invalidate_sessions(ctx);
     ctx.state.session_client = None;
     let read_only = ctx
         .state
@@ -137,6 +138,7 @@ pub(super) fn attached(
     ctx.state.session_name = Some(session.clone());
     ctx.state.created_from_profile = created_from_profile;
     ctx.state.session_attached = true;
+    crate::update::sidebar::invalidate_sessions(ctx);
     ctx.state.deferred_profile_seed = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
@@ -266,6 +268,7 @@ pub(super) fn attached(
     if let Some(origin) = ctx.state.created_from_profile.clone() {
         confirm_profile_origin(ctx, origin);
     }
+    crate::update::sidebar::request_sessions_refresh(ctx);
     update
 }
 

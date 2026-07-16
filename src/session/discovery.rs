@@ -77,6 +77,16 @@ pub fn discover_sessions_excluding(
     Ok(rows)
 }
 
+/// Session-picker/sidebar discovery policy: omit the current session while probing and hide
+/// foreign disposable sessions. The caller adds its locally known current row afterwards.
+pub(crate) fn discover_selectable_sessions(
+    current_name: Option<&str>,
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    let mut rows = discover_sessions_excluding(current_name)?;
+    rows.retain(|entry| !entry.ephemeral);
+    Ok(rows)
+}
+
 /// Probes one session endpoint. Returns `None` for a stale endpoint whose server is gone
 /// (connection refused): the dead socket file is unlinked so a killed or crashed session stops
 /// appearing in the list.

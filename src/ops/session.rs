@@ -171,26 +171,29 @@ fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSessi
 /// process's ephemeral has no business being a selectable row (attaching would fight its owner over
 /// teardown), so it is filtered out here. Our own ephemeral still appears via the current row.
 fn discover_picker_sessions(current_name: Option<&str>) -> std::io::Result<Vec<DiscoveredSession>> {
-    let mut rows = crate::session::discovery::discover_sessions_excluding(current_name)?;
-    rows.retain(|entry| !entry.ephemeral);
-    Ok(rows)
+    crate::session::discovery::discover_selectable_sessions(current_name)
 }
 
 /// Append a row for the attached session (discovery excludes it) and keep the list sorted.
 fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<DiscoveredSession>) {
-    if let Some(name) = &ctx.state.session_name {
-        rows.push(DiscoveredSession {
-            name: name.clone(),
-            ephemeral: ctx.state.is_ephemeral_session(),
-            status: crate::session::discovery::DiscoveredSessionStatus::Running {
-                panes: ctx.state.workspaces.iter().map(|w| w.panes.len()).sum(),
-                has_layout: true,
-                clients: ctx.state.attached_client_count(),
-                created_from_profile: ctx.state.created_from_profile.clone(),
-            },
-        });
+    if let Some(current) = current_session_row(&ctx.state) {
+        rows.push(current);
         rows.sort_by(|a, b| a.name.cmp(&b.name));
     }
+}
+
+pub(crate) fn current_session_row(state: &crate::state::State) -> Option<DiscoveredSession> {
+    let name = state.session_name.clone()?;
+    Some(DiscoveredSession {
+        name,
+        ephemeral: state.is_ephemeral_session(),
+        status: crate::session::discovery::DiscoveredSessionStatus::Running {
+            panes: state.workspaces.iter().map(|w| w.panes.len()).sum(),
+            has_layout: true,
+            clients: state.attached_client_count(),
+            created_from_profile: state.created_from_profile.clone(),
+        },
+    })
 }
 
 fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
@@ -401,6 +404,7 @@ pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Up
 /// its ephemeral server, while followers, viewers, shared ephemeral clients, and named-session
 /// clients detach so they cannot destroy another client's session.
 pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
+    crate::update::sidebar::invalidate_sessions(ctx);
     crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     let Some(client) = ctx.state.session_client.clone() else {
@@ -426,6 +430,7 @@ pub(crate) fn swap_state_for_attach(
     ctx: &mut Context<HyprmuxApp>,
     mut replacement: crate::state::State,
 ) {
+    replacement.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     replacement.theme_watcher = ctx.state.theme_watcher.take();
     replacement.system_theme = ctx.state.system_theme.clone();
     replacement.control_socket_path = ctx.state.control_socket_path.clone();
@@ -556,6 +561,22 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
     else {
         return Update::full();
     };
+    activate_discovered_session(ctx, entry, SessionActivationSource::Picker(index))
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum SessionActivationSource {
+    Picker(usize),
+    Sidebar,
+}
+
+/// Activate a discovered running session without resolving it through a mutable row index. Picker
+/// and sidebar callers keep separate ephemeral-discard confirmations.
+pub(crate) fn activate_discovered_session(
+    ctx: &mut Context<HyprmuxApp>,
+    entry: DiscoveredSession,
+    source: SessionActivationSource,
+) -> Update {
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
     // (an incompatible older server is the usual cause). Attaching would only fail after the connect
     // retry deadline, so reject it up front, keep the picker open, and point at the fix - killing
@@ -564,7 +585,12 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Unknown
     ) {
-        clear_pending_open(ctx);
+        match source {
+            SessionActivationSource::Picker(_) => clear_pending_open(ctx),
+            SessionActivationSource::Sidebar => {
+                ctx.state.sidebar.pending_session_open = None;
+            }
+        }
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
             "Attach failed",
@@ -583,21 +609,36 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
         && ctx.state.is_ephemeral_session()
         && ctx.state.session_name.as_deref() != Some(entry.name.as_str());
     if discards_ephemeral {
-        let armed = ctx
-            .state
-            .session_picker
-            .as_ref()
-            .is_some_and(|picker| picker.pending_open == Some(index));
+        let armed = match source {
+            SessionActivationSource::Picker(index) => ctx
+                .state
+                .session_picker
+                .as_ref()
+                .is_some_and(|picker| picker.pending_open == Some(index)),
+            SessionActivationSource::Sidebar => {
+                ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str())
+            }
+        };
         if !armed {
             // Arm the confirmation: the target row renders the warning-colored "⏎ again - ends temp
             // session" cue, so a second Enter is required and no toast is needed.
-            if let Some(picker) = ctx.state.session_picker.as_mut() {
-                picker.pending_open = Some(index);
+            match source {
+                SessionActivationSource::Picker(index) => {
+                    if let Some(picker) = ctx.state.session_picker.as_mut() {
+                        picker.pending_open = Some(index);
+                    }
+                }
+                SessionActivationSource::Sidebar => {
+                    ctx.state.sidebar.pending_session_open = Some(entry.name);
+                }
             }
             return Update::full();
         }
     }
-    clear_pending_open(ctx);
+    match source {
+        SessionActivationSource::Picker(_) => clear_pending_open(ctx),
+        SessionActivationSource::Sidebar => ctx.state.sidebar.pending_session_open = None,
+    }
     // A session shown in the picker is already running, so don't autostart a replacement if it
     // died between discovery and attach.
     attach_session_by_name(ctx, entry.name, false)

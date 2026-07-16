@@ -37,6 +37,14 @@ pub enum Msg {
     WorkbarCommandOutput(String, String),
     SidebarTabSelected(crate::config::SidebarTabId),
     SidebarFocusPane(PaneId),
+    SidebarSessionsRefresh {
+        epoch: u64,
+    },
+    SidebarSessionsDiscovered {
+        epoch: u64,
+        rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+    },
+    SidebarSessionActivate(crate::session::discovery::DiscoveredSession),
     ThemeError(String),
     CloseSearch,
     SearchQueryChanged(String),

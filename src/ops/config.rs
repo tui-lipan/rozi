@@ -139,6 +139,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.sidebar_visible = new_config.sidebar.visible;
     ctx.state.sidebar.reconcile(&new_config.sidebar);
     ctx.state.config = new_config;
+    crate::update::sidebar::request_sessions_refresh(ctx);
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {

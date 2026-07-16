@@ -291,6 +291,14 @@ fn execute_action_inner(
             Update::full()
         }
         Action::SmartFocus(direction) => smart_focus(ctx, direction),
+        Action::FocusNextBlockedPane => {
+            if let Some(id) = crate::ops::focus::next_blocked_pane(&ctx.state) {
+                crate::ops::focus::focus_pane_anywhere(ctx, id);
+                Update::full()
+            } else {
+                Update::none()
+            }
+        }
         Action::Move(direction) => {
             move_focused_in_direction(ctx, direction);
             request_current_pane_focus(ctx);
@@ -430,12 +438,12 @@ fn execute_action_inner(
         Action::ToggleWorkbarPowerline => toggle_pane_flag!(ctx, workbar_powerline),
         Action::ToggleSidebar => {
             ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
-            Update::full()
+            crate::update::sidebar::visibility_changed(ctx)
         }
         Action::SidebarNextTab => {
             if ctx.state.sidebar_visible {
                 ctx.state.sidebar.cycle(&ctx.state.config.sidebar, true);
-                Update::full()
+                crate::update::sidebar::visibility_changed(ctx)
             } else {
                 Update::none()
             }
@@ -443,7 +451,7 @@ fn execute_action_inner(
         Action::SidebarPrevTab => {
             if ctx.state.sidebar_visible {
                 ctx.state.sidebar.cycle(&ctx.state.config.sidebar, false);
-                Update::full()
+                crate::update::sidebar::visibility_changed(ctx)
             } else {
                 Update::none()
             }
@@ -609,6 +617,44 @@ mod tests {
             .expect("spawn scratchpad action test thread")
             .join()
             .expect("scratchpad action test thread completes");
+    }
+
+    #[test]
+    fn focus_next_blocked_action_switches_workspace_and_focuses_pane() {
+        use crate::Msg;
+        use crate::state::Pane;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut blocked = Pane::new(
+                    2,
+                    100,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 40.0,
+                        h: 20.0,
+                    },
+                );
+                blocked.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+                    value: "BLOCKED".to_string(),
+                    reason: None,
+                    set_at: 1,
+                });
+                backend.state_mut().workspaces[1].panes.push(blocked);
+
+                backend
+                    .dispatch(Msg::RunAction(Action::FocusNextBlockedPane))
+                    .expect("focus blocked pane");
+                assert_eq!(backend.state().active_workspace, 1);
+                assert_eq!(backend.state().focused_pane, Some(2));
+            })
+            .expect("spawn blocked focus action test")
+            .join()
+            .expect("blocked focus action test completes");
     }
 
     #[test]

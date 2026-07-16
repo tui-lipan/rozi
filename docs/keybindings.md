@@ -213,10 +213,11 @@ second confirmation.
 | Toggle sidebar (`toggle-sidebar`) | *(no default)* | Show or hide the current client's docked sidebar. It remains available while the scratchpad is open. |
 | Next sidebar tab (`sidebar-next-tab`) | *(no default)* | Cycle forward through configured tabs while the sidebar is visible. |
 | Previous sidebar tab (`sidebar-prev-tab`) | *(no default)* | Cycle backward through configured tabs while the sidebar is visible. |
+| Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next pane reporting `blocked`; wraps after the current focus and skips closing/special panes. |
 
-All three actions are available from the command palette and `hyprmux run-action`. Bind them under
-`[keys]` if desired. The Panes tab lists live panes by workspace; clicking a row switches workspace
-and focuses that pane. See [Sidebar](sidebar.md).
+All four actions are available from the command palette and `hyprmux run-action`. Bind them under
+`[keys]` if desired. The Panes and Agents tabs focus rows across workspaces; Sessions discovers and
+attaches to running sessions while active. See [Sidebar](sidebar.md).
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.

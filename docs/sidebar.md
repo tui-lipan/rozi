@@ -25,26 +25,39 @@ command-backed table syntax.
 
 ## Built-in Tabs
 
-The **Panes** tab is active functionality: it groups every live workspace pane under its workspace,
+The **Panes** tab groups every live workspace pane under its workspace,
 shows the pane title and current foreground program, marks local focus, and switches workspace and
 focus when a row is clicked.
 
-The **Agents** and **Sessions** tabs intentionally show explicit empty placeholders in this phase.
-Agent-status rendering and session discovery are added by the next sidebar phase; launcher and
-command-backed row execution follow after that. Keeping the placeholders means the final default
-tab list and complete schema are valid already.
+The **Agents** tab lists ordinary workspace panes from every workspace. Rows show the pane title,
+reported status, and a shortened reason; clicking a row switches workspace and focuses it. Statuses
+sort as `blocked`, `working`, custom values, `done`, `idle`, then panes with no reported status.
+Well-known statuses are matched case-insensitively and use themed status glyphs, while custom status
+spelling is shown unchanged. Closing panes, the scratchpad, and popups are excluded.
+
+The **Sessions** tab discovers running named sessions and includes the currently attached session,
+including the current ephemeral session. Foreign ephemeral sessions are hidden. Discovery runs off
+the UI thread immediately when the visible tab is activated and refreshes while that tab remains
+active. Clicking a discovered row attaches to that already-running session without autostarting a
+replacement if it disappeared. Incompatible sessions are rejected. Leaving a disposable ephemeral
+session requires clicking the target row a second time; this confirmation is independent from the
+session picker's confirmation.
 
 ## Actions
 
 - `toggle-sidebar` shows or hides the sidebar for this client.
 - `sidebar-next-tab` and `sidebar-prev-tab` cycle configured tabs while visible.
-- All three are unbound by default and can be assigned under `[keys]` or invoked with
+- `focus-next-blocked-pane` scans all workspaces in pane order, wraps after the focused pane, and
+  focuses the next pane whose reported status is `blocked`. It skips closing and special panes and
+  does nothing when the current pane is the only blocked pane.
+- All four are unbound by default and can be assigned under `[keys]` or invoked with
   `hyprmux run-action <id>`.
 
 Visibility and the active tab are local runtime state. A config reload reapplies `visible` and
 reconciles the selected tab by stable ID; if that tab was removed, the first configured tab becomes
 active. Runtime toggles are not written to disk. `toggle-sidebar` remains usable while the
-scratchpad is open.
+scratchpad is open. Closing the sidebar, changing tabs, attaching or detaching, and reloading config
+invalidate in-flight session discovery so an old result cannot repopulate or restart the tab.
 
 ## Shared Sessions
 

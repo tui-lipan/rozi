@@ -283,6 +283,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::FocusNextBlockedPane,
+        label: "Focus next blocked pane",
+        category: "Focus",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ToggleHelp,
         label: "Keybindings",
         category: "App",

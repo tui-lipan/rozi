@@ -422,6 +422,25 @@ mod tests {
     use crate::config::HyprmuxConfig;
     use crate::state::{Pane, State};
 
+    #[test]
+    fn shared_pane_without_replay_field_parses_as_non_replay() {
+        // Layout documents committed by builds predating the `replay` field must still parse.
+        let pane: SharedPane = serde_json::from_value(serde_json::json!({
+            "pane_id": 2,
+            "generation": 7,
+            "title": null,
+            "profile_name": null,
+            "cwd": null,
+            "command": "nvim",
+            "keep_open": false,
+            "floating": false,
+            "fullscreen": false,
+            "rect": null
+        }))
+        .expect("pre-replay shared pane parses");
+        assert!(!pane.replay);
+    }
+
     fn state_with_split() -> State {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
         let rect = FloatRect {

@@ -51,6 +51,9 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     // Drop shared-lease bookkeeping: while disconnected we behave as a solo controller, and a
     // successful reconnect rebuilds this from the fresh `Attached` frame.
     ctx.state.shared = None;
+    // Replay inputs whose spawn already went to the dead server will never see a `SpawnResult`;
+    // only spawns still queued in `pending_spawns` (flushed on reattach) keep their entry.
+    ctx.state.prune_replay_inputs_to_pending_spawns();
     for pane in ctx
         .state
         .workspaces

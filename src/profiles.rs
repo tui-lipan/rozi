@@ -146,7 +146,10 @@ pub fn restore_state_from_profile(
                     .to_string_lossy()
                     .to_string()
             });
-            pane.identity.command = pane_profile.command.clone();
+            pane.identity.command = pane_profile
+                .command
+                .clone()
+                .filter(|command| !command.trim().is_empty());
             // Profile commands are replayed through the interactive shell (typed at the prompt)
             // rather than the command-runner shell: they were captured from what the user ran
             // interactively, so aliases, shell functions, and rc-file PATH entries must resolve.
@@ -974,6 +977,11 @@ mod tests {
                         id: 1,
                         ..PaneProfile::default()
                     },
+                    PaneProfile {
+                        id: 2,
+                        command: Some("   ".to_string()),
+                        ..PaneProfile::default()
+                    },
                 ],
                 ..WorkspaceProfile::default()
             }],
@@ -985,6 +993,9 @@ mod tests {
         assert!(panes[0].identity.replay);
         assert_eq!(panes[1].identity.command, None);
         assert!(!panes[1].identity.replay);
+        // A blank command must not become a stray injected carriage return.
+        assert_eq!(panes[2].identity.command, None);
+        assert!(!panes[2].identity.replay);
     }
 
     #[test]

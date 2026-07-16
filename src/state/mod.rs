@@ -238,6 +238,25 @@ impl State {
         crate::profiles::restore_state_from_profile(config, theme, profile)
     }
 
+    /// Drop queued replay inputs whose spawn can no longer complete. Called when the session
+    /// connection is torn down (disconnect, attach-elsewhere reseed): only a spawn still waiting
+    /// in [`Self::pending_spawns`] will ever produce a `SpawnResult` for its key, and a stale
+    /// entry must not linger - `reset_state_for_shared_seed` restarts the generation counter, so
+    /// a later attachment could mint the same `(pane_id, generation)` key and receive a command
+    /// meant for a pane of the previous session.
+    pub fn prune_replay_inputs_to_pending_spawns(&mut self) {
+        if self.pending_replay_inputs.is_empty() {
+            return;
+        }
+        let queued: std::collections::HashSet<(PaneId, u64)> = self
+            .pending_spawns
+            .iter()
+            .map(|spawn| (spawn.pane_id, spawn.generation))
+            .collect();
+        self.pending_replay_inputs
+            .retain(|key, _| queued.contains(key));
+    }
+
     /// Whether the currently attached session is an auto-managed ephemeral session.
     pub fn is_ephemeral_session(&self) -> bool {
         self.session_name

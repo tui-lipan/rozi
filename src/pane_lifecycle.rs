@@ -754,6 +754,35 @@ mod tests {
     }
 
     #[test]
+    fn replay_inputs_survive_teardown_only_while_their_spawn_is_still_queued() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        request_pane_spawn(
+            &mut state,
+            7,
+            3,
+            Some("n".to_string()),
+            None,
+            80,
+            24,
+            false,
+            Vec::new(),
+            None,
+            TerminalColorPalette::default(),
+            true,
+        );
+        // An entry whose spawn already went out (not queued) can never complete after a
+        // disconnect, and its key could be minted again once the generation counter restarts.
+        state
+            .pending_replay_inputs
+            .insert((9, 1), "stale".to_string());
+
+        state.prune_replay_inputs_to_pending_spawns();
+
+        assert!(state.pending_replay_inputs.contains_key(&(7, 3)));
+        assert!(!state.pending_replay_inputs.contains_key(&(9, 1)));
+    }
+
+    #[test]
     fn stale_prune_token_does_not_match_reused_pane_id() {
         use crate::config::HyprmuxConfig;
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());

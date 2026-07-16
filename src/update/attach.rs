@@ -17,6 +17,9 @@ pub(super) fn reset_state_for_shared_seed(state: &mut State) {
     state.focused_pane = None;
     state.active_workspace = 0;
     state.next_pane_id = 1;
+    // The generation counter restarts, so replay inputs queued for the previous attachment's
+    // panes must not survive into keys a new pane could mint.
+    state.prune_replay_inputs_to_pending_spawns();
     state.next_pty_generation = 1;
 }
 

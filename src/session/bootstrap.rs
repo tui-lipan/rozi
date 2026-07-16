@@ -143,6 +143,17 @@ fn attach_session_client_with_profile(
                             return;
                         }
                     };
+                    // An updated/rebuilt binary unlinks the one this client runs from; on Linux
+                    // `current_exe` then points at `hyprmux (deleted)`, which cannot be spawned.
+                    // Name the real cause instead of surfacing a raw ENOENT.
+                    if !exe.exists() {
+                        link.send(Msg::SessionAttachFailed {
+                            epoch,
+                            message: "hyprmux was updated on disk\nRestart it to start new sessions"
+                                .to_string(),
+                        });
+                        return;
+                    }
                     match crate::platform::server_lifecycle::spawn_detached_server(
                         &exe,
                         &name,

@@ -29,11 +29,14 @@ The **Panes** tab groups every live workspace pane under its workspace,
 shows the pane title and current foreground program, marks local focus, and switches workspace and
 focus when a row is clicked.
 
-The **Agents** tab lists ordinary workspace panes from every workspace. Rows show the pane title,
-reported status, and a shortened reason; clicking a row switches workspace and focuses it. Statuses
-sort as `blocked`, `working`, custom values, `done`, `idle`, then panes with no reported status.
-Well-known statuses are matched case-insensitively and use themed status glyphs, while custom status
-spelling is shown unchanged. Closing panes, the scratchpad, and popups are excluded.
+The **Agents** tab lists detected coding-agent processes from every workspace. It currently
+recognizes Claude Code (`claude`/`claude-code`), OpenCode, Codex, Aider, Gemini CLI, Goose, and
+Amp by their foreground executable; ordinary shells, editors, and other panes are excluded. Rows
+show the normalized agent name, reported status, and a shortened reason; clicking a row switches
+workspace and focuses it. An agent without a reported status is shown as `idle`, rather than
+`no status`. Statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
+Well-known statuses are matched case-insensitively and use themed status glyphs, while custom
+status spelling is shown unchanged. Closing panes, the scratchpad, and popups are excluded.
 
 The **Sessions** tab discovers running named sessions and includes the currently attached session,
 including the current ephemeral session. Foreign ephemeral sessions are hidden. Discovery runs off

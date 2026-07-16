@@ -14,6 +14,23 @@ pub(crate) struct AgentRow {
     pub reason: Option<String>,
 }
 
+/// Return a stable display name for supported agent executables. The foreground program is the
+/// process inspector's basename, so ordinary shells and editor panes never enter this tab.
+fn detected_agent(program: Option<&str>) -> Option<&'static str> {
+    let program = program?.rsplit(['/', '\\']).next()?.to_ascii_lowercase();
+    let program = program.strip_suffix(".exe").unwrap_or(&program);
+    match program {
+        "claude" | "claude-code" => Some("Claude Code"),
+        "opencode" => Some("OpenCode"),
+        "codex" => Some("Codex"),
+        "aider" => Some("Aider"),
+        "gemini" | "gemini-cli" => Some("Gemini CLI"),
+        "goose" => Some("Goose"),
+        "amp" => Some("Amp"),
+        _ => None,
+    }
+}
+
 fn normalized_status(value: &str) -> &str {
     value.trim()
 }
@@ -49,12 +66,15 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                     !pane.closing
                         && pane.id != crate::state::SCRATCH_PANE_ID
                         && pane.id != crate::state::POPUP_PANE_ID
+                        && detected_agent(pane.terminal.foreground_program.as_deref()).is_some()
                 })
                 .map(move |(pane_index, pane)| AgentRow {
                     pane_id: pane.id,
                     workspace_index,
                     pane_index,
-                    title: pane.display_title(pane.terminal.title()),
+                    title: detected_agent(pane.terminal.foreground_program.as_deref())
+                        .expect("agent filter and row construction agree")
+                        .to_string(),
                     status: pane
                         .terminal
                         .reported_status
@@ -132,7 +152,7 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     }
     rows.into_iter()
         .fold(VStack::new().gap(0).padding((1, 0)), |body, row| {
-            let status = row.status.as_deref().unwrap_or("none");
+            let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
             let (glyph, color) = status_glyph(status, &ctx.state.theme);
             let status_icon: Element = if status.trim().eq_ignore_ascii_case(pane_status::WORKING) {
                 Spinner::new()
@@ -148,7 +168,7 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
             let status_label = row
                 .status
                 .clone()
-                .unwrap_or_else(|| "no status".to_string());
+                .unwrap_or_else(|| pane_status::IDLE.to_string());
             let mut detail = HStack::new()
                 .gap(1)
                 .height(Length::Px(1))
@@ -202,6 +222,7 @@ mod tests {
             },
         );
         pane.closing = closing;
+        pane.terminal.foreground_program = Some("claude".to_string());
         pane.terminal.reported_status = value.map(|value| PaneStatus {
             value: value.to_string(),
             reason: None,
@@ -240,5 +261,18 @@ mod tests {
         assert_eq!(status_glyph(" BLOCKED ", &theme).0, "!");
         assert_eq!(status_glyph("Working", &theme).0, "⠋");
         assert_eq!(status_glyph("Waiting", &theme).0, "•");
+    }
+
+    #[test]
+    fn detects_known_agents_and_excludes_regular_programs() {
+        assert_eq!(detected_agent(Some("/usr/bin/claude")), Some("Claude Code"));
+        assert_eq!(detected_agent(Some("opencode.exe")), Some("OpenCode"));
+        assert_eq!(detected_agent(Some("codex")), Some("Codex"));
+        assert_eq!(detected_agent(Some("bash")), None);
+        assert_eq!(detected_agent(None), None);
+
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.workspaces[0].panes[0].terminal.foreground_program = Some("bash".into());
+        assert!(agent_rows(&state).is_empty());
     }
 }

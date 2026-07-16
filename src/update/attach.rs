@@ -173,10 +173,23 @@ pub(crate) fn spawn_state_panes_on_session(
             .cloned()
             .chain(pane_env(ctx.state.control_socket_path.as_deref(), pane))
             .collect::<Vec<_>>();
+        // A replay command is not sent as the spawn command: the pane starts as a plain
+        // interactive shell and the command is injected as type-ahead input once the spawn
+        // succeeds (see `State::pending_replay_inputs`).
+        let command = if pane.identity.replay {
+            if let Some(command) = pane.identity.command.clone() {
+                ctx.state
+                    .pending_replay_inputs
+                    .insert((pane.id, generation), command);
+            }
+            None
+        } else {
+            pane.identity.command.clone()
+        };
         client.spawn_pane(
             pane.id,
             generation,
-            pane.identity.command.clone(),
+            command,
             pane.identity.cwd.clone(),
             pane.terminal.cols,
             pane.terminal.rows,

@@ -193,6 +193,14 @@ pub enum Msg {
         ok: bool,
         error: Option<String>,
     },
+    /// Fallback deadline for a queued replay input (see
+    /// [`crate::state::State::pending_replay_inputs`]): if the pane's shell has not reported its
+    /// first prompt by now (no OSC 133 integration), write the command as plain type-ahead.
+    ReplayInputDeadline {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+    },
     SessionOutput {
         epoch: u64,
         pane_id: PaneId,

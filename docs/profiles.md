@@ -25,8 +25,8 @@ Each pane entry supports:
 | --- | --- |
 | `name` | Pane title shown in the titlebar. |
 | `cwd` | Local working directory when the pane launches. `~` expands to `$HOME`; remote SSH paths are not captured as local paths. |
-| `command` | Run through the configured `command_shell` when the pane opens. Saving keeps an explicit launch command, or captures a detected non-shell foreground executable basename. |
-| `keep_open` | When `true`, drop into an interactive shell when the command exits instead of closing the pane. |
+| `command` | Typed into the pane's interactive shell at its first prompt when the pane opens, so aliases, shell functions, and rc-file `PATH` entries resolve exactly as if you ran it yourself. Saving keeps an explicit launch command, or captures the executable of a command that is still running. |
+| `keep_open` | Kept for round-tripping; a restored command pane always returns to its interactive shell when the command exits. |
 | `floating` | Start as a floating pane instead of tiled. |
 | `fullscreen` | Start fullscreen. |
 | `rect` | Floating geometry `{ x, y, w, h }`. |
@@ -132,12 +132,14 @@ same-named session.
 
 ## Command lifetime
 
-Without `keep_open = true`, a pane closes when its `command` exits.
-
-Set `keep_open = true` to drop into an interactive shell instead. When the command finishes, the
-session server prints its exit status into the pane and replaces the dead PTY with your interactive
-shell **in place** — same pane, same scrollback, so the command's output is still there above the
-new prompt. The shell starts in the directory the command left the pane in, when that is known.
+A restored pane starts your interactive shell in its `cwd`; a pane with a `command` then has that
+command typed into the shell's first prompt. Because the command runs inside a real interactive
+shell, aliases, shell functions, and rc-file `PATH` entries resolve, the prompt's title/OSC
+integration runs first, and when the command exits the pane simply returns to the prompt — the
+command's output stays in the scrollback above it. (`keep_open` matters for panes spawned with a
+command through the command-runner shell, such as `[[rules]]` targets or control `new-pane`; for
+those, `keep_open = true` replaces the dead PTY with your interactive shell in place after the
+command exits.)
 
 See also [Project profiles & pane identity](project-profiles.md) for pane titles, saving
 limitations, and session autosave details.

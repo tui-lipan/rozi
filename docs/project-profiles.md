@@ -14,8 +14,8 @@ shell:
   palette). It overrides the program's terminal title. Submitting an empty name clears it.
 - **Profile name** - the name a pane was restored with from a profile.
 - **cwd / command** - the local working directory and launch command. Saves use live server runtime
-  metadata, reject remote-host cwd reports, and capture a non-shell foreground executable basename
-  when no explicit launch command exists.
+  metadata, reject remote-host cwd reports, and capture the non-shell executable basename of a
+  command that is still running (a pane idling at its prompt saves no command).
 
 The titlebar shows the custom title if set, otherwise the program's terminal title, otherwise
 the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
@@ -71,8 +71,8 @@ set `name` (its custom name, settable at runtime with *Rename workspace* - see
 
 - `name`: pane title shown by `hyprmux` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
-- `command`: command string run through the configured `command_shell` when launching the pane.
-- `keep_open`: start the configured interactive shell in the same pane after `command` exits.
+- `command`: command line typed into the pane's interactive shell at its first prompt.
+- `keep_open`: kept for round-tripping; a command pane returns to its interactive shell on exit.
 - `floating`: whether the pane is floating instead of tiled.
 - `fullscreen`: whether the pane starts fullscreen.
 - `rect`: floating geometry as `{ x, y, w, h }`; used for floating panes.
@@ -114,11 +114,13 @@ rect = { x = 8.0, y = 4.0, w = 80.0, h = 24.0 }
 
 ## Command lifetime
 
-Profile commands run through the configured `command_shell`. If the command exits, `hyprmux` closes that pane. Set `keep_open = true` to preserve the pane and start the configured interactive shell in place after the command finishes:
+A restored pane launches your interactive shell in its `cwd`. A pane with a `command` has that
+command typed into the shell's first prompt, so aliases, shell functions, and rc-file `PATH`
+entries resolve exactly as if you ran it yourself, and the pane returns to the prompt when the
+command exits:
 
 ```toml
 command = "cargo run"
-keep_open = true
 ```
 
 ## Session auto-save
@@ -140,8 +142,9 @@ state, floating geometry, and each pane's detected local working directory. A cw
 remote host, such as an SSH session, is never saved as a local path; hyprmux falls back to the
 pane's original local launch directory instead.
 
-When the server can identify a foreground executable, saving records its basename as `command`.
-Interactive shells are filtered out, and an explicit launch command always takes precedence.
-hyprmux cannot reconstruct the foreground program's original arguments, so a detected `nvim`
-process is saved as `command = "nvim"`, not its full invocation. Rename panes explicitly when you
-want stable profile titles.
+When a pane is running a command at save time, saving records the detected executable basename as
+`command`. Interactive shells are filtered out, a pane idling at its prompt saves no command at
+all (the last command you ran is not replayed), and an explicit launch command is kept when
+nothing is running. hyprmux cannot reconstruct the foreground program's original arguments, so a
+detected `nvim` process is saved as `command = "nvim"`, not its full invocation. Rename panes
+explicitly when you want stable profile titles.

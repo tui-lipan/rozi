@@ -147,6 +147,10 @@ pub fn restore_state_from_profile(
                     .to_string()
             });
             pane.identity.command = pane_profile.command.clone();
+            // Profile commands are replayed through the interactive shell (typed at the prompt)
+            // rather than the command-runner shell: they were captured from what the user ran
+            // interactively, so aliases, shell functions, and rc-file PATH entries must resolve.
+            pane.identity.replay = pane.identity.command.is_some();
             pane.identity.keep_open = pane_profile.keep_open;
             pane.floating = pane_profile.floating;
             pane.fullscreen = pane_profile.fullscreen;
@@ -248,6 +252,7 @@ pub fn restore_state_from_profile(
         session_attached: false,
         pending_session_attach: None,
         pending_spawns: Vec::new(),
+        pending_replay_inputs: std::collections::HashMap::new(),
         pending_destructive: None,
         shared: None,
         workbar_command_output: std::collections::HashMap::new(),
@@ -342,18 +347,37 @@ fn workspace_profile_from_state(
                     .or_else(|| pane.identity.profile_name.clone()),
                 title: pane.identity.custom_title.clone(),
                 cwd: pane.local_cwd().map(PathBuf::from),
-                command: pane.identity.command.clone().or_else(|| {
-                    pane.terminal
-                        .foreground_program
-                        .clone()
-                        .filter(|program| !shells.contains(&normalize_executable(program)))
-                }),
+                command: live_running_command(pane, shells)
+                    .or_else(|| pane.identity.command.clone()),
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
                 rect: pane.floating.then_some(pane.floating_rect.into()),
             })
             .collect(),
+    }
+}
+
+/// The command a pane is running *right now*, if it is worth replaying on restore.
+///
+/// `foreground_program` keeps reporting the last executed command's executable while the shell
+/// sits idle at a prompt (OSC 133 `hyprmux_exe=` is only replaced by the next command), so a pane
+/// where the user merely changed directories would otherwise capture stale prompt machinery like
+/// `__zoxide_hook` and replay it as a pane command. Only trust it while shell integration reports
+/// a command mid-flight (`Executing`), or when there is no integration at all (`Unknown`) and the
+/// value comes from the process inspector, which reads the live foreground process group.
+fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String> {
+    use crate::session::protocol::PaneCommandPhase;
+
+    match pane.terminal.command_phase {
+        PaneCommandPhase::Executing | PaneCommandPhase::Unknown => pane
+            .terminal
+            .foreground_program
+            .clone()
+            .filter(|program| !shells.contains(&normalize_executable(program))),
+        PaneCommandPhase::Prompt | PaneCommandPhase::Input | PaneCommandPhase::Completed { .. } => {
+            None
+        }
     }
 }
 
@@ -902,6 +926,65 @@ mod tests {
         pane.terminal.foreground_program = Some("bash".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("cargo test"));
+    }
+
+    #[test]
+    fn save_ignores_stale_executable_reported_by_an_idle_prompt() {
+        use crate::session::protocol::PaneCommandPhase;
+
+        // `foreground_program` still holds the last command's executable (here a shell hook that
+        // ran during `cd`) while shell integration reports the pane idle at a prompt; capturing
+        // it would replay prompt machinery as a pane command on restore.
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let pane = &mut state.workspaces[0].panes[0];
+        pane.terminal.foreground_program = Some("__zoxide_hook".to_string());
+        for phase in [
+            PaneCommandPhase::Prompt,
+            PaneCommandPhase::Input,
+            PaneCommandPhase::Completed { exit_status: None },
+        ] {
+            state.workspaces[0].panes[0].terminal.command_phase = phase;
+            let saved = &profile_from_state(&state).workspaces[0].panes[0];
+            assert_eq!(
+                saved.command, None,
+                "stale executable captured at {phase:?}"
+            );
+        }
+
+        // A command genuinely mid-flight is worth replaying.
+        state.workspaces[0].panes[0].terminal.command_phase = PaneCommandPhase::Executing;
+        let saved = &profile_from_state(&state).workspaces[0].panes[0];
+        assert_eq!(saved.command.as_deref(), Some("__zoxide_hook"));
+    }
+
+    #[test]
+    fn restored_profile_commands_are_marked_for_interactive_replay() {
+        let profile = HyprmuxProfile {
+            version: 1,
+            active_workspace: 0,
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                panes: vec![
+                    PaneProfile {
+                        id: 0,
+                        command: Some("n".to_string()),
+                        ..PaneProfile::default()
+                    },
+                    PaneProfile {
+                        id: 1,
+                        ..PaneProfile::default()
+                    },
+                ],
+                ..WorkspaceProfile::default()
+            }],
+        };
+
+        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let panes = &state.workspaces[0].panes;
+        assert_eq!(panes[0].identity.command.as_deref(), Some("n"));
+        assert!(panes[0].identity.replay);
+        assert_eq!(panes[1].identity.command, None);
+        assert!(!panes[1].identity.replay);
     }
 
     #[test]

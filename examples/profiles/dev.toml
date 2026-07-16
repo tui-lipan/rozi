@@ -3,8 +3,8 @@
 #   hyprmux dev                         # canonical session "dev"
 #   hyprmux new review --profile dev    # independent session "review"
 #
-# lazygit on the left keeps an interactive shell when you quit lazygit (keep_open).
-# nvim on the right runs normally and closes the pane when you exit vim.
+# Each pane starts your interactive shell in its cwd and types its command at the first
+# prompt, so quitting lazygit or nvim returns that pane to the shell.
 
 version = 1
 active_workspace = 0

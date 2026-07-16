@@ -116,6 +116,13 @@ pub struct State {
     /// during the initial attach or a reconnect window). Flushed to the server once
     /// [`Msg::SessionAttached`](crate::Msg::SessionAttached) installs the client.
     pub pending_spawns: Vec<PendingPaneSpawn>,
+    /// Replay commands (see [`PaneIdentity::replay`]) waiting for their pane's `SpawnResult`,
+    /// keyed by `(pane_id, generation)`. The spawn goes out with `command: None` so the server
+    /// launches the interactive shell; once the spawn succeeds the command is sent as pane input
+    /// (with a trailing carriage return), where it sits as type-ahead until the shell's first
+    /// prompt reads and runs it. Only the client that requested the spawn holds the entry, so a
+    /// multi-client session injects it exactly once.
+    pub pending_replay_inputs: HashMap<(PaneId, u64), String>,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -214,6 +221,7 @@ impl State {
             session_attached: false,
             pending_session_attach: None,
             pending_spawns: Vec::new(),
+            pending_replay_inputs: HashMap::new(),
             pending_destructive: None,
             shared: None,
             workbar_command_output: HashMap::new(),

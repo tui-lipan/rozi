@@ -121,6 +121,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
             env,
             None,
             palette,
+            false,
         );
     }
 

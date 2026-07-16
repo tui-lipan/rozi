@@ -52,7 +52,8 @@ cwd = "~/code"              # default: the directory hyprmux was launched from
 scrollback = 10000          # default: 5000 lines per pane
 
 # Deterministic shell used to run one-off command lines: pane/popup commands, hooks, workbar
-# `command:` segments, `[keys] run`, profile commands, and control-socket run requests. Unlike
+# `command:` segments, `[keys] run`, and control-socket run requests. (Profile commands are
+# instead typed into the pane's interactive shell so aliases and rc-file PATH resolve.) Unlike
 # `shell`, this is never detection-based, so a config snippet using it behaves the same on every
 # machine. Accepts the same bare-string or argument-preserving-array forms as `shell`.
 # command_shell = ["/bin/sh", "-c"]  # default on Linux/macOS
@@ -160,7 +161,7 @@ close = "ctrl-a q"
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `shell` | string or array | see below | Interactive shell launched in each new pane. |
-| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, profile commands, control-socket run requests). |
+| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). Profile commands are typed into the pane's interactive shell instead. |
 | `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
 | `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |

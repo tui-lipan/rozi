@@ -79,23 +79,49 @@ __hyprmux_precmd() {
     return $status
 }
 
-# DEBUG trap (preexec-equivalent): fires before every simple command, including ones inside
-# `PROMPT_COMMAND` itself - `__hyprmux_in_precmd` and the `$COMP_LINE`/`$COMP_POINT` completion
-# guard keep it from firing for anything but a real typed command about to execute.
+# Armed as the *last* prompt-pipeline step (see the `PROMPT_COMMAND` install below) and consumed
+# by the first DEBUG trap firing afterwards, i.e. by whatever bash runs once readline returns.
+# Preserves `$?` like `__hyprmux_precmd` so a plain `$?` in `PS1` still shows the real status.
+__hyprmux_arm() {
+    local status=$?
+    __hyprmux_at_prompt=1
+    return $status
+}
+
+# DEBUG trap (preexec-equivalent): fires before every simple command, including every command run
+# by other `PROMPT_COMMAND` hooks (zoxide, starship, ...) and by function bodies. Only the first
+# firing after `__hyprmux_arm` armed the prompt is a genuinely typed command; matching
+# `$BASH_COMMAND` against `$PROMPT_COMMAND` instead (the previous guard) misses hooks held in the
+# bash >= 5.1 `PROMPT_COMMAND` *array* and every command inside a hook's function body, which left
+# stray `C;hyprmux_exe=<hook>` reports after each prompt.
 __hyprmux_preexec() {
     [ -n "${COMP_LINE:-}" ] && return
-    [ "$BASH_COMMAND" = "__hyprmux_precmd" ] && return
-    case "$PROMPT_COMMAND" in
-    *"$BASH_COMMAND"*) return ;;
+    [ -z "${__hyprmux_at_prompt:-}" ] && return
+    [ "${BASH_SUBSHELL:-0}" -eq 0 ] && __hyprmux_at_prompt=""
+    # An empty Enter re-runs the prompt pipeline while still armed; our own precmd is its first
+    # command, so seeing it means nothing was typed.
+    case "$BASH_COMMAND" in
+    __hyprmux_precmd | __hyprmux_arm) return ;;
     esac
     __hyprmux_have_last_command=1
     __hyprmux_osc133_c "$BASH_COMMAND"
 }
 
-case "$PROMPT_COMMAND" in
+# `PROMPT_COMMAND` may be a plain string or an array (bash >= 5.1; starship/zoxide/bash-preexec
+# append array elements). Install `__hyprmux_precmd` first and `__hyprmux_arm` last, after every
+# other hook, so anything the DEBUG trap sees in between is prompt machinery, never a typed
+# command. `${PROMPT_COMMAND[*]}` reads the whole array (and degrades to the string form).
+case "${PROMPT_COMMAND[*]:-}" in
 *__hyprmux_precmd*) ;;
-"") PROMPT_COMMAND='__hyprmux_precmd' ;;
-*) PROMPT_COMMAND="__hyprmux_precmd;$PROMPT_COMMAND" ;;
+*)
+    if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+        PROMPT_COMMAND=(__hyprmux_precmd "${PROMPT_COMMAND[@]}" __hyprmux_arm)
+    elif [ -z "${PROMPT_COMMAND:-}" ]; then
+        PROMPT_COMMAND='__hyprmux_precmd;__hyprmux_arm'
+    else
+        PROMPT_COMMAND="__hyprmux_precmd;$PROMPT_COMMAND;__hyprmux_arm"
+    fi
+    ;;
 esac
 
 # `\[...\]` marks the escape sequence as zero-width for readline's prompt-length accounting.

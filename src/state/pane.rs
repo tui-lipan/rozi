@@ -76,7 +76,12 @@ impl Pane {
     }
 
     pub fn subtitle_for_title(&self, title: &str) -> Option<String> {
-        if let Some(command) = self.identity.command.as_deref() {
+        // A replay pane (profile-restored command typed into its interactive shell) is
+        // behaviorally a shell pane: its live title/cwd describe it better than the launch
+        // command, which the shell may have long finished.
+        if !self.identity.replay
+            && let Some(command) = self.identity.command.as_deref()
+        {
             return Some(command.to_string());
         }
 
@@ -182,6 +187,21 @@ mod tests {
         pane.identity.command = Some("vim src/main.rs".to_string());
 
         assert_eq!(pane.subtitle(), Some("vim src/main.rs"));
+    }
+
+    #[test]
+    fn replay_pane_subtitle_shows_cwd_not_the_replayed_command() {
+        let mut pane = pane();
+        pane.identity.cwd = Some("/tmp/project".to_string());
+        pane.identity.command = Some("nvim".to_string());
+        pane.identity.replay = true;
+
+        // The replay command runs inside a live interactive shell; the pane's cwd (and live
+        // title) describe it, not the launch command the shell may have long finished.
+        assert_eq!(
+            pane.subtitle_for_title("shell"),
+            Some("/tmp/project".to_string())
+        );
     }
 
     #[test]

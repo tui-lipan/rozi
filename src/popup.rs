@@ -82,6 +82,7 @@ pub(crate) fn open(
         env,
         identity.custom_title,
         palette,
+        false,
     );
     request_pane_focus(ctx, POPUP_PANE_ID);
     Ok(Update::full())

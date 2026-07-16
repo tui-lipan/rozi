@@ -323,6 +323,9 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     }
     ctx.state.scratch_visible = false;
     ctx.state.pending_spawns.clear();
+    // Replay inputs queued for panes of the layout being replaced must never reach their
+    // (killed) panes' successors; `spawn_state_panes_on_session` re-queues the new layout's own.
+    ctx.state.pending_replay_inputs.clear();
     for pane in ctx
         .state
         .workspaces

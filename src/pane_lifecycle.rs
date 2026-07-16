@@ -132,6 +132,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let cwd = pane.identity.cwd.clone();
     let title = pane.identity.custom_title.clone();
     let keep_open = pane.identity.keep_open;
+    let replay = pane.identity.replay;
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
 
@@ -166,6 +167,7 @@ pub(crate) fn spawn_pane_in_workspace(
         env,
         title,
         palette,
+        replay,
     );
     crate::events::emit(
         &ctx.state,
@@ -250,6 +252,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         env,
         identity.custom_title,
         palette,
+        identity.replay,
     );
     crate::update::schedule_layout_commit(ctx);
     Update::full()
@@ -270,7 +273,20 @@ pub(crate) fn request_pane_spawn(
     env: Vec<(String, String)>,
     title: Option<String>,
     palette: TerminalColorPalette,
+    replay: bool,
 ) {
+    // A replay command (see `PaneIdentity::replay`) spawns a plain interactive shell and is
+    // injected as type-ahead input after the spawn succeeds (see `State::pending_replay_inputs`),
+    // so aliases/functions/rc-file PATH resolve and the prompt's title integration runs first.
+    let command = match command {
+        Some(command) if replay => {
+            state
+                .pending_replay_inputs
+                .insert((pane_id, generation), command);
+            None
+        }
+        command => command,
+    };
     let (shell, command_shell, extra_env) = resolved_launch_argv(&state.config);
     // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
@@ -686,6 +702,55 @@ mod tests {
             focus: true,
             fullscreen: false,
         }
+    }
+
+    #[test]
+    fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        request_pane_spawn(
+            &mut state,
+            7,
+            3,
+            Some("n".to_string()),
+            None,
+            80,
+            24,
+            false,
+            Vec::new(),
+            None,
+            TerminalColorPalette::default(),
+            true,
+        );
+        // No client yet: the spawn is queued, with the replay command stripped from the wire
+        // request and parked for post-spawn injection instead.
+        assert_eq!(state.pending_spawns.len(), 1);
+        assert_eq!(state.pending_spawns[0].command, None);
+        assert_eq!(
+            state.pending_replay_inputs.get(&(7, 3)).map(String::as_str),
+            Some("n")
+        );
+
+        // A non-replay command rides the wire request as before.
+        request_pane_spawn(
+            &mut state,
+            8,
+            4,
+            Some("htop".to_string()),
+            None,
+            80,
+            24,
+            false,
+            Vec::new(),
+            None,
+            TerminalColorPalette::default(),
+            false,
+        );
+        assert_eq!(
+            state.pending_spawns[1].command.as_deref(),
+            Some("htop"),
+            "deterministic command panes must keep command-shell semantics"
+        );
+        assert!(!state.pending_replay_inputs.contains_key(&(8, 4)));
     }
 
     #[test]

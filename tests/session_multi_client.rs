@@ -261,6 +261,7 @@ fn pane_layout() -> SharedLayout {
                 profile_name: None,
                 cwd: None,
                 command: None,
+                replay: false,
                 keep_open: false,
                 floating: false,
                 fullscreen: false,

@@ -227,6 +227,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             ok,
             error,
         } => session::spawn_result(ctx, epoch, pane_id, generation, pid, ok, error),
+        Msg::ReplayInputDeadline {
+            epoch,
+            pane_id,
+            generation,
+        } => session::replay_input_deadline(ctx, epoch, pane_id, generation),
         Msg::SessionError { epoch, message } => session::error(ctx, epoch, message),
         Msg::SessionRenamed {
             epoch,

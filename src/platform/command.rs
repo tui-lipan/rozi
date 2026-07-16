@@ -203,8 +203,9 @@ fn windows_interactive_shell(env: &ShellEnv) -> ShellCommand {
 }
 
 /// Resolve the command-runner launch policy: the shell used to run one-off command lines
-/// (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, profile commands,
-/// control-socket run requests). Never probes the environment for "the best" shell - only the
+/// (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run
+/// requests; profile commands instead replay through the interactive shell - see
+/// [`crate::state::PaneIdentity::replay`]). Never probes the environment for "the best" shell - only the
 /// user's explicit `command_shell` override (if any) or the fixed per-platform default - so a
 /// config snippet using it behaves identically on every machine.
 pub fn resolve_command_shell(configured: Option<&[String]>, env: &ShellEnv) -> ShellCommand {

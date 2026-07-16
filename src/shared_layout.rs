@@ -55,6 +55,11 @@ pub struct SharedPane {
     pub profile_name: Option<String>,
     pub cwd: Option<String>,
     pub command: Option<String>,
+    /// See [`crate::state::PaneIdentity::replay`]. Shared so a follower that takes control
+    /// respawns an exited profile pane through the interactive shell, not the command runner.
+    /// Defaulted so layout documents committed before this field existed still parse.
+    #[serde(default)]
+    pub replay: bool,
     pub keep_open: bool,
     pub floating: bool,
     pub fullscreen: bool,
@@ -128,6 +133,7 @@ fn shared_workspace_from_state(
                 profile_name: pane.identity.profile_name.clone(),
                 cwd: pane.identity.cwd.clone(),
                 command: pane.identity.command.clone(),
+                replay: pane.identity.replay,
                 keep_open: pane.identity.keep_open,
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
@@ -406,6 +412,7 @@ fn apply_shared_pane_fields(
     pane.identity.profile_name = shared_pane.profile_name.clone();
     pane.identity.cwd = shared_pane.cwd.clone();
     pane.identity.command = shared_pane.command.clone();
+    pane.identity.replay = shared_pane.replay;
     pane.identity.keep_open = shared_pane.keep_open;
 }
 
@@ -530,6 +537,7 @@ mod reconciler_tests {
                         profile_name: None,
                         cwd: None,
                         command: None,
+                        replay: false,
                         keep_open: false,
                         floating: false,
                         fullscreen: false,

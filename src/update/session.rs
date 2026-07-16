@@ -6,7 +6,7 @@ use super::attach::{
 };
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::pane_lifecycle::{begin_close_pane, find_pane_mut};
+use crate::pane_lifecycle::{begin_close_pane, find_pane, find_pane_mut};
 use crate::pty_events::{error_toast, maybe_notify_pane_exit};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason, PaneMeta, PaneRuntimeState};
@@ -677,6 +677,11 @@ pub(super) fn pane_runtime_changed(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
+    let at_prompt = matches!(
+        state.command_phase,
+        crate::session::protocol::PaneCommandPhase::Prompt
+            | crate::session::protocol::PaneCommandPhase::Input
+    );
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
@@ -688,7 +693,68 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.command_phase = state.command_phase;
         pane.terminal.last_exit_status = state.last_exit_status;
     }
+    // The shell reached its first prompt: deliver any queued replay input now, so readline
+    // echoes it exactly once at the prompt (see `flush_replay_input`).
+    if at_prompt {
+        flush_replay_input(ctx, pane_id, generation);
+    }
     Update::full()
+}
+
+/// How long a queued replay input waits for its pane's shell to report a prompt (OSC 133 A/B)
+/// before being written as plain type-ahead anyway - a shell without integration never reports
+/// one, and correctness does not depend on the prompt: type-ahead input is read whenever the
+/// shell gets there. Waiting only avoids the cosmetic double echo of injecting mid-startup
+/// (kernel tty echo first, readline's redraw second).
+const REPLAY_PROMPT_DEADLINE: std::time::Duration = std::time::Duration::from_millis(800);
+
+fn replay_input_deadline_command(epoch: u64, pane_id: PaneId, generation: u64) -> Command {
+    Command::spawn(move |link: CommandLink<crate::Msg>| {
+        std::thread::sleep(REPLAY_PROMPT_DEADLINE);
+        link.send(crate::Msg::ReplayInputDeadline {
+            epoch,
+            pane_id,
+            generation,
+        });
+    })
+}
+
+pub(super) fn replay_input_deadline(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    pane_id: PaneId,
+    generation: u64,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
+    }
+    flush_replay_input(ctx, pane_id, generation);
+    Update::none()
+}
+
+/// Deliver a queued replay command (see `State::pending_replay_inputs`) exactly once: sent as
+/// ordinary pane input followed by a carriage return, the pane's interactive shell reads and runs
+/// it as if the user had typed it - aliases, shell functions, and rc-file PATH resolve, and the
+/// prompt's title/OSC integration has already run. The entry is consumed even when the pane is
+/// gone or the client dropped; a later respawn queues its own fresh entry.
+fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation: u64) {
+    let Some(input) = ctx
+        .state
+        .pending_replay_inputs
+        .remove(&(pane_id, generation))
+    else {
+        return;
+    };
+    if !find_pane(&ctx.state, pane_id)
+        .is_some_and(|pane| pane.pty_generation == generation && !pane.closing)
+    {
+        return;
+    }
+    if let Some(client) = ctx.state.session_client.clone() {
+        let mut bytes = input.into_bytes();
+        bytes.push(b'\r');
+        client.send_input(pane_id, generation, bytes);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -707,10 +773,12 @@ pub(super) fn spawn_result(
     let is_controller = ctx.state.is_controller();
     let mut should_close = false;
     let mut toast_error = None;
+    let mut spawned_live = false;
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
         if pane.pty_generation != generation {
             return Update::none();
         }
+        spawned_live = ok && !pane.closing;
         // A follower may already hold this pane (bound and Ready) from the reconciler; only (re)bind
         // a fresh backend for a pane still waiting on its own spawn to complete, so we never destroy
         // a live screen that is already replaying server output.
@@ -733,6 +801,25 @@ pub(super) fn spawn_result(
     } else if let Some(error) = error {
         toast_error = Some(error);
     }
+    // A queued replay command (see `State::pending_replay_inputs`) is not written yet: it waits
+    // for the shell's first prompt report (`pane_runtime_changed` flushes it) so readline echoes
+    // it exactly once at the prompt, instead of the kernel tty echoing it again mid-startup. The
+    // deadline command is the fallback for shells without OSC 133 integration. A failed or
+    // superseded spawn drops the entry instead.
+    let mut replay_deadline = None;
+    if ctx
+        .state
+        .pending_replay_inputs
+        .contains_key(&(pane_id, generation))
+    {
+        if spawned_live {
+            replay_deadline = Some(replay_input_deadline_command(epoch, pane_id, generation));
+        } else {
+            ctx.state
+                .pending_replay_inputs
+                .remove(&(pane_id, generation));
+        }
+    }
     ctx.state.commands_dirty = true;
     if let Some(error) = toast_error {
         ctx.toast()
@@ -740,6 +827,8 @@ pub(super) fn spawn_result(
     }
     if should_close {
         begin_close_pane(ctx, pane_id, ctx.state.config.animations)
+    } else if let Some(command) = replay_deadline {
+        Update::with_command(command)
     } else {
         Update::full()
     }

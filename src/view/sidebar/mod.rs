@@ -44,8 +44,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
     );
 
     Frame::new()
-        .border(true)
-        .border_style(BorderStyle::Plain)
+        .border(false)
         .padding(0)
         .style(
             ctx.state
@@ -56,10 +55,18 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
         .width(Length::Px(width))
         .height(Length::Flex(1))
         .child(
-            VStack::new()
-                .gap(0)
-                .child(tab_bar)
-                .child(ScrollView::new().scrollbar(true).child(body)),
+            HStack::new()
+                .child(
+                    VStack::new()
+                        .gap(0)
+                        .width(Length::Flex(1))
+                        .child(tab_bar)
+                        .child(ScrollView::new().scrollbar(true).child(body)),
+                )
+                .child(
+                    Divider::vertical()
+                        .style(Style::new().fg(ctx.state.theme.surface.element.elevate(0.15))),
+                ),
         )
         .into()
 }

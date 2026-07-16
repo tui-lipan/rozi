@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
 
-use super::ProcessInspector;
+use super::{ForegroundJob, ForegroundProcess, ProcessInspector};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MacosProcessInspector;
@@ -30,6 +30,19 @@ impl ProcessInspector for MacosProcessInspector {
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String> {
         let pgid = pty.foreground_process_group_id()?;
         name_for_pid(pgid)
+    }
+
+    fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
+        let process_group_id = pty.foreground_process_group_id()?.try_into().ok()?;
+        Some(ForegroundJob {
+            process_group_id,
+            processes: vec![ForegroundProcess {
+                pid: process_group_id,
+                name: name_for_pid(process_group_id as i32)?,
+                argv: Vec::new(),
+                agent_hint: None,
+            }],
+        })
     }
 }
 

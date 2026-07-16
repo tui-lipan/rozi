@@ -20,7 +20,7 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
             |name| format!("{}  {}", workspace_index + 1, name),
         );
         body = body.child(
-            Text::new(workspace_label)
+            Text::new(format!(" {workspace_label}"))
                 .style(super::super::fg_only(&ctx.state.theme.accent).bold())
                 .height(Length::Px(1)),
         );
@@ -37,7 +37,27 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
             let row = HStack::new()
                 .gap(1)
                 .height(Length::Px(2))
-                .child(Text::new(marker).style(super::super::fg_only(&ctx.state.theme.accent)))
+                .style(if focused {
+                    Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
+                } else {
+                    Style::default()
+                })
+                .child(
+                    VStack::new()
+                        .gap(0)
+                        .width(Length::Auto)
+                        .height(Length::Px(2))
+                        .child(
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
+                        )
+                        .child(
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
+                        ),
+                )
                 .child(
                     VStack::new()
                         .gap(0)
@@ -51,7 +71,7 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
                 );
             body = body.child(
                 MouseRegion::new()
-                    .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
+                    .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
                     .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
                     .child(row)
                     .key(format!("sidebar-pane-{id}")),

@@ -29,14 +29,28 @@ The **Panes** tab groups every live workspace pane under its workspace,
 shows the pane title and current foreground program, marks local focus, and switches workspace and
 focus when a row is clicked.
 
-The **Agents** tab lists detected coding-agent processes from every workspace. It currently
-recognizes Claude Code (`claude`/`claude-code`), OpenCode, Codex, Aider, Gemini CLI, Goose, and
-Amp by their foreground executable; ordinary shells, editors, and other panes are excluded. Rows
-show the normalized agent name, reported status, and a shortened reason; clicking a row switches
-workspace and focuses it. An agent without a reported status is shown as `idle`, rather than
-`no status`. Statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
+The **Agents** tab lists detected coding-agent processes from every workspace. The session server
+inspects the foreground process group and its arguments, so agents launched through Node, Python,
+shell, and package-manager wrappers are recognized without relying only on the executable name.
+`HYPRMUX_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
+The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
+common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
+normalized agent name, inferred or reported status, and a shortened reason; clicking a row switches
+workspace and focuses it. Statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
 Well-known statuses are matched case-insensitively and use themed status glyphs, while custom
 status spelling is shown unchanged. Closing panes, the scratchpad, and popups are excluded.
+
+Process detection infers `working` and `blocked` from server-owned terminal state where an agent
+exposes recognizable progress or prompt markers. Agent integrations can publish a more reliable
+status through the control socket; reported status takes precedence over inference.
+
+### OpenCode Status Plugin
+
+OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, and blocked states.
+Install the included plugin by linking or copying
+`integrations/opencode/hyprmux-agent-state.js` into `~/.config/opencode/plugins/`, then restart
+OpenCode inside hyprmux. The plugin has no package dependencies and does nothing outside hyprmux.
+It uses the injected `HYPRMUX_SOCKET` and `HYPRMUX_PANE` values to update only its own pane.
 
 The **Sessions** tab discovers running named sessions and includes the currently attached session,
 including the current ephemeral session. Foreign ephemeral sessions are hidden. Discovery runs off

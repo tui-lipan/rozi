@@ -61,7 +61,27 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
             let content = HStack::new()
                 .gap(1)
                 .height(Length::Px(2))
-                .child(Text::new(marker).style(super::super::fg_only(&ctx.state.theme.accent)))
+                .style(if current {
+                    Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
+                } else {
+                    Style::default()
+                })
+                .child(
+                    VStack::new()
+                        .gap(0)
+                        .width(Length::Auto)
+                        .height(Length::Px(2))
+                        .child(
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
+                        )
+                        .child(
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
+                        ),
+                )
                 .child(
                     VStack::new()
                         .gap(0)
@@ -72,7 +92,7 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
                 );
             body.child(
                 MouseRegion::new()
-                    .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
+                    .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
                     .on_click(
                         ctx.link()
                             .callback(move |_| Msg::SidebarSessionActivate(entry.clone())),

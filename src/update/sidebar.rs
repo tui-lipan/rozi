@@ -88,7 +88,7 @@ pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> U
         ctx.state.sidebar.invalidate_commands();
         ctx.state.sidebar.active_tab = Some(id);
         if sessions_active(ctx) {
-            refresh_sessions(ctx, ctx.state.sidebar.sessions_epoch)
+            open_sessions(ctx)
         } else {
             start_active_command(ctx)
         }
@@ -101,9 +101,24 @@ pub(crate) fn visibility_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.sidebar.invalidate_sessions();
     ctx.state.sidebar.invalidate_commands();
     if sessions_active(ctx) {
-        refresh_sessions(ctx, ctx.state.sidebar.sessions_epoch)
+        open_sessions(ctx)
     } else {
         start_active_command(ctx)
+    }
+}
+
+fn open_sessions(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let epoch = ctx.state.sidebar.sessions_epoch;
+    match crate::ops::session::picker_rows(ctx) {
+        Ok(rows) => sessions_discovered(ctx, epoch, Ok(rows)),
+        Err(error) => {
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Session list failed",
+                error.to_string(),
+            ));
+            refresh_sessions(ctx, epoch)
+        }
     }
 }
 

@@ -113,6 +113,7 @@ pub fn attached_message() -> ServerMessage {
                     foreground_program: Some("benchmark-worker".to_string()),
                     last_exit_status: Some(0),
                     status: None,
+                    detected_agent: None,
                     sequence: u64::from(pane.pane_id),
                 },
             })

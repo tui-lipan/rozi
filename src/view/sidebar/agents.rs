@@ -14,20 +14,11 @@ pub(crate) struct AgentRow {
     pub reason: Option<String>,
 }
 
-/// Return a stable display name for supported agent executables. The foreground program is the
-/// process inspector's basename, so ordinary shells and editor panes never enter this tab.
-fn detected_agent(program: Option<&str>) -> Option<&'static str> {
-    let program = program?.rsplit(['/', '\\']).next()?.to_ascii_lowercase();
-    let program = program.strip_suffix(".exe").unwrap_or(&program);
-    match program {
-        "claude" | "claude-code" => Some("Claude Code"),
-        "opencode" => Some("OpenCode"),
-        "codex" => Some("Codex"),
-        "aider" => Some("Aider"),
-        "gemini" | "gemini-cli" => Some("Gemini CLI"),
-        "goose" => Some("Goose"),
-        "amp" => Some("Amp"),
-        _ => None,
+fn detected_status(state: crate::session::protocol::DetectedAgentState) -> &'static str {
+    match state {
+        crate::session::protocol::DetectedAgentState::Idle => pane_status::IDLE,
+        crate::session::protocol::DetectedAgentState::Working => pane_status::WORKING,
+        crate::session::protocol::DetectedAgentState::Blocked => pane_status::BLOCKED,
     }
 }
 
@@ -66,25 +57,33 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                     !pane.closing
                         && pane.id != crate::state::SCRATCH_PANE_ID
                         && pane.id != crate::state::POPUP_PANE_ID
-                        && detected_agent(pane.terminal.foreground_program.as_deref()).is_some()
+                        && pane.terminal.detected_agent.is_some()
                 })
-                .map(move |(pane_index, pane)| AgentRow {
-                    pane_id: pane.id,
-                    workspace_index,
-                    pane_index,
-                    title: detected_agent(pane.terminal.foreground_program.as_deref())
-                        .expect("agent filter and row construction agree")
-                        .to_string(),
-                    status: pane
+                .map(move |(pane_index, pane)| {
+                    let detected = pane
                         .terminal
-                        .reported_status
+                        .detected_agent
                         .as_ref()
-                        .map(|status| status.value.clone()),
-                    reason: pane
-                        .terminal
-                        .reported_status
-                        .as_ref()
-                        .and_then(|status| status.reason.clone()),
+                        .expect("agent filter and row construction agree");
+                    AgentRow {
+                        pane_id: pane.id,
+                        workspace_index,
+                        pane_index,
+                        title: detected.kind.label().to_string(),
+                        status: Some(
+                            pane.terminal
+                                .reported_status
+                                .as_ref()
+                                .map(|status| status.value.as_str())
+                                .unwrap_or_else(|| detected_status(detected.state))
+                                .to_string(),
+                        ),
+                        reason: pane
+                            .terminal
+                            .reported_status
+                            .as_ref()
+                            .and_then(|status| status.reason.clone()),
+                    }
                 })
         })
         .collect::<Vec<_>>();
@@ -146,7 +145,7 @@ fn truncate_reason(value: &str) -> String {
 pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     let rows = agent_rows(&ctx.state);
     if rows.is_empty() {
-        return Text::new("No panes")
+        return Text::new("No agents detected")
             .style(super::super::fg_only(&ctx.state.theme.muted))
             .into();
     }
@@ -180,22 +179,46 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
                 );
             }
             let id = row.pane_id;
+            let focused = ctx.state.focused_pane == Some(id);
+            let marker = if focused { "▎" } else { " " };
             let content = HStack::new()
-                .gap(1)
+                .gap(0)
                 .height(Length::Px(2))
-                .child(status_icon)
+                .style(if focused {
+                    Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
+                } else {
+                    Style::default()
+                })
                 .child(
                     VStack::new()
                         .gap(0)
+                        .width(Length::Auto)
+                        .height(Length::Px(2))
                         .child(
-                            Text::new(row.title)
-                                .style(super::super::fg_only(&ctx.state.theme.primary)),
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
                         )
-                        .child(detail),
+                        .child(
+                            Text::new(marker)
+                                .height(Length::Px(1))
+                                .style(super::super::fg_only(&ctx.state.theme.accent)),
+                        ),
+                )
+                .child(
+                    HStack::new().gap(1).height(Length::Px(2)).child(status_icon).child(
+                        VStack::new()
+                            .gap(0)
+                            .child(
+                                Text::new(row.title)
+                                    .style(super::super::fg_only(&ctx.state.theme.primary)),
+                            )
+                            .child(detail),
+                    ),
                 );
             body.child(
                 MouseRegion::new()
-                    .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
+                    .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
                     .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
                     .child(content)
                     .key(format!("sidebar-agent-{id}")),
@@ -207,7 +230,7 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::protocol::PaneStatus;
+    use crate::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;
 
     fn pane(id: PaneId, value: Option<&str>, closing: bool) -> Pane {
@@ -222,7 +245,10 @@ mod tests {
             },
         );
         pane.closing = closing;
-        pane.terminal.foreground_program = Some("claude".to_string());
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            kind: AgentKind::Claude,
+            state: DetectedAgentState::Idle,
+        });
         pane.terminal.reported_status = value.map(|value| PaneStatus {
             value: value.to_string(),
             reason: None,
@@ -264,15 +290,33 @@ mod tests {
     }
 
     #[test]
-    fn detects_known_agents_and_excludes_regular_programs() {
-        assert_eq!(detected_agent(Some("/usr/bin/claude")), Some("Claude Code"));
-        assert_eq!(detected_agent(Some("opencode.exe")), Some("OpenCode"));
-        assert_eq!(detected_agent(Some("codex")), Some("Codex"));
-        assert_eq!(detected_agent(Some("bash")), None);
-        assert_eq!(detected_agent(None), None);
-
+    fn rows_use_server_detection_and_exclude_non_agents() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes[0].terminal.foreground_program = Some("bash".into());
         assert!(agent_rows(&state).is_empty());
+        state.workspaces[0].panes[0].terminal.detected_agent = Some(DetectedAgent {
+            kind: AgentKind::OpenCode,
+            state: DetectedAgentState::Working,
+        });
+        let rows = agent_rows(&state);
+        assert_eq!(rows[0].title, "OpenCode");
+        assert_eq!(rows[0].status.as_deref(), Some("working"));
+    }
+
+    #[test]
+    fn reported_status_overrides_detected_state() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let pane = &mut state.workspaces[0].panes[0];
+        pane.terminal.detected_agent = Some(DetectedAgent {
+            kind: AgentKind::Claude,
+            state: DetectedAgentState::Working,
+        });
+        pane.terminal.reported_status = Some(PaneStatus {
+            value: "blocked".into(),
+            reason: Some("approval".into()),
+            set_at: 1,
+        });
+        let rows = agent_rows(&state);
+        assert_eq!(rows[0].status.as_deref(), Some("blocked"));
+        assert_eq!(rows[0].reason.as_deref(), Some("approval"));
     }
 }

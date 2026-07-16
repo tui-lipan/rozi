@@ -6,8 +6,7 @@
 //! precedence (OSC report first, this trait second, launch config last) is decided by
 //! `session::server`'s pane-runtime-state computation (Phase 6), not here.
 //!
-//! - [`linux`] - **implemented**: `/proc/<pid>/cwd` and `/proc/<pgid>/comm`, moved behind the trait
-//!   from where they used to live inline in `session::server::mod`.
+//! - [`linux`] - **implemented**: `/proc/<pid>/cwd` plus bounded foreground process-group records.
 //! - [`macos`] - **implemented, unverified** (no macOS runtime in this environment; cross-compile
 //!   checked only): `proc_pidvnodepathinfo` for cwd, `proc_name` for the foreground executable.
 //! - [`windows`] - **implemented as explicit unavailable**, per the plan (no PEB/process-tree
@@ -16,6 +15,20 @@
 use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForegroundProcess {
+    pub pid: u32,
+    pub name: String,
+    pub argv: Vec<String>,
+    pub agent_hint: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForegroundJob {
+    pub process_group_id: u32,
+    pub processes: Vec<ForegroundProcess>,
+}
 
 #[cfg(target_os = "linux")]
 pub mod linux;
@@ -32,6 +45,9 @@ pub trait ProcessInspector {
     /// The normalized basename of the process currently in the PTY's foreground process group, if
     /// the platform can determine one. Never a full command line.
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String>;
+    fn foreground_job(&self, _pty: &TerminalPty) -> Option<ForegroundJob> {
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -701,6 +701,7 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.command_phase = state.command_phase;
         pane.terminal.last_exit_status = state.last_exit_status;
         pane.terminal.reported_status = state.status;
+        pane.terminal.detected_agent = state.detected_agent;
         if previous != pane.terminal.reported_status {
             transition = Some((
                 previous,
@@ -1055,6 +1056,10 @@ mod tests {
                 };
                 let runtime = PaneRuntimeState {
                     status: Some(status.clone()),
+                    detected_agent: Some(crate::session::protocol::DetectedAgent {
+                        kind: crate::session::protocol::AgentKind::OpenCode,
+                        state: crate::session::protocol::DetectedAgentState::Blocked,
+                    }),
                     sequence: 1,
                     ..PaneRuntimeState::default()
                 };
@@ -1074,6 +1079,14 @@ mod tests {
                 assert_eq!(event["data"]["status"], "blocked");
                 assert_eq!(event["data"]["reason"], "needs approval");
                 assert_eq!(event["data"]["previous_status"], "");
+                assert_eq!(
+                    backend.state().workspaces[0].panes[0]
+                        .terminal
+                        .detected_agent
+                        .as_ref()
+                        .map(|agent| agent.kind),
+                    Some(crate::session::protocol::AgentKind::OpenCode)
+                );
 
                 backend
                     .dispatch(Msg::SessionPaneRuntimeChanged {
@@ -1102,6 +1115,12 @@ mod tests {
                         .terminal
                         .reported_status,
                     Some(status)
+                );
+                assert!(
+                    backend.state().workspaces[0].panes[0]
+                        .terminal
+                        .detected_agent
+                        .is_some()
                 );
                 assert!(events.try_recv().is_err());
             })

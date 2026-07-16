@@ -21,6 +21,7 @@ pub struct TerminalPane {
     /// Free-form status reported by the pane through the session server. This is distinct from
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
+    pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -71,6 +72,7 @@ impl TerminalPane {
             child_pid: None,
             foreground_program: None,
             reported_status: None,
+            detected_agent: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -83,6 +85,7 @@ impl TerminalPane {
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
             self.reported_status = None;
+            self.detected_agent = None;
         }
         self.pane_id = pane_id;
         self.generation = generation;

@@ -2,16 +2,20 @@
 //!
 //! Both operations key off `/proc`: `cwd` reads `/proc/<pid>/cwd` for the PTY child's own pid;
 //! `foreground_program` reads `/proc/<pgid>/comm` for the PTY's current foreground process-group
-//! id. Using the pgid directly (rather than enumerating `/proc/*/stat` for group members) relies on
-//! the standard Unix invariant that a process group id is the pid of its group leader - the first
-//! command in a pipeline, which is exactly the process a shell hands the terminal to in the common
-//! single-foreground-command case this fallback targets.
+//! leader. `foreground_job` additionally scans `/proc/*/stat` for group members so wrapped agents
+//! and package runners can be identified from bounded argument and environment reads.
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalPty;
 
-use super::ProcessInspector;
+use super::{ForegroundJob, ForegroundProcess, ProcessInspector};
+
+const MAX_FOREGROUND_PROCESSES: usize = 64;
+const MAX_PROC_BYTES: u64 = 64 * 1024;
+const MAX_ARG_COUNT: usize = 128;
+const MAX_ARG_CHARS: usize = 4096;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxProcessInspector;
@@ -28,6 +32,106 @@ impl ProcessInspector for LinuxProcessInspector {
         let name = comm.trim();
         (!name.is_empty()).then(|| name.to_string())
     }
+
+    fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
+        foreground_job_for_group(pty.foreground_process_group_id()?.try_into().ok()?)
+    }
+}
+
+fn foreground_job_for_group(process_group_id: u32) -> Option<ForegroundJob> {
+    let entries = std::fs::read_dir("/proc").ok()?;
+    let mut processes = Vec::new();
+    if let Some(process) = process_group_member(process_group_id, process_group_id) {
+        processes.push(process);
+    }
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .filter(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == process_group_id {
+            continue;
+        }
+        let Some(process) = process_group_member(process_group_id, pid) else {
+            continue;
+        };
+        processes.push(process);
+        if processes.len() == MAX_FOREGROUND_PROCESSES {
+            break;
+        }
+    }
+    processes.sort_unstable_by_key(|process| (process.pid != process_group_id, process.pid));
+    (!processes.is_empty()).then_some(ForegroundJob {
+        process_group_id,
+        processes,
+    })
+}
+
+fn process_group_member(process_group_id: u32, pid: u32) -> Option<ForegroundProcess> {
+    let (group, name) = read_process_stat(pid)?;
+    (group == process_group_id).then(|| ForegroundProcess {
+        pid,
+        name,
+        argv: read_nul_records(&format!("/proc/{pid}/cmdline")),
+        agent_hint: read_agent_hint(&format!("/proc/{pid}/environ")),
+    })
+}
+
+fn read_process_stat(pid: u32) -> Option<(u32, String)> {
+    parse_process_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+fn parse_process_stat(stat: &str) -> Option<(u32, String)> {
+    let open = stat.find('(')?;
+    let close = stat.rfind(')')?;
+    let name = stat.get(open + 1..close)?.to_string();
+    let fields: Vec<_> = stat.get(close + 2..)?.split_whitespace().collect();
+    let process_group_id = fields.get(2)?.parse().ok()?;
+    Some((process_group_id, name))
+}
+
+fn read_bounded(path: &str) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_PROC_BYTES).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+fn read_nul_records(path: &str) -> Vec<String> {
+    read_bounded(path)
+        .unwrap_or_default()
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .take(MAX_ARG_COUNT)
+        .map(|part| {
+            String::from_utf8_lossy(part)
+                .chars()
+                .take(MAX_ARG_CHARS)
+                .collect()
+        })
+        .collect()
+}
+
+fn parse_agent_hint(bytes: &[u8]) -> Option<String> {
+    let records = bytes.split(|byte| *byte == 0);
+    for key in [b"HYPRMUX_AGENT=".as_slice(), b"HERDR_AGENT=".as_slice()] {
+        for record in records.clone() {
+            if let Some(value) = record.strip_prefix(key)
+                && !value.is_empty()
+            {
+                return Some(String::from_utf8_lossy(value).chars().take(64).collect());
+            }
+        }
+    }
+    None
+}
+
+fn read_agent_hint(path: &str) -> Option<String> {
+    parse_agent_hint(&read_bounded(path)?)
 }
 
 #[cfg(test)]
@@ -72,5 +176,25 @@ mod tests {
         // is that neither call panics for an exited/inspectable-but-gone process.
         let _ = inspector.cwd(&pty);
         let _ = inspector.foreground_program(&pty);
+    }
+
+    #[test]
+    fn stat_parser_handles_spaces_and_parentheses_in_comm() {
+        assert_eq!(
+            parse_process_stat("42 (node worker (agent)) S 1 777 777 0 -1"),
+            Some((777, "node worker (agent)".into()))
+        );
+    }
+
+    #[test]
+    fn agent_hint_prefers_hyprmux_and_accepts_herdr() {
+        assert_eq!(
+            parse_agent_hint(b"HERDR_AGENT=claude\0HYPRMUX_AGENT=codex\0"),
+            Some("codex".into())
+        );
+        assert_eq!(
+            parse_agent_hint(b"PATH=/bin\0HERDR_AGENT=opencode\0"),
+            Some("opencode".into())
+        );
     }
 }

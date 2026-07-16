@@ -96,7 +96,7 @@ impl SessionServer {
             .map(|(&id, pane)| (id, pane.generation))
             .collect();
         for (id, generation) in panes {
-            self.sync_pane_runtime(id, generation);
+            self.sync_pane_runtime_inner(id, generation, true);
         }
     }
 
@@ -105,6 +105,10 @@ impl SessionServer {
     /// current generation - a stale caller (e.g. a queued event racing a respawn) is a silent
     /// no-op, matching every other per-pane event handler in this module.
     pub(super) fn sync_pane_runtime(&mut self, pane_id: PaneId, generation: u64) {
+        self.sync_pane_runtime_inner(pane_id, generation, false);
+    }
+
+    fn sync_pane_runtime_inner(&mut self, pane_id: PaneId, generation: u64, detect_agent: bool) {
         let Some(pane) = self.panes.get_mut(&pane_id) else {
             return;
         };
@@ -112,7 +116,7 @@ impl SessionServer {
             return;
         }
         let inspector = PlatformProcessInspector::default();
-        let next = compute_runtime_state(pane, &inspector);
+        let next = compute_runtime_state(pane, &inspector, detect_agent);
         if next == pane.runtime {
             return;
         }
@@ -128,7 +132,11 @@ impl SessionServer {
 /// Build the candidate [`PaneRuntimeState`] for `pane`, bumping `sequence` past its previous value
 /// only when some other field actually differs (a no-op recompute must not burn a sequence number,
 /// or every idle heartbeat tick would look like a change to clients).
-fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -> PaneRuntimeState {
+fn compute_runtime_state(
+    pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    detect_agent: bool,
+) -> PaneRuntimeState {
     let semantic = pane.screen.semantic_state();
     let command_phase = PaneCommandPhase::from(semantic.command_phase);
     let last_exit_status = match command_phase {
@@ -150,6 +158,11 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
                 .as_ref()
                 .and_then(|pty| inspector.foreground_program(pty))
         });
+    let detected_agent = if detect_agent {
+        detect_pane_agent(pane, inspector, foreground_program.as_deref())
+    } else {
+        pane.runtime.detected_agent.clone()
+    };
 
     let candidate = PaneRuntimeState {
         cwd,
@@ -159,6 +172,7 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         foreground_program,
         last_exit_status,
         status: pane.runtime.status.clone(),
+        detected_agent,
         sequence: pane.runtime.sequence,
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
@@ -167,7 +181,8 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         || candidate.command_phase != pane.runtime.command_phase
         || candidate.foreground_program != pane.runtime.foreground_program
         || candidate.last_exit_status != pane.runtime.last_exit_status
-        || candidate.status != pane.runtime.status;
+        || candidate.status != pane.runtime.status
+        || candidate.detected_agent != pane.runtime.detected_agent;
     PaneRuntimeState {
         sequence: if changed {
             pane.runtime.sequence.wrapping_add(1)
@@ -176,6 +191,58 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         },
         ..candidate
     }
+}
+
+fn detect_pane_agent(
+    pane: &mut ServerPane,
+    inspector: &impl ProcessInspector,
+    foreground_program: Option<&str>,
+) -> Option<crate::session::protocol::DetectedAgent> {
+    let mut foreground_job = pane
+        .pty
+        .as_ref()
+        .and_then(|pty| inspector.foreground_job(pty));
+    let configured_hint = ["HYPRMUX_AGENT", "HERDR_AGENT"]
+        .into_iter()
+        .find_map(|key| {
+            pane.env
+                .iter()
+                .rev()
+                .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
+        });
+    if let Some(hint) = configured_hint {
+        if let Some(process) = foreground_job
+            .as_mut()
+            .and_then(|job| job.processes.first_mut())
+        {
+            process.agent_hint.get_or_insert(hint);
+        } else {
+            foreground_job = Some(crate::platform::process::ForegroundJob {
+                process_group_id: 0,
+                processes: vec![crate::platform::process::ForegroundProcess {
+                    pid: 0,
+                    name: foreground_program.unwrap_or_default().to_string(),
+                    argv: Vec::new(),
+                    agent_hint: Some(hint),
+                }],
+            });
+        }
+    } else if foreground_job.is_none()
+        && let Some(program) = foreground_program
+    {
+        foreground_job = Some(crate::platform::process::ForegroundJob {
+            process_group_id: 0,
+            processes: vec![crate::platform::process::ForegroundProcess {
+                pid: 0,
+                name: program.to_string(),
+                argv: vec![program.to_string()],
+                agent_hint: None,
+            }],
+        });
+    }
+    let screen = pane.screen.snapshot();
+    let title = pane.effective_title().unwrap_or_default();
+    crate::agent_detection::detect(foreground_job.as_ref(), screen.as_ref(), &title)
 }
 
 /// Resolve the pane's displayable cwd per [`PaneCwdSource`]'s precedence order: a valid local or
@@ -284,8 +351,8 @@ mod tests {
 
     #[test]
     fn falls_back_to_launch_cwd_with_no_pty_and_no_shell_report() {
-        let pane = make_pane();
-        let state = compute_runtime_state(&pane, &StubInspector);
+        let mut pane = make_pane();
+        let state = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(state.cwd, Some("/launch/dir".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::LaunchDirectory);
         assert_eq!(state.cwd_host, None);
@@ -297,7 +364,7 @@ mod tests {
         let mut pane = make_pane();
         pane.screen
             .process_bytes(b"\x1b]7;file://localhost/reported/dir\x1b\\");
-        let state = compute_runtime_state(&pane, &StubInspector);
+        let state = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(state.cwd, Some("/reported/dir".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
         assert_eq!(state.cwd_host, None);
@@ -308,7 +375,7 @@ mod tests {
         let mut pane = make_pane();
         pane.screen
             .process_bytes(b"\x1b]7;file://otherhost.example/remote/dir\x1b\\");
-        let state = compute_runtime_state(&pane, &StubInspector);
+        let state = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(state.cwd, Some("/remote/dir".to_string()));
         assert_eq!(state.cwd_host, Some("otherhost.example".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
@@ -339,9 +406,9 @@ mod tests {
     #[test]
     fn recompute_is_a_no_op_when_nothing_changed() {
         let mut pane = make_pane();
-        let first = compute_runtime_state(&pane, &StubInspector);
+        let first = compute_runtime_state(&mut pane, &StubInspector, false);
         pane.runtime = first.clone();
-        let second = compute_runtime_state(&pane, &StubInspector);
+        let second = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(second, first);
         assert_eq!(second.sequence, first.sequence);
     }
@@ -356,12 +423,12 @@ mod tests {
         });
         pane.runtime.sequence = 7;
 
-        let changed = compute_runtime_state(&pane, &StubInspector);
+        let changed = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(changed.status, pane.runtime.status);
         assert_eq!(changed.sequence, 8);
 
         pane.runtime = changed.clone();
-        let unchanged = compute_runtime_state(&pane, &StubInspector);
+        let unchanged = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(unchanged, changed);
         assert_eq!(unchanged.sequence, 8);
     }
@@ -370,7 +437,7 @@ mod tests {
     fn completed_command_phase_sticks_the_exit_status() {
         let mut pane = make_pane();
         pane.screen.process_bytes(b"\x1b]133;D;7\x1b\\");
-        let state = compute_runtime_state(&pane, &StubInspector);
+        let state = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(
             state.command_phase,
             PaneCommandPhase::Completed {
@@ -381,8 +448,30 @@ mod tests {
 
         pane.runtime = state;
         pane.screen.process_bytes(b"\x1b]133;A\x1b\\");
-        let next = compute_runtime_state(&pane, &StubInspector);
+        let next = compute_runtime_state(&mut pane, &StubInspector, false);
         assert_eq!(next.command_phase, PaneCommandPhase::Prompt);
         assert_eq!(next.last_exit_status, Some(7));
+    }
+
+    #[test]
+    fn agent_detection_uses_configured_hint_and_is_preserved_between_polls() {
+        let mut pane = make_pane();
+        pane.env.push(("HYPRMUX_AGENT".into(), "opencode".into()));
+        pane.screen.process_bytes(b"esc to interrupt");
+
+        let detected = compute_runtime_state(&mut pane, &StubInspector, true);
+        assert_eq!(
+            detected.detected_agent,
+            Some(crate::session::protocol::DetectedAgent {
+                kind: crate::session::protocol::AgentKind::OpenCode,
+                state: crate::session::protocol::DetectedAgentState::Working,
+            })
+        );
+
+        pane.runtime = detected.clone();
+        pane.env.clear();
+        let event_update = compute_runtime_state(&mut pane, &StubInspector, false);
+        assert_eq!(event_update.detected_agent, detected.detected_agent);
+        assert_eq!(event_update.sequence, detected.sequence);
     }
 }

@@ -8,7 +8,7 @@ use crate::state::PaneId;
 
 /// Protocol version shared by clients and session servers. Spawn requests carry resolved launch
 /// policy, and pane metadata includes server-authoritative runtime state.
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -110,6 +110,78 @@ pub struct PaneStatus {
     pub set_at: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentKind {
+    Pi,
+    Claude,
+    Codex,
+    Gemini,
+    Cursor,
+    Devin,
+    Antigravity,
+    Cline,
+    Omp,
+    Mastracode,
+    OpenCode,
+    GithubCopilot,
+    Kimi,
+    Kiro,
+    Droid,
+    Amp,
+    Grok,
+    Hermes,
+    Kilo,
+    QoderCli,
+    Maki,
+    Aider,
+    Goose,
+}
+
+impl AgentKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pi => "Pi",
+            Self::Claude => "Claude Code",
+            Self::Codex => "Codex",
+            Self::Gemini => "Gemini CLI",
+            Self::Cursor => "Cursor Agent",
+            Self::Devin => "Devin CLI",
+            Self::Antigravity => "Antigravity",
+            Self::Cline => "Cline",
+            Self::Omp => "OMP",
+            Self::Mastracode => "Mastra Code",
+            Self::OpenCode => "OpenCode",
+            Self::GithubCopilot => "GitHub Copilot",
+            Self::Kimi => "Kimi Code",
+            Self::Kiro => "Kiro CLI",
+            Self::Droid => "Droid",
+            Self::Amp => "Amp",
+            Self::Grok => "Grok",
+            Self::Hermes => "Hermes",
+            Self::Kilo => "Kilo Code",
+            Self::QoderCli => "Qoder CLI",
+            Self::Maki => "Maki",
+            Self::Aider => "Aider",
+            Self::Goose => "Goose",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DetectedAgentState {
+    Idle,
+    Working,
+    Blocked,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DetectedAgent {
+    pub kind: AgentKind,
+    pub state: DetectedAgentState,
+}
+
 impl From<TerminalCommandPhase> for PaneCommandPhase {
     fn from(phase: TerminalCommandPhase) -> Self {
         match phase {
@@ -148,6 +220,8 @@ pub struct PaneRuntimeState {
     pub last_exit_status: Option<i32>,
     #[serde(default)]
     pub status: Option<PaneStatus>,
+    #[serde(default)]
+    pub detected_agent: Option<DetectedAgent>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -762,6 +836,7 @@ mod tests {
         });
         let decoded: PaneRuntimeState = serde_json::from_value(old_shape).unwrap();
         assert_eq!(decoded.status, None);
+        assert_eq!(decoded.detected_agent, None);
 
         let state = PaneRuntimeState {
             status: Some(PaneStatus {
@@ -845,7 +920,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":10,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":11,"label":"alice","read_only":true})
         );
         assert_eq!(
             serde_json::to_value(ClientMessage::SetSessionOrigin {
@@ -865,7 +940,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":10})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":11})
         );
     }
 

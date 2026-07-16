@@ -158,7 +158,7 @@ fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
 
 /// Build the full picker row list: every discovered session plus a row for the currently attached
 /// one, sorted by name.
-fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
+pub(crate) fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
     let current_name = ctx.state.session_name.as_deref();
     let mut rows = discover_picker_sessions(current_name)?;
     push_current_session_row(ctx, &mut rows);

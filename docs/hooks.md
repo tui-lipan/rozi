@@ -35,6 +35,7 @@ an uppercase `HYPRMUX_` prefix, for example the `client_id` field becomes
 | --- | --- | --- |
 | `pane-spawned` | A workspace pane is created. | `pane`: pane id; `workspace`: 1-based workspace; `command`: configured command, or empty for a shell pane; `cwd`: configured working directory, or empty when inherited. |
 | `pane-exited` | A pane process exit is reported to the client. | `pane`: pane id; `code`: process exit code. |
+| `pane-status-changed` | A pane's server-owned reported status changes or is cleared. Initial attach seeding does not fire an event. | `pane`: pane id; `status`: new status; `reason`: new reason; `previous_status`: prior status; `previous_reason`: prior reason. Missing or cleared values are empty strings. |
 | `focus-changed` | Focus moves to another workspace pane. | `pane`: newly focused pane id. |
 | `workspace-switched` | The active workspace changes, including a move or relocation that switches workspaces. | `workspace`: new 1-based workspace. |
 | `session-attached` | This client finishes attaching to an ephemeral or named session. | `session`: session name; `client_id`: this client's numeric id; `controller`: controller client id, or empty if none; `read_only`: `true` or `false`. |
@@ -81,8 +82,11 @@ does not wait for an earlier one.
 
 Hooks belong to the UI client, not the background session server. Each attached client uses its own
 loaded config and launches hooks for events it observes. Consequently, one shared-session change can
-run equivalent hooks on several attached clients. Once all clients are detached, the server may
-continue owning PTYs, but it does not load client hooks or launch hook commands.
+run equivalent hooks on several attached clients. Pane status is the deliberate exception: every
+client publishes `pane-status-changed` to its local control-socket subscribers, but only the current
+layout controller launches matching hooks. This prevents one agent status update from starting the
+same side effect on every attached client. Once all clients are detached, the server may continue
+owning PTYs, but it does not load client hooks or launch hook commands.
 
 Server-only transitions such as server startup and resurrection snapshot writes are not hook
 events. An abrupt client crash also cannot run a final `session-detached` hook. Hook execution is

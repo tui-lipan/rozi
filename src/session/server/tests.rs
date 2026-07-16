@@ -21,6 +21,28 @@ fn test_command_shell() -> Vec<String> {
     vec!["/bin/sh".to_string(), "-c".to_string()]
 }
 
+fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
+    ServerPane {
+        generation,
+        title: None,
+        cwd: None,
+        command: None,
+        keep_open: false,
+        command_completed: false,
+        shell: Vec::new(),
+        env: Vec::new(),
+        palette: test_palette(),
+        pty: None,
+        screen: TerminalScreen::new(5, 20, 100),
+        cols: 20,
+        rows: 5,
+        exited,
+        log: None,
+        runtime: protocol::PaneRuntimeState::default(),
+        initial_cursor_report_primed: false,
+    }
+}
+
 /// Register a client backed by a socketpair and return its id plus the client-side stream.
 fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (client_stream, server_stream) = UnixStream::pair().unwrap();
@@ -465,6 +487,122 @@ fn read_only_and_locked_follower_input_is_denied() {
     server.handle_message(controller, ClientMessage::SetInputLock { locked: true });
     assert!(server.client_may_input(controller));
     assert!(!server.client_may_input(follower));
+}
+
+#[test]
+fn writable_follower_sets_sanitized_status_and_broadcasts() {
+    let mut server = SessionServer::new_named("dev");
+    let (_controller, _s1) = attach_client(&mut server);
+    let (follower, _s2) = attach_client(&mut server);
+    server.panes.insert(1, status_test_pane(2, None));
+    let raw_status = format!("\u{1b}[31m{}\u{1b}[0m\r\n", "é".repeat(70));
+
+    let responses = server.handle_message(
+        follower,
+        ClientMessage::SetPaneStatus {
+            pane_id: 1,
+            generation: 2,
+            status: Some(raw_status),
+            reason: Some("\u{1b}]0;hidden\u{7} needs\u{0} approval\n".into()),
+        },
+    );
+
+    let [(Target::Broadcast, ServerMessage::PaneRuntimeChanged { state, .. })] =
+        responses.as_slice()
+    else {
+        panic!("expected status broadcast, got {responses:?}");
+    };
+    let status = state.status.as_ref().unwrap();
+    assert_eq!(status.value, "é".repeat(protocol::PANE_STATUS_MAX_LEN));
+    assert_eq!(status.reason.as_deref(), Some("needs approval"));
+    assert!(status.set_at > 0);
+    assert_eq!(state.sequence, 1);
+    assert_eq!(server.panes[&1].runtime, *state);
+}
+
+#[test]
+fn pane_status_rejects_invalid_clients_and_panes() {
+    let mut server = SessionServer::new_named("dev");
+    let (writable, _s1) = attach_client(&mut server);
+    let (viewer, _s2) = attach_read_only_client(&mut server);
+    let (unattached, _s3) = add_client(&mut server);
+    server.panes.insert(1, status_test_pane(2, None));
+    server.panes.insert(2, status_test_pane(4, Some(0)));
+
+    let request = |pane_id, generation| ClientMessage::SetPaneStatus {
+        pane_id,
+        generation,
+        status: Some("working".into()),
+        reason: None,
+    };
+    for (client, message, expected) in [
+        (viewer, request(1, 2), "read-only"),
+        (unattached, request(1, 2), "attach-required"),
+        (writable, request(9, 2), "pane-not-found"),
+        (writable, request(1, 3), "stale-generation"),
+        (writable, request(2, 4), "pane-exited"),
+    ] {
+        let responses = server.handle_message(client, message);
+        assert!(matches!(
+            responses.as_slice(),
+            [(Target::Sender, ServerMessage::Error { code, .. })] if code == expected
+        ));
+    }
+}
+
+#[test]
+fn pane_status_no_op_reason_change_and_clear_have_single_sequences() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    server.panes.insert(1, status_test_pane(2, None));
+    let set = |reason: Option<&str>| ClientMessage::SetPaneStatus {
+        pane_id: 1,
+        generation: 2,
+        status: Some("blocked".into()),
+        reason: reason.map(str::to_string),
+    };
+
+    assert_eq!(server.handle_message(client, set(Some("one"))).len(), 1);
+    let first = server.panes[&1].runtime.clone();
+    assert!(server.handle_message(client, set(Some("one"))).is_empty());
+    assert_eq!(server.panes[&1].runtime, first);
+
+    assert_eq!(server.handle_message(client, set(Some("two"))).len(), 1);
+    assert_eq!(server.panes[&1].runtime.sequence, first.sequence + 1);
+    assert_eq!(
+        server.panes[&1]
+            .runtime
+            .status
+            .as_ref()
+            .and_then(|status| status.reason.as_deref()),
+        Some("two")
+    );
+
+    let responses = server.handle_message(
+        client,
+        ClientMessage::SetPaneStatus {
+            pane_id: 1,
+            generation: 2,
+            status: None,
+            reason: Some("discarded".into()),
+        },
+    );
+    assert_eq!(responses.len(), 1);
+    assert_eq!(server.panes[&1].runtime.status, None);
+    assert_eq!(server.panes[&1].runtime.sequence, first.sequence + 2);
+    assert!(
+        server
+            .handle_message(
+                client,
+                ClientMessage::SetPaneStatus {
+                    pane_id: 1,
+                    generation: 2,
+                    status: Some("\n\u{1b}[31m".into()),
+                    reason: Some("ignored".into()),
+                },
+            )
+            .is_empty()
+    );
 }
 
 #[test]

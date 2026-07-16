@@ -269,6 +269,8 @@ struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
     bell: Option<bool>,
+    pane_blocked: Option<bool>,
+    pane_done: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -461,6 +463,12 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(bell) = parsed.notifications.bell {
         config.notifications.bell = bell;
+    }
+    if let Some(pane_blocked) = parsed.notifications.pane_blocked {
+        config.notifications.pane_blocked = pane_blocked;
+    }
+    if let Some(pane_done) = parsed.notifications.pane_done {
+        config.notifications.pane_done = pane_done;
     }
     if let Some(editors) = parsed.navigation.editors {
         config.navigation.editors = editors
@@ -800,11 +808,13 @@ mod file_tests {
     #[test]
     fn file_config_parses_notifications_and_navigation() {
         let parsed: FileConfig = toml::from_str(
-            "[notifications]\nenabled = true\npane_exit = false\n[navigation]\neditors = [\"nvim\", \"hx\"]",
+            "[notifications]\nenabled = true\npane_exit = false\npane_blocked = false\npane_done = true\n[navigation]\neditors = [\"nvim\", \"hx\"]",
         )
         .expect("config parses");
         assert_eq!(parsed.notifications.enabled, Some(true));
         assert_eq!(parsed.notifications.pane_exit, Some(false));
+        assert_eq!(parsed.notifications.pane_blocked, Some(false));
+        assert_eq!(parsed.notifications.pane_done, Some(true));
         assert_eq!(
             parsed.navigation.editors,
             Some(vec!["nvim".into(), "hx".into()])

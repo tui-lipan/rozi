@@ -165,6 +165,29 @@ impl SessionServer {
                     vec![(Target::Broadcast, message)]
                 }
             }
+            ClientMessage::SetPaneStatus {
+                pane_id,
+                generation,
+                status,
+                reason,
+            } => match self.set_pane_status(client_id, pane_id, generation, status, reason) {
+                Ok(Some(state)) => vec![(
+                    Target::Broadcast,
+                    ServerMessage::PaneRuntimeChanged {
+                        pane_id,
+                        generation,
+                        state,
+                    },
+                )],
+                Ok(None) => Vec::new(),
+                Err((code, message)) => vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: code.to_string(),
+                        message,
+                    },
+                )],
+            },
             ClientMessage::SpawnPane {
                 pane_id,
                 generation,

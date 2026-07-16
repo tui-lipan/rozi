@@ -18,6 +18,9 @@ pub struct TerminalPane {
     /// [`crate::session::protocol::ServerMessage::PaneRuntimeChanged`] rather than inspected
     /// locally, since the server (not necessarily this client's host) owns the PTY.
     pub foreground_program: Option<String>,
+    /// Free-form status reported by the pane through the session server. This is distinct from
+    /// `status`, which tracks whether the client-side terminal parser is ready or exited.
+    pub reported_status: Option<crate::session::protocol::PaneStatus>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -67,6 +70,7 @@ impl TerminalPane {
             cwd_host: None,
             child_pid: None,
             foreground_program: None,
+            reported_status: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -77,6 +81,9 @@ impl TerminalPane {
     }
 
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
+        if self.pane_id != pane_id || self.generation != generation {
+            self.reported_status = None;
+        }
         self.pane_id = pane_id;
         self.generation = generation;
     }
@@ -578,6 +585,22 @@ mod tests {
         pane.process_server_output(b"\x07");
         assert!(pane.take_bell());
         assert!(!pane.take_bell());
+    }
+
+    #[test]
+    fn binding_a_different_backend_generation_clears_reported_status() {
+        let mut pane = TerminalPane::new(100);
+        pane.bind_session(1, 2);
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: 1,
+        });
+
+        pane.bind_session(1, 2);
+        assert!(pane.reported_status.is_some());
+        pane.bind_session(1, 3);
+        assert!(pane.reported_status.is_none());
     }
 
     #[test]

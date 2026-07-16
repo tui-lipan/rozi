@@ -114,6 +114,8 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 [notifications]
 enabled = false              # desktop notifications are opt-in (default: false)
 pane_exit = true             # notify on natural pane process exits when enabled
+pane_blocked = true          # notify when an unfocused pane reports `blocked`
+pane_done = false            # optionally notify when an unfocused pane reports `done`
 bell = true                  # mark unfocused panes/workspaces urgent on BEL
 
 [navigation]
@@ -346,14 +348,18 @@ See [Terminal features](terminal.md) for clipboard and selection behavior.
 
 ## `[notifications]`
 
-Desktop notifications are disabled by default. When enabled, hyprmux currently sends only natural
-pane-exit notifications (not user-initiated pane closes) via `notify-send` if it is available.
+Desktop notifications are disabled by default. When enabled, hyprmux sends natural pane-exit
+notifications (not user-initiated pane closes) and selected pane-status notifications via
+`notify-send` if it is available. Status notifications run only on the current session controller
+and are suppressed while that pane is locally focused, avoiding duplicate or distracting notices.
 Failures are ignored and never block the UI.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
 | `pane_exit` | `true` | Notify when a pane's process exits naturally. |
+| `pane_blocked` | `true` | Notify when an unfocused pane transitions into the well-known `blocked` status. |
+| `pane_done` | `false` | Notify when an unfocused pane transitions into the well-known `done` status. |
 | `bell` | `true` | Mark an unfocused pane urgent on BEL; focusing it clears urgency. Independent of desktop notifications. |
 
 ## `[navigation]`
@@ -628,7 +634,7 @@ Multiple entries may target the same event; each command is launched asynchronou
 `HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
 are warned and ignored.
 
-See [Hooks](hooks.md) for all 15 events and fields, the complete environment contract, command
+See [Hooks](hooks.md) for all 16 events and fields, the complete environment contract, command
 lifecycle and client-side semantics, migration examples, and control-socket callbacks.
 
 ## Pane synchronization

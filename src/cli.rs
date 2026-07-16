@@ -195,6 +195,39 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }),
                 }));
             }
+            "status" => {
+                let first = iter
+                    .next()
+                    .ok_or_else(|| "status requires a value or --clear".to_string())?;
+                let (status, reason) = if first == "--clear" {
+                    reject_trailing_control_args(&mut iter, "status --clear")?;
+                    (None, None)
+                } else {
+                    if first.starts_with('-') {
+                        return Err(format!("unexpected status flag `{first}`"));
+                    }
+                    let reason = match iter.next() {
+                        None => None,
+                        Some(flag) if flag == "--reason" => Some(
+                            iter.next()
+                                .ok_or_else(|| "--reason requires text".to_string())?,
+                        ),
+                        Some(extra) => {
+                            return Err(format!("unexpected argument `{extra}` after status"));
+                        }
+                    };
+                    reject_trailing_control_args(&mut iter, "status")?;
+                    (Some(first), reason)
+                };
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::SetStatus {
+                        target: None,
+                        status,
+                        reason,
+                    }),
+                }));
+            }
             "split" | "new-pane" => {
                 let command = iter.next();
                 reject_trailing_control_args(&mut iter, "split")?;
@@ -472,6 +505,8 @@ USAGE:
     hyprmux [--socket PATH] list|list-panes
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
+    hyprmux [--socket PATH] status <VALUE> [--reason <TEXT>]
+    hyprmux [--socket PATH] status --clear
     hyprmux [--socket PATH] split [COMMAND]
     hyprmux [--socket PATH] run-action <ACTION_ID>
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
@@ -659,6 +694,59 @@ mod tests {
             .is_err()
         );
         assert!(parse_cli_args(vec!["send-text".into(), "hi".into(), "extra".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_parses_status_set_and_clear() {
+        let ParsedCli::Control(set) = parse_cli_args(vec![
+            "status".into(),
+            "blocked".into(),
+            "--reason".into(),
+            "needs approval".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            set.request.command,
+            control::ControlCommand::SetStatus {
+                target: None,
+                status: Some("blocked".into()),
+                reason: Some("needs approval".into()),
+            }
+        );
+
+        let ParsedCli::Control(clear) =
+            parse_cli_args(vec!["status".into(), "--clear".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            clear.request.command,
+            control::ControlCommand::SetStatus {
+                target: None,
+                status: None,
+                reason: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cli_rejects_ambiguous_or_malformed_status_commands() {
+        for args in [
+            vec!["status"],
+            vec!["status", "--clear", "blocked"],
+            vec!["status", "--clear", "--reason", "why"],
+            vec!["status", "blocked", "--clear"],
+            vec!["status", "blocked", "--reason"],
+            vec!["status", "blocked", "--reason", "one", "extra"],
+            vec!["status", "blocked", "--reason", "one", "--reason", "two"],
+        ] {
+            assert!(
+                parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()).is_err(),
+                "accepted malformed args: {args:?}"
+            );
+        }
     }
 
     #[test]

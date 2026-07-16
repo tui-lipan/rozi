@@ -293,6 +293,8 @@ pub struct HyprmuxNotificationsConfig {
     pub enabled: bool,
     pub pane_exit: bool,
     pub bell: bool,
+    pub pane_blocked: bool,
+    pub pane_done: bool,
 }
 
 impl Default for HyprmuxNotificationsConfig {
@@ -301,6 +303,8 @@ impl Default for HyprmuxNotificationsConfig {
             enabled: false,
             pane_exit: true,
             bell: true,
+            pane_blocked: true,
+            pane_done: false,
         }
     }
 }

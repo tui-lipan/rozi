@@ -182,6 +182,43 @@ pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: 
     );
 }
 
+pub(crate) fn maybe_notify_pane_status(
+    config: &crate::config::HyprmuxConfig,
+    is_controller: bool,
+    is_focused: bool,
+    id: PaneId,
+    title: &str,
+    status: Option<&crate::session::protocol::PaneStatus>,
+) {
+    let Some(status) = status else {
+        return;
+    };
+    if !should_notify_pane_status(config, is_controller, is_focused, &status.value) {
+        return;
+    }
+    let body = status.reason.as_deref().map_or_else(
+        || format!("Pane {id} ({title}) is {}", status.value),
+        |reason| format!("Pane {id} ({title}) is {}: {reason}", status.value),
+    );
+    crate::platform::notifications::notify("hyprmux", &body);
+}
+
+fn should_notify_pane_status(
+    config: &crate::config::HyprmuxConfig,
+    is_controller: bool,
+    is_focused: bool,
+    status: &str,
+) -> bool {
+    if !config.notifications.enabled || !is_controller || is_focused {
+        return false;
+    }
+    let status = status.trim();
+    (config.notifications.pane_blocked
+        && status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED))
+        || (config.notifications.pane_done
+            && status.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE))
+}
+
 pub(crate) fn handle_pane_input(
     ctx: &mut Context<HyprmuxApp>,
     id: PaneId,
@@ -491,6 +528,21 @@ mod tests {
         state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
 
         assert_eq!(synchronized_key_targets(&state, 1), vec![1]);
+    }
+
+    #[test]
+    fn pane_status_notification_policy_is_controller_only_and_configurable() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        config.notifications.enabled = true;
+
+        assert!(should_notify_pane_status(&config, true, false, "blocked"));
+        assert!(!should_notify_pane_status(&config, false, false, "blocked"));
+        assert!(!should_notify_pane_status(&config, true, true, "blocked"));
+        assert!(!should_notify_pane_status(&config, true, false, "done"));
+        config.notifications.pane_done = true;
+        assert!(should_notify_pane_status(&config, true, false, "DONE"));
+        config.notifications.enabled = false;
+        assert!(!should_notify_pane_status(&config, true, false, "blocked"));
     }
 
     #[test]

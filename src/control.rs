@@ -72,6 +72,14 @@ pub enum ControlCommand {
         #[serde(default)]
         enabled: Option<bool>,
     },
+    SetStatus {
+        #[serde(default)]
+        target: Option<PaneId>,
+        #[serde(default)]
+        status: Option<String>,
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -366,6 +374,33 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<ControlRequest>(&json).unwrap(),
             request
+        );
+    }
+
+    #[test]
+    fn set_status_command_round_trips_through_json() {
+        let request = ControlRequest {
+            command: ControlCommand::SetStatus {
+                target: Some(7),
+                status: Some("blocked".into()),
+                reason: Some("needs approval".into()),
+            },
+            source_pane: Some(3),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(&json).unwrap(),
+            request
+        );
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"set-status"}"#)
+                .unwrap()
+                .command,
+            ControlCommand::SetStatus {
+                target: None,
+                status: None,
+                reason: None,
+            }
         );
     }
 

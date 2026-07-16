@@ -112,6 +112,7 @@ pub fn attached_message() -> ServerMessage {
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),
                     last_exit_status: Some(0),
+                    status: None,
                     sequence: u64::from(pane.pane_id),
                 },
             })

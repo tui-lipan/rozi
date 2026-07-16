@@ -20,6 +20,8 @@ struct PaneInfo {
     command: Option<String>,
     cwd: Option<String>,
     status: String,
+    reported_status: Option<String>,
+    status_reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -103,6 +105,18 @@ pub(crate) fn handle_control_request(
                 None => ControlResponse::error("pane not found"),
             }
         }
+        ControlCommand::SetStatus {
+            target,
+            status,
+            reason,
+        } => set_status(
+            ctx,
+            target
+                .or(envelope.request.source_pane)
+                .or(ctx.state.focused_pane),
+            status,
+            reason,
+        ),
     };
     let _ = envelope.reply.send(response);
     Update::full()
@@ -119,6 +133,16 @@ fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
                 command: pane.identity.command.clone(),
                 cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
                 status: pane.terminal.status_text(),
+                reported_status: pane
+                    .terminal
+                    .reported_status
+                    .as_ref()
+                    .map(|status| status.value.clone()),
+                status_reason: pane
+                    .terminal
+                    .reported_status
+                    .as_ref()
+                    .and_then(|status| status.reason.clone()),
             });
         }
     }
@@ -130,9 +154,51 @@ fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
             command: pane.identity.command.clone(),
             cwd: pane.live_cwd().or_else(|| pane.identity.cwd.clone()),
             status: pane.terminal.status_text(),
+            reported_status: pane
+                .terminal
+                .reported_status
+                .as_ref()
+                .map(|status| status.value.clone()),
+            status_reason: pane
+                .terminal
+                .reported_status
+                .as_ref()
+                .and_then(|status| status.reason.clone()),
         });
     }
     ControlResponse::ok(panes)
+}
+
+fn set_status(
+    ctx: &mut Context<HyprmuxApp>,
+    target: Option<PaneId>,
+    status: Option<String>,
+    reason: Option<String>,
+) -> ControlResponse {
+    let Some(id) = target else {
+        return ControlResponse::error("no target pane and no focused pane");
+    };
+    let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id).filter(|pane| !pane.closing)
+    else {
+        return ControlResponse::error(format!("pane {id} not found"));
+    };
+    let generation = pane.pty_generation;
+    if !ctx.state.session_attached {
+        return ControlResponse::error(format!("pane {id} session is not attached"));
+    }
+    if ctx
+        .state
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.read_only)
+    {
+        return ControlResponse::error("attached read-only");
+    }
+    let Some(client) = ctx.state.session_client.clone() else {
+        return ControlResponse::error(format!("pane {id} session is not connected"));
+    };
+    client.set_pane_status(id, generation, status, reason);
+    ControlResponse::empty()
 }
 
 fn focus_target(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> ControlResponse {
@@ -303,7 +369,12 @@ fn workspace_for_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
+    use crate::session::client::{ClientOutbound, SessionClient};
+    use crate::session::protocol::ClientMessage;
     use crate::state::{Pane, State};
+    use std::sync::mpsc;
+    use tui_lipan::TestBackend;
 
     fn rect() -> FloatRect {
         FloatRect {
@@ -338,5 +409,107 @@ mod tests {
         assert!(validate_workspace_index(1).is_none());
         assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT).is_none());
         assert!(validate_workspace_index(crate::state::WORKSPACE_COUNT + 1).is_some());
+    }
+
+    #[test]
+    fn writable_follower_can_queue_status_and_read_only_client_cannot() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let (client, outbound) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.session_attached = true;
+                    state.session_client = Some(client);
+                    state.workspaces[0].panes[0].pty_generation = 9;
+                    let mut shared = crate::state::SharedSessionState::new(1);
+                    shared.controller = Some(2);
+                    state.shared = Some(shared);
+                }
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::SetStatus {
+                                target: Some(1),
+                                status: Some("blocked".into()),
+                                reason: Some("waiting".into()),
+                            },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch writable status request");
+                assert!(response.recv().unwrap().ok);
+                assert!(outbound.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                        pane_id: 1,
+                        generation: 9,
+                        status: Some(status),
+                        reason: Some(reason),
+                    }) if status == "blocked" && reason == "waiting"
+                )));
+
+                backend.state_mut().shared.as_mut().unwrap().read_only = true;
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::SetStatus {
+                                target: Some(1),
+                                status: None,
+                                reason: None,
+                            },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch read-only status request");
+                let response = response.recv().unwrap();
+                assert!(!response.ok);
+                assert_eq!(response.error.as_deref(), Some("attached read-only"));
+                assert!(outbound.try_recv().is_err());
+            })
+            .expect("spawn control status test thread")
+            .join()
+            .expect("control status test thread completes");
+    }
+
+    #[test]
+    fn list_panes_keeps_terminal_status_and_adds_reported_status_fields() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                backend.state_mut().workspaces[0].panes[0]
+                    .terminal
+                    .reported_status = Some(crate::session::protocol::PaneStatus {
+                    value: "working".into(),
+                    reason: Some("building".into()),
+                    set_at: 1,
+                });
+                backend.state_mut().workspaces[0].panes[0].terminal.status =
+                    ManagedTerminalStatus::Ready;
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::ListPanes,
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch list panes");
+                let data = response.recv().unwrap().data.unwrap();
+                assert!(data[0]["status"].is_string());
+                assert_ne!(data[0]["status"], "working");
+                assert_eq!(data[0]["reported_status"], "working");
+                assert_eq!(data[0]["status_reason"], "building");
+            })
+            .expect("spawn list panes test thread")
+            .join()
+            .expect("list panes test thread completes");
     }
 }

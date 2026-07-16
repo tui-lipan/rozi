@@ -196,6 +196,20 @@ impl SessionClient {
             enabled,
         });
     }
+    pub fn set_pane_status(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        status: Option<String>,
+        reason: Option<String>,
+    ) {
+        self.send_control(ClientMessage::SetPaneStatus {
+            pane_id,
+            generation,
+            status,
+            reason,
+        });
+    }
     /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only
     /// while this client holds the lease and `base_rev` matches the current revision.
     pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {
@@ -388,6 +402,26 @@ mod tests {
             ClientOutbound::Control(ClientMessage::Pong { seq: 42 })
         );
         assert!(inbound_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn set_pane_status_queues_control_message() {
+        let (client, outbound) = SessionClient::test_channel();
+        client.set_pane_status(
+            3,
+            5,
+            Some("blocked".to_string()),
+            Some("needs approval".to_string()),
+        );
+        assert_eq!(
+            outbound.try_recv().unwrap(),
+            ClientOutbound::Control(ClientMessage::SetPaneStatus {
+                pane_id: 3,
+                generation: 5,
+                status: Some("blocked".to_string()),
+                reason: Some("needs approval".to_string()),
+            })
+        );
     }
 
     #[test]

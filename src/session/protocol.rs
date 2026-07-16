@@ -8,8 +8,10 @@ use crate::state::PaneId;
 
 /// Protocol version shared by clients and session servers. Spawn requests carry resolved launch
 /// policy, and pane metadata includes server-authoritative runtime state.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
+pub const PANE_STATUS_MAX_LEN: usize = 64;
+pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
 const FRAME_KIND_CONTROL_JSON: u8 = 1;
 const FRAME_KIND_PANE_OUTPUT: u8 = 2;
 const FRAME_KIND_PANE_INPUT: u8 = 3;
@@ -93,6 +95,21 @@ pub enum PaneCommandPhase {
     },
 }
 
+pub mod pane_status {
+    pub const WORKING: &str = "working";
+    pub const BLOCKED: &str = "blocked";
+    pub const DONE: &str = "done";
+    pub const IDLE: &str = "idle";
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneStatus {
+    pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub set_at: u64,
+}
+
 impl From<TerminalCommandPhase> for PaneCommandPhase {
     fn from(phase: TerminalCommandPhase) -> Self {
         match phase {
@@ -129,6 +146,8 @@ pub struct PaneRuntimeState {
     /// itself exiting. Sticky across the next command's `Prompt`/`Input` phases so callers can
     /// still show "last command exited N" at a fresh prompt.
     pub last_exit_status: Option<i32>,
+    #[serde(default)]
+    pub status: Option<PaneStatus>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -219,6 +238,12 @@ pub enum ClientMessage {
         pane_id: PaneId,
         generation: u64,
         enabled: bool,
+    },
+    SetPaneStatus {
+        pane_id: PaneId,
+        generation: u64,
+        status: Option<String>,
+        reason: Option<String>,
     },
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
@@ -702,6 +727,59 @@ mod tests {
     }
 
     #[test]
+    fn pane_status_message_round_trips() {
+        let msg = ClientMessage::SetPaneStatus {
+            pane_id: 7,
+            generation: 9,
+            status: Some("blocked".into()),
+            reason: Some("needs approval".into()),
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &msg).unwrap();
+        assert_eq!(read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(), msg);
+        assert_eq!(
+            serde_json::to_value(&msg).unwrap(),
+            serde_json::json!({
+                "type": "set-pane-status",
+                "pane_id": 7,
+                "generation": 9,
+                "status": "blocked",
+                "reason": "needs approval"
+            })
+        );
+    }
+
+    #[test]
+    fn pane_runtime_status_is_optional_for_serde_compatibility() {
+        let old_shape = serde_json::json!({
+            "cwd": null,
+            "cwd_host": null,
+            "cwd_source": "unknown",
+            "command_phase": {"phase": "unknown"},
+            "foreground_program": null,
+            "last_exit_status": null,
+            "sequence": 4
+        });
+        let decoded: PaneRuntimeState = serde_json::from_value(old_shape).unwrap();
+        assert_eq!(decoded.status, None);
+
+        let state = PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: "working".into(),
+                reason: None,
+                set_at: 123,
+            }),
+            sequence: 5,
+            ..PaneRuntimeState::default()
+        };
+        assert_eq!(
+            serde_json::from_value::<PaneRuntimeState>(serde_json::to_value(&state).unwrap())
+                .unwrap(),
+            state
+        );
+    }
+
+    #[test]
     fn oversized_frame_is_rejected_before_allocation() {
         let mut buf = Vec::new();
         buf.extend_from_slice(&(9_u32).to_be_bytes());
@@ -767,7 +845,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":9,"label":"alice","read_only":true})
+            serde_json::json!({"type":"attach","session":"dev","protocol_version":10,"label":"alice","read_only":true})
         );
         assert_eq!(
             serde_json::to_value(ClientMessage::SetSessionOrigin {
@@ -787,7 +865,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":9})
+            serde_json::json!({"type":"query","session":"dev","protocol_version":10})
         );
     }
 

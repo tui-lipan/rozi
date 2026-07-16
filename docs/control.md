@@ -44,6 +44,8 @@ hyprmux run-action toggle-float
 hyprmux capture-pane --target 3
 hyprmux switch-workspace 2
 hyprmux move-to-workspace 3
+hyprmux status blocked --reason "needs approval"
+hyprmux status --clear
 ```
 
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
@@ -58,6 +60,15 @@ returns the plain text of a pane's current visible snapshot grid, defaulting to 
 `move-to-workspace` take a 1-9 workspace number, matching the on-screen tabs.
 Destructive `run-action` calls honor `[confirm]` settings; a first call can arm a confirmation
 toast and a second matching call within the toast window confirms it.
+
+`status <value> [--reason <text>]` reports a short, free-form status for the source/focused pane;
+use `status --clear` to remove it. An explicit control request may instead supply `target`. Status is
+server-owned and visible to every attached client. The values `working`, `blocked`, `done`, and
+`idle` receive built-in presentation and notification behavior, but other values are accepted.
+The command's successful reply means the validated update was queued to the session server; it is
+not a synchronous acknowledgement that the server has applied it. Read-only clients cannot set
+status. `list-panes` exposes this metadata as `reported_status` and `status_reason`; its existing
+`status` field continues to describe terminal readiness.
 
 Session lifecycle commands are separate from the per-run control socket:
 
@@ -82,8 +93,8 @@ The socket accepts one newline-delimited JSON request per connection and returns
 newline-delimited event objects until disconnected.
 
 Requests use a `cmd` field: `list-panes`, `focus`, `send-text`, `new-pane`, `run-action`,
-`capture-pane`, `switch-workspace`, `move-to-workspace`, `popup`, or `subscribe`. A client may include `source_pane`; the
-CLI derives it from `HYPRMUX_PANE`.
+`capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`, or `subscribe`. A
+client may include `source_pane`; the CLI derives it from `HYPRMUX_PANE`.
 
 Examples:
 
@@ -96,8 +107,10 @@ Examples:
 {"cmd":"capture-pane","target":2}
 {"cmd":"switch-workspace","index":2}
 {"cmd":"move-to-workspace","index":3}
+{"cmd":"set-status","target":2,"status":"blocked","reason":"needs approval"}
+{"cmd":"set-status","target":2,"status":null}
 {"cmd":"popup","command":"fzf","width":0.7,"height":0.6,"title":"files"}
-{"cmd":"subscribe","events":["pane-exited","workspace-switched"]}
+{"cmd":"subscribe","events":["pane-exited","pane-status-changed","workspace-switched"]}
 ```
 
 Responses have `ok`, and either `data` or `error`.
@@ -106,10 +119,14 @@ Popup dimensions are viewport fractions, clamped to `0.2`-`0.95`; omitted dimens
 `0.6`. Only one popup may exist at a time. It closes when its command exits, when its backdrop is
 clicked, or through the normal close action. Escape is sent to the popup application.
 
-Subscriptions support `pane-spawned`, `pane-exited`, `focus-changed`, `workspace-switched`,
-`session-attached`, `session-detached`, `session-renamed`, `controller-changed`, `client-joined`,
-`client-left`, `profile-loaded`, `profile-applied`, `profile-saved`, `session-created`, and
-`config-reloaded`. An empty `events` list subscribes to all 15.
+Subscriptions support `pane-spawned`, `pane-exited`, `pane-status-changed`, `focus-changed`,
+`workspace-switched`, `session-attached`, `session-detached`, `session-renamed`,
+`controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
+`profile-saved`, `session-created`, and `config-reloaded`. An empty `events` list subscribes to all
+16. `pane-status-changed` carries
+`pane`, `status`, `reason`, `previous_status`, and `previous_reason`; cleared or absent values are
+empty strings. Initial status received while attaching is state seeding, not a transition, and does
+not emit this event.
 Event names and existing fields are stable; later versions may add events or fields. See
 [Hooks](hooks.md#events-and-fields) for the complete field table. Slow subscribers are bounded and
 disconnected rather than blocking the UI. Example:

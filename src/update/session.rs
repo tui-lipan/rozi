@@ -7,7 +7,7 @@ use super::attach::{
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::pane_lifecycle::{begin_close_pane, find_pane, find_pane_mut};
-use crate::pty_events::{error_toast, maybe_notify_pane_exit};
+use crate::pty_events::{error_toast, maybe_notify_pane_exit, maybe_notify_pane_status};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason, PaneMeta, PaneRuntimeState};
 use crate::shared_layout::{ClientId, SharedLayout};
@@ -685,16 +685,73 @@ pub(super) fn pane_runtime_changed(
         crate::session::protocol::PaneCommandPhase::Prompt
             | crate::session::protocol::PaneCommandPhase::Input
     );
+    let mut transition = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
     {
+        let previous = pane.terminal.reported_status.clone();
         pane.terminal.runtime_sequence = state.sequence;
         pane.terminal.cwd = state.cwd;
         pane.terminal.cwd_host = state.cwd_host;
         pane.terminal.foreground_program = state.foreground_program;
         pane.terminal.command_phase = state.command_phase;
         pane.terminal.last_exit_status = state.last_exit_status;
+        pane.terminal.reported_status = state.status;
+        if previous != pane.terminal.reported_status {
+            transition = Some((
+                previous,
+                pane.terminal.reported_status.clone(),
+                pane.display_title(None),
+            ));
+        }
+    }
+    if let Some((previous, current, title)) = transition {
+        crate::events::emit_with_controller_hooks(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::PaneStatusChanged,
+                vec![
+                    ("pane", pane_id.to_string()),
+                    (
+                        "status",
+                        current
+                            .as_ref()
+                            .map(|status| status.value.clone())
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "reason",
+                        current
+                            .as_ref()
+                            .and_then(|status| status.reason.clone())
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "previous_status",
+                        previous
+                            .as_ref()
+                            .map(|status| status.value.clone())
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "previous_reason",
+                        previous
+                            .as_ref()
+                            .and_then(|status| status.reason.clone())
+                            .unwrap_or_default(),
+                    ),
+                ],
+            ),
+        );
+        maybe_notify_pane_status(
+            &ctx.state.config,
+            ctx.state.is_controller(),
+            ctx.state.focused_pane == Some(pane_id),
+            pane_id,
+            &title,
+            current.as_ref(),
+        );
     }
     // The shell reached its first prompt: deliver any queued replay input now, so readline
     // echoes it exactly once at the prompt (see `flush_replay_input`).
@@ -973,6 +1030,81 @@ mod tests {
                 ("count", "2".into()),
             ]
         );
+    }
+
+    #[test]
+    fn runtime_status_transitions_emit_once_and_stale_updates_are_ignored() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let pane = &mut backend.state_mut().workspaces[0].panes[0];
+                pane.pty_generation = 7;
+                pane.terminal.bind_session(pane.id, 7);
+                let events = backend.state().event_hub.subscribe(Some(HashSet::from([
+                    crate::events::EventKind::PaneStatusChanged,
+                ])));
+                let status = crate::session::protocol::PaneStatus {
+                    value: "blocked".into(),
+                    reason: Some("needs approval".into()),
+                    set_at: 1,
+                };
+                let runtime = PaneRuntimeState {
+                    status: Some(status.clone()),
+                    sequence: 1,
+                    ..PaneRuntimeState::default()
+                };
+
+                backend
+                    .dispatch(Msg::SessionPaneRuntimeChanged {
+                        epoch,
+                        pane_id: 1,
+                        generation: 7,
+                        state: runtime.clone(),
+                    })
+                    .expect("dispatch status transition");
+                let event: serde_json::Value =
+                    serde_json::from_str(&events.try_recv().expect("transition event")).unwrap();
+                assert_eq!(event["event"], "pane-status-changed");
+                assert_eq!(event["data"]["pane"], "1");
+                assert_eq!(event["data"]["status"], "blocked");
+                assert_eq!(event["data"]["reason"], "needs approval");
+                assert_eq!(event["data"]["previous_status"], "");
+
+                backend
+                    .dispatch(Msg::SessionPaneRuntimeChanged {
+                        epoch,
+                        pane_id: 1,
+                        generation: 7,
+                        state: runtime,
+                    })
+                    .expect("dispatch duplicate status");
+                assert!(events.try_recv().is_err());
+
+                backend
+                    .dispatch(Msg::SessionPaneRuntimeChanged {
+                        epoch,
+                        pane_id: 1,
+                        generation: 7,
+                        state: PaneRuntimeState {
+                            status: None,
+                            sequence: 0,
+                            ..PaneRuntimeState::default()
+                        },
+                    })
+                    .expect("dispatch stale status");
+                assert_eq!(
+                    backend.state().workspaces[0].panes[0]
+                        .terminal
+                        .reported_status,
+                    Some(status)
+                );
+                assert!(events.try_recv().is_err());
+            })
+            .expect("spawn runtime status test thread")
+            .join()
+            .expect("runtime status test thread completes");
     }
 
     #[test]

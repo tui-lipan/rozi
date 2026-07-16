@@ -8,11 +8,82 @@
 
 use super::*;
 use crate::platform::process::{PlatformProcessInspector, ProcessInspector};
-use crate::session::protocol::{PaneCommandPhase, PaneCwdSource, PaneRuntimeState};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::session::protocol::{
+    PANE_STATUS_MAX_LEN, PANE_STATUS_REASON_MAX_LEN, PaneCommandPhase, PaneCwdSource,
+    PaneRuntimeState, PaneStatus,
+};
 
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 impl SessionServer {
+    pub(super) fn set_pane_status(
+        &mut self,
+        client_id: ClientId,
+        pane_id: PaneId,
+        generation: u64,
+        status: Option<String>,
+        reason: Option<String>,
+    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+        if !self.client_attached(client_id) {
+            return Err(("attach-required", "client is not attached".to_string()));
+        }
+        if self.client_read_only(client_id) {
+            return Err(("read-only", "read-only client".to_string()));
+        }
+
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return Err(("pane-not-found", format!("pane {pane_id} not found")));
+        };
+        if pane.generation != generation {
+            return Err((
+                "stale-generation",
+                format!("pane {pane_id} generation does not match"),
+            ));
+        }
+        if pane.exited.is_some() {
+            return Err(("pane-exited", format!("pane {pane_id} has exited")));
+        }
+
+        let value = status
+            .map(|value| crate::plain_text::sanitize(&value))
+            .map(|value| value.chars().take(PANE_STATUS_MAX_LEN).collect::<String>())
+            .filter(|value| !value.is_empty());
+        let reason = value.as_ref().and_then(|_| {
+            reason
+                .map(|reason| crate::plain_text::sanitize(&reason))
+                .map(|reason| {
+                    reason
+                        .chars()
+                        .take(PANE_STATUS_REASON_MAX_LEN)
+                        .collect::<String>()
+                })
+                .filter(|reason| !reason.is_empty())
+        });
+
+        let unchanged = match (&pane.runtime.status, &value) {
+            (None, None) => true,
+            (Some(current), Some(value)) => current.value == *value && current.reason == reason,
+            _ => false,
+        };
+        if unchanged {
+            return Ok(None);
+        }
+
+        let set_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        pane.runtime.status = value.map(|value| PaneStatus {
+            value,
+            reason,
+            set_at,
+        });
+        pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+        Ok(Some(pane.runtime.clone()))
+    }
+
     pub(super) fn poll_pane_runtime(&mut self) {
         if self.last_runtime_poll.elapsed() < RUNTIME_POLL_INTERVAL {
             return;
@@ -87,6 +158,7 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         command_phase,
         foreground_program,
         last_exit_status,
+        status: pane.runtime.status.clone(),
         sequence: pane.runtime.sequence,
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
@@ -94,7 +166,8 @@ fn compute_runtime_state(pane: &ServerPane, inspector: &impl ProcessInspector) -
         || candidate.cwd_source != pane.runtime.cwd_source
         || candidate.command_phase != pane.runtime.command_phase
         || candidate.foreground_program != pane.runtime.foreground_program
-        || candidate.last_exit_status != pane.runtime.last_exit_status;
+        || candidate.last_exit_status != pane.runtime.last_exit_status
+        || candidate.status != pane.runtime.status;
     PaneRuntimeState {
         sequence: if changed {
             pane.runtime.sequence.wrapping_add(1)
@@ -271,6 +344,26 @@ mod tests {
         let second = compute_runtime_state(&pane, &StubInspector);
         assert_eq!(second, first);
         assert_eq!(second.sequence, first.sequence);
+    }
+
+    #[test]
+    fn recompute_preserves_status_and_only_bumps_for_other_runtime_changes() {
+        let mut pane = make_pane();
+        pane.runtime.status = Some(PaneStatus {
+            value: "working".into(),
+            reason: Some("tests".into()),
+            set_at: 123,
+        });
+        pane.runtime.sequence = 7;
+
+        let changed = compute_runtime_state(&pane, &StubInspector);
+        assert_eq!(changed.status, pane.runtime.status);
+        assert_eq!(changed.sequence, 8);
+
+        pane.runtime = changed.clone();
+        let unchanged = compute_runtime_state(&pane, &StubInspector);
+        assert_eq!(unchanged, changed);
+        assert_eq!(unchanged.sequence, 8);
     }
 
     #[test]

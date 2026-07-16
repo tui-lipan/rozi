@@ -21,6 +21,7 @@ pub mod msg;
 mod ops;
 pub mod pane;
 mod pane_lifecycle;
+mod plain_text;
 pub mod platform;
 mod popup;
 mod profiles;

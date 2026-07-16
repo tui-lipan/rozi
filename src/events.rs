@@ -7,6 +7,7 @@ use serde::Serialize;
 pub enum EventKind {
     PaneSpawned,
     PaneExited,
+    PaneStatusChanged,
     FocusChanged,
     WorkspaceSwitched,
     SessionAttached,
@@ -23,9 +24,10 @@ pub enum EventKind {
 }
 
 impl EventKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::PaneSpawned,
         Self::PaneExited,
+        Self::PaneStatusChanged,
         Self::FocusChanged,
         Self::WorkspaceSwitched,
         Self::SessionAttached,
@@ -45,6 +47,7 @@ impl EventKind {
         match self {
             Self::PaneSpawned => "pane-spawned",
             Self::PaneExited => "pane-exited",
+            Self::PaneStatusChanged => "pane-status-changed",
             Self::FocusChanged => "focus-changed",
             Self::WorkspaceSwitched => "workspace-switched",
             Self::SessionAttached => "session-attached",
@@ -134,6 +137,20 @@ impl EventHub {
 
 pub fn emit(state: &crate::state::State, event: Event) {
     state.event_hub.publish(&event);
+    run_hooks(state, &event);
+}
+
+/// Publish an event to this client's subscribers, but run its hooks only on the current layout
+/// controller. Server-owned transitions reach every client, so this prevents duplicate external
+/// side effects while preserving each client's local `subscribe` stream.
+pub fn emit_with_controller_hooks(state: &crate::state::State, event: Event) {
+    state.event_hub.publish(&event);
+    if state.is_controller() {
+        run_hooks(state, &event);
+    }
+}
+
+fn run_hooks(state: &crate::state::State, event: &Event) {
     let commands: Vec<_> = state
         .config
         .hooks
@@ -144,7 +161,7 @@ pub fn emit(state: &crate::state::State, event: Event) {
     if commands.is_empty() {
         return;
     }
-    let env = hook_env(&event, state.control_socket_path.as_deref());
+    let env = hook_env(event, state.control_socket_path.as_deref());
     let runner = crate::platform::command::resolve_command_shell(
         state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -182,7 +199,7 @@ mod tests {
 
     #[test]
     fn event_kind_ids_round_trip() {
-        assert_eq!(EventKind::ALL.len(), 15);
+        assert_eq!(EventKind::ALL.len(), 16);
         let mut ids = HashSet::new();
         for kind in EventKind::ALL {
             assert_eq!(EventKind::parse(kind.id()), Some(kind));

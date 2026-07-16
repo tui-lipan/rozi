@@ -154,7 +154,10 @@ Explicit targets and `--pick` take precedence.
 ## Attach, detach, and quit
 
 All panes are server-backed. The UI receives raw pane output frames and sends input, resize,
-palette, layout-commit, rename, and kill requests back through the session protocol. Resizes are
+palette, pane-status, layout-commit, rename, and kill requests back through the session protocol.
+Each live pane's reported status and optional reason are server-owned runtime metadata. They remain
+available when every client detaches and are seeded to clients on reattach without generating a
+status-change event. Resizes are
 applied to the client screen only when the server acknowledges them (`Resized`), so both parsers
 resize at the same byte position and wrap state stays identical. The server is authoritative for the
 layout: the controlling client commits a revisioned `SharedLayout` on every change and the server
@@ -285,6 +288,11 @@ a fresh PTY, with the old terminal history replayed above its new output. Missin
 working directories, or individual pane spawn failures do not prevent the rest of the session from
 loading. Unsupported or malformed snapshots are left on disk and reported without blocking startup.
 
+Reported pane status is intentionally not written to resurrection snapshots. It survives client
+detach/reattach while the same session server remains alive, but is cleared when a dead server is
+restarted and its panes are resurrected. Agents should report fresh status after their process
+restarts.
+
 `kill-session` and a clean in-protocol session shutdown mean **forget**: they remove the snapshot as
 well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it for resurrection.
 
@@ -301,5 +309,5 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
-The session wire protocol is version 9. After upgrading hyprmux, restart existing named session
+The session wire protocol is version 10. After upgrading hyprmux, restart existing named session
 servers before attaching with the new client.

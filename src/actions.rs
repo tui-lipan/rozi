@@ -105,7 +105,7 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
             crate::popup::open(ctx, command, None, None, None, None).unwrap_or_else(|error| {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Popup",
+                    "Popup failed",
                     error,
                 ));
                 Update::full()
@@ -368,7 +368,7 @@ fn execute_action_inner(
             let update = crate::ops::session::swap_to_fresh_ephemeral(ctx);
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
-                "Started a fresh ephemeral session",
+                "Started a fresh temporary session",
             ));
             update
         }

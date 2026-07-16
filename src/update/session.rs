@@ -99,7 +99,7 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     }
     ctx.state.pending_session_attach = None;
     ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Sessions", message));
+        .push(error_toast(&ctx.state.theme, "Attach failed", message));
     Update::full()
 }
 
@@ -225,9 +225,9 @@ pub(super) fn attached(
         .as_ref()
         .map(|left| {
             if left.was_ephemeral_shutdown {
-                " - ended temporary session".to_string()
+                "\nEnded the temporary session".to_string()
             } else {
-                format!(" - detached from `{}` (still running)", left.name)
+                format!("\nDetached from `{}`", left.name)
             }
         })
         .unwrap_or_default();
@@ -430,7 +430,7 @@ pub(super) fn clients_changed(
                 crate::pty_events::info_toast(
                     &ctx.state.theme,
                     if input_locked {
-                        "Input locked to controller"
+                        "Input locked to the controller"
                     } else {
                         "Input unlocked"
                     },
@@ -826,7 +826,7 @@ pub(super) fn spawn_result(
     ctx.state.commands_dirty = true;
     if let Some(error) = toast_error {
         ctx.toast()
-            .push(error_toast(&ctx.state.theme, "Session Spawn", error));
+            .push(error_toast(&ctx.state.theme, "Spawn failed", error));
     }
     if should_close {
         begin_close_pane(ctx, pane_id, ctx.state.config.animations)
@@ -845,7 +845,7 @@ pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) 
         return Update::none();
     }
     ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Session", message));
+        .push(error_toast(&ctx.state.theme, "Session error", message));
     Update::full()
 }
 

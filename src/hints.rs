@@ -173,12 +173,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     };
     let copied = result.is_ok() && !open;
     match result {
-        Ok(()) if open => {
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                "Opened hint",
-            ));
-        }
+        // Success needs no toast: an opened URL raises the browser and a copy flashes below.
         Ok(()) => {}
         Err(error) => {
             ctx.toast().push(crate::pty_events::error_toast(

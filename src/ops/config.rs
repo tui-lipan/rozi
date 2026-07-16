@@ -107,8 +107,8 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             Err(err) => {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Theme Watcher",
-                    format!("Can't watch theme file: {err}"),
+                    "Theme watch failed",
+                    err.to_string(),
                 ));
             }
         }
@@ -142,7 +142,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
-            "Config",
+            "Config warning",
             warning.clone(),
         ));
     }
@@ -193,8 +193,8 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(command) = missing_editor_command(&editor) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
-            "Open config file",
-            format!("Editor `{command}` not found. Set EDITOR."),
+            "Editor not found",
+            format!("`{command}` is not available\nSet $EDITOR"),
         ));
         return Update::none();
     }

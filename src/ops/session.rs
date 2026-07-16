@@ -58,7 +58,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
         Err(err) => {
             ctx.toast().push(crate::pty_events::error_toast(
                 &ctx.state.theme,
-                "Sessions",
+                "Session list failed",
                 err.to_string(),
             ));
             ctx.state.session_picker = Some(SessionPickerState::new(Vec::new()));
@@ -109,7 +109,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
         Err(err) => {
             ctx.toast().push(crate::pty_events::error_toast(
                 &ctx.state.theme,
-                "Sessions",
+                "Session list failed",
                 err.to_string(),
             ));
         }
@@ -232,12 +232,16 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
         .and_then(|shared| shared.controller)
         .map(|id| format!("client {id}"))
         .unwrap_or_else(|| "another client".to_string());
+    // Advertise the live request binding so the hint tracks any `[keys]` override.
+    let how = crate::commands::command_prefix_chord(ctx, "request-control")
+        .map(|chord| format!("{chord} to request control"))
+        .unwrap_or_else(|| "Try requesting control".to_string());
     crate::pty_events::replace_toast(
         ctx,
         crate::state::ToastChannel::LayoutControl,
         info_toast(
             &ctx.state.theme,
-            format!("Layout controlled by {who}\nTry requesting control"),
+            format!("Layout controlled by {who}\n{how}"),
         ),
     );
     true
@@ -492,8 +496,8 @@ pub(crate) fn attach_session_by_name(
     if !crate::session::discovery::valid_attach_target(&name) {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
-            "Sessions",
             "Invalid session name",
+            "Use letters, numbers, _ or -",
         ));
         return Update::full();
     }
@@ -563,9 +567,9 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
         clear_pending_open(ctx);
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
-            "Sessions",
+            "Attach failed",
             format!(
-                "Session `{}` is unavailable (incompatible version)\nPress Ctrl+K to remove it",
+                "`{}` runs an incompatible version\nCtrl+K removes it",
                 entry.name
             ),
         ));
@@ -721,8 +725,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Sessions",
-                    "Use letters, numbers, _ or - for session names",
+                    "Invalid session name",
+                    "Use letters, numbers, _ or -",
                 ));
                 request_rename_session_focus(ctx);
                 return Update::full();
@@ -777,8 +781,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Sessions",
-                    "Use letters, numbers, _ or - for session names",
+                    "Invalid session name",
+                    "Use letters, numbers, _ or -",
                 ));
                 request_rename_session_focus(ctx);
                 return Update::full();
@@ -791,8 +795,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 let Some(client) = ctx.state.session_client.clone() else {
                     ctx.toast().push(crate::pty_events::error_toast(
                         &ctx.state.theme,
-                        "Sessions",
-                        "Lost connection to the session - can't name it right now.",
+                        "Rename failed",
+                        "Session connection lost",
                     ));
                     return Update::full();
                 };
@@ -820,8 +824,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Sessions",
-                    "Use letters, numbers, _ or - for session names",
+                    "Invalid session name",
+                    "Use letters, numbers, _ or -",
                 ));
                 request_rename_session_focus(ctx);
                 return Update::full();
@@ -885,17 +889,12 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         return kill_current_session(ctx, display);
     }
     match shutdown_session(&entry.name) {
-        Ok(()) => {
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
-                format!("Killed session `{display}`"),
-            ));
-            refresh_session_picker(ctx)
-        }
+        // The refreshed picker shows the row gone; that is the confirmation.
+        Ok(()) => refresh_session_picker(ctx),
         Err(err) => {
             ctx.toast().push(crate::pty_events::error_toast(
                 &ctx.state.theme,
-                "Sessions",
+                "Kill failed",
                 err.to_string(),
             ));
             Update::full()

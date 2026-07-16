@@ -87,11 +87,8 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
         let text = pane.terminal.extract_text(anchor, cursor);
         if !text.is_empty() {
             match ctx.clipboard().copy(&text) {
-                Ok(()) => {
-                    copied_selection = Some((anchor, cursor));
-                    ctx.toast()
-                        .push(crate::pty_events::info_toast(&ctx.state.theme, "Copied"));
-                }
+                // The copy flash below is the confirmation; a "Copied" toast would double it.
+                Ok(()) => copied_selection = Some((anchor, cursor)),
                 Err(err) => {
                     ctx.toast().push(crate::pty_events::error_toast(
                         &ctx.state.theme,

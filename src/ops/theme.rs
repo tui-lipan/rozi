@@ -178,7 +178,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     for warning in &resolved.warnings {
         ctx.toast().push(crate::pty_events::error_toast(
             &ctx.state.theme,
-            "Theme",
+            "Theme warning",
             warning.clone(),
         ));
     }
@@ -197,8 +197,8 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
             Err(err) => {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
-                    "Theme Watcher",
-                    format!("Can't watch theme file: {err}"),
+                    "Theme watch failed",
+                    err.to_string(),
                 ));
             }
         }

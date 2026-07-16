@@ -28,8 +28,8 @@ fn padding_value(value: &str) -> Option<u16> {
 fn padding_error(ctx: &mut Context<HyprmuxApp>) {
     ctx.toast().push(error_toast(
         &ctx.state.theme,
-        "Padding needs a value",
-        "Enter one digit.",
+        "Invalid padding",
+        "Enter one digit",
     ));
 }
 
@@ -246,7 +246,7 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
         ctx.toast().push(error_toast(
             &ctx.state.theme,
-            "Could not save padding",
+            "Padding not saved",
             error,
         ));
     }
@@ -295,7 +295,7 @@ pub(super) fn workbar_command_output(
 
 pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Update {
     ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Theme Reload", message));
+        .push(error_toast(&ctx.state.theme, "Theme reload failed", message));
     Update::full()
 }
 

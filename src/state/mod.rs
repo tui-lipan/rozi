@@ -284,7 +284,7 @@ impl State {
         if shared.read_only {
             Some("Attached read-only")
         } else if shared.input_locked && !shared.is_controller() {
-            Some("Input is locked to the controller")
+            Some("Input locked to the controller")
         } else {
             None
         }

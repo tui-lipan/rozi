@@ -673,6 +673,29 @@ pub(super) fn pane_logging_changed(
     Update::full()
 }
 
+fn status_is(value: Option<&str>, needle: &str) -> bool {
+    value.is_some_and(|value| value.trim().eq_ignore_ascii_case(needle))
+}
+
+/// Update the pane's "unseen finish" pulse from an agent-status transition. Arms it on a
+/// `working` -> quiescent edge (the run finished while you were looking elsewhere) and disarms it
+/// the moment the agent resumes `working`, so a spinning agent never wears a completed-dot. A
+/// `blocked` outcome is deliberately left un-armed: it already has its own loud glyph, and arming
+/// here would let the sidebar's pulse override it. A separate focus chokepoint clears the flag once
+/// the pane is actually looked at.
+fn update_finished_unseen(pane: &mut crate::pane::TerminalPane, previous: Option<&str>) {
+    let current = pane.agent_status();
+    let current = current.as_deref();
+    if status_is(current, crate::session::protocol::pane_status::WORKING) {
+        pane.finished_unseen = false;
+    } else if status_is(previous, crate::session::protocol::pane_status::WORKING)
+        && current.is_some()
+        && !status_is(current, crate::session::protocol::pane_status::BLOCKED)
+    {
+        pane.finished_unseen = true;
+    }
+}
+
 pub(super) fn pane_runtime_changed(
     ctx: &mut Context<HyprmuxApp>,
     epoch: u64,
@@ -694,6 +717,7 @@ pub(super) fn pane_runtime_changed(
         && state.sequence > pane.terminal.runtime_sequence
     {
         let previous = pane.terminal.reported_status.clone();
+        let previous_agent_status = pane.terminal.agent_status();
         pane.terminal.runtime_sequence = state.sequence;
         pane.terminal.cwd = state.cwd;
         pane.terminal.cwd_host = state.cwd_host;
@@ -702,6 +726,7 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.last_exit_status = state.last_exit_status;
         pane.terminal.reported_status = state.status;
         pane.terminal.detected_agent = state.detected_agent;
+        update_finished_unseen(&mut pane.terminal, previous_agent_status.as_deref());
         if previous != pane.terminal.reported_status {
             transition = Some((
                 previous,
@@ -989,6 +1014,48 @@ mod tests {
     use std::collections::HashSet;
     use std::path::PathBuf;
     use tui_lipan::TestBackend;
+
+    fn agent_pane(status: &str) -> crate::pane::TerminalPane {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::Claude,
+            state: crate::session::protocol::DetectedAgentState::Idle,
+        });
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: status.to_string(),
+            reason: None,
+            set_at: 1,
+        });
+        pane
+    }
+
+    #[test]
+    fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
+        // working -> idle arms the pulse.
+        let mut pane = agent_pane("idle");
+        update_finished_unseen(&mut pane, Some("working"));
+        assert!(pane.finished_unseen);
+
+        // A later idle -> idle poll leaves it armed until the pane is looked at.
+        update_finished_unseen(&mut pane, Some("idle"));
+        assert!(pane.finished_unseen);
+
+        // Resuming work disarms it: a spinning agent must not wear a completed dot.
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: 2,
+        });
+        update_finished_unseen(&mut pane, Some("idle"));
+        assert!(!pane.finished_unseen);
+    }
+
+    #[test]
+    fn finished_unseen_ignores_working_to_blocked() {
+        let mut pane = agent_pane("blocked");
+        update_finished_unseen(&mut pane, Some("working"));
+        assert!(!pane.finished_unseen);
+    }
 
     #[test]
     fn hold_on_exit_excludes_disabled_scratch_and_closing_panes() {

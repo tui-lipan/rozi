@@ -36,9 +36,24 @@ shell, and package-manager wrappers are recognized without relying only on the e
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
 common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
 normalized agent name, inferred or reported status, and a shortened reason; clicking a row switches
-workspace and focuses it. Statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
+workspace and focuses it. Closing panes, the scratchpad, and popups are excluded.
+
+Agents are grouped by project: the working directory the session server reports for the pane. Each
+group is headed by the directory basename plus the group's most urgent status glyph; two projects
+sharing a basename are disambiguated with one parent segment (`work/api`, `oss/api`), and a remote
+working directory gains an `@host` suffix. Group order is alphabetical and stable — never by
+status, so blocks do not jump while agents change state. Agents without a usable working directory
+collect in a trailing `elsewhere` group; when that is the only group, rows render flat with no
+header. Within a group, statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
 Well-known statuses are matched case-insensitively and use themed status glyphs, while custom
-status spelling is shown unchanged. Closing panes, the scratchpad, and popups are excluded.
+status spelling is shown unchanged.
+
+When an agent finishes a run — its effective status goes from `working` to a quiescent state such
+as `idle` or `done` — the row shows a filled attention dot in the success color instead of the calm
+idle glyph, so a completed run does not blend in with agents that were idle all along. The pulse
+also surfaces on the project header. `blocked` is never replaced by the pulse, since it already has
+its own glyph, and an agent that resumes working drops the pulse. The pulse is cleared as soon as
+the pane is focused through any path, so looking at a finished agent acknowledges it.
 
 Process detection infers `working` and `blocked` from server-owned terminal state where an agent
 exposes recognizable progress or prompt markers. Agent integrations can publish a more reliable

@@ -22,6 +22,11 @@ pub struct TerminalPane {
     /// `status`, which tracks whether the client-side terminal parser is ready or exited.
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
+    /// Set when this agent pane's effective status transitions from `working` to a quiescent state
+    /// (finished) while the pane is not focused, and cleared once the pane is focused. Drives the
+    /// sidebar's "unseen finish" pulse so a completed run does not blend into panes that were idle
+    /// all along. Never set for `blocked`, which already has its own attention glyph.
+    pub finished_unseen: bool,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -73,6 +78,7 @@ impl TerminalPane {
             foreground_program: None,
             reported_status: None,
             detected_agent: None,
+            finished_unseen: false,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -86,6 +92,7 @@ impl TerminalPane {
         if self.pane_id != pane_id || self.generation != generation {
             self.reported_status = None;
             self.detected_agent = None;
+            self.finished_unseen = false;
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -399,6 +406,30 @@ impl TerminalPane {
             .clone()
             .map(|title| title.trim().to_string())
             .filter(|title| !title.is_empty())
+    }
+
+    /// The effective agent status for a detected-agent pane: the explicitly reported status if the
+    /// integration published one, otherwise the server's inferred `working`/`idle`/`blocked` state.
+    /// `None` when the pane is not a detected agent. Single source of truth shared by the sidebar
+    /// and the "unseen finish" edge detector so they never disagree on what "working" means.
+    pub fn agent_status(&self) -> Option<String> {
+        let detected = self.detected_agent.as_ref()?;
+        let value = self
+            .reported_status
+            .as_ref()
+            .map(|status| status.value.as_str())
+            .unwrap_or_else(|| match detected.state {
+                crate::session::protocol::DetectedAgentState::Idle => {
+                    crate::session::protocol::pane_status::IDLE
+                }
+                crate::session::protocol::DetectedAgentState::Working => {
+                    crate::session::protocol::pane_status::WORKING
+                }
+                crate::session::protocol::DetectedAgentState::Blocked => {
+                    crate::session::protocol::pane_status::BLOCKED
+                }
+            });
+        Some(value.to_string())
     }
 
     pub fn status_text(&self) -> String {

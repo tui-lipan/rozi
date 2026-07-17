@@ -80,6 +80,10 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "focused background",
         ]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
+        // The live label is "Enable/Disable sidebar", so a bare "sidebar" query only matches its
+        // label as a mid-string substring and loses to "Next/Previous sidebar tab". An exact
+        // "sidebar" alias competes via `max()` and floats the toggle to the top.
+        "toggle-sidebar" => alias_list(&["sidebar", "panel", "toggle sidebar"]),
         _ => Vec::new(),
     }
 }

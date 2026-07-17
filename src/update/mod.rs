@@ -264,6 +264,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         } => session::renamed(ctx, epoch, name),
     };
 
+    clear_finished_unseen_on_focus(ctx);
+
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();
         update = Update::with_command(command);
@@ -281,6 +283,24 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     }
 
     update
+}
+
+/// Focus chokepoint for the sidebar's "unseen finish" pulse: after every message, clear the flag on
+/// the currently focused pane. Runs here rather than at the many places that move focus (click,
+/// keyboard, workspace switch, layout reconcile) so every path acknowledges a finished agent by the
+/// same rule — looking at it. Cheap: a single lookup in the active workspace.
+fn clear_finished_unseen_on_focus(ctx: &mut Context<HyprmuxApp>) {
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if let Some(pane) = ctx.state.workspaces[ctx.state.active_workspace]
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == focused)
+        && pane.terminal.finished_unseen
+    {
+        pane.terminal.finished_unseen = false;
+    }
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {

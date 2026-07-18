@@ -499,13 +499,22 @@ pub(crate) fn tiled_resize_strips(
 
     let gap = ctx.state.tile_gap();
     let (vertical_strips, horizontal_strips) = resize_strip_hitboxes(&tiled, gap, master);
+    let top_offset = f32::from(ctx.state.content_top_offset());
 
     let mut strips = Vec::new();
     for strip in &vertical_strips {
-        strips.push((strip.rect, resize_strip_element(ctx, strip.pane_id, true)));
+        strips.push((
+            strip.rect,
+            resize_strip_element(ctx, strip, true, strip.boundary),
+        ));
     }
     for strip in &horizontal_strips {
-        strips.push((strip.rect, resize_strip_element(ctx, strip.pane_id, false)));
+        // Strip rects are canvas-space; the chrome coordinate is compared against event
+        // coordinates, which are root-space.
+        strips.push((
+            strip.rect,
+            resize_strip_element(ctx, strip, false, strip.boundary + top_offset),
+        ));
     }
     for junction in resize_junction_hitboxes(&vertical_strips, &horizontal_strips) {
         strips.push((
@@ -529,7 +538,7 @@ fn resize_strip_hitboxes(
     let mut vertical_strips = Vec::new();
     let mut horizontal_strips = Vec::new();
     for (a_id, a) in tiled {
-        for (_b_id, b) in tiled {
+        for (b_id, b) in tiled {
             // Vertical boundary → horizontal (left|right) split. `a` is the left pane.
             let a_right = a.x + a.w;
             if (b.x - (a_right + h_gap)).abs() < eps {
@@ -544,6 +553,8 @@ fn resize_strip_hitboxes(
                             h: y1 - y0,
                         },
                         pane_id: *a_id,
+                        neighbor_id: *b_id,
+                        boundary: b.x,
                     });
                 }
             }
@@ -562,6 +573,8 @@ fn resize_strip_hitboxes(
                                 h: (b.y - a_bottom + 2.0).max(1.0),
                             },
                             pane_id: *a_id,
+                            neighbor_id: *b_id,
+                            boundary: b.y,
                         });
                     }
                 }
@@ -574,7 +587,15 @@ fn resize_strip_hitboxes(
 #[derive(Clone, Copy)]
 struct ResizeStripHitbox {
     rect: FloatRect,
+    /// The pane on the near side of the boundary (left or above); its tree split is the one a
+    /// drag on this strip resizes.
     pane_id: PaneId,
+    /// The pane on the far side of the boundary (right or below).
+    neighbor_id: PaneId,
+    /// Leading edge of `neighbor_id` on the strip's axis, in canvas coordinates. The strip covers
+    /// pane chrome on both sides of it (borders, and the far pane's titlebar row), so a plain
+    /// click or hover is routed to whichever pane owns the cell under the pointer.
+    boundary: f32,
 }
 
 #[derive(Clone)]
@@ -664,12 +685,39 @@ fn resize_junction_hitboxes(
     junctions
 }
 
+/// Which pane owns the cell a pointer is over inside a resize strip. `boundary` is the far pane's
+/// first row/column on the strip's axis, so a pointer at or past it sits on the far pane's leading
+/// chrome (its titlebar row, when titles are shown); anything before it is still the near pane's
+/// trailing border.
+fn strip_pointer_owner(near: PaneId, far: PaneId, boundary: u16, along: u16) -> PaneId {
+    if along >= boundary { far } else { near }
+}
+
+/// A resize strip sits *above* the panes it separates, so it also swallows pointer events over the
+/// pane chrome beneath it. With titles shown a horizontal strip is two rows - the upper pane's
+/// bottom border and the lower pane's whole titlebar - so without this the titlebar of every pane
+/// below the first row is unclickable. Focus clicks and hover-focus are re-issued here for
+/// whichever pane owns the cell under the pointer; drags still resize the split.
 fn resize_strip_element(
     ctx: &Context<HyprmuxApp>,
-    pane_id: PaneId,
+    strip: &ResizeStripHitbox,
     horizontal_split: bool,
+    boundary: f32,
 ) -> Element {
-    MouseRegion::new()
+    let near = strip.pane_id;
+    let far = strip.neighbor_id;
+    let pane_id = near;
+    let boundary = boundary.round().max(0.0) as u16;
+    let owner = move |x: u16, y: u16| {
+        let along = if horizontal_split { x } else { y };
+        strip_pointer_owner(near, far, boundary, along)
+    };
+
+    let mut region = MouseRegion::new()
+        .on_mouse_down(
+            ctx.link()
+                .callback(move |event: MouseEvent| Msg::FocusPane(owner(event.x, event.y))),
+        )
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::BeginResizeSplit(pane_id, horizontal_split, event.from_x, event.from_y)
         }))
@@ -683,7 +731,17 @@ fn resize_strip_element(
                 event.y,
             )
         }))
-        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
+        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit));
+
+    if ctx.state.config.pane.focus_on_hover {
+        region =
+            region
+                .on_mouse_move(ctx.link().callback(move |event: MouseMoveEvent| {
+                    Msg::HoverPane(owner(event.x, event.y))
+                }));
+    }
+
+    region
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
 }
@@ -813,5 +871,58 @@ mod tests {
         assert_eq!(junctions[0].rect, rect(9.0, 9.0, 3.0, 2.0));
         assert_eq!(junctions[0].horizontal_panes, vec![1, 3]);
         assert_eq!(junctions[0].vertical_panes, vec![1, 2]);
+    }
+
+    /// With titles shown, merged borders keep a zero vertical gap, so the strip between stacked
+    /// panes covers two rows: the upper pane's bottom border and the lower pane's titlebar. The
+    /// strip draws above both panes, so it must route a pointer on the lower row to the lower
+    /// pane - otherwise no pane below the first row can be focused by its title.
+    #[test]
+    fn stacked_strip_routes_the_titlebar_row_to_the_lower_pane() {
+        let gap = TileGap {
+            horizontal: -1.0,
+            vertical: 0.0,
+        };
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(0.0, 10.0, 10.0, 10.0)),
+        ];
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false);
+
+        assert_eq!(horizontal.len(), 1);
+        let strip = horizontal[0];
+        assert_eq!(strip.rect, rect(0.0, 9.0, 10.0, 2.0));
+        assert_eq!(strip.boundary, 10.0);
+
+        let boundary = strip.boundary as u16;
+        let owner = |y| strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, y);
+        assert_eq!(owner(9), 1, "upper pane's bottom border stays with it");
+        assert_eq!(owner(10), 2, "lower pane's titlebar row focuses that pane");
+    }
+
+    #[test]
+    fn side_by_side_strip_routes_the_seam_column_to_the_right_pane() {
+        let gap = TileGap {
+            horizontal: -1.0,
+            vertical: 0.0,
+        };
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(9.0, 0.0, 10.0, 10.0)),
+        ];
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false);
+
+        assert_eq!(vertical.len(), 1);
+        let strip = vertical[0];
+        assert_eq!(strip.boundary, 9.0);
+
+        let boundary = strip.boundary as u16;
+        let owner = |x| strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, x);
+        assert_eq!(owner(8), 1, "left pane keeps its own right border");
+        assert_eq!(
+            owner(9),
+            2,
+            "the shared seam cell belongs to the right pane"
+        );
     }
 }

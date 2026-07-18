@@ -21,12 +21,34 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
         bar.tab(Tab::new(tab.label().to_string()))
     });
     let tab_ids: Vec<_> = tabs.iter().map(SidebarTab::id).collect();
-    let tab_bar =
-        tab_bar
-            .active(active)
-            .on_change(ctx.link().callback(move |event: TabsEvent| {
-                Msg::SidebarTabSelected(tab_ids[event.index].clone())
-            }));
+    let theme = &ctx.state.theme;
+    // Selection presentation matches the workbar's workspace tabs so the two strips read as one
+    // system; the sidebar sits on the element surface rather than the panel, so the resting and
+    // hover backgrounds follow that surface instead.
+    let tab_bar = tab_bar
+        .active(active)
+        .focusable(false)
+        .height(Length::Px(1))
+        .divider(' ')
+        .style(
+            Style::new()
+                .fg(theme.surface.menu)
+                .bg(theme.surface.element),
+        )
+        .active_style(
+            Style::new()
+                .fg(theme.surface.backdrop)
+                .bg(theme.border_active)
+                .bold(),
+        )
+        .tab_hover_style(
+            Style::new()
+                .fg(theme.surface.menu)
+                .bg(theme.surface.element.elevate(0.08)),
+        )
+        .on_change(ctx.link().callback(move |event: TabsEvent| {
+            Msg::SidebarTabSelected(tab_ids[event.index].clone())
+        }));
 
     let body = tabs.get(active).map_or_else(
         || placeholder(ctx, "No sidebar tabs configured"),

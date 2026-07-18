@@ -39,10 +39,17 @@ fn normalized_status(value: &str) -> &str {
     value.trim()
 }
 
-fn status_rank(status: Option<&str>) -> u8 {
+/// Sort rank for a row, keyed on the status the row *displays* rather than the raw one the agent
+/// reported. A finished-unseen agent reports `idle` but reads "done", so it ranks with `done`:
+/// ranking it as idle would sink the row to the bottom of its group at the same moment the filled
+/// dot lights up to draw the eye to it.
+fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
     let Some(status) = status.map(normalized_status) else {
         return 5;
     };
+    if is_finished_quiet(status, finished_unseen) {
+        return 3;
+    }
     if status.eq_ignore_ascii_case(pane_status::BLOCKED) {
         0
     } else if status.eq_ignore_ascii_case(pane_status::WORKING) {
@@ -110,7 +117,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
         .collect::<Vec<_>>();
     rows.sort_by_key(|row| {
         (
-            status_rank(row.status.as_deref()),
+            status_rank(row.status.as_deref(), row.finished_unseen),
             row.workspace_index,
             row.pane_index,
         )
@@ -285,8 +292,12 @@ fn truncate_reason(value: &str) -> String {
 pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     let groups = agent_groups(&ctx.state);
     if groups.is_empty() {
-        return Text::new("No agents detected")
-            .style(super::super::fg_only(&ctx.state.theme.muted))
+        return VStack::new()
+            .padding((1, 0, 0, 1))
+            .child(
+                Text::new("No agents detected")
+                    .style(super::super::fg_only(&ctx.state.theme.muted)),
+            )
             .into();
     }
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
@@ -307,15 +318,42 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     body.into()
 }
 
-/// The glyph and color a row shows: the plain status glyph, except a finished-unseen agent that is
-/// no longer working (and not blocked, which keeps its own loud glyph) shows a filled success dot
-/// to pull the eye to a completed run. `bool` is whether the working spinner should animate.
-fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Color, bool) {
+/// Whether a row is in the "finished a run, not looked at yet" state: quiescent (neither working
+/// nor blocked, which keep their own louder presentation) with an unseen finish.
+fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
     let working = status.trim().eq_ignore_ascii_case(pane_status::WORKING);
     let blocked = status.trim().eq_ignore_ascii_case(pane_status::BLOCKED);
-    if finished_unseen && !working && !blocked {
-        return ("●".to_string(), theme.status.success, false);
+    finished_unseen && !working && !blocked
+}
+
+/// The theme's plain foreground, used where a status should read as ordinary text rather than carry
+/// a semantic color.
+fn primary_color(theme: &Theme) -> Color {
+    theme
+        .primary
+        .fg
+        .map(|paint| paint.color())
+        .unwrap_or(Color::Reset)
+}
+
+/// The status word a row displays. A finished-unseen agent reads "done" regardless of the raw
+/// status the agent last reported, which is usually "idle" — idle describes the pane, done
+/// describes the run that just ended.
+fn row_status_label(status: &str, finished_unseen: bool) -> String {
+    if is_finished_quiet(status, finished_unseen) {
+        return pane_status::DONE.to_string();
     }
+    status.to_string()
+}
+
+/// The glyph and color a row shows: the plain status glyph, except a finished-unseen agent shows a
+/// filled dot in plain foreground — the fill pulls the eye to a completed run without spending a
+/// semantic status color on it. `bool` is whether the working spinner should animate.
+fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Color, bool) {
+    if is_finished_quiet(status, finished_unseen) {
+        return ("●".to_string(), primary_color(theme), false);
+    }
+    let working = status.trim().eq_ignore_ascii_case(pane_status::WORKING);
     let (glyph, color) = status_glyph(status, theme);
     (glyph.to_string(), color, working)
 }
@@ -330,17 +368,37 @@ fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
         .and_then(|row| row.status.clone())
         .unwrap_or_else(|| pane_status::IDLE.to_string());
     let finished_unseen = group.rows.iter().any(|row| row.finished_unseen);
-    let (glyph, color, _) = row_glyph(&status, finished_unseen, &ctx.state.theme);
+    let (glyph, color, spinner) = row_glyph(&status, finished_unseen, &ctx.state.theme);
     let label = group.project.as_deref().unwrap_or("elsewhere");
     let label_style = if group.project.is_some() {
         super::super::fg_only(&ctx.state.theme.accent).bold()
     } else {
         super::super::fg_only(&ctx.state.theme.muted).bold()
     };
+    // The glyph column is one cell wide with a space on each side; a spinner has to be built from
+    // those three pieces rather than a single formatted string so the animated cell stays its own
+    // widget.
+    let glyph_cell: Element = if spinner {
+        HStack::new()
+            .gap(0)
+            .height(Length::Px(1))
+            .child(Text::new(" "))
+            .child(
+                Spinner::new()
+                    .style(Style::new().fg(color))
+                    .height(Length::Px(1)),
+            )
+            .child(Text::new(" "))
+            .into()
+    } else {
+        Text::new(format!(" {glyph} "))
+            .style(Style::new().fg(color))
+            .into()
+    };
     HStack::new()
         .gap(0)
         .height(Length::Px(1))
-        .child(Text::new(format!(" {glyph} ")).style(Style::new().fg(color)))
+        .child(glyph_cell)
         .child(Text::new(label.to_string()).style(label_style))
         .into()
 }
@@ -362,10 +420,7 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow, indent: bool) -> Element 
             .height(Length::Px(1))
             .into()
     };
-    let status_label = row
-        .status
-        .clone()
-        .unwrap_or_else(|| pane_status::IDLE.to_string());
+    let status_label = row_status_label(status, row.finished_unseen);
     let mut detail = HStack::new()
         .gap(1)
         .height(Length::Px(1))
@@ -481,6 +536,31 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 4, 2, 5, 1, 6]
         );
+    }
+
+    /// A finished-unseen agent reports `idle` but displays "done", and must sort with `done` —
+    /// above plain idle rows — so the row does not sink as it lights up.
+    #[test]
+    fn finished_unseen_rows_sort_as_done_not_idle() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut finished = pane(2, Some("idle"), false);
+        finished.terminal.finished_unseen = true;
+        state.workspaces[0].panes = vec![pane(1, Some("idle"), false), finished];
+
+        assert_eq!(
+            agent_rows(&state)
+                .into_iter()
+                .map(|row| row.pane_id)
+                .collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        assert_eq!(
+            status_rank(Some("idle"), true),
+            status_rank(Some("done"), false)
+        );
+        // Working and blocked keep their own louder presentation and outrank a finished run.
+        assert!(status_rank(Some("working"), true) < status_rank(Some("idle"), true));
+        assert!(status_rank(Some("blocked"), true) < status_rank(Some("idle"), true));
     }
 
     #[test]

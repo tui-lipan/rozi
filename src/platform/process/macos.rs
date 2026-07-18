@@ -39,6 +39,7 @@ impl ProcessInspector for MacosProcessInspector {
             processes: vec![ForegroundProcess {
                 pid: process_group_id,
                 name: name_for_pid(process_group_id as i32)?,
+                executable: None,
                 argv: Vec::new(),
                 agent_hint: None,
             }],

@@ -32,6 +32,13 @@ fn identify_job(job: &ForegroundJob) -> Option<AgentKind> {
 }
 
 fn identify_process(process: &ForegroundProcess) -> Option<(AgentKind, bool)> {
+    if let Some(kind) = process
+        .executable
+        .as_deref()
+        .and_then(|path| parse_agent(path_basename(path)))
+    {
+        return Some((kind, false));
+    }
     let argv0 = process
         .argv
         .first()
@@ -105,7 +112,7 @@ fn parse_agent(value: &str) -> Option<AgentKind> {
         "cline" => Some(AgentKind::Cline),
         "omp" => Some(AgentKind::Omp),
         "mastracode" | "mastra-code" => Some(AgentKind::Mastracode),
-        "opencode" | "open-code" => Some(AgentKind::OpenCode),
+        "opencode" | "open-code" | "opencode-tui" => Some(AgentKind::OpenCode),
         "copilot" | "github-copilot" | "ghcs" => Some(AgentKind::GithubCopilot),
         "kimi" | "kimi-code" => Some(AgentKind::Kimi),
         "kiro" | "kiro-cli" => Some(AgentKind::Kiro),
@@ -223,6 +230,7 @@ mod tests {
         ForegroundProcess {
             pid,
             name: name.into(),
+            executable: None,
             argv: argv.iter().map(|value| (*value).into()).collect(),
             agent_hint: hint.map(str::to_string),
         }
@@ -239,6 +247,7 @@ mod tests {
     fn aliases_cover_the_agent_catalog() {
         assert_eq!(parse_agent("claude-code"), Some(AgentKind::Claude));
         assert_eq!(parse_agent("open-code"), Some(AgentKind::OpenCode));
+        assert_eq!(parse_agent("opencode-tui"), Some(AgentKind::OpenCode));
         assert_eq!(parse_agent("ghcs"), Some(AgentKind::GithubCopilot));
         assert_eq!(parse_agent("antigravity-cli"), Some(AgentKind::Antigravity));
         assert_eq!(parse_agent("qoderclicn"), Some(AgentKind::QoderCli));
@@ -288,6 +297,16 @@ mod tests {
             ],
         );
         assert_eq!(identify_job(&wrapped), Some(AgentKind::OpenCode));
+    }
+
+    #[test]
+    fn identifies_an_agent_invoked_through_an_unrelated_alias() {
+        let mut aliased = process(10, "cl", &["cl"], None);
+        aliased.executable = Some("/work/target/release/opencode-tui".into());
+        assert_eq!(
+            identify_process(&aliased),
+            Some((AgentKind::OpenCode, false))
+        );
     }
 
     #[test]

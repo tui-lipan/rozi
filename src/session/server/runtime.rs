@@ -222,6 +222,7 @@ fn detect_pane_agent(
                 processes: vec![crate::platform::process::ForegroundProcess {
                     pid: 0,
                     name: foreground_program.unwrap_or_default().to_string(),
+                    executable: None,
                     argv: Vec::new(),
                     agent_hint: Some(hint),
                 }],
@@ -235,6 +236,7 @@ fn detect_pane_agent(
             processes: vec![crate::platform::process::ForegroundProcess {
                 pid: 0,
                 name: program.to_string(),
+                executable: None,
                 argv: vec![program.to_string()],
                 agent_hint: None,
             }],

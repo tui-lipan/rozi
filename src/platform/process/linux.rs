@@ -76,6 +76,9 @@ fn process_group_member(process_group_id: u32, pid: u32) -> Option<ForegroundPro
     (group == process_group_id).then(|| ForegroundProcess {
         pid,
         name,
+        executable: std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .map(|path| path.to_string_lossy().into_owned()),
         argv: read_nul_records(&format!("/proc/{pid}/cmdline")),
         agent_hint: read_agent_hint(&format!("/proc/{pid}/environ")),
     })

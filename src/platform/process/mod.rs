@@ -20,6 +20,7 @@ use tui_lipan::prelude::TerminalPty;
 pub struct ForegroundProcess {
     pub pid: u32,
     pub name: String,
+    pub executable: Option<String>,
     pub argv: Vec<String>,
     pub agent_hint: Option<String>,
 }

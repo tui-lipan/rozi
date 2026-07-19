@@ -386,6 +386,7 @@ fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
             .child(
                 Spinner::new()
                     .style(Style::new().fg(color))
+                    .width(Length::Px(1))
                     .height(Length::Px(1)),
             )
             .child(Text::new(" "))

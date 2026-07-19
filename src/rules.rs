@@ -27,6 +27,7 @@ mod tests {
     use super::*;
 
     use crate::config::RuleMatcher;
+    use regex_lite::Regex;
 
     fn substring_rule(matches: &str) -> HyprmuxRuleConfig {
         HyprmuxRuleConfig {

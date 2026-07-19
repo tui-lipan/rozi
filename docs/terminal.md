@@ -105,10 +105,15 @@ end (these row-local motions reuse `tui-lipan`'s vim-mode `TextArea` motion algo
 bottom. Press `/` to search within the focused pane (same overlay as scrollback search, scoped
 to this pane); `Enter` parks the copy cursor on the match and returns to copy mode, `Esc`
 cancels back to copy mode, and `n`/`N` cycle later matches while keeping any selection anchor.
-Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
+With shell integration, `[`/`]` jump between prompt marks and `o` copies the last command's
+output. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
 system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar shows a **COPY**
 indicator while active, and the selection is highlighted with the theme's selection color. Yank
 uses the system clipboard, reaching it over SSH via OSC52 when enabled.
+
+*Copy last command output* is also available from the command palette / `copy-last-output`
+action and as `hyprmux capture-pane --scrollback last-output` for automation. Without shell
+integration marks the action shows a status hint rather than an error.
 
 ## Hint mode
 

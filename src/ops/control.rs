@@ -334,11 +334,23 @@ fn capture_pane(
             if let Err(message) = spec.validate() {
                 return ControlResponse::error(message);
             }
-            let lines = match spec {
-                CaptureScrollback::Lines(n) => Some(n),
-                CaptureScrollback::Named(_) => None,
-            };
-            pane.terminal.capture_scrollback_text(lines)
+            match spec {
+                CaptureScrollback::Lines(n) => pane.terminal.capture_scrollback_text(Some(n)),
+                CaptureScrollback::Named(name)
+                    if name.eq_ignore_ascii_case("last-output")
+                        || name.eq_ignore_ascii_case("last_output") =>
+                {
+                    match pane.terminal.capture_last_command_output() {
+                        Some(text) => text,
+                        None => {
+                            return ControlResponse::error(
+                                "no last command output (shell integration marks missing)",
+                            );
+                        }
+                    }
+                }
+                CaptureScrollback::Named(_) => pane.terminal.capture_scrollback_text(None),
+            }
         }
     };
     ControlResponse::ok(PaneCapture { id, text })

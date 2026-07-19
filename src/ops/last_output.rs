@@ -1,0 +1,43 @@
+//! Copy the last shell-integration command's output to the clipboard.
+
+use tui_lipan::prelude::*;
+
+use crate::HyprmuxApp;
+use crate::pane_lifecycle::find_pane_mut;
+
+/// Resolve `last_command_output_range`, copy the text, and flash the selection when possible.
+pub(crate) fn copy_last_output(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(id) = ctx.state.focused_pane else {
+        return Update::none();
+    };
+    let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
+        return Update::none();
+    };
+    let Some(text) = pane.terminal.capture_last_command_output() else {
+        ctx.toast().push(crate::pty_events::info_toast(
+            &ctx.state.theme,
+            "No last command output (enable shell integration)",
+        ));
+        return Update::full();
+    };
+    if text.is_empty() {
+        ctx.toast().push(crate::pty_events::info_toast(
+            &ctx.state.theme,
+            "Last command produced no output",
+        ));
+        return Update::full();
+    }
+    let rows = usize::from(pane.terminal.rows).saturating_sub(1);
+    let cols = usize::from(pane.terminal.cols).saturating_sub(1);
+    match ctx.clipboard().copy(&text) {
+        Ok(()) => crate::copy_mode::start_copy_flash(ctx, id, ((0, 0), (rows, cols)), false),
+        Err(err) => {
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Copy failed",
+                err.to_string(),
+            ));
+            Update::full()
+        }
+    }
+}

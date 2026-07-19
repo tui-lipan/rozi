@@ -3,6 +3,7 @@ pub(crate) mod control;
 pub(crate) mod exit;
 pub(crate) mod focus;
 pub(crate) mod identity;
+pub(crate) mod last_output;
 pub(crate) mod profile;
 pub(crate) mod resize_move;
 pub(crate) mod scrollback;

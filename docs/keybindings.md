@@ -271,6 +271,8 @@ Esc** indicator while active.
 | `g` / `G` | Jump to the top of history / the live bottom |
 | `/` | Search this pane's scrollback; Enter returns to copy mode on the match |
 | `n` / `N` | Next / previous search match (after `/`) |
+| `[` / `]` | Jump to previous / next shell prompt (OSC 133; requires shell integration) |
+| `o` | Copy last command output (requires shell integration) |
 | `v` or `Space` | Start a selection at the cursor |
 | `y` or `Enter` | Copy the selection to the system clipboard and exit |
 | `Esc` or `q` | Exit without copying |

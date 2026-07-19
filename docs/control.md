@@ -46,7 +46,9 @@ hyprmux split 'claude --agent helper'
 hyprmux run-action toggle-float
 hyprmux capture-pane --target 3
 hyprmux capture-pane --scrollback full
+hyprmux capture-pane --scrollback last-output
 hyprmux capture-pane --scrollback 200 --target 3
+hyprmux run-action copy-last-output
 hyprmux switch-workspace 2
 hyprmux move-to-workspace 3
 hyprmux status blocked --reason "needs approval"
@@ -65,7 +67,8 @@ literal text (so `send-keys -l C-c` types the characters `C-c` instead of Ctrl+C
 `run-action` takes any keybindable action's stable id (the same ids used in `[keys]` config and
 shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. `capture-pane`
 returns the plain text of a pane's current visible snapshot grid by default, or scrollback history
-with `--scrollback N` / `--scrollback full`. It defaults to the request's `source_pane` or the
+with `--scrollback N` / `--scrollback full`, or the last shell-integration command's output with
+`--scrollback last-output`. It defaults to the request's `source_pane` or the
 focused pane when `--target`/`target` is omitted. `switch-workspace` and
 `move-to-workspace` take a 1-9 workspace number, matching the on-screen tabs.
 Destructive `run-action` calls honor `[confirm]` settings; a first call can arm a confirmation
@@ -114,6 +117,7 @@ Examples:
 {"cmd":"send-keys","keys":["C-c"],"literal":true}
 {"cmd":"capture-pane","target":3}
 {"cmd":"capture-pane","scrollback":"full"}
+{"cmd":"capture-pane","scrollback":"last-output"}
 {"cmd":"capture-pane","scrollback":200,"target":3}
 ```
 

@@ -311,6 +311,21 @@ impl TerminalPane {
         self.screen.export_text(start, total)
     }
 
+    /// Plain text of the last shell-integration command's output, when marks are available.
+    pub fn capture_last_command_output(&self) -> Option<String> {
+        self.screen.export_last_command_output()
+    }
+
+    /// Absolute-line semantic marks from OSC 133 (Prompt / OutputStart / OutputEnd).
+    pub fn semantic_marks(&self) -> Vec<tui_lipan::prelude::SemanticMark> {
+        self.screen.semantic_marks()
+    }
+
+    /// Map an absolute text line to `(scrollback_offset, viewport_row)`.
+    pub fn absolute_line_to_viewport(&self, absolute: usize) -> Option<(usize, usize)> {
+        self.screen.absolute_line_to_viewport(absolute)
+    }
+
     /// Plain, right-trimmed text of a single row in the current snapshot grid, or an empty
     /// string when `row` is out of range.
     pub fn row_text(&self, row: usize) -> String {

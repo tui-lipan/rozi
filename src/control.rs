@@ -35,18 +35,27 @@ impl CaptureScrollback {
         if value.eq_ignore_ascii_case("full") {
             return Ok(Self::Named("full".into()));
         }
+        if value.eq_ignore_ascii_case("last-output") || value.eq_ignore_ascii_case("last_output") {
+            return Ok(Self::Named("last-output".into()));
+        }
         value
             .parse::<usize>()
             .map(Self::Lines)
-            .map_err(|_| "--scrollback requires a line count or `full`".to_string())
+            .map_err(|_| "--scrollback requires a line count, `full`, or `last-output`".to_string())
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
         match self {
             Self::Lines(_) => Ok(()),
-            Self::Named(name) if name.eq_ignore_ascii_case("full") => Ok(()),
+            Self::Named(name)
+                if name.eq_ignore_ascii_case("full")
+                    || name.eq_ignore_ascii_case("last-output")
+                    || name.eq_ignore_ascii_case("last_output") =>
+            {
+                Ok(())
+            }
             Self::Named(name) => Err(format!(
-                "unknown scrollback specifier `{name}` (expected a line count or `full`)"
+                "unknown scrollback specifier `{name}` (expected a line count, `full`, or `last-output`)"
             )),
         }
     }

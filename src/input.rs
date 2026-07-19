@@ -77,6 +77,7 @@ pub enum Action {
     TogglePaneSynchronization,
     OpenConfigFile,
     EditScrollback,
+    CopyLastOutput,
     /// Runs `config.user_commands[index]`. Defined only by `[keys]` table entries (see
     /// `crate::config::build_key_overrides`), so - like workspace digits - it has no static id
     /// and isn't independently rebindable or listed in `crate::commands::BUILTIN_COMMANDS`.
@@ -166,6 +167,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::TogglePaneSynchronization,
     Action::OpenConfigFile,
     Action::EditScrollback,
+    Action::CopyLastOutput,
 ];
 
 impl Action {
@@ -257,6 +259,7 @@ impl Action {
             Action::TogglePaneSynchronization => "toggle-pane-synchronization",
             Action::OpenConfigFile => "open-config",
             Action::EditScrollback => "edit-scrollback",
+            Action::CopyLastOutput => "copy-last-output",
             Action::SwitchWorkspace(_)
             | Action::MoveToWorkspace(_)
             | Action::RelocateWorkspace(_)

@@ -183,6 +183,15 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     if key.is(KeyCode::Char('N')) {
         return (true, cycle_copy_search(ctx, true));
     }
+    if key.is(KeyCode::Char('[')) {
+        return (true, jump_semantic_prompt(ctx, false));
+    }
+    if key.is(KeyCode::Char(']')) {
+        return (true, jump_semantic_prompt(ctx, true));
+    }
+    if key.is(KeyCode::Char('o')) {
+        return (true, crate::ops::last_output::copy_last_output(ctx));
+    }
     if key.is(KeyCode::Char('v')) || key.is(KeyCode::Char(' ')) {
         if let Some(copy) = ctx.state.copy_mode.as_mut() {
             copy.anchor = Some((copy.cursor_row, copy.cursor_col));
@@ -289,6 +298,68 @@ fn cycle_copy_search(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
     };
     let matched = copy.search_matches[copy.search_current].clone();
     apply_copy_search_match(ctx, &matched);
+    Update::full()
+}
+
+fn jump_semantic_prompt(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update {
+    let Some(copy) = ctx.state.copy_mode.as_ref() else {
+        return Update::none();
+    };
+    let target = copy.target;
+    let cursor_row = copy.cursor_row;
+    let offset = copy.offset;
+    let (prompts, rows, history) = {
+        let Some(pane) = find_pane_mut(&mut ctx.state, target) else {
+            return Update::none();
+        };
+        let prompts: Vec<_> = pane
+            .terminal
+            .semantic_marks()
+            .into_iter()
+            .filter(|mark| mark.kind == tui_lipan::prelude::SemanticMarkKind::Prompt)
+            .collect();
+        (
+            prompts,
+            usize::from(pane.terminal.rows),
+            pane.terminal.total_scrollback_rows(),
+        )
+    };
+    if prompts.is_empty() {
+        return Update::full();
+    }
+    let current_abs = history
+        .saturating_add(rows)
+        .saturating_sub(offset)
+        .saturating_sub(rows)
+        .saturating_add(cursor_row);
+    let idx = if forward {
+        prompts
+            .iter()
+            .position(|mark| mark.absolute_line > current_abs)
+            .unwrap_or(0)
+    } else {
+        prompts
+            .iter()
+            .rposition(|mark| mark.absolute_line < current_abs)
+            .unwrap_or(prompts.len() - 1)
+    };
+    let mark = prompts[idx];
+    let Some((new_offset, row)) = ({
+        let Some(pane) = find_pane_mut(&mut ctx.state, target) else {
+            return Update::full();
+        };
+        pane.terminal.absolute_line_to_viewport(mark.absolute_line)
+    }) else {
+        return Update::full();
+    };
+    if let Some(copy) = ctx.state.copy_mode.as_mut() {
+        copy.offset = new_offset;
+        copy.cursor_row = row;
+        copy.cursor_col = 0;
+    }
+    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
+        pane.terminal.set_scrollback(new_offset);
+    }
     Update::full()
 }
 

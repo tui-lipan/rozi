@@ -203,13 +203,21 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
 }
 
 /// Finish a copy-mode search: park matches on [`CopyModeState`] for `n`/`N` and clear the overlay.
+///
+/// Only clears the search overlay when it was opened from copy mode; otherwise leaves the
+/// normal scrollback-search overlay alone for its own confirm/cancel path.
 pub(crate) fn finish_copy_mode_search(ctx: &mut Context<HyprmuxApp>, apply_current: bool) {
+    if !ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.from_copy_mode)
+    {
+        return;
+    }
     let Some(search) = ctx.state.search.take() else {
         return;
     };
-    if !search.from_copy_mode {
-        return;
-    }
     let matches: Vec<crate::state::CopySearchMatch> = search
         .matches
         .into_iter()

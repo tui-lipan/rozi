@@ -112,16 +112,18 @@ indicator while active, and the selection is highlighted with the theme's select
 uses the system clipboard, reaching it over SSH via OSC52 when enabled.
 
 *Copy last command output* is also available from the command palette / `copy-last-output`
-action and as `hyprmux capture-pane --scrollback last-output` for automation. Without shell
+action and as `hyprmux capture-pane --last-output` for automation. Without shell
 integration marks the action shows a status hint rather than an error.
 
 ## Hint mode
 
 Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an
 optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot, plus any
-additive `[[hints]]` patterns from config. Each match receives a home-row label. A lowercase label
-copies the match; an uppercase final label character opens URL matches (and custom hints with
-`open = true`) and copies other kinds. `Esc`/`q` exits. Scroll first to hint older output.
+additive `[[hints]]` patterns from config. Built-ins run first and win on overlap; trailing
+`.,;:!?)]}` characters are trimmed from custom matches too. Each match receives a home-row label.
+A lowercase label copies the match; an uppercase final label character opens URL matches (and
+custom hints with `open = true`) and copies other kinds. `Esc`/`q` exits. Scroll first to hint
+older output.
 
 ## Bell urgency
 

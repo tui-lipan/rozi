@@ -170,6 +170,7 @@ mod tests {
         assert_eq!(warnings.len(), 3);
     }
 
+    #[test]
     fn invalid_rules_are_skipped_or_lose_invalid_workspace() {
         let parsed: RulesOnly = toml::from_str(
             r#"

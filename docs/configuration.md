@@ -297,9 +297,14 @@ focus = false
 
 ## `[[hints]]`
 
-Additive hint patterns for hint mode (`u`). Built-in URL / path / Git-SHA detectors always run;
-each `[[hints]]` entry appends another regex over the visible snapshot. Invalid patterns
+Additive hint patterns for hint mode (`u`). Built-in URL / path / Git-SHA detectors always run
+first; each `[[hints]]` entry appends another regex over the visible snapshot. Invalid patterns
 warn-and-skip on load/reload. There is no disable/override syntax for built-ins.
+
+Built-ins win on overlap: a custom match that intersects an existing URL/path/SHA on the same row
+is dropped (including its `open = true` behavior). Trailing `.,;:!?)]}` characters are trimmed from
+**custom** matches as well as built-ins, so a pattern that deliberately ends in `)` will not keep
+that character in the captured text.
 
 ```toml
 [[hints]]

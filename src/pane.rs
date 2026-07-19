@@ -186,9 +186,14 @@ impl TerminalPane {
         }
 
         let total = self.screen.total_text_lines();
-        let lines = self.screen.text_lines(0, total);
+        // `text_lines(start, count)` returns up to `count` lines beginning at absolute
+        // `start`. Indices below are `start + i` so a future clamp/shift in the exporter
+        // cannot silently renumber matches.
+        let start = 0;
+        let lines = self.screen.text_lines(start, total);
         let mut matches = Vec::new();
-        for (absolute, text) in lines.into_iter().enumerate() {
+        for (i, text) in lines.into_iter().enumerate() {
+            let absolute = start + i;
             let Some((offset, line)) = self.screen.absolute_line_to_viewport(absolute) else {
                 continue;
             };

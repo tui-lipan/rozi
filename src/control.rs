@@ -26,38 +26,32 @@ pub struct ControlRequest {
 pub enum CaptureScrollback {
     /// Trailing line count from the retained scrollback + live grid.
     Lines(usize),
-    /// `"full"` — every retained line.
-    Named(String),
+    /// Named capture modes (`"full"`, `"last-output"`).
+    Named(CaptureScrollbackNamed),
+}
+
+/// Named `capture-pane` scrollback modes. Serde maps these to kebab-case strings so
+/// validation lives in the type instead of string compares at each call site.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureScrollbackNamed {
+    Full,
+    #[serde(alias = "last_output")]
+    LastOutput,
 }
 
 impl CaptureScrollback {
     pub fn parse_cli(value: &str) -> std::result::Result<Self, String> {
         if value.eq_ignore_ascii_case("full") {
-            return Ok(Self::Named("full".into()));
+            return Ok(Self::Named(CaptureScrollbackNamed::Full));
         }
         if value.eq_ignore_ascii_case("last-output") || value.eq_ignore_ascii_case("last_output") {
-            return Ok(Self::Named("last-output".into()));
+            return Ok(Self::Named(CaptureScrollbackNamed::LastOutput));
         }
         value
             .parse::<usize>()
             .map(Self::Lines)
-            .map_err(|_| "--scrollback requires a line count, `full`, or `last-output`".to_string())
-    }
-
-    pub fn validate(&self) -> std::result::Result<(), String> {
-        match self {
-            Self::Lines(_) => Ok(()),
-            Self::Named(name)
-                if name.eq_ignore_ascii_case("full")
-                    || name.eq_ignore_ascii_case("last-output")
-                    || name.eq_ignore_ascii_case("last_output") =>
-            {
-                Ok(())
-            }
-            Self::Named(name) => Err(format!(
-                "unknown scrollback specifier `{name}` (expected a line count, `full`, or `last-output`)"
-            )),
-        }
+            .map_err(|_| "--scrollback requires a line count or `full`".to_string())
     }
 }
 
@@ -399,8 +393,23 @@ mod tests {
             with_scrollback.command,
             ControlCommand::CapturePane {
                 target: None,
-                scrollback: Some(CaptureScrollback::Named("full".into()))
+                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full))
             }
+        );
+
+        let with_last_output: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"capture-pane","scrollback":"last-output"}"#).unwrap();
+        assert_eq!(
+            with_last_output.command,
+            ControlCommand::CapturePane {
+                target: None,
+                scrollback: Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput))
+            }
+        );
+
+        assert!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"capture-pane","scrollback":"100"}"#)
+                .is_err()
         );
 
         let send_keys: ControlRequest =

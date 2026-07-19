@@ -3,7 +3,9 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::actions::execute_action;
-use crate::control::{CaptureScrollback, ControlCommand, ControlEnvelope, ControlResponse};
+use crate::control::{
+    CaptureScrollback, CaptureScrollbackNamed, ControlCommand, ControlEnvelope, ControlResponse,
+};
 use crate::input::Action;
 use crate::ops::focus::{
     focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
@@ -264,6 +266,9 @@ fn send_keys(
         return ControlResponse::error(format!("pane {id} session is not connected"));
     };
 
+    // Parse every argument before sending any so invalid input never reaches the PTY.
+    // A mid-loop send failure can still leave earlier keys already delivered; callers that
+    // retry on error should treat the pane as partially updated.
     let mut items = Vec::with_capacity(keys.len());
     for key in &keys {
         match parse_send_keys_arg(key, literal) {
@@ -330,26 +335,18 @@ fn capture_pane(
     };
     let text = match scrollback {
         None => pane.terminal.capture_text(),
-        Some(spec) => {
-            if let Err(message) = spec.validate() {
-                return ControlResponse::error(message);
-            }
-            match spec {
-                CaptureScrollback::Lines(n) => pane.terminal.capture_scrollback_text(Some(n)),
-                CaptureScrollback::Named(name)
-                    if name.eq_ignore_ascii_case("last-output")
-                        || name.eq_ignore_ascii_case("last_output") =>
-                {
-                    match pane.terminal.capture_last_command_output() {
-                        Some(text) => text,
-                        None => {
-                            return ControlResponse::error(
-                                "no last command output (shell integration marks missing)",
-                            );
-                        }
-                    }
+        Some(CaptureScrollback::Lines(n)) => pane.terminal.capture_scrollback_text(Some(n)),
+        Some(CaptureScrollback::Named(CaptureScrollbackNamed::Full)) => {
+            pane.terminal.capture_scrollback_text(None)
+        }
+        Some(CaptureScrollback::Named(CaptureScrollbackNamed::LastOutput)) => {
+            match pane.terminal.capture_last_command_output() {
+                Some(text) => text,
+                None => {
+                    return ControlResponse::error(
+                        "no last command output (shell integration marks missing)",
+                    );
                 }
-                CaptureScrollback::Named(_) => pane.terminal.capture_scrollback_text(None),
             }
         }
     };

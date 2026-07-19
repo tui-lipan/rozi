@@ -185,13 +185,20 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "send-keys" => {
                 let mut literal = false;
                 let mut keys = Vec::new();
+                let mut passthrough = false;
                 for arg in iter.by_ref() {
-                    if arg == "-l" || arg == "--literal" {
-                        literal = true;
-                        continue;
-                    }
-                    if arg.starts_with('-') && keys.is_empty() && arg != "-" {
-                        return Err(format!("unexpected send-keys flag `{arg}`"));
+                    if !passthrough {
+                        if arg == "--" {
+                            passthrough = true;
+                            continue;
+                        }
+                        if arg == "-l" || arg == "--literal" {
+                            literal = true;
+                            continue;
+                        }
+                        if arg.starts_with('-') && keys.is_empty() && arg != "-" {
+                            return Err(format!("unexpected send-keys flag `{arg}`"));
+                        }
                     }
                     keys.push(arg);
                 }
@@ -282,6 +289,11 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                                 "--scrollback requires a line count or `full`".to_string()
                             })?;
                             scrollback = Some(control::CaptureScrollback::parse_cli(&value)?);
+                        }
+                        "--last-output" => {
+                            scrollback = Some(control::CaptureScrollback::Named(
+                                control::CaptureScrollbackNamed::LastOutput,
+                            ));
                         }
                         other => {
                             return Err(format!(
@@ -535,6 +547,8 @@ USAGE:
     hyprmux [--socket PATH] split [COMMAND]
     hyprmux [--socket PATH] run-action <ACTION_ID>
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
+                            [--scrollback <N|full>] [--last-output]
+    hyprmux [--socket PATH] send-keys [-l|--literal] [--] <KEY|TEXT>...
     hyprmux [--socket PATH] switch-workspace <1-9>
     hyprmux [--socket PATH] move-to-workspace <1-9>
     hyprmux --session <NAME> [--read-only]
@@ -700,7 +714,24 @@ mod tests {
             capture_scrollback.request.command,
             control::ControlCommand::CapturePane {
                 target: None,
-                scrollback: Some(control::CaptureScrollback::Named("full".into()))
+                scrollback: Some(control::CaptureScrollback::Named(
+                    control::CaptureScrollbackNamed::Full
+                ))
+            }
+        );
+
+        let ParsedCli::Control(capture_last) =
+            parse_cli_args(vec!["capture-pane".into(), "--last-output".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            capture_last.request.command,
+            control::ControlCommand::CapturePane {
+                target: None,
+                scrollback: Some(control::CaptureScrollback::Named(
+                    control::CaptureScrollbackNamed::LastOutput
+                ))
             }
         );
 
@@ -714,6 +745,24 @@ mod tests {
             control::ControlCommand::SendKeys {
                 target: None,
                 keys: vec!["C-c".into(), "Enter".into()],
+                literal: false,
+            }
+        );
+
+        let ParsedCli::Control(send_keys_dash) = parse_cli_args(vec![
+            "send-keys".into(),
+            "--".into(),
+            "-n".into(),
+            "hello".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            send_keys_dash.request.command,
+            control::ControlCommand::SendKeys {
+                target: None,
+                keys: vec!["-n".into(), "hello".into()],
                 literal: false,
             }
         );

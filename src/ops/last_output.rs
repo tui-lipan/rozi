@@ -5,7 +5,10 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::pane_lifecycle::find_pane_mut;
 
-/// Resolve `last_command_output_range`, copy the text, and flash the selection when possible.
+/// Resolve `last_command_output_range`, copy the text, and confirm with a toast.
+///
+/// A viewport selection flash would be misleading when the output has scrolled into
+/// history (or spans more than the live grid), so this path uses a toast instead.
 pub(crate) fn copy_last_output(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(id) = ctx.state.focused_pane else {
         return Update::none();
@@ -27,10 +30,14 @@ pub(crate) fn copy_last_output(ctx: &mut Context<HyprmuxApp>) -> Update {
         ));
         return Update::full();
     }
-    let rows = usize::from(pane.terminal.rows).saturating_sub(1);
-    let cols = usize::from(pane.terminal.cols).saturating_sub(1);
     match ctx.clipboard().copy(&text) {
-        Ok(()) => crate::copy_mode::start_copy_flash(ctx, id, ((0, 0), (rows, cols)), false),
+        Ok(()) => {
+            ctx.toast().push(crate::pty_events::info_toast(
+                &ctx.state.theme,
+                "Copied last command output",
+            ));
+            Update::full()
+        }
         Err(err) => {
             ctx.toast().push(crate::pty_events::error_toast(
                 &ctx.state.theme,

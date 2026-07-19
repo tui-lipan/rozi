@@ -177,10 +177,11 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     if key.is(KeyCode::Char('/')) {
         return (true, crate::ops::search::open_search_from_copy_mode(ctx));
     }
-    if key.is(KeyCode::Char('n')) {
+    // Match on `key.code` (not `key.is`) so Shift+N still works under Kitty keyboard protocol.
+    if matches!(key.code, KeyCode::Char('n')) {
         return (true, cycle_copy_search(ctx, false));
     }
-    if key.is(KeyCode::Char('N')) {
+    if matches!(key.code, KeyCode::Char('N')) {
         return (true, cycle_copy_search(ctx, true));
     }
     if key.is(KeyCode::Char('[')) {
@@ -308,7 +309,7 @@ fn jump_semantic_prompt(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update 
     let target = copy.target;
     let cursor_row = copy.cursor_row;
     let offset = copy.offset;
-    let (prompts, rows, history) = {
+    let (prompts, history) = {
         let Some(pane) = find_pane_mut(&mut ctx.state, target) else {
             return Update::none();
         };
@@ -318,20 +319,14 @@ fn jump_semantic_prompt(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update 
             .into_iter()
             .filter(|mark| mark.kind == tui_lipan::prelude::SemanticMarkKind::Prompt)
             .collect();
-        (
-            prompts,
-            usize::from(pane.terminal.rows),
-            pane.terminal.total_scrollback_rows(),
-        )
+        (prompts, pane.terminal.total_scrollback_rows())
     };
     if prompts.is_empty() {
         return Update::full();
     }
-    let current_abs = history
-        .saturating_add(rows)
-        .saturating_sub(offset)
-        .saturating_sub(rows)
-        .saturating_add(cursor_row);
+    // Absolute line of the copy cursor: history lines above the viewport, minus
+    // scrollback offset, plus the cursor's row within the viewport.
+    let current_abs = history.saturating_sub(offset).saturating_add(cursor_row);
     let idx = if forward {
         prompts
             .iter()

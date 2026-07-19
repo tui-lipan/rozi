@@ -47,8 +47,9 @@ pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
 
 /// Write `bytes` to a new file with mode `0600` (Unix) / inherited private ACL (Windows).
 ///
-/// Creates parent directories as private when missing. Overwrites an existing file in place after
-/// truncating it.
+/// Creates parent directories as private when missing. Uses `create_new` so an existing path
+/// is never truncated through a re-resolved path race; callers that need unique names
+/// (for example scrollback dumps) should generate them before calling.
 #[cfg(unix)]
 pub fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
@@ -60,12 +61,11 @@ pub fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)?;
-    // Reinforce mode in case the file already existed with a looser umask-derived mode.
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    // Reinforce mode on the open handle (not via path) in case the create mode was masked.
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -230,6 +230,8 @@ mod windows_impl {
     }
 
     /// Write `bytes` into a private parent directory. Child files inherit the protected DACL.
+    ///
+    /// Uses `create_new` so an existing path is never truncated through a re-resolved path race.
     pub fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
         use std::io::Write;
 
@@ -238,8 +240,7 @@ mod windows_impl {
         }
         let mut file = fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(path)?;
         file.write_all(bytes)?;
         file.sync_all()

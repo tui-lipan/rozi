@@ -42,11 +42,12 @@ hyprmux send-text 'cargo test
 hyprmux send-keys C-c
 hyprmux send-keys 'echo hi' Enter
 hyprmux send-keys -l C-c
+hyprmux send-keys -- -n hello
 hyprmux split 'claude --agent helper'
 hyprmux run-action toggle-float
 hyprmux capture-pane --target 3
 hyprmux capture-pane --scrollback full
-hyprmux capture-pane --scrollback last-output
+hyprmux capture-pane --last-output
 hyprmux capture-pane --scrollback 200 --target 3
 hyprmux run-action copy-last-output
 hyprmux switch-workspace 2
@@ -62,14 +63,18 @@ PTY may still be starting (`pty_ready: false`).
 `send-keys` accepts tmux-style key names (`C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
 `BSpace`, arrows, `Home`/`End`, `PgUp`/`PgDn`, `F1`..`F12`) mixed with literal text arguments.
 Unknown tokens are sent as literal UTF-8. `-l` / `--literal` forces every argument to be treated as
-literal text (so `send-keys -l C-c` types the characters `C-c` instead of Ctrl+C).
+literal text (so `send-keys -l C-c` types the characters `C-c` instead of Ctrl+C). A `--`
+terminator stops flag parsing so arguments that look like options can be typed literally
+(`send-keys -- -n hello`). All arguments are validated before any are sent; if a later key fails
+to deliver, earlier keys may already have reached the PTY — automation clients that retry on
+error should treat the pane as partially updated.
 
 `run-action` takes any keybindable action's stable id (the same ids used in `[keys]` config and
 shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. `capture-pane`
 returns the plain text of a pane's current visible snapshot grid by default, or scrollback history
 with `--scrollback N` / `--scrollback full`, or the last shell-integration command's output with
-`--scrollback last-output`. It defaults to the request's `source_pane` or the
-focused pane when `--target`/`target` is omitted. `switch-workspace` and
+`--last-output` (JSON: `"scrollback":"last-output"`). It defaults to the request's `source_pane`
+or the focused pane when `--target`/`target` is omitted. `switch-workspace` and
 `move-to-workspace` take a 1-9 workspace number, matching the on-screen tabs.
 Destructive `run-action` calls honor `[confirm]` settings; a first call can arm a confirmation
 toast and a second matching call within the toast window confirms it.

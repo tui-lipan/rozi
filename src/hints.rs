@@ -67,6 +67,7 @@ pub fn scan_snapshot_with_custom(
                     continue;
                 }
                 if kind == HintKind::GitSha && !trimmed.bytes().any(|b| b.is_ascii_alphabetic()) {
+                    // Pure decimal runs are timestamps, PIDs, or byte counts — not Git SHAs.
                     continue;
                 }
                 let start_col = line[..matched.start()].chars().count();

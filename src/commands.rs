@@ -586,6 +586,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         default_keys: &[],
         palette: true,
     },
+    BuiltinCommand {
+        action: Action::EditScrollback,
+        label: "Edit scrollback in $EDITOR",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
 ];
 
 /// Workspace digit shifted symbols on a US layout (`shift-1` ==`!` etc.), used for the

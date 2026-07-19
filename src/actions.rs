@@ -517,6 +517,7 @@ fn execute_action_inner(
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),
         Action::OpenConfigFile => crate::ops::config::open_config_file(ctx),
+        Action::EditScrollback => crate::ops::scrollback::edit_scrollback(ctx),
         Action::TogglePaneSynchronization => {
             let synchronized = {
                 let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];

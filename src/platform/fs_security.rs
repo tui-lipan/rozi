@@ -45,6 +45,31 @@ pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
+/// Write `bytes` to a new file with mode `0600` (Unix) / inherited private ACL (Windows).
+///
+/// Creates parent directories as private when missing. Overwrites an existing file in place after
+/// truncating it.
+#[cfg(unix)]
+pub fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(parent) = path.parent() {
+        ensure_private_dir(parent)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    // Reinforce mode in case the file already existed with a looser umask-derived mode.
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
 /// Validate that `dir` (with pre-fetched `metadata` from `symlink_metadata`, never `metadata`, so
 /// a symlink cannot substitute for the real directory) is private to the current user.
 #[cfg(unix)]
@@ -204,6 +229,22 @@ mod windows_impl {
         }
     }
 
+    /// Write `bytes` into a private parent directory. Child files inherit the protected DACL.
+    pub fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+
+        if let Some(parent) = path.parent() {
+            ensure_private_dir(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
+
     /// Reject anything that is not a real directory we can trust: a file, or a reparse point
     /// (junction/symlink) that could silently redirect the "private" directory somewhere else.
     ///
@@ -260,7 +301,9 @@ mod windows_impl {
 }
 
 #[cfg(windows)]
-pub use windows_impl::{current_user_sid, ensure_private_dir, private_security_descriptor};
+pub use windows_impl::{
+    current_user_sid, ensure_private_dir, private_security_descriptor, write_private_file,
+};
 
 #[cfg(all(test, unix))]
 mod tests {
@@ -282,6 +325,20 @@ mod tests {
         ensure_private_dir(&dir).expect("create");
         let mode = fs::symlink_metadata(&dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_private_file_creates_0600_file() {
+        let dir = temp_base("private-file");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("dump.txt");
+
+        write_private_file(&path, b"scrollback\n").expect("write");
+        let mode = fs::symlink_metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "scrollback\n");
 
         let _ = fs::remove_dir_all(&dir);
     }

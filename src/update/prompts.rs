@@ -14,6 +14,16 @@ use crate::ops::search::{recompute_search, search_next as next_search, select_se
 use crate::{HyprmuxApp, session};
 
 pub(super) fn close_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let from_copy_mode = ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.from_copy_mode);
+    if from_copy_mode {
+        crate::ops::search::finish_copy_mode_search(ctx, false);
+        request_current_pane_focus(ctx);
+        return Update::full();
+    }
     ctx.state.search = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
@@ -40,6 +50,16 @@ pub(super) fn search_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
 
 pub(super) fn search_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     select_search_match(ctx, index);
+    let from_copy_mode = ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.from_copy_mode);
+    if from_copy_mode {
+        crate::ops::search::finish_copy_mode_search(ctx, true);
+        request_current_pane_focus(ctx);
+        return Update::full();
+    }
     ctx.state.search = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);

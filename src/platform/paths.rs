@@ -17,6 +17,7 @@
 //! contracts, but is **unverified**: this environment has no Windows target to run it on. See
 //! `AGENTS.md`/`CLAUDE.md` for the cross-platform plan's verification constraints.
 
+use std::fs;
 use std::io;
 use std::path::PathBuf;
 
@@ -143,6 +144,45 @@ pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
 pub fn fallback_runtime_dir_path() -> PathBuf {
     let owner = super::user::current_user_tag();
     std::env::temp_dir().join(format!("{APP_DIR}-{owner}"))
+}
+
+/// Directory for temporary scrollback dumps opened in `$EDITOR` (`state_dir/scrollback`).
+pub fn scrollback_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
+    let dir = state_dir(env).join("scrollback");
+    fs_security::ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+const SCROLLBACK_DUMP_CAP: usize = 20;
+
+/// Write a scrollback dump as `pane-<id>-<timestamp>.txt` (mode 0600) and prune older dumps so
+/// the directory stays near [`SCROLLBACK_DUMP_CAP`] files.
+pub fn write_scrollback_dump(env: &PlatformEnv, pane_id: u64, text: &str) -> io::Result<PathBuf> {
+    let dir = scrollback_dir(env)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("pane-{pane_id}-{stamp}.txt"));
+    fs_security::write_private_file(&path, text.as_bytes())?;
+    prune_scrollback_dumps(&dir, SCROLLBACK_DUMP_CAP)?;
+    Ok(path)
+}
+
+fn prune_scrollback_dumps(dir: &std::path::Path, cap: usize) -> io::Result<()> {
+    let mut entries: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "txt"))
+        .collect();
+    if entries.len() <= cap {
+        return Ok(());
+    }
+    entries.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok());
+    let remove_count = entries.len().saturating_sub(cap);
+    for entry in entries.into_iter().take(remove_count) {
+        let _ = fs::remove_file(entry.path());
+    }
+    Ok(())
 }
 
 /// Normalize a working directory reported by a shell (`OSC 7` / `OSC 9;9`) into the platform's

@@ -102,7 +102,10 @@ toward the live view at the top/bottom edges); `w`/`b`/`e` and `W`/`B`/`E` move 
 (forward, backward, to word end), `0`/`^`/`$` jump to the line start, first non-blank, or line
 end (these row-local motions reuse `tui-lipan`'s vim-mode `TextArea` motion algorithms);
 `Ctrl-u`/`Ctrl-d` page by half a screen; and `g`/`G` jump to the top of history / the live
-bottom. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
+bottom. Press `/` to search within the focused pane (same overlay as scrollback search, scoped
+to this pane); `Enter` parks the copy cursor on the match and returns to copy mode, `Esc`
+cancels back to copy mode, and `n`/`N` cycle later matches while keeping any selection anchor.
+Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
 system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar shows a **COPY**
 indicator while active, and the selection is highlighted with the theme's selection color. Yank
 uses the system clipboard, reaching it over SSH via OSC52 when enabled.
@@ -146,11 +149,23 @@ Press `/` (or *Search scrollback* in the palette) to search the focused pane's s
 - Selecting a match scrolls the pane to that position; `Esc` closes the search and the pane
   returns to where it was.
 
-Search is **app-side**: `hyprmux` scans the terminal snapshot by walking the scrollback offset
-in viewport-sized windows, de-duplicating overlapping scans (preferring the lowest offset so
-already-visible matches don't jump), then restores the original scroll position. Matching is
-case-insensitive. This works regardless of the program running in the pane, because it reads
-rendered terminal lines rather than relying on an in-terminal highlight search.
+Search is **app-side**: `hyprmux` scans retained scrollback via `TerminalScreen`'s plain-text
+export (no scrollback-offset mutation), then maps absolute lines back to viewport coordinates
+for jumping. Matching is case-insensitive. This works regardless of the program running in the
+pane, because it reads rendered terminal lines rather than relying on an in-terminal highlight
+search.
+
+## Edit scrollback
+
+*Edit scrollback in $EDITOR* (palette / `edit-scrollback` action) dumps the focused pane's full
+retained scrollback to a private file under the state directory
+(`~/.local/state/hyprmux/scrollback/pane-<id>-<timestamp>.txt`, mode `0600`) and opens it in
+`$EDITOR` (then `$VISUAL`, then `vi`) as a tiled pane — the same pattern as opening the config
+file. Older dumps are pruned so the directory stays near 20 files.
+
+**Credentials caveat:** like pane logging, scrollback dumps can contain secrets typed or printed
+in the terminal (tokens, passwords, private URLs). Treat the dump directory as sensitive local
+data; do not share those files.
 
 ## Runtime persistence boundaries
 

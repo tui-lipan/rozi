@@ -62,6 +62,8 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
         cursor_col,
         anchor: None,
         offset,
+        search_matches: Vec::new(),
+        search_current: 0,
     });
     ctx.state.mode = Mode::Copy;
     ctx.state.show_help = false;
@@ -73,7 +75,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Leave copy mode. When `copy` is set the current selection (if any) is sent to the system
 /// clipboard. Either way scrollback snaps back to the live view and focus returns to the pane.
 pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
-    let Some(state) = ctx.state.copy_mode else {
+    let Some(state) = ctx.state.copy_mode.take() else {
         ctx.state.mode = Mode::Normal;
         ctx.state.commands_dirty = true;
         return Update::full();
@@ -105,7 +107,6 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     {
         pane.terminal.set_scrollback(0);
     }
-    ctx.state.copy_mode = None;
     ctx.state.mode = Mode::Normal;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
@@ -173,6 +174,15 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     if key.is(KeyCode::Char('y')) || key.is(KeyCode::Enter) {
         return (true, exit(ctx, true));
     }
+    if key.is(KeyCode::Char('/')) {
+        return (true, crate::ops::search::open_search_from_copy_mode(ctx));
+    }
+    if key.is(KeyCode::Char('n')) {
+        return (true, cycle_copy_search(ctx, false));
+    }
+    if key.is(KeyCode::Char('N')) {
+        return (true, cycle_copy_search(ctx, true));
+    }
     if key.is(KeyCode::Char('v')) || key.is(KeyCode::Char(' ')) {
         if let Some(copy) = ctx.state.copy_mode.as_mut() {
             copy.anchor = Some((copy.cursor_row, copy.cursor_col));
@@ -181,17 +191,23 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     }
 
     let (cols, rows, total, row_text) = {
-        let Some(copy) = ctx.state.copy_mode else {
+        let Some(target) = ctx.state.copy_mode.as_ref().map(|copy| copy.target) else {
             return (true, Update::none());
         };
-        let Some(pane) = find_pane_mut(&mut ctx.state, copy.target) else {
+        let cursor_row = ctx
+            .state
+            .copy_mode
+            .as_ref()
+            .map(|copy| copy.cursor_row)
+            .unwrap_or(0);
+        let Some(pane) = find_pane_mut(&mut ctx.state, target) else {
             return (true, Update::none());
         };
         (
             usize::from(pane.terminal.cols),
             usize::from(pane.terminal.rows),
             pane.terminal.total_scrollback_rows(),
-            pane.terminal.row_text(copy.cursor_row),
+            pane.terminal.row_text(cursor_row),
         )
     };
 
@@ -258,6 +274,41 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     (true, Update::full())
 }
 
+fn cycle_copy_search(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
+    let Some(copy) = ctx.state.copy_mode.as_mut() else {
+        return Update::none();
+    };
+    if copy.search_matches.is_empty() {
+        return Update::full();
+    }
+    let len = copy.search_matches.len();
+    copy.search_current = if backward {
+        copy.search_current.checked_sub(1).unwrap_or(len - 1)
+    } else {
+        (copy.search_current + 1) % len
+    };
+    let matched = copy.search_matches[copy.search_current].clone();
+    apply_copy_search_match(ctx, &matched);
+    Update::full()
+}
+
+pub(crate) fn apply_copy_search_match(
+    ctx: &mut Context<HyprmuxApp>,
+    matched: &crate::state::CopySearchMatch,
+) {
+    let Some(copy) = ctx.state.copy_mode.as_mut() else {
+        return;
+    };
+    copy.offset = matched.offset;
+    copy.cursor_row = matched.line;
+    copy.cursor_col = matched.start_col;
+    let target = copy.target;
+    let offset = copy.offset;
+    if let Some(pane) = find_pane_mut(&mut ctx.state, target) {
+        pane.terminal.set_scrollback(offset);
+    }
+}
+
 /// Move the cursor up `steps` rows; at the top of the viewport, scroll further into history
 /// (raising the scrollback offset, clamped to the total) while keeping the cursor on row 0.
 fn move_up(copy: &mut CopyModeState, steps: usize, total: usize) {
@@ -299,6 +350,8 @@ mod tests {
             cursor_col: 0,
             anchor: None,
             offset: 0,
+            search_matches: Vec::new(),
+            search_current: 0,
         }
     }
 
@@ -323,6 +376,39 @@ mod tests {
         move_down(&mut copy, 100, 4);
         // Cursor pinned to bottom row, offset drained back to the live view.
         assert_eq!((copy.cursor_row, copy.offset), (3, 0));
+    }
+
+    #[test]
+    fn copy_search_match_maps_onto_cursor_and_preserves_anchor() {
+        let mut copy = copy_state();
+        copy.anchor = Some((1, 2));
+        copy.search_matches = vec![
+            crate::state::CopySearchMatch {
+                offset: 5,
+                line: 3,
+                start_col: 4,
+                end_col: 9,
+            },
+            crate::state::CopySearchMatch {
+                offset: 2,
+                line: 1,
+                start_col: 0,
+                end_col: 3,
+            },
+        ];
+        let matched = copy.search_matches[0].clone();
+        copy.offset = matched.offset;
+        copy.cursor_row = matched.line;
+        copy.cursor_col = matched.start_col;
+        assert_eq!((copy.offset, copy.cursor_row, copy.cursor_col), (5, 3, 4));
+        assert_eq!(copy.anchor, Some((1, 2)));
+
+        let matched = copy.search_matches[1].clone();
+        copy.offset = matched.offset;
+        copy.cursor_row = matched.line;
+        copy.cursor_col = matched.start_col;
+        assert_eq!((copy.offset, copy.cursor_row, copy.cursor_col), (2, 1, 0));
+        assert_eq!(copy.anchor, Some((1, 2)));
     }
 
     #[test]

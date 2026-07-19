@@ -5,6 +5,7 @@ pub(crate) mod focus;
 pub(crate) mod identity;
 pub(crate) mod profile;
 pub(crate) mod resize_move;
+pub(crate) mod scrollback;
 pub(crate) mod search;
 pub(crate) mod session;
 pub(crate) mod theme;

@@ -18,6 +18,26 @@ pub(crate) fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
+/// Open scrollback search from copy mode: keep `Mode::Copy`, scope to the focused pane, and
+/// return to copy mode on confirm/cancel with the cursor parked on the match.
+pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(target) = ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .map(|copy| copy.target)
+        .or(ctx.state.focused_pane)
+    else {
+        return Update::full();
+    };
+    ctx.state.search = Some(ScrollbackSearchState::from_copy_mode(target));
+    ctx.state.show_help = false;
+    ctx.state.show_palette = false;
+    // Keep Mode::Copy so confirm/cancel can restore the copy-mode cursor path.
+    request_search_focus(ctx);
+    Update::full()
+}
+
 /// Cycle the search scope (focused pane → workspace → all) and re-run the search.
 pub(crate) fn cycle_search_scope(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(search) = ctx.state.search.as_mut() {
@@ -153,6 +173,11 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
     else {
         return;
     };
+    let from_copy_mode = ctx
+        .state
+        .search
+        .as_ref()
+        .is_some_and(|search| search.from_copy_mode);
 
     // Bring the matching pane's workspace forward and focus it before scrolling.
     if let Some(workspace_index) = pane_workspace(&ctx.state, matched.pane)
@@ -166,4 +191,54 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
     if let Some(pane) = find_pane_mut(&mut ctx.state, matched.pane) {
         pane.terminal.set_scrollback(matched.offset);
     }
+
+    if from_copy_mode
+        && let Some(copy) = ctx.state.copy_mode.as_mut()
+        && copy.target == matched.pane
+    {
+        copy.offset = matched.offset;
+        copy.cursor_row = matched.line;
+        copy.cursor_col = matched.start_col;
+    }
+}
+
+/// Finish a copy-mode search: park matches on [`CopyModeState`] for `n`/`N` and clear the overlay.
+pub(crate) fn finish_copy_mode_search(ctx: &mut Context<HyprmuxApp>, apply_current: bool) {
+    let Some(search) = ctx.state.search.take() else {
+        return;
+    };
+    if !search.from_copy_mode {
+        return;
+    }
+    let matches: Vec<crate::state::CopySearchMatch> = search
+        .matches
+        .into_iter()
+        .map(|matched| crate::state::CopySearchMatch {
+            offset: matched.offset,
+            line: matched.line,
+            start_col: matched.start_col,
+            end_col: matched.end_col,
+        })
+        .collect();
+    let current = search.current.min(matches.len().saturating_sub(1));
+    let apply = apply_current
+        .then(|| matches.get(current).cloned())
+        .flatten();
+    if let Some(copy) = ctx.state.copy_mode.as_mut() {
+        if let Some(matched) = apply.as_ref() {
+            copy.offset = matched.offset;
+            copy.cursor_row = matched.line;
+            copy.cursor_col = matched.start_col;
+        }
+        copy.search_matches = matches;
+        copy.search_current = current;
+    }
+    if let Some(matched) = apply
+        && let Some(target) = ctx.state.copy_mode.as_ref().map(|copy| copy.target)
+        && let Some(pane) = find_pane_mut(&mut ctx.state, target)
+    {
+        pane.terminal.set_scrollback(matched.offset);
+    }
+    ctx.state.mode = crate::state::Mode::Copy;
+    ctx.state.commands_dirty = true;
 }

@@ -213,11 +213,11 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Single-quotes a shell argument so a config path containing spaces (or other shell
 /// metacharacters) survives being spliced into a `sh -c` command string.
-fn quote_shell_arg(value: &str) -> String {
+pub(crate) fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn config_editor() -> String {
+pub(crate) fn config_editor() -> String {
     std::env::var("EDITOR")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -229,7 +229,7 @@ fn config_editor() -> String {
         .unwrap_or_else(|| "vi".to_string())
 }
 
-fn missing_editor_command(editor: &str) -> Option<String> {
+pub(crate) fn missing_editor_command(editor: &str) -> Option<String> {
     let command = first_shell_word(editor.trim()).unwrap_or(editor.trim());
     if command.is_empty() || command_exists(command) {
         None

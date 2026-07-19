@@ -46,6 +46,8 @@ pub struct ScrollbackSearchState {
     pub matches: Vec<ScrollbackMatch>,
     pub current: usize,
     pub status: String,
+    /// When true, confirm/cancel returns to copy mode and Enter parks the copy cursor on the match.
+    pub from_copy_mode: bool,
 }
 
 impl ScrollbackSearchState {
@@ -57,6 +59,14 @@ impl ScrollbackSearchState {
             matches: Vec::new(),
             current: 0,
             status: "Type to search scrollback".to_string(),
+            from_copy_mode: false,
         }
+    }
+
+    pub fn from_copy_mode(target: PaneId) -> Self {
+        let mut state = Self::new(target);
+        state.from_copy_mode = true;
+        state.status = "Type to search (copy mode)".to_string();
+        state
     }
 }

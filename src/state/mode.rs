@@ -19,7 +19,7 @@ pub struct HintModeState {
 
 /// State for keyboard copy mode: a cursor and optional selection anchor in the target
 /// pane's snapshot grid (viewport coordinates, which already reflect `offset`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CopyModeState {
     pub target: PaneId,
     pub cursor_row: usize,
@@ -28,6 +28,18 @@ pub struct CopyModeState {
     pub anchor: Option<(usize, usize)>,
     /// Scrollback offset the pane is parked at while in copy mode.
     pub offset: usize,
+    /// Matches retained after a `/` search so `n`/`N` can cycle without reopening the overlay.
+    pub search_matches: Vec<CopySearchMatch>,
+    pub search_current: usize,
+}
+
+/// One scrollback match parked on [`CopyModeState`] for `n`/`N` cycling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopySearchMatch {
+    pub offset: usize,
+    pub line: usize,
+    pub start_col: usize,
+    pub end_col: usize,
 }
 
 impl CopyModeState {

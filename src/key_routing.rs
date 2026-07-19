@@ -23,7 +23,15 @@ pub(crate) fn handle_key_routing(
             (false, Update::none())
         }
         Mode::Resize => handle_resize_mode_key(ctx, key),
-        Mode::Copy => crate::copy_mode::handle_copy_key(ctx, key),
+        Mode::Copy => {
+            // While a copy-mode `/` search overlay is open, let the focused search input handle
+            // keys instead of consuming them in handle_copy_key.
+            if ctx.state.search.is_some() {
+                (false, Update::none())
+            } else {
+                crate::copy_mode::handle_copy_key(ctx, key)
+            }
+        }
         Mode::Hint => crate::hints::handle_hint_key(ctx, key),
     }
 }

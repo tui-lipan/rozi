@@ -773,7 +773,11 @@ fn resize_junction_element(
 /// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
 /// cursor cell; with an anchor it spans anchor→cursor inclusive (matching `extract_text`).
 fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
-    let copy = ctx.state.copy_mode.filter(|copy| copy.target == id)?;
+    let copy = ctx
+        .state
+        .copy_mode
+        .as_ref()
+        .filter(|copy| copy.target == id)?;
     let cursor = (copy.cursor_row, copy.cursor_col);
     let (a, b) = copy
         .anchor

@@ -267,10 +267,10 @@ Pane focus and chrome behavior.
 ## `[[rules]]`
 
 Window rules apply to ordinary workspace panes spawned with an explicit command, including control
-`new-pane`, `[keys]` `run`, and other interactive command-spawn paths. Matching is a case-sensitive
-command substring and the first matching rule wins. Plain shell-pane spawns, profile restoration,
-scratchpads, and popups do not use rules. Rules are command-based only; terminal titles arrive after
-spawn and are not matched.
+`new-pane`, `[keys]` `run`, and other interactive command-spawn paths. Matching is either a
+case-sensitive command substring (`match`) or a regex (`match_regex`); set exactly one. The first
+matching rule wins. Plain shell-pane spawns, profile restoration, scratchpads, and popups do not
+use rules. Rules are command-based only; OSC titles arrive after spawn and are never matched.
 
 ```toml
 [[rules]]
@@ -280,19 +280,40 @@ width = 0.7
 height = 0.7
 
 [[rules]]
-match = "cargo watch"
+match_regex = "^cargo\\s"
 workspace = 9
 focus = false
 ```
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `match` | required | Non-empty command substring. |
+| `match` | — | Non-empty command substring. Exactly one of `match` / `match_regex` is required. |
+| `match_regex` | — | Regex matched against the full command line (`regex-lite`). Invalid patterns warn-and-skip. |
 | `float` | `false` | Spawn centered as a floating pane. |
 | `width`, `height` | `0.6` when floating | Fractions of the pane canvas, clamped to `0.1..=1.0`. |
 | `workspace` | current | 1-based target workspace (`1..=9`). |
 | `focus` | `true` | Switch to and focus the spawned pane. When false, the target workspace remembers the new pane as its own focus without stealing the current view. |
 | `fullscreen` | `false` | Spawn with fullscreen enabled. |
+
+## `[[hints]]`
+
+Additive hint patterns for hint mode (`u`). Built-in URL / path / Git-SHA detectors always run;
+each `[[hints]]` entry appends another regex over the visible snapshot. Invalid patterns
+warn-and-skip on load/reload. There is no disable/override syntax for built-ins.
+
+```toml
+[[hints]]
+pattern = '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+open = false
+
+[[hints]]
+pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `pattern` | required | Non-empty `regex-lite` pattern. |
+| `open` | `false` | When true, an uppercase final label character opens the match (same path as URLs). |
 
 ## `[animations]`
 

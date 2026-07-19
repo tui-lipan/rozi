@@ -478,6 +478,7 @@ pub struct HyprmuxConfig {
     pub scratchpad: HyprmuxScratchpadConfig,
     pub sidebar: SidebarConfig,
     pub rules: Vec<HyprmuxRuleConfig>,
+    pub hints: Vec<HyprmuxHintConfig>,
     pub hooks: Vec<HyprmuxHookConfig>,
     pub logging: HyprmuxLoggingConfig,
     pub workbar: WorkbarConfig,
@@ -501,9 +502,43 @@ pub struct HyprmuxLoggingConfig {
     pub dir: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug)]
+pub enum RuleMatcher {
+    Substring(String),
+    Regex(regex_lite::Regex),
+}
+
+impl PartialEq for RuleMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Substring(a), Self::Substring(b)) => a == b,
+            (Self::Regex(a), Self::Regex(b)) => a.as_str() == b.as_str(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RuleMatcher {}
+
+impl RuleMatcher {
+    pub fn matches(&self, command: &str) -> bool {
+        match self {
+            Self::Substring(needle) => command.contains(needle),
+            Self::Regex(regex) => regex.is_match(command),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Self::Substring(needle) => needle.clone(),
+            Self::Regex(regex) => regex.as_str().to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HyprmuxRuleConfig {
-    pub matches: String,
+    pub matcher: RuleMatcher,
     pub float: bool,
     pub width: Option<f32>,
     pub height: Option<f32>,
@@ -511,6 +546,18 @@ pub struct HyprmuxRuleConfig {
     pub workspace: Option<usize>,
     pub focus: bool,
     pub fullscreen: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct HyprmuxHintConfig {
+    pub pattern: regex_lite::Regex,
+    pub open: bool,
+}
+
+impl PartialEq for HyprmuxHintConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.open == other.open && self.pattern.as_str() == other.pattern.as_str()
+    }
 }
 
 /// What a user-defined keybinding does: `Run` spawns a new pane running the shell command;
@@ -688,6 +735,7 @@ impl Default for HyprmuxConfig {
             scratchpad: HyprmuxScratchpadConfig::default(),
             sidebar: SidebarConfig::default(),
             rules: Vec::new(),
+            hints: Vec::new(),
             hooks: Vec::new(),
             logging: HyprmuxLoggingConfig::default(),
             workbar: WorkbarConfig::default(),

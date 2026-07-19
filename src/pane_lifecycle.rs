@@ -700,7 +700,7 @@ mod tests {
 
     fn rule(matches: &str) -> crate::config::HyprmuxRuleConfig {
         crate::config::HyprmuxRuleConfig {
-            matches: matches.to_string(),
+            matcher: crate::config::RuleMatcher::Substring(matches.to_string()),
             float: false,
             width: None,
             height: None,

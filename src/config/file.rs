@@ -10,7 +10,7 @@ use crate::state::{CapStyle, PaneBorderStyle};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
-use super::rules::build_rules;
+use super::rules::{build_hints, build_rules};
 use super::schema::*;
 use super::sidebar::apply_sidebar_config;
 use super::workbar::{apply_workbar_config, apply_workbar_style_config};
@@ -62,6 +62,7 @@ struct FileConfig {
     sidebar: SidebarFileConfig,
     workbar: WorkbarFileConfig,
     rules: Vec<RuleFileConfig>,
+    hints: Vec<HintFileConfig>,
     hooks: Vec<HookFileConfig>,
     logging: LoggingFileConfig,
     keys: HashMap<String, KeyBindingSpec>,
@@ -267,8 +268,10 @@ pub(super) struct PaneFileConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct RuleFileConfig {
-    #[serde(rename = "match")]
+    #[serde(rename = "match", default)]
     pub(super) matches: String,
+    #[serde(default)]
+    pub(super) match_regex: Option<String>,
     pub(super) float: bool,
     pub(super) width: Option<f32>,
     pub(super) height: Option<f32>,
@@ -281,6 +284,7 @@ impl Default for RuleFileConfig {
     fn default() -> Self {
         Self {
             matches: String::new(),
+            match_regex: None,
             float: false,
             width: None,
             height: None,
@@ -289,6 +293,13 @@ impl Default for RuleFileConfig {
             fullscreen: false,
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct HintFileConfig {
+    pub(super) pattern: String,
+    pub(super) open: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -560,6 +571,7 @@ pub fn load_config() -> LoadedConfig {
     apply_workbar_config(&mut config.workbar, parsed.workbar, &mut warnings);
     apply_sidebar_config(&mut config.sidebar, parsed.sidebar, &mut warnings);
     config.rules = build_rules(parsed.rules, &mut warnings);
+    config.hints = build_hints(parsed.hints, &mut warnings);
     config.hooks = build_hooks(parsed.hooks, &mut warnings);
     let mut user_commands = Vec::new();
     config.key_overrides = build_key_overrides(

@@ -15,6 +15,16 @@ pub enum HintKind {
     Url,
     Path,
     GitSha,
+    /// User-configured `[[hints]]` pattern. `open` mirrors URL behavior for uppercase activate.
+    Custom {
+        open: bool,
+    },
+}
+
+impl HintKind {
+    fn can_open(self) -> bool {
+        matches!(self, Self::Url | Self::Custom { open: true })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,11 +36,14 @@ pub struct HintMatch {
     pub kind: HintKind,
 }
 
-pub fn scan_snapshot(text: &str) -> Vec<HintMatch> {
+pub fn scan_snapshot_with_custom(
+    text: &str,
+    custom: &[crate::config::HyprmuxHintConfig],
+) -> Vec<HintMatch> {
     static URL: OnceLock<Regex> = OnceLock::new();
     static PATH: OnceLock<Regex> = OnceLock::new();
     static SHA: OnceLock<Regex> = OnceLock::new();
-    let patterns = [
+    let builtins = [
         (
             HintKind::Url,
             URL.get_or_init(|| Regex::new(r"https?://[^\s<>]+").unwrap()),
@@ -46,15 +59,13 @@ pub fn scan_snapshot(text: &str) -> Vec<HintMatch> {
     ];
     let mut out = Vec::new();
     for (row, line) in text.lines().enumerate() {
-        for (kind, regex) in patterns {
+        let mut push_match = |kind: HintKind, regex: &Regex| {
             for matched in regex.find_iter(line) {
                 let raw = matched.as_str();
                 let trimmed = raw.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
                 if trimmed.is_empty() {
                     continue;
                 }
-                // A pure-decimal run (timestamp, PID, byte count) is far more likely than a
-                // letterless SHA; require at least one hex letter to keep numeric output quiet.
                 if kind == HintKind::GitSha && !trimmed.bytes().any(|b| b.is_ascii_alphabetic()) {
                     continue;
                 }
@@ -75,6 +86,12 @@ pub fn scan_snapshot(text: &str) -> Vec<HintMatch> {
                     kind,
                 });
             }
+        };
+        for (kind, regex) in builtins {
+            push_match(kind, regex);
+        }
+        for hint in custom {
+            push_match(HintKind::Custom { open: hint.open }, &hint.pattern);
         }
     }
     out.sort_by_key(|matched| (matched.row, matched.start_col));
@@ -104,7 +121,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(pane) = find_pane(&ctx.state, target) else {
         return Update::full();
     };
-    let matches = scan_snapshot(&pane.terminal.capture_text());
+    let matches = scan_snapshot_with_custom(&pane.terminal.capture_text(), &ctx.state.config.hints);
     if matches.is_empty() {
         ctx.toast().push(crate::pty_events::info_toast(
             &ctx.state.theme,
@@ -163,7 +180,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
         return (true, Update::full());
     }
     let matched = state.matches[candidates[0]].clone();
-    let open = ch.is_ascii_uppercase() && matched.kind == HintKind::Url;
+    let open = ch.is_ascii_uppercase() && matched.kind.can_open();
     let result = if open {
         tui_lipan::utils::open_url(&matched.text).map_err(|err| err.to_string())
     } else {
@@ -206,7 +223,8 @@ mod tests {
 
     #[test]
     fn scans_and_deduplicates_hints() {
-        let found = scan_snapshot("https://example.com/a). ./src/main.rs:12 deadbeef");
+        let found =
+            scan_snapshot_with_custom("https://example.com/a). ./src/main.rs:12 deadbeef", &[]);
         assert_eq!(
             found.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["https://example.com/a", "./src/main.rs:12", "deadbeef"]
@@ -216,8 +234,8 @@ mod tests {
 
     #[test]
     fn pure_decimal_runs_are_not_sha_hints() {
-        assert!(scan_snapshot("size 17520384 pid 1234567890").is_empty());
-        let found = scan_snapshot("rev 1234abc timestamp 1720780800");
+        assert!(scan_snapshot_with_custom("size 17520384 pid 1234567890", &[]).is_empty());
+        let found = scan_snapshot_with_custom("rev 1234abc timestamp 1720780800", &[]);
         assert_eq!(
             found.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(),
             vec!["1234abc"]
@@ -238,5 +256,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn custom_hints_append_after_builtins_with_stable_label_order() {
+        let custom = [crate::config::HyprmuxHintConfig {
+            pattern: regex_lite::Regex::new(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b").unwrap(),
+            open: true,
+        }];
+        let found = scan_snapshot_with_custom(
+            "see 10.0.0.1 then https://example.com and deadbeef",
+            &custom,
+        );
+        let texts: Vec<_> = found.iter().map(|m| m.text.as_str()).collect();
+        assert!(texts.contains(&"https://example.com"));
+        assert!(texts.contains(&"deadbeef"));
+        assert!(texts.contains(&"10.0.0.1"));
+        assert!(
+            found
+                .iter()
+                .any(|m| m.text == "10.0.0.1" && m.kind == HintKind::Custom { open: true })
+        );
+        assert!(
+            found
+                .iter()
+                .any(|m| m.text == "https://example.com" && m.kind == HintKind::Url)
+        );
+        // Left-to-right order after sort by (row, start_col).
+        assert_eq!(found[0].text, "10.0.0.1");
     }
 }

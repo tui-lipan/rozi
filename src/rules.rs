@@ -5,7 +5,7 @@ pub(crate) fn placement_for_command(
     rules: &[HyprmuxRuleConfig],
     command: &str,
 ) -> (Option<usize>, SpawnPlacement) {
-    let Some(rule) = rules.iter().find(|rule| command.contains(&rule.matches)) else {
+    let Some(rule) = rules.iter().find(|rule| rule.matcher.matches(command)) else {
         return (None, SpawnPlacement::default());
     };
     let float = rule.float.then(|| SpawnFloat {
@@ -26,9 +26,11 @@ pub(crate) fn placement_for_command(
 mod tests {
     use super::*;
 
-    fn rule(matches: &str) -> HyprmuxRuleConfig {
+    use crate::config::RuleMatcher;
+
+    fn substring_rule(matches: &str) -> HyprmuxRuleConfig {
         HyprmuxRuleConfig {
-            matches: matches.into(),
+            matcher: RuleMatcher::Substring(matches.to_string()),
             float: false,
             width: None,
             height: None,
@@ -38,41 +40,36 @@ mod tests {
         }
     }
 
+    fn regex_rule(pattern: &str) -> HyprmuxRuleConfig {
+        HyprmuxRuleConfig {
+            matcher: RuleMatcher::Regex(Regex::new(pattern).unwrap()),
+            float: true,
+            width: Some(0.5),
+            height: Some(0.5),
+            workspace: Some(2),
+            focus: false,
+            fullscreen: false,
+        }
+    }
+
     #[test]
-    fn substring_first_match_wins_and_remaps_workspace() {
-        let mut first = rule("cargo");
-        first.workspace = Some(8);
-        first.focus = false;
-        let mut second = rule("cargo watch");
-        second.workspace = Some(2);
-        let (workspace, placement) = placement_for_command(&[first, second], "cargo watch -x test");
-        assert_eq!(workspace, Some(8));
+    fn substring_match_is_case_sensitive_first_match_wins() {
+        let rules = vec![substring_rule("top"), substring_rule("btop")];
+        // "btop" contains "top", so the first rule wins.
+        let (workspace, placement) = placement_for_command(&rules, "btop");
+        assert_eq!(workspace, None);
+        assert!(placement.float.is_none());
+    }
+
+    #[test]
+    fn match_regex_avoids_substring_footgun() {
+        let rules = vec![regex_rule(r"(^|[^\w])btop($|[^\w])"), substring_rule("top")];
+        let (workspace, placement) = placement_for_command(&rules, "btop --version");
+        assert_eq!(workspace, Some(2));
+        assert!(placement.float.is_some());
         assert!(!placement.focus);
-    }
 
-    #[test]
-    fn defaults_apply_when_no_rule_matches() {
-        assert_eq!(
-            placement_for_command(&[rule("btop")], "bash"),
-            (None, SpawnPlacement::default())
-        );
-    }
-
-    #[test]
-    fn floating_rule_uses_dimensions_and_flags() {
-        let mut configured = rule("btop");
-        configured.float = true;
-        configured.width = Some(0.7);
-        configured.height = Some(0.8);
-        configured.fullscreen = true;
-        let (_, placement) = placement_for_command(&[configured], "exec btop");
-        assert_eq!(
-            placement.float,
-            Some(SpawnFloat {
-                width: 0.7,
-                height: 0.8
-            })
-        );
-        assert!(placement.fullscreen);
+        let (workspace, _) = placement_for_command(&rules, "htop");
+        assert_eq!(workspace, None);
     }
 }

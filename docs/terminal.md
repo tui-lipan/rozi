@@ -113,10 +113,10 @@ uses the system clipboard, reaching it over SSH via OSC52 when enabled.
 ## Hint mode
 
 Press `u` (or *Hint mode* in the palette) to detect URLs, filesystem paths containing `/` (with an
-optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot. Each match
-receives a home-row label. A lowercase label copies the match; an uppercase final label character
-opens URL matches and copies other kinds. `Esc`/`q` exits. Scroll first to hint older output.
-Custom hint patterns are not configurable yet.
+optional `:line` suffix), and 7-40 character Git SHAs in the visible terminal snapshot, plus any
+additive `[[hints]]` patterns from config. Each match receives a home-row label. A lowercase label
+copies the match; an uppercase final label character opens URL matches (and custom hints with
+`open = true`) and copies other kinds. `Esc`/`q` exits. Scroll first to hint older output.
 
 ## Bell urgency
 

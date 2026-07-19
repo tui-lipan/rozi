@@ -29,6 +29,7 @@ mod profiles;
 mod pty_events;
 mod rules;
 mod scratchpad;
+mod send_keys;
 pub mod session;
 pub mod shared_layout;
 pub mod state;

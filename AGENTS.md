@@ -198,7 +198,7 @@ Detach leaves the server running for later reattach; a clean quit shuts an ephem
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
-share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v9). One client holds the
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v11). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state

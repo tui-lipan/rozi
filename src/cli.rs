@@ -183,15 +183,27 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "send-keys" => {
-                let text = iter.next().ok_or_else(|| {
-                    "send-keys requires literal text (named keys are not implemented)".to_string()
-                })?;
-                reject_trailing_control_args(&mut iter, "send-keys")?;
+                let mut literal = false;
+                let mut keys = Vec::new();
+                for arg in iter.by_ref() {
+                    if arg == "-l" || arg == "--literal" {
+                        literal = true;
+                        continue;
+                    }
+                    if arg.starts_with('-') && keys.is_empty() && arg != "-" {
+                        return Err(format!("unexpected send-keys flag `{arg}`"));
+                    }
+                    keys.push(arg);
+                }
+                if keys.is_empty() {
+                    return Err("send-keys requires at least one key or text argument".to_string());
+                }
                 return Ok(ParsedCli::Control(ControlCli {
                     socket,
-                    request: control_request(control::ControlCommand::SendText {
+                    request: control_request(control::ControlCommand::SendKeys {
                         target: None,
-                        text,
+                        keys,
+                        literal,
                     }),
                 }));
             }
@@ -253,24 +265,37 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "capture-pane" => {
                 let mut target = None;
-                if let Some(next) = iter.next() {
-                    if next == "--target" {
-                        let value = iter
-                            .next()
-                            .ok_or_else(|| "--target requires a pane id".to_string())?;
-                        target = Some(
-                            value
-                                .parse()
-                                .map_err(|_| "--target requires a numeric pane id".to_string())?,
-                        );
-                    } else {
-                        return Err(format!("unexpected argument `{next}` after capture-pane"));
+                let mut scrollback = None;
+                while let Some(next) = iter.next() {
+                    match next.as_str() {
+                        "--target" => {
+                            let value = iter
+                                .next()
+                                .ok_or_else(|| "--target requires a pane id".to_string())?;
+                            target =
+                                Some(value.parse().map_err(|_| {
+                                    "--target requires a numeric pane id".to_string()
+                                })?);
+                        }
+                        "--scrollback" => {
+                            let value = iter.next().ok_or_else(|| {
+                                "--scrollback requires a line count or `full`".to_string()
+                            })?;
+                            scrollback = Some(control::CaptureScrollback::parse_cli(&value)?);
+                        }
+                        other => {
+                            return Err(format!(
+                                "unexpected argument `{other}` after capture-pane"
+                            ));
+                        }
                     }
                 }
-                reject_trailing_control_args(&mut iter, "capture-pane")?;
                 return Ok(ParsedCli::Control(ControlCli {
                     socket,
-                    request: control_request(control::ControlCommand::CapturePane { target }),
+                    request: control_request(control::ControlCommand::CapturePane {
+                        target,
+                        scrollback,
+                    }),
                 }));
             }
             "switch-workspace" => {
@@ -643,7 +668,10 @@ mod tests {
         };
         assert_eq!(
             capture.request.command,
-            control::ControlCommand::CapturePane { target: None }
+            control::ControlCommand::CapturePane {
+                target: None,
+                scrollback: None
+            }
         );
 
         let ParsedCli::Control(capture_target) =
@@ -654,7 +682,40 @@ mod tests {
         };
         assert_eq!(
             capture_target.request.command,
-            control::ControlCommand::CapturePane { target: Some(7) }
+            control::ControlCommand::CapturePane {
+                target: Some(7),
+                scrollback: None
+            }
+        );
+
+        let ParsedCli::Control(capture_scrollback) = parse_cli_args(vec![
+            "capture-pane".into(),
+            "--scrollback".into(),
+            "full".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            capture_scrollback.request.command,
+            control::ControlCommand::CapturePane {
+                target: None,
+                scrollback: Some(control::CaptureScrollback::Named("full".into()))
+            }
+        );
+
+        let ParsedCli::Control(send_keys) =
+            parse_cli_args(vec!["send-keys".into(), "C-c".into(), "Enter".into()]).expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            send_keys.request.command,
+            control::ControlCommand::SendKeys {
+                target: None,
+                keys: vec!["C-c".into(), "Enter".into()],
+                literal: false,
+            }
         );
 
         let ParsedCli::Control(switch) =

@@ -39,9 +39,14 @@ hyprmux list-panes
 hyprmux focus 3
 hyprmux send-text 'cargo test
 '
+hyprmux send-keys C-c
+hyprmux send-keys 'echo hi' Enter
+hyprmux send-keys -l C-c
 hyprmux split 'claude --agent helper'
 hyprmux run-action toggle-float
 hyprmux capture-pane --target 3
+hyprmux capture-pane --scrollback full
+hyprmux capture-pane --scrollback 200 --target 3
 hyprmux switch-workspace 2
 hyprmux move-to-workspace 3
 hyprmux status blocked --reason "needs approval"
@@ -50,13 +55,18 @@ hyprmux status --clear
 
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
 discovery/connect failures. `split`/`new-pane` replies as soon as the pane is accepted by the UI; the
-PTY may still be starting (`pty_ready: false`). Named `send-keys` compatibility is not implemented;
-`send-keys` currently aliases literal text.
+PTY may still be starting (`pty_ready: false`).
+
+`send-keys` accepts tmux-style key names (`C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
+`BSpace`, arrows, `Home`/`End`, `PgUp`/`PgDn`, `F1`..`F12`) mixed with literal text arguments.
+Unknown tokens are sent as literal UTF-8. `-l` / `--literal` forces every argument to be treated as
+literal text (so `send-keys -l C-c` types the characters `C-c` instead of Ctrl+C).
 
 `run-action` takes any keybindable action's stable id (the same ids used in `[keys]` config and
 shown in the command palette/help overlay), e.g. `toggle-float`, `spawn`, `close`. `capture-pane`
-returns the plain text of a pane's current visible snapshot grid, defaulting to the request's
-`source_pane` or the focused pane when `--target`/`target` is omitted. `switch-workspace` and
+returns the plain text of a pane's current visible snapshot grid by default, or scrollback history
+with `--scrollback N` / `--scrollback full`. It defaults to the request's `source_pane` or the
+focused pane when `--target`/`target` is omitted. `switch-workspace` and
 `move-to-workspace` take a 1-9 workspace number, matching the on-screen tabs.
 Destructive `run-action` calls honor `[confirm]` settings; a first call can arm a confirmation
 toast and a second matching call within the toast window confirms it.
@@ -92,11 +102,20 @@ The socket accepts one newline-delimited JSON request per connection and returns
 `subscribe` is the exception: after its acknowledgement, the connection remains open and streams
 newline-delimited event objects until disconnected.
 
-Requests use a `cmd` field: `list-panes`, `focus`, `send-text`, `new-pane`, `run-action`,
+Requests use a `cmd` field: `list-panes`, `focus`, `send-text`, `send-keys`, `new-pane`, `run-action`,
 `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`, or `subscribe`. A
 client may include `source_pane`; the CLI derives it from `HYPRMUX_PANE`.
 
 Examples:
+
+```json
+{"cmd":"send-keys","keys":["C-c"]}
+{"cmd":"send-keys","keys":["echo hi","Enter"]}
+{"cmd":"send-keys","keys":["C-c"],"literal":true}
+{"cmd":"capture-pane","target":3}
+{"cmd":"capture-pane","scrollback":"full"}
+{"cmd":"capture-pane","scrollback":200,"target":3}
+```
 
 ```json
 {"cmd":"list-panes","source_pane":1}

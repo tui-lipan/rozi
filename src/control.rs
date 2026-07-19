@@ -20,6 +20,38 @@ pub struct ControlRequest {
     pub source_pane: Option<PaneId>,
 }
 
+/// How many scrollback lines `capture-pane` should include when not using the visible grid.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CaptureScrollback {
+    /// Trailing line count from the retained scrollback + live grid.
+    Lines(usize),
+    /// `"full"` — every retained line.
+    Named(String),
+}
+
+impl CaptureScrollback {
+    pub fn parse_cli(value: &str) -> std::result::Result<Self, String> {
+        if value.eq_ignore_ascii_case("full") {
+            return Ok(Self::Named("full".into()));
+        }
+        value
+            .parse::<usize>()
+            .map(Self::Lines)
+            .map_err(|_| "--scrollback requires a line count or `full`".to_string())
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        match self {
+            Self::Lines(_) => Ok(()),
+            Self::Named(name) if name.eq_ignore_ascii_case("full") => Ok(()),
+            Self::Named(name) => Err(format!(
+                "unknown scrollback specifier `{name}` (expected a line count or `full`)"
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum ControlCommand {
@@ -30,6 +62,15 @@ pub enum ControlCommand {
     SendText {
         target: Option<PaneId>,
         text: String,
+    },
+    /// Send named keys and/or literal text chunks to a pane (tmux-style key names).
+    SendKeys {
+        #[serde(default)]
+        target: Option<PaneId>,
+        keys: Vec<String>,
+        /// When true, every entry in `keys` is forwarded as literal UTF-8 (no key-name parsing).
+        #[serde(default)]
+        literal: bool,
     },
     NewPane {
         command: Option<String>,
@@ -42,10 +83,13 @@ pub enum ControlCommand {
     RunAction {
         action: String,
     },
-    /// Capture the plain text of a pane's current visible snapshot grid.
+    /// Capture pane text. Without `scrollback`, returns the current visible snapshot grid.
+    /// With `scrollback`, returns scrollback history (`"full"` or a trailing line count).
     CapturePane {
         #[serde(default)]
         target: Option<PaneId>,
+        #[serde(default)]
+        scrollback: Option<CaptureScrollback>,
     },
     /// Switch the active workspace. `index` is 1-based (1-9), matching the on-screen tabs.
     SwitchWorkspace {
@@ -321,7 +365,10 @@ mod tests {
     #[test]
     fn capture_pane_command_round_trips_through_json() {
         let request = ControlRequest {
-            command: ControlCommand::CapturePane { target: Some(5) },
+            command: ControlCommand::CapturePane {
+                target: Some(5),
+                scrollback: None,
+            },
             source_pane: None,
         };
         let json = serde_json::to_string(&request).unwrap();
@@ -331,7 +378,31 @@ mod tests {
         let defaulted: ControlRequest = serde_json::from_str(r#"{"cmd":"capture-pane"}"#).unwrap();
         assert_eq!(
             defaulted.command,
-            ControlCommand::CapturePane { target: None }
+            ControlCommand::CapturePane {
+                target: None,
+                scrollback: None
+            }
+        );
+
+        let with_scrollback: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"capture-pane","scrollback":"full"}"#).unwrap();
+        assert_eq!(
+            with_scrollback.command,
+            ControlCommand::CapturePane {
+                target: None,
+                scrollback: Some(CaptureScrollback::Named("full".into()))
+            }
+        );
+
+        let send_keys: ControlRequest =
+            serde_json::from_str(r#"{"cmd":"send-keys","keys":["C-c","Enter"]}"#).unwrap();
+        assert_eq!(
+            send_keys.command,
+            ControlCommand::SendKeys {
+                target: None,
+                keys: vec!["C-c".into(), "Enter".into()],
+                literal: false,
+            }
         );
     }
 

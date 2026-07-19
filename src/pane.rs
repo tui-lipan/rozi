@@ -185,44 +185,23 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let screen = &mut self.screen;
-        let original_offset = screen.scrollback_offset();
-        let max_offset = screen.total_scrollback_rows();
+        let total = self.screen.total_text_lines();
+        let lines = self.screen.text_lines(0, total);
         let mut matches = Vec::new();
-        let mut seen_matches = std::collections::HashMap::new();
-        let step = usize::from(self.rows.max(1));
-
-        let mut offset = max_offset;
-        loop {
-            screen.set_scrollback(offset);
-            let snapshot = screen.render_snapshot();
-            for (line, text) in snapshot.text.lines().enumerate() {
-                let logical_line = line as isize - offset as isize;
-                for (start_col, end_col) in search_match_ranges(text, query) {
-                    let matched = TerminalSearchMatch {
-                        offset,
-                        line,
-                        start_col,
-                        end_col,
-                        text: text.to_string(),
-                    };
-                    let key = (logical_line, start_col, end_col);
-                    if let Some(index) = seen_matches.get(&key).copied() {
-                        matches[index] = matched;
-                    } else {
-                        seen_matches.insert(key, matches.len());
-                        matches.push(matched);
-                    }
-                }
+        for (absolute, text) in lines.into_iter().enumerate() {
+            let Some((offset, line)) = self.screen.absolute_line_to_viewport(absolute) else {
+                continue;
+            };
+            for (start_col, end_col) in search_match_ranges(&text, query) {
+                matches.push(TerminalSearchMatch {
+                    offset,
+                    line,
+                    start_col,
+                    end_col,
+                    text: text.clone(),
+                });
             }
-            if offset == 0 {
-                break;
-            }
-            offset = offset.saturating_sub(step);
         }
-
-        screen.set_scrollback(original_offset);
-        self.snapshot = screen.render_snapshot();
         matches
     }
 
@@ -317,6 +296,19 @@ impl TerminalPane {
     /// is currently applied), one row per line, joined with `\n`.
     pub fn capture_text(&self) -> String {
         self.snapshot.text.to_string()
+    }
+
+    /// Plain text from retained scrollback history.
+    ///
+    /// `lines = None` exports the full retained grid (history + live). `Some(n)` exports the
+    /// trailing `n` lines. Does not mutate the pane's scrollback offset.
+    pub fn capture_scrollback_text(&self, lines: Option<usize>) -> String {
+        let total = self.screen.total_text_lines();
+        let start = match lines {
+            None => 0,
+            Some(n) => total.saturating_sub(n),
+        };
+        self.screen.export_text(start, total)
     }
 
     /// Plain, right-trimmed text of a single row in the current snapshot grid, or an empty
@@ -662,6 +654,27 @@ mod tests {
             search_match_ranges("Alpha beta alpha", "alpha"),
             vec![(0, 5), (11, 16)]
         );
+    }
+
+    #[test]
+    fn search_scrollback_uses_text_export_without_mutating_offset() {
+        let mut pane = TerminalPane::new(50);
+        pane.apply_server_resize(10, 4);
+        // Drive enough lines to push content into history.
+        for i in 0..12 {
+            pane.process_server_output(format!("line-{i}\r\n").as_bytes());
+        }
+        let offset_before = pane.scrollback_offset();
+        let matches = pane.search_scrollback("line-1");
+        assert!(!matches.is_empty());
+        assert!(matches.iter().any(|m| m.text.contains("line-1")));
+        assert_eq!(pane.scrollback_offset(), offset_before);
+
+        let full = pane.capture_scrollback_text(None);
+        assert!(full.contains("line-0"));
+        assert!(full.contains("line-11"));
+        let last_two = pane.capture_scrollback_text(Some(2));
+        assert!(last_two.lines().count() <= 2);
     }
 
     #[test]

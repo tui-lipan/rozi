@@ -3,12 +3,14 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::actions::execute_action;
-use crate::control::{ControlCommand, ControlEnvelope, ControlResponse};
+use crate::control::{CaptureScrollback, ControlCommand, ControlEnvelope, ControlResponse};
 use crate::input::Action;
 use crate::ops::focus::{
     focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
 };
 use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane};
+use crate::pty_events::send_key_to_session_client;
+use crate::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
 #[derive(Serialize)]
@@ -46,6 +48,11 @@ pub(crate) fn handle_control_request(
         ControlCommand::SendText { target, text } => {
             send_text(ctx, target.or(envelope.request.source_pane), text)
         }
+        ControlCommand::SendKeys {
+            target,
+            keys,
+            literal,
+        } => send_keys(ctx, target.or(envelope.request.source_pane), keys, literal),
         ControlCommand::NewPane {
             command,
             cwd,
@@ -65,8 +72,8 @@ pub(crate) fn handle_control_request(
         ControlCommand::RunAction { action } => {
             return run_action(ctx, &action, envelope.reply);
         }
-        ControlCommand::CapturePane { target } => {
-            capture_pane(ctx, target.or(envelope.request.source_pane))
+        ControlCommand::CapturePane { target, scrollback } => {
+            capture_pane(ctx, target.or(envelope.request.source_pane), scrollback)
         }
         ControlCommand::SwitchWorkspace { index } => switch_workspace_command(ctx, index),
         ControlCommand::MoveToWorkspace { index } => move_to_workspace_command(ctx, index),
@@ -233,6 +240,57 @@ fn send_text(
     ControlResponse::empty()
 }
 
+fn send_keys(
+    ctx: &mut Context<HyprmuxApp>,
+    target: Option<PaneId>,
+    keys: Vec<String>,
+    literal: bool,
+) -> ControlResponse {
+    if let Some(reason) = ctx.state.pane_input_block_reason() {
+        return ControlResponse::error(reason);
+    }
+    let id = target.or(ctx.state.focused_pane);
+    let Some(id) = id else {
+        return ControlResponse::error("no target pane and no focused pane");
+    };
+    let client = ctx.state.session_client.clone();
+    let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
+        return ControlResponse::error(format!("pane {id} not found"));
+    };
+    if !pane.terminal.accepts_input() {
+        return ControlResponse::error(format!("pane {id} PTY is not ready"));
+    }
+    let Some(client) = client else {
+        return ControlResponse::error(format!("pane {id} session is not connected"));
+    };
+
+    let mut items = Vec::with_capacity(keys.len());
+    for key in &keys {
+        match parse_send_keys_arg(key, literal) {
+            Ok(item) => items.push(item),
+            Err(message) => return ControlResponse::error(message),
+        }
+    }
+
+    let modes = pane.terminal.snapshot.key_modes;
+    let generation = pane.pty_generation;
+    for item in items {
+        match item {
+            SendKeysItem::Text(text) => {
+                client.send_input(id, generation, text.into_bytes());
+            }
+            SendKeysItem::Key(event) => {
+                if let Err(message) =
+                    send_key_to_session_client(&client, id, generation, event, modes)
+                {
+                    return ControlResponse::error(message);
+                }
+            }
+        }
+    }
+    ControlResponse::empty()
+}
+
 /// Run any keybindable action by its stable id, the same names used in `[keys]` config and the
 /// command palette (see `Action::id`/`Action::from_id`).
 fn run_action(
@@ -259,17 +317,31 @@ fn run_action(
     update
 }
 
-fn capture_pane(ctx: &mut Context<HyprmuxApp>, target: Option<PaneId>) -> ControlResponse {
+fn capture_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    target: Option<PaneId>,
+    scrollback: Option<CaptureScrollback>,
+) -> ControlResponse {
     let Some(id) = target.or(ctx.state.focused_pane) else {
         return ControlResponse::error("no target pane and no focused pane");
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
-    ControlResponse::ok(PaneCapture {
-        id,
-        text: pane.terminal.capture_text(),
-    })
+    let text = match scrollback {
+        None => pane.terminal.capture_text(),
+        Some(spec) => {
+            if let Err(message) = spec.validate() {
+                return ControlResponse::error(message);
+            }
+            let lines = match spec {
+                CaptureScrollback::Lines(n) => Some(n),
+                CaptureScrollback::Named(_) => None,
+            };
+            pane.terminal.capture_scrollback_text(lines)
+        }
+    };
+    ControlResponse::ok(PaneCapture { id, text })
 }
 
 fn switch_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {

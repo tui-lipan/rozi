@@ -46,7 +46,9 @@ binding, e.g. `detach = "ctrl-a d"`.
 
 All exit and lifecycle commands are prefix/modifier actions like everything else. hyprmux
 disables tui-lipan's built-in global `Ctrl-q` quit (`App::global_quit(None)`); bind
-`quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux.
+`quit = "ctrl-q"` under `[keys]` if you want that shortcut back through hyprmux. Bare `F12`
+is also unbound so it reaches terminal panes; DevTools uses prefix/mod+`F12` instead
+(`toggle-devtools`).
 
 ### Windows input notes
 
@@ -177,6 +179,7 @@ name. Names are saved with profiles and session autosave.
 | --- | --- |
 | Command palette | `p` |
 | Show keybindings (help) | `?` |
+| Toggle DevTools | `F12` |
 | Copy mode | `[` |
 | Search scrollback | `/` |
 | Toggle scratchpad | `` ` `` (backtick) |

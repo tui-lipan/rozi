@@ -369,7 +369,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
   <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
-  crate uses `terminal`, `terminal-serde`, and `theme-reload`.
+  crate uses `terminal`, `terminal-serde`, `theme-reload`, and `devtools`.
 
 ## Further Reading
 

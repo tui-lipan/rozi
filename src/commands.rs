@@ -297,6 +297,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ToggleDevtools,
+        label: "Toggle DevTools",
+        category: "App",
+        default_keys: &["f12"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::EnterCopyMode,
         label: "Copy mode",
         category: "App",
@@ -798,9 +805,10 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
     }
     // tui-lipan's runtime auto-registers framework commands under the `app.` id prefix
     // (`app.quit`, `app.focus-next`, `app.focus-prev`, `app.dismiss-overlay`,
-    // `app.toggle-devtools`). None of them are meaningful in hyprmux's palette: quit/detach
-    // have dedicated commands, panes are terminal shells rather than app-focusable widgets,
-    // dismissing an overlay is just `Esc`, and DevTools is a dev-only tool. Keep them out.
+    // `app.toggle-devtools`). None of them belong in hyprmux's palette: quit/detach have
+    // dedicated commands, panes are terminal shells rather than app-focusable widgets,
+    // dismissing an overlay is just `Esc`, and DevTools is exposed as hyprmux's own
+    // `toggle-devtools` (prefix/mod+F12) instead of the framework's bare F12 binding.
     if id.starts_with("app.") {
         return false;
     }

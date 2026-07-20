@@ -243,7 +243,11 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
 /// The scratchpad is a focused modal terminal: workspace and application actions must not run
 /// behind it. Its own toggle remains available so the same shortcut can dismiss it.
 pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Action) -> bool {
-    state.scratch_visible && !matches!(action, Action::ToggleScratchpad | Action::ToggleSidebar)
+    state.scratch_visible
+        && !matches!(
+            action,
+            Action::ToggleScratchpad | Action::ToggleSidebar | Action::ToggleDevtools
+        )
 }
 
 pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
@@ -440,6 +444,10 @@ fn execute_action_inner(
                 ctx.state.show_appearance = false;
             }
             Update::full()
+        }
+        Action::ToggleDevtools => {
+            ctx.toggle_devtools();
+            Update::none()
         }
         Action::ToggleTitles => toggle_pane_flag!(ctx, show_titles),
         Action::ToggleWorkbar => toggle_pane_flag!(ctx, show_workbar),

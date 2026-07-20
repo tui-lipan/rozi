@@ -31,6 +31,51 @@ pub struct ForegroundJob {
     pub processes: Vec<ForegroundProcess>,
 }
 
+/// One pass over the host's process table, shared by every pane in a poll cycle.
+///
+/// Finding a pane's process-group members means examining every process on the host, and the
+/// server resolves a foreground job per pane. Done independently that repeats the same walk once
+/// per pane, so idle cost scaled with pane count (~2% of a core each). Capturing the walk once and
+/// answering each pane from it keeps the cost flat.
+///
+/// Only the cheap identifying pass is shared. The expensive per-process reads (executable,
+/// argv, agent hint) still happen only for the groups actually asked about.
+///
+/// Capture is lazy at the call site: a poll where every pane's detection is already cached must
+/// not pay for a walk nobody reads. See [`ProcessScan::capture`].
+#[derive(Debug, Default)]
+pub struct ProcessScan {
+    #[cfg(target_os = "linux")]
+    entries: Vec<linux::ScannedProcess>,
+}
+
+impl ProcessScan {
+    /// Walk the process table now. Platforms whose `foreground_job` does not enumerate processes
+    /// (macOS reads the group leader directly; Windows reports unavailable) capture nothing.
+    pub fn capture() -> Self {
+        Self {
+            #[cfg(target_os = "linux")]
+            entries: linux::scan_processes(),
+        }
+    }
+}
+
+/// A [`ProcessScan`] captured on first use and then reused, so a poll cycle walks at most once and
+/// only when some pane actually needs it.
+#[derive(Debug, Default)]
+pub struct LazyProcessScan(Option<ProcessScan>);
+
+impl LazyProcessScan {
+    pub fn get(&mut self) -> &ProcessScan {
+        self.0.get_or_insert_with(ProcessScan::capture)
+    }
+
+    /// Whether the walk actually happened, for tests and diagnostics.
+    pub fn captured(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub mod linux;
 #[cfg(target_os = "macos")]
@@ -48,6 +93,16 @@ pub trait ProcessInspector {
     fn foreground_program(&self, pty: &TerminalPty) -> Option<String>;
     fn foreground_job(&self, _pty: &TerminalPty) -> Option<ForegroundJob> {
         None
+    }
+
+    /// Resolve the foreground job against an already-captured [`ProcessScan`].
+    ///
+    /// Implementations that enumerate the process table should override this and read `scan`
+    /// instead of walking again; the default ignores it, which is correct for platforms that
+    /// resolve the group leader directly.
+    fn foreground_job_in(&self, pty: &TerminalPty, scan: &ProcessScan) -> Option<ForegroundJob> {
+        let _ = scan;
+        self.foreground_job(pty)
     }
 }
 

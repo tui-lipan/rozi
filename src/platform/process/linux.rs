@@ -34,16 +34,39 @@ impl ProcessInspector for LinuxProcessInspector {
     }
 
     fn foreground_job(&self, pty: &TerminalPty) -> Option<ForegroundJob> {
-        foreground_job_for_group(pty.foreground_process_group_id()?.try_into().ok()?)
+        foreground_job_for_group(
+            pty.foreground_process_group_id()?.try_into().ok()?,
+            &scan_processes(),
+        )
+    }
+
+    fn foreground_job_in(
+        &self,
+        pty: &TerminalPty,
+        scan: &super::ProcessScan,
+    ) -> Option<ForegroundJob> {
+        foreground_job_for_group(
+            pty.foreground_process_group_id()?.try_into().ok()?,
+            &scan.entries,
+        )
     }
 }
 
-fn foreground_job_for_group(process_group_id: u32) -> Option<ForegroundJob> {
-    let entries = std::fs::read_dir("/proc").ok()?;
-    let mut processes = Vec::new();
-    if let Some(process) = process_group_member(process_group_id, process_group_id) {
-        processes.push(process);
-    }
+/// One process from the shared table walk: enough to decide group membership without the
+/// expensive per-process reads.
+#[derive(Clone, Debug)]
+pub struct ScannedProcess {
+    pid: u32,
+    process_group_id: u32,
+}
+
+/// Walk `/proc` once, recording each process's group. This is the part every pane used to repeat;
+/// see [`super::ProcessScan`].
+pub fn scan_processes() -> Vec<ScannedProcess> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut scanned = Vec::new();
     for entry in entries.flatten() {
         let Some(pid) = entry
             .file_name()
@@ -53,10 +76,34 @@ fn foreground_job_for_group(process_group_id: u32) -> Option<ForegroundJob> {
         else {
             continue;
         };
-        if pid == process_group_id {
+        // A process that exits between the readdir and this read simply drops out, exactly as it
+        // did when each pane walked separately.
+        let Some((process_group_id, _)) = read_process_stat(pid) else {
+            continue;
+        };
+        scanned.push(ScannedProcess {
+            pid,
+            process_group_id,
+        });
+    }
+    scanned
+}
+
+fn foreground_job_for_group(
+    process_group_id: u32,
+    scanned: &[ScannedProcess],
+) -> Option<ForegroundJob> {
+    let mut processes = Vec::new();
+    // The group leader stays first even if it is not in the scan (it may have exited between the
+    // walk and now, or the walk may have been skipped entirely).
+    if let Some(process) = process_group_member(process_group_id, process_group_id) {
+        processes.push(process);
+    }
+    for entry in scanned {
+        if entry.process_group_id != process_group_id || entry.pid == process_group_id {
             continue;
         }
-        let Some(process) = process_group_member(process_group_id, pid) else {
+        let Some(process) = process_group_member(process_group_id, entry.pid) else {
             continue;
         };
         processes.push(process);

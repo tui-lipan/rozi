@@ -7,7 +7,7 @@
 //! [`ServerMessage::PaneRuntimeChanged`].
 
 use super::*;
-use crate::platform::process::{PlatformProcessInspector, ProcessInspector};
+use crate::platform::process::{LazyProcessScan, PlatformProcessInspector, ProcessInspector};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::session::protocol::{
@@ -101,8 +101,12 @@ impl SessionServer {
             .filter(|(_, pane)| pane.pty.is_some())
             .map(|(&id, pane)| (id, pane.generation))
             .collect();
+        // One process-table walk serves every pane in this cycle, and is captured only if some
+        // pane's detection is actually stale (see `LazyProcessScan`). Without this each pane
+        // walked the whole host separately, so idle cost scaled with pane count.
+        let mut scan = LazyProcessScan::default();
         for (id, generation) in panes {
-            self.sync_pane_runtime_inner(id, generation, true);
+            self.sync_pane_runtime_inner(id, generation, true, &mut scan);
         }
     }
 
@@ -111,10 +115,16 @@ impl SessionServer {
     /// current generation - a stale caller (e.g. a queued event racing a respawn) is a silent
     /// no-op, matching every other per-pane event handler in this module.
     pub(super) fn sync_pane_runtime(&mut self, pane_id: PaneId, generation: u64) {
-        self.sync_pane_runtime_inner(pane_id, generation, false);
+        self.sync_pane_runtime_inner(pane_id, generation, false, &mut LazyProcessScan::default());
     }
 
-    fn sync_pane_runtime_inner(&mut self, pane_id: PaneId, generation: u64, detect_agent: bool) {
+    fn sync_pane_runtime_inner(
+        &mut self,
+        pane_id: PaneId,
+        generation: u64,
+        detect_agent: bool,
+        scan: &mut LazyProcessScan,
+    ) {
         let Some(pane) = self.panes.get_mut(&pane_id) else {
             return;
         };
@@ -122,7 +132,7 @@ impl SessionServer {
             return;
         }
         let inspector = PlatformProcessInspector::default();
-        let next = compute_runtime_state(pane, &inspector, detect_agent);
+        let next = compute_runtime_state(pane, &inspector, detect_agent, scan);
         if next == pane.runtime {
             return;
         }
@@ -142,6 +152,7 @@ fn compute_runtime_state(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
     detect_agent: bool,
+    scan: &mut LazyProcessScan,
 ) -> PaneRuntimeState {
     let semantic = pane.screen.semantic_state();
     let command_phase = PaneCommandPhase::from(semantic.command_phase);
@@ -185,7 +196,7 @@ fn compute_runtime_state(
         if stale {
             pane.last_agent_probe = Some(probe);
             pane.last_agent_detect = Some(Instant::now());
-            detect_pane_agent(pane, inspector, foreground_program.as_deref())
+            detect_pane_agent(pane, inspector, foreground_program.as_deref(), scan)
         } else {
             pane.runtime.detected_agent.clone()
         }
@@ -226,11 +237,12 @@ fn detect_pane_agent(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
+    scan: &mut LazyProcessScan,
 ) -> Option<crate::session::protocol::DetectedAgent> {
     let mut foreground_job = pane
         .pty
         .as_ref()
-        .and_then(|pty| inspector.foreground_job(pty));
+        .and_then(|pty| inspector.foreground_job_in(pty, scan.get()));
     let configured_hint = ["HYPRMUX_AGENT", "HERDR_AGENT"]
         .into_iter()
         .find_map(|key| {
@@ -382,10 +394,68 @@ mod tests {
         }
     }
 
+    /// Detection walks every process on the host, so a poll where nothing changed must skip it —
+    /// that walk, repeated per pane at the poll rate, was ~2% of a core per idle pane.
+    ///
+    /// `last_agent_detect` only advances when detection actually runs, so it is the observable
+    /// for the gate. (Asserting on `LazyProcessScan::captured` would pass vacuously here: the test
+    /// pane has no PTY, so the walk is unreachable either way.)
+    #[test]
+    fn an_unchanged_pane_skips_detection() {
+        let mut pane = make_pane();
+        let mut scan = LazyProcessScan::default();
+
+        // First pass has no cached probe, so detection must run.
+        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        let first = pane.last_agent_detect.expect("first poll must detect");
+
+        // Foreground program and command phase unchanged: detection must be skipped.
+        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        assert_eq!(
+            pane.last_agent_detect,
+            Some(first),
+            "an unchanged pane must not re-run detection"
+        );
+
+        // A new foreground program is a real change and must detect again.
+        pane.runtime.foreground_program = Some("claude".to_string());
+        pane.last_agent_probe = Some(AgentProbe {
+            foreground_program: Some("claude".to_string()),
+            command_phase: pane.runtime.command_phase,
+        });
+        pane.last_agent_probe = None;
+        pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
+        assert_ne!(
+            pane.last_agent_detect,
+            Some(first),
+            "a changed foreground must re-run detection"
+        );
+    }
+
+    /// The walk is captured once per cycle and reused, so cost stops scaling with pane count.
+    #[test]
+    fn panes_in_one_cycle_share_a_single_process_table_walk() {
+        let mut scan = LazyProcessScan::default();
+        assert!(!scan.captured(), "capture must be lazy");
+
+        let first = scan.get() as *const _;
+        let second = scan.get() as *const _;
+        assert!(scan.captured());
+        assert_eq!(
+            first, second,
+            "every pane in a cycle must read the same captured walk"
+        );
+    }
+
     #[test]
     fn falls_back_to_launch_cwd_with_no_pty_and_no_shell_report() {
         let mut pane = make_pane();
-        let state = compute_runtime_state(&mut pane, &StubInspector, false);
+        let state = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(state.cwd, Some("/launch/dir".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::LaunchDirectory);
         assert_eq!(state.cwd_host, None);
@@ -397,7 +467,12 @@ mod tests {
         let mut pane = make_pane();
         pane.screen
             .process_bytes(b"\x1b]7;file://localhost/reported/dir\x1b\\");
-        let state = compute_runtime_state(&mut pane, &StubInspector, false);
+        let state = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(state.cwd, Some("/reported/dir".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
         assert_eq!(state.cwd_host, None);
@@ -408,7 +483,12 @@ mod tests {
         let mut pane = make_pane();
         pane.screen
             .process_bytes(b"\x1b]7;file://otherhost.example/remote/dir\x1b\\");
-        let state = compute_runtime_state(&mut pane, &StubInspector, false);
+        let state = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(state.cwd, Some("/remote/dir".to_string()));
         assert_eq!(state.cwd_host, Some("otherhost.example".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
@@ -439,9 +519,19 @@ mod tests {
     #[test]
     fn recompute_is_a_no_op_when_nothing_changed() {
         let mut pane = make_pane();
-        let first = compute_runtime_state(&mut pane, &StubInspector, false);
+        let first = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         pane.runtime = first.clone();
-        let second = compute_runtime_state(&mut pane, &StubInspector, false);
+        let second = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(second, first);
         assert_eq!(second.sequence, first.sequence);
     }
@@ -456,12 +546,22 @@ mod tests {
         });
         pane.runtime.sequence = 7;
 
-        let changed = compute_runtime_state(&mut pane, &StubInspector, false);
+        let changed = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(changed.status, pane.runtime.status);
         assert_eq!(changed.sequence, 8);
 
         pane.runtime = changed.clone();
-        let unchanged = compute_runtime_state(&mut pane, &StubInspector, false);
+        let unchanged = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(unchanged, changed);
         assert_eq!(unchanged.sequence, 8);
     }
@@ -470,7 +570,12 @@ mod tests {
     fn completed_command_phase_sticks_the_exit_status() {
         let mut pane = make_pane();
         pane.screen.process_bytes(b"\x1b]133;D;7\x1b\\");
-        let state = compute_runtime_state(&mut pane, &StubInspector, false);
+        let state = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(
             state.command_phase,
             PaneCommandPhase::Completed {
@@ -481,7 +586,12 @@ mod tests {
 
         pane.runtime = state;
         pane.screen.process_bytes(b"\x1b]133;A\x1b\\");
-        let next = compute_runtime_state(&mut pane, &StubInspector, false);
+        let next = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(next.command_phase, PaneCommandPhase::Prompt);
         assert_eq!(next.last_exit_status, Some(7));
     }
@@ -492,7 +602,12 @@ mod tests {
         pane.env.push(("HYPRMUX_AGENT".into(), "opencode".into()));
         pane.screen.process_bytes(b"esc to interrupt");
 
-        let detected = compute_runtime_state(&mut pane, &StubInspector, true);
+        let detected = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            true,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(
             detected.detected_agent,
             Some(crate::session::protocol::DetectedAgent {
@@ -503,7 +618,12 @@ mod tests {
 
         pane.runtime = detected.clone();
         pane.env.clear();
-        let event_update = compute_runtime_state(&mut pane, &StubInspector, false);
+        let event_update = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
         assert_eq!(event_update.detected_agent, detected.detected_agent);
         assert_eq!(event_update.sequence, detected.sequence);
     }

@@ -166,22 +166,32 @@ awk -v a=$t0 -v b=$t1 'BEGIN{printf "%.2f%%\n", (b-a)/6}'
 Add panes over the control socket (`HYPRMUX_SOCKET=… hyprmux new-pane`) and check the slope: a
 cost that scales with pane count is per-pane polling, while a flat cost is the server's own loop.
 
-Measured at idle, before and after caching agent detection:
+Measured at idle, server process:
 
-| Panes | Detect every poll | Detect on change |
-| --- | --- | --- |
-| 2 | 4.33% | 1.17% |
-| 3 | 6.33% | 1.33% |
-| 5 | 10.17% | 2.00% |
+| Panes | Detect every poll | Detect on change | Plus shared walk |
+| --- | --- | --- | --- |
+| 2 | 4.33% | 1.17% | 1.33% |
+| 3 | 6.33% | 1.33% | 1.33% |
+| 5 | 10.17% | 2.00% | 1.50% |
 
-That is ~1.95% per pane against ~0.28%. The cause was `foreground_job`, which must scan every
-process on the host to find a pane's process-group members, running once per pane at the 250 ms
-`RUNTIME_POLL_INTERVAL` — and every pane re-scanned the same `/proc`. Detection now runs only when
-the (cheaply known) foreground program or command phase changes, with `AGENT_DETECT_REFRESH` as a
-periodic safety net.
+Marginal cost per pane: **~1.95% → ~0.06%**.
 
-The residual per-pane cost is that safety net. Making it cheaper again means sharing one `/proc`
-sweep across all panes in a poll cycle, so cost stops scaling with pane count at all.
+The cause was `foreground_job`, which must examine every process on the host to find a pane's
+process-group members, running once per pane at the 250 ms `RUNTIME_POLL_INTERVAL` — so every pane
+independently walked the same process table four times a second. Two changes fixed it:
+
+- Detection runs only when the cheaply known foreground program or command phase changes, with
+  `AGENT_DETECT_REFRESH` as a periodic re-sweep for a wrapped process appearing inside an unchanged
+  foreground.
+- When a sweep is needed, [`ProcessScan`] captures the walk once and every pane in that cycle reads
+  it, so cost no longer scales with pane count. Capture is lazy: a cycle where nothing is stale
+  never walks at all.
+
+Keep both properties when touching this path. The unit tests assert the gate via
+`last_agent_detect` rather than via `LazyProcessScan::captured`, because the test pane has no PTY
+and the walk is unreachable there either way — a `captured()` assertion would pass vacuously.
+
+[`ProcessScan`]: ../src/platform/process/mod.rs
 
 ## Snapshot rebuilds dominate output cost
 

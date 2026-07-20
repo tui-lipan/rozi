@@ -247,7 +247,7 @@ pub struct HyprmuxPaneConfig {
     /// over its left neighbor's color) instead of standing apart with a gap. Independent of
     /// `workbar_badge_style`, which only controls the pill shape.
     pub workbar_powerline: bool,
-    /// End-cap style for workspace tabs in the workbar.
+    /// End-cap style for workspace and sidebar tabs.
     pub workbar_tab_style: CapStyle,
     /// End-cap style for the workbar itself: the whole panel bar reads as a pill/point over the
     /// backdrop rather than a flush edge-to-edge bar.

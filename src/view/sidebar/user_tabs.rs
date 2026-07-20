@@ -15,26 +15,23 @@ pub(super) fn launcher_tab(
     entries
         .iter()
         .enumerate()
-        .fold(
-            VStack::new().gap(1),
-            |body, (index, entry)| {
-                let id = tab_id.clone();
-                body.child(
-                    MouseRegion::new()
-                        .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
-                        .on_click(ctx.link().callback(move |_| Msg::SidebarLauncherActivate {
-                            config_epoch,
-                            tab_id: id.clone(),
-                            entry_index: index,
-                        }))
-                        .child(
-                            Text::new(entry.label.clone())
-                                .style(super::super::fg_only(&ctx.state.theme.primary)),
-                        )
-                        .key(format!("sidebar-launcher-{}-{index}", tab_id.as_str())),
-                )
-            },
-        )
+        .fold(VStack::new().gap(1), |body, (index, entry)| {
+            let id = tab_id.clone();
+            body.child(
+                MouseRegion::new()
+                    .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
+                    .on_click(ctx.link().callback(move |_| Msg::SidebarLauncherActivate {
+                        config_epoch,
+                        tab_id: id.clone(),
+                        entry_index: index,
+                    }))
+                    .child(
+                        Text::new(entry.label.clone())
+                            .style(super::super::fg_only(&ctx.state.theme.primary)),
+                    )
+                    .key(format!("sidebar-launcher-{}-{index}", tab_id.as_str())),
+            )
+        })
         .into()
 }
 
@@ -55,39 +52,35 @@ pub(super) fn command_tab(
         .rows
         .iter()
         .enumerate()
-        .fold(
-            VStack::new().gap(1),
-            |body, (index, row)| {
-                let style = if row.error {
-                    Style::new().fg(ctx.state.theme.status.error)
-                } else {
-                    super::super::fg_only(&ctx.state.theme.primary)
-                };
-                let text = Text::new(row.display.clone()).style(style);
-                if clickable && !row.error {
-                    let id = tab_id.clone();
-                    let line = row.raw.clone();
-                    body.child(
-                        MouseRegion::new()
-                            .hover_style(
-                                Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)),
-                            )
-                            .on_click(ctx.link().callback(move |_| {
-                                Msg::SidebarCommandRowActivate {
+        .fold(VStack::new().gap(1), |body, (index, row)| {
+            let style = if row.error {
+                Style::new().fg(ctx.state.theme.status.error)
+            } else {
+                super::super::fg_only(&ctx.state.theme.primary)
+            };
+            let text = Text::new(row.display.clone()).style(style);
+            if clickable && !row.error {
+                let id = tab_id.clone();
+                let line = row.raw.clone();
+                body.child(
+                    MouseRegion::new()
+                        .hover_style(Style::new().bg(ctx.state.theme.surface.element.elevate(0.08)))
+                        .on_click(
+                            ctx.link()
+                                .callback(move |_| Msg::SidebarCommandRowActivate {
                                     config_epoch,
                                     tab_id: id.clone(),
                                     output_epoch,
                                     line: line.clone(),
-                                }
-                            }))
-                            .child(text)
-                            .key(format!("sidebar-command-{}-{index}", tab_id.as_str())),
-                    )
-                } else {
-                    body.child(text)
-                }
-            },
-        )
+                                }),
+                        )
+                        .child(text)
+                        .key(format!("sidebar-command-{}-{index}", tab_id.as_str())),
+                )
+            } else {
+                body.child(text)
+            }
+        })
         .into()
 }
 

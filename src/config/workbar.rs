@@ -90,7 +90,7 @@ pub(super) fn apply_workbar_style_config(
     if let Some(workbar_tab_style) = parsed.workbar_tab_style.as_deref() {
         match CapStyle::parse(workbar_tab_style) {
             Some(CapStyle::Half) => warnings.push(format!(
-                "Ignored pane.workbar_tab_style \"{workbar_tab_style}\" (half block is not available for workspace tabs)"
+                "Ignored pane.workbar_tab_style \"{workbar_tab_style}\" (half block is not available for tab bars)"
             )),
             Some(style) => config.workbar_tab_style = style,
             None => warnings.push(format!(

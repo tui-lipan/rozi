@@ -22,14 +22,23 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
     });
     let tab_ids: Vec<_> = tabs.iter().map(SidebarTab::id).collect();
     let theme = &ctx.state.theme;
+    let tab_caps = ctx
+        .state
+        .config
+        .pane
+        .workbar_tab_style
+        .caps()
+        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     // Selection presentation matches the workbar's workspace tabs so the two strips read as one
     // system; the sidebar sits on the element surface rather than the panel, so the resting and
     // hover backgrounds follow that surface instead.
     let tab_bar = tab_bar
         .active(active)
         .focusable(false)
+        .width(Length::Auto)
         .height(Length::Px(1))
         .divider(' ')
+        .caps(tab_caps)
         .style(
             Style::new()
                 .fg(theme.surface.menu)
@@ -82,7 +91,13 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
                     VStack::new()
                         .gap(0)
                         .width(Length::Flex(1))
-                        .child(tab_bar)
+                        .child(
+                            ScrollView::new()
+                                .axis(ScrollAxis::Horizontal)
+                                .h_scrollbar(false)
+                                .height(Length::Px(1))
+                                .child(tab_bar),
+                        )
                         .child(
                             // Top inset sits outside the scroll so it stays under the tab bar
                             // instead of scrolling away with the first row.

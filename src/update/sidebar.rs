@@ -127,7 +127,8 @@ fn start_active_command(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::full();
     };
     if command_active(ctx, &tab_id) && command_tab(ctx, &tab_id).is_some() {
-        poll_command(ctx, ctx.state.sidebar.command_epoch, tab_id)
+        let update = poll_command(ctx, ctx.state.sidebar.command_epoch, tab_id);
+        Update::with_command(update.command)
     } else {
         Update::full()
     }

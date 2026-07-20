@@ -166,6 +166,16 @@ single frame, only the last snapshot is ever rendered, and `output_burst` measur
 `per_message` rebuilds after every message (the old behavior), `per_frame` rebuilds once at the end
 (the current one).
 
+| Messages in burst | Rebuild per message | Rebuild per frame | Saved |
+| --- | --- | --- | --- |
+| 1 | 130 µs | 127 µs | — |
+| 8 | 977 µs | 130 µs | 7.5x |
+| 32 | 3.92 ms | 143 µs | 27x |
+| 128 | 15.9 ms | 417 µs | 38x |
+
+The single-message row matters as much as the others: it shows the work was genuinely removed
+rather than relocated. One message has no redundant rebuild to drop, so the two shapes agree.
+
 Two consequences worth preserving:
 
 - Do not reintroduce an eager `render_snapshot()` call on a write path. It reads as harmless

@@ -3,7 +3,7 @@ use tui_lipan::prelude::*;
 use crate::{HyprmuxApp, Msg};
 
 pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
-    let mut body = VStack::new().gap(0).padding((1, 0));
+    let mut body = VStack::new().gap(1);
     let mut any = false;
     for (workspace_index, workspace) in ctx.state.workspaces.iter().enumerate() {
         let panes: Vec<_> = workspace
@@ -19,7 +19,7 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
             || format!("Workspace {}", workspace_index + 1),
             |name| format!("{}  {}", workspace_index + 1, name),
         );
-        body = body.child(
+        let mut section = VStack::new().gap(0).child(
             Text::new(format!(" {workspace_label}"))
                 .style(super::super::fg_only(&ctx.state.theme.accent).bold())
                 .height(Length::Px(1)),
@@ -69,7 +69,7 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
                                 .style(super::super::fg_only(&ctx.state.theme.muted)),
                         ),
                 );
-            body = body.child(
+            section = section.child(
                 MouseRegion::new()
                     .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
                     .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
@@ -77,12 +77,14 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
                     .key(format!("sidebar-pane-{id}")),
             );
         }
+        body = body.child(section);
     }
     if any {
         body.into()
     } else {
-        Text::new("No panes")
-            .style(super::super::fg_only(&ctx.state.theme.muted))
+        VStack::new()
+            .padding((0, 0, 0, 1))
+            .child(Text::new("No panes").style(super::super::fg_only(&ctx.state.theme.muted)))
             .into()
     }
 }

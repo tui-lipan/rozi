@@ -28,8 +28,12 @@ fn session_detail(entry: &DiscoveredSession, current: bool) -> String {
 
 pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.sidebar.sessions.is_empty() {
-        return Text::new("No sessions discovered")
-            .style(super::super::fg_only(&ctx.state.theme.muted))
+        return VStack::new()
+            .padding((0, 0, 0, 1))
+            .child(
+                Text::new("No sessions discovered")
+                    .style(super::super::fg_only(&ctx.state.theme.muted)),
+            )
             .into();
     }
     ctx.state
@@ -37,7 +41,7 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
         .sessions
         .iter()
         .cloned()
-        .fold(VStack::new().gap(0).padding((1, 0)), |body, entry| {
+        .fold(VStack::new().gap(1), |body, entry| {
             let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
             let pending =
                 ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str());

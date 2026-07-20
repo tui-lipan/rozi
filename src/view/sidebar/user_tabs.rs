@@ -16,7 +16,7 @@ pub(super) fn launcher_tab(
         .iter()
         .enumerate()
         .fold(
-            VStack::new().gap(0).padding((1, 0)),
+            VStack::new().gap(1),
             |body, (index, entry)| {
                 let id = tab_id.clone();
                 body.child(
@@ -56,7 +56,7 @@ pub(super) fn command_tab(
         .iter()
         .enumerate()
         .fold(
-            VStack::new().gap(0).padding((1, 0)),
+            VStack::new().gap(1),
             |body, (index, row)| {
                 let style = if row.error {
                     Style::new().fg(ctx.state.theme.status.error)
@@ -92,7 +92,8 @@ pub(super) fn command_tab(
 }
 
 fn empty(ctx: &Context<HyprmuxApp>, text: &str) -> Element {
-    Text::new(text.to_string())
-        .style(super::super::fg_only(&ctx.state.theme.muted))
+    VStack::new()
+        .padding((0, 0, 0, 1))
+        .child(Text::new(text.to_string()).style(super::super::fg_only(&ctx.state.theme.muted)))
         .into()
 }

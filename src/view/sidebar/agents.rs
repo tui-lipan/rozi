@@ -293,7 +293,7 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     let groups = agent_groups(&ctx.state);
     if groups.is_empty() {
         return VStack::new()
-            .padding((1, 0, 0, 1))
+            .padding((0, 0, 0, 1))
             .child(
                 Text::new("No agents detected")
                     .style(super::super::fg_only(&ctx.state.theme.muted)),
@@ -303,17 +303,16 @@ pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
     let show_headers = groups.len() > 1 || groups[0].project.is_some();
-    let mut body = VStack::new().gap(0).padding((1, 0));
-    for (index, group) in groups.into_iter().enumerate() {
+    let mut body = VStack::new().gap(1);
+    for group in groups {
+        let mut section = VStack::new().gap(0);
         if show_headers {
-            if index > 0 {
-                body = body.child(Text::new("").height(Length::Px(1)));
-            }
-            body = body.child(group_header(ctx, &group));
+            section = section.child(group_header(ctx, &group));
         }
         for row in group.rows {
-            body = body.child(agent_row(ctx, row, show_headers));
+            section = section.child(agent_row(ctx, row, show_headers));
         }
+        body = body.child(section);
     }
     body.into()
 }

@@ -83,7 +83,16 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
                         .gap(0)
                         .width(Length::Flex(1))
                         .child(tab_bar)
-                        .child(ScrollView::new().scrollbar(true).child(body)),
+                        .child(
+                            // Top inset sits outside the scroll so it stays under the tab bar
+                            // instead of scrolling away with the first row.
+                            VStack::new()
+                                .gap(0)
+                                .padding((1, 0, 0, 0))
+                                .width(Length::Flex(1))
+                                .height(Length::Flex(1))
+                                .child(ScrollView::new().scrollbar(true).child(body)),
+                        ),
                 )
                 .child(
                     Divider::vertical()
@@ -95,7 +104,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
 
 fn placeholder(ctx: &Context<HyprmuxApp>, text: &str) -> Element {
     VStack::new()
-        .padding((1, 1))
+        .padding((0, 0, 0, 1))
         .child(Text::new(text.to_string()).style(super::fg_only(&ctx.state.theme.muted)))
         .into()
 }

@@ -277,7 +277,7 @@ fn send_keys(
         }
     }
 
-    let modes = pane.terminal.snapshot.key_modes;
+    let modes = pane.terminal.snapshot().key_modes;
     let generation = pane.pty_generation;
     for item in items {
         match item {

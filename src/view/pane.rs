@@ -422,7 +422,7 @@ fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> Termina
         );
     }
     let Some(query) = search_highlight_query(ctx, pane.id) else {
-        return pane.terminal.snapshot.clone();
+        return pane.terminal.snapshot();
     };
     pane.terminal.search_highlighted_snapshot(
         query,
@@ -451,7 +451,9 @@ fn active_search_highlight(
 ) -> Option<crate::pane::TerminalSearchHighlight> {
     let search = ctx.state.search.as_ref()?;
     let matched = search.matches.get(search.current)?;
-    if matched.pane != pane.id || matched.offset != pane.terminal.snapshot.scrollback_offset {
+    // `scrollback_offset()` reads the screen directly; going through `snapshot()` here would clone
+    // a whole snapshot just to compare one integer.
+    if matched.pane != pane.id || matched.offset != pane.terminal.scrollback_offset() {
         return None;
     }
     Some(crate::pane::TerminalSearchHighlight {

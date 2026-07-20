@@ -129,7 +129,7 @@ fn forward_key_to_targets(
                 *id,
                 pane.pty_generation,
                 key,
-                pane.terminal.snapshot.key_modes,
+                pane.terminal.snapshot().key_modes,
             )
             .is_ok()
                 && pane.terminal.set_scrollback(0)

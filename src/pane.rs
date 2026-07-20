@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use tui_lipan::prelude::*;
 
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
@@ -5,7 +7,6 @@ use tui_lipan::prelude::*;
 pub struct TerminalPane {
     pub pane_id: crate::state::PaneId,
     pub generation: u64,
-    pub snapshot: TerminalRenderSnapshot,
     pub cols: u16,
     pub rows: u16,
     pub status: ManagedTerminalStatus,
@@ -32,7 +33,11 @@ pub struct TerminalPane {
     pub runtime_sequence: u64,
     pub last_palette: Option<TerminalColorPalette>,
     seen_bell_count: u64,
-    screen: Box<TerminalScreen>,
+    /// Behind a `RefCell` so [`TerminalPane::snapshot`] can rebuild through a shared reference:
+    /// the render snapshot is pulled by the view (which only ever holds `&State`), and rebuilding
+    /// it at read time rather than at write time is what collapses a burst of output messages into
+    /// one rebuild. See [`TerminalPane::process_server_output`].
+    screen: RefCell<Box<TerminalScreen>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,12 +67,10 @@ impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
         let rows = 32;
-        let mut screen = TerminalScreen::new(rows, cols, scrollback);
-        let snapshot = screen.render_snapshot();
+        let screen = TerminalScreen::new(rows, cols, scrollback);
         Self {
             pane_id: 0,
             generation: 0,
-            snapshot,
             cols,
             rows,
             status: ManagedTerminalStatus::Starting,
@@ -84,8 +87,18 @@ impl TerminalPane {
             runtime_sequence: 0,
             last_palette: None,
             seen_bell_count: 0,
-            screen: Box::new(screen),
+            screen: RefCell::new(Box::new(screen)),
         }
+    }
+
+    /// The current render snapshot, rebuilt on demand.
+    ///
+    /// `TerminalScreen` already caches its snapshot behind an internal dirty flag, so this is a
+    /// cheap `Arc` clone whenever no bytes have arrived since the last call. Pulling it here rather
+    /// than pushing it on every write is what makes a burst of output cost one rebuild instead of
+    /// one per message.
+    pub fn snapshot(&self) -> TerminalRenderSnapshot {
+        self.screen.borrow_mut().render_snapshot()
     }
 
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
@@ -103,16 +116,17 @@ impl TerminalPane {
     pub fn bind_server_backend(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
-        *self.screen = TerminalScreen::new(self.rows, self.cols, 5000);
-        self.seen_bell_count = self.screen.bell_count();
+        let mut screen = self.screen.borrow_mut();
+        **screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
-            self.screen.set_palette(palette);
+            screen.set_palette(palette);
         }
-        self.snapshot = self.screen.render_snapshot();
+        drop(screen);
     }
 
     pub fn take_bell(&mut self) -> bool {
-        let count = self.screen.bell_count();
+        let count = self.screen.borrow().bell_count();
         let rang = count > self.seen_bell_count;
         self.seen_bell_count = count;
         rang
@@ -121,10 +135,13 @@ impl TerminalPane {
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
     pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
-        self.screen.process_bytes(bytes);
-        let _ = self.screen.drain_responses();
-        self.title = self.screen.title().and_then(sanitize_terminal_title);
-        self.snapshot = self.screen.render_snapshot();
+        self.screen.borrow_mut().process_bytes(bytes);
+        let _ = self.screen.borrow_mut().drain_responses();
+        self.title = self
+            .screen
+            .borrow()
+            .title()
+            .and_then(sanitize_terminal_title);
         self.status = ManagedTerminalStatus::Ready;
         PaneEventOutcome::Repaint
     }
@@ -148,8 +165,7 @@ impl TerminalPane {
         if self.last_palette == Some(palette) {
             return false;
         }
-        self.screen.set_palette(palette);
-        self.snapshot = self.screen.render_snapshot();
+        self.screen.borrow_mut().set_palette(palette);
         self.last_palette = Some(palette);
         true
     }
@@ -165,17 +181,15 @@ impl TerminalPane {
         }
         self.cols = cols;
         self.rows = rows;
-        self.screen.resize(rows, cols);
-        self.snapshot = self.screen.render_snapshot();
+        self.screen.borrow_mut().resize(rows, cols);
         true
     }
 
     pub fn set_scrollback(&mut self, offset: usize) -> bool {
-        if self.screen.scrollback_offset() == offset {
+        if self.screen.borrow().scrollback_offset() == offset {
             return false;
         }
-        self.screen.set_scrollback(offset);
-        self.snapshot = self.screen.render_snapshot();
+        self.screen.borrow_mut().set_scrollback(offset);
         true
     }
 
@@ -185,16 +199,17 @@ impl TerminalPane {
             return Vec::new();
         }
 
-        let total = self.screen.total_text_lines();
+        let total = self.screen.borrow().total_text_lines();
         // `text_lines(start, count)` returns up to `count` lines beginning at absolute
         // `start`. Indices below are `start + i` so a future clamp/shift in the exporter
         // cannot silently renumber matches.
         let start = 0;
-        let lines = self.screen.text_lines(start, total);
+        let lines = self.screen.borrow().text_lines(start, total);
         let mut matches = Vec::new();
         for (i, text) in lines.into_iter().enumerate() {
             let absolute = start + i;
-            let Some((offset, line)) = self.screen.absolute_line_to_viewport(absolute) else {
+            let Some((offset, line)) = self.screen.borrow().absolute_line_to_viewport(absolute)
+            else {
                 continue;
             };
             for (start_col, end_col) in search_match_ranges(&text, query) {
@@ -217,39 +232,13 @@ impl TerminalPane {
         active_highlight_style: Style,
         active_highlight: Option<TerminalSearchHighlight>,
     ) -> TerminalRenderSnapshot {
-        let query = query.trim();
-        if query.is_empty() {
-            return self.snapshot.clone();
-        }
-
-        let mut snapshot = self.snapshot.clone();
-        let plain_lines: Vec<&str> = snapshot.text.lines().collect();
-        let mut color_lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
-        let mut changed = false;
-
-        for (row, spans) in color_lines.iter_mut().enumerate() {
-            let Some(line) = plain_lines.get(row) else {
-                continue;
-            };
-            let ranges = search_match_ranges(line, query);
-            if ranges.is_empty() {
-                continue;
-            }
-            *spans = highlight_span_ranges(
-                row,
-                spans,
-                &ranges,
-                highlight_style,
-                active_highlight_style,
-                active_highlight,
-            );
-            changed = true;
-        }
-
-        if changed {
-            snapshot.color_lines = color_lines.into();
-        }
-        snapshot
+        search_highlighted_snapshot(
+            self.snapshot(),
+            query,
+            highlight_style,
+            active_highlight_style,
+            active_highlight,
+        )
     }
 
     pub fn hint_snapshot(
@@ -260,47 +249,112 @@ impl TerminalPane {
         match_style: Style,
         label_style: Style,
     ) -> TerminalRenderSnapshot {
-        let mut snapshot = self.snapshot.clone();
-        let mut lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
-        for (index, matched) in matches.iter().enumerate().rev() {
-            let Some(label) = labels.get(index) else {
-                continue;
-            };
-            if !label.starts_with(input) {
-                continue;
-            }
-            let Some(spans) = lines.get_mut(matched.row) else {
-                continue;
-            };
-            let range = [(matched.start_col, matched.end_col)];
-            *spans =
-                highlight_span_ranges(matched.row, spans, &range, match_style, match_style, None);
-            insert_styled_span(spans, matched.end_col, label, label_style);
-        }
-        snapshot.color_lines = lines.into();
-        snapshot
+        hint_snapshot(
+            self.snapshot(),
+            matches,
+            labels,
+            input,
+            match_style,
+            label_style,
+        )
+    }
+}
+
+/// Overlay search highlights onto a snapshot. Split out from [`TerminalPane`] so it can be tested
+/// against a synthetic snapshot; see [`extract_snapshot_text`].
+fn search_highlighted_snapshot(
+    mut snapshot: TerminalRenderSnapshot,
+    query: &str,
+    highlight_style: Style,
+    active_highlight_style: Style,
+    active_highlight: Option<TerminalSearchHighlight>,
+) -> TerminalRenderSnapshot {
+    let query = query.trim();
+    if query.is_empty() {
+        return snapshot;
     }
 
+    let plain_lines: Vec<&str> = snapshot.text.lines().collect();
+    let mut color_lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
+    let mut changed = false;
+
+    for (row, spans) in color_lines.iter_mut().enumerate() {
+        let Some(line) = plain_lines.get(row) else {
+            continue;
+        };
+        let ranges = search_match_ranges(line, query);
+        if ranges.is_empty() {
+            continue;
+        }
+        *spans = highlight_span_ranges(
+            row,
+            spans,
+            &ranges,
+            highlight_style,
+            active_highlight_style,
+            active_highlight,
+        );
+        changed = true;
+    }
+
+    if changed {
+        snapshot.color_lines = color_lines.into();
+    }
+    snapshot
+}
+
+/// Overlay hint labels onto a snapshot. Split out from [`TerminalPane`] for testability; see
+/// [`extract_snapshot_text`].
+fn hint_snapshot(
+    mut snapshot: TerminalRenderSnapshot,
+    matches: &[crate::hints::HintMatch],
+    labels: &[String],
+    input: &str,
+    match_style: Style,
+    label_style: Style,
+) -> TerminalRenderSnapshot {
+    let mut lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
+    for (index, matched) in matches.iter().enumerate().rev() {
+        let Some(label) = labels.get(index) else {
+            continue;
+        };
+        if !label.starts_with(input) {
+            continue;
+        }
+        let Some(spans) = lines.get_mut(matched.row) else {
+            continue;
+        };
+        let range = [(matched.start_col, matched.end_col)];
+        *spans = highlight_span_ranges(matched.row, spans, &range, match_style, match_style, None);
+        insert_styled_span(spans, matched.end_col, label, label_style);
+    }
+    snapshot.color_lines = lines.into();
+    snapshot
+}
+
+impl TerminalPane {
     /// Current cursor position in the visible snapshot grid as `(row, col)`.
     pub fn cursor_position(&self) -> (usize, usize) {
         (
-            usize::from(self.snapshot.cursor_row),
-            usize::from(self.snapshot.cursor_col),
+            usize::from(self.snapshot().cursor_row),
+            usize::from(self.snapshot().cursor_col),
         )
     }
 
+    /// Read straight from the screen rather than through [`TerminalPane::snapshot`]:
+    /// `process_bytes` keeps this field current on its own, so it needs no snapshot rebuild.
     pub fn scrollback_offset(&self) -> usize {
-        self.snapshot.scrollback_offset
+        self.screen.borrow().scrollback_offset()
     }
 
     pub fn total_scrollback_rows(&self) -> usize {
-        self.snapshot.total_scrollback_rows
+        self.screen.borrow_mut().total_scrollback_rows()
     }
 
     /// Plain text of the current visible snapshot grid (reflecting whatever scrollback offset
     /// is currently applied), one row per line, joined with `\n`.
     pub fn capture_text(&self) -> String {
-        self.snapshot.text.to_string()
+        self.snapshot().text.to_string()
     }
 
     /// Plain text from retained scrollback history.
@@ -308,33 +362,33 @@ impl TerminalPane {
     /// `lines = None` exports the full retained grid (history + live). `Some(n)` exports the
     /// trailing `n` lines. Does not mutate the pane's scrollback offset.
     pub fn capture_scrollback_text(&self, lines: Option<usize>) -> String {
-        let total = self.screen.total_text_lines();
+        let total = self.screen.borrow().total_text_lines();
         let start = match lines {
             None => 0,
             Some(n) => total.saturating_sub(n),
         };
-        self.screen.export_text(start, total)
+        self.screen.borrow().export_text(start, total)
     }
 
     /// Plain text of the last shell-integration command's output, when marks are available.
     pub fn capture_last_command_output(&self) -> Option<String> {
-        self.screen.export_last_command_output()
+        self.screen.borrow().export_last_command_output()
     }
 
     /// Absolute-line semantic marks from OSC 133 (Prompt / OutputStart / OutputEnd).
     pub fn semantic_marks(&self) -> Vec<tui_lipan::prelude::SemanticMark> {
-        self.screen.semantic_marks()
+        self.screen.borrow().semantic_marks()
     }
 
     /// Map an absolute text line to `(scrollback_offset, viewport_row)`.
     pub fn absolute_line_to_viewport(&self, absolute: usize) -> Option<(usize, usize)> {
-        self.screen.absolute_line_to_viewport(absolute)
+        self.screen.borrow().absolute_line_to_viewport(absolute)
     }
 
     /// Plain, right-trimmed text of a single row in the current snapshot grid, or an empty
     /// string when `row` is out of range.
     pub fn row_text(&self, row: usize) -> String {
-        self.snapshot
+        self.snapshot()
             .text
             .lines()
             .nth(row)
@@ -347,36 +401,50 @@ impl TerminalPane {
     /// `cursor` are `(row, col)` in visible-viewport coordinates; ordering is normalized.
     /// Trailing whitespace is trimmed per line and lines are joined with `\n`.
     pub fn extract_text(&self, anchor: (usize, usize), cursor: (usize, usize)) -> String {
-        let (start, end) = if anchor <= cursor {
-            (anchor, cursor)
-        } else {
-            (cursor, anchor)
-        };
-        let lines: Vec<&str> = self.snapshot.text.lines().collect();
-        let mut out = String::new();
-        for row in start.0..=end.0 {
-            let Some(line) = lines.get(row) else {
-                continue;
-            };
-            let chars: Vec<char> = line.chars().collect();
-            let col_start = if row == start.0 { start.1 } else { 0 };
-            let col_end = if row == end.0 {
-                (end.1 + 1).min(chars.len())
-            } else {
-                chars.len()
-            };
-            let segment: String = chars
-                .get(col_start..col_end.max(col_start))
-                .map(|slice| slice.iter().collect())
-                .unwrap_or_default();
-            out.push_str(segment.trim_end());
-            if row < end.0 {
-                out.push('\n');
-            }
-        }
-        out
+        extract_snapshot_text(&self.snapshot(), anchor, cursor)
     }
+}
 
+/// Extract the text covered by a selection from a snapshot grid.
+///
+/// Split out from [`TerminalPane`] so it can be exercised against a synthetic snapshot: the pane's
+/// own snapshot is now derived from its live screen and cannot be injected.
+fn extract_snapshot_text(
+    snapshot: &TerminalRenderSnapshot,
+    anchor: (usize, usize),
+    cursor: (usize, usize),
+) -> String {
+    let (start, end) = if anchor <= cursor {
+        (anchor, cursor)
+    } else {
+        (cursor, anchor)
+    };
+    let lines: Vec<&str> = snapshot.text.lines().collect();
+    let mut out = String::new();
+    for row in start.0..=end.0 {
+        let Some(line) = lines.get(row) else {
+            continue;
+        };
+        let chars: Vec<char> = line.chars().collect();
+        let col_start = if row == start.0 { start.1 } else { 0 };
+        let col_end = if row == end.0 {
+            (end.1 + 1).min(chars.len())
+        } else {
+            chars.len()
+        };
+        let segment: String = chars
+            .get(col_start..col_end.max(col_start))
+            .map(|slice| slice.iter().collect())
+            .unwrap_or_default();
+        out.push_str(segment.trim_end());
+        if row < end.0 {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+impl TerminalPane {
     /// Mark the pane as exited locally. The server owns the PTY and is asked to kill it via a
     /// separate `Kill` RPC (see `close_pane_state`).
     pub fn kill(&mut self) {
@@ -651,21 +719,20 @@ mod tests {
 
     #[test]
     fn extract_text_trims_and_joins_selected_rows() {
-        let mut pane = TerminalPane::new(100);
-        pane.snapshot = TerminalRenderSnapshot {
+        let snapshot = TerminalRenderSnapshot {
             text: std::sync::Arc::from("hello world   \nfoo bar\nbaz"),
             ..TerminalRenderSnapshot::default()
         };
 
         // Single-line span is inclusive of the cursor cell and trims trailing space.
-        assert_eq!(pane.extract_text((0, 0), (0, 4)), "hello");
+        assert_eq!(extract_snapshot_text(&snapshot, (0, 0), (0, 4)), "hello");
         // Multi-line span joins rows with newlines, trimming each line's trailing space.
         assert_eq!(
-            pane.extract_text((0, 0), (2, 2)),
+            extract_snapshot_text(&snapshot, (0, 0), (2, 2)),
             "hello world\nfoo bar\nbaz"
         );
         // Anchor/cursor order is normalized.
-        assert_eq!(pane.extract_text((0, 4), (0, 0)), "hello");
+        assert_eq!(extract_snapshot_text(&snapshot, (0, 4), (0, 0)), "hello");
     }
 
     #[test]
@@ -699,11 +766,10 @@ mod tests {
 
     #[test]
     fn search_highlighted_snapshot_marks_all_visible_matches() {
-        let mut pane = TerminalPane::new(100);
         let base_style = Style::new().fg(Color::Green);
         let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
         let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        pane.snapshot = TerminalRenderSnapshot {
+        let base = TerminalRenderSnapshot {
             text: std::sync::Arc::from("Alpha beta alpha"),
             color_lines: std::sync::Arc::from([vec![
                 Span::new("Alpha beta alpha").style(base_style),
@@ -711,7 +777,8 @@ mod tests {
             ..TerminalRenderSnapshot::default()
         };
 
-        let snapshot = pane.search_highlighted_snapshot(
+        let snapshot = search_highlighted_snapshot(
+            base.clone(),
             "alpha",
             highlight_style,
             active_highlight_style,
@@ -729,11 +796,10 @@ mod tests {
 
     #[test]
     fn search_highlighted_snapshot_marks_active_match_differently() {
-        let mut pane = TerminalPane::new(100);
         let base_style = Style::new().fg(Color::Green);
         let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
         let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        pane.snapshot = TerminalRenderSnapshot {
+        let base = TerminalRenderSnapshot {
             text: std::sync::Arc::from("Alpha beta alpha"),
             color_lines: std::sync::Arc::from([vec![
                 Span::new("Alpha beta alpha").style(base_style),
@@ -741,7 +807,8 @@ mod tests {
             ..TerminalRenderSnapshot::default()
         };
 
-        let snapshot = pane.search_highlighted_snapshot(
+        let snapshot = search_highlighted_snapshot(
+            base.clone(),
             "alpha",
             highlight_style,
             active_highlight_style,
@@ -758,11 +825,10 @@ mod tests {
 
     #[test]
     fn hint_snapshot_appends_distinct_labels_without_replacing_match_text() {
-        let mut pane = TerminalPane::new(100);
         let base_style = Style::new().fg(Color::Green);
         let match_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
         let label_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        pane.snapshot = TerminalRenderSnapshot {
+        let base = TerminalRenderSnapshot {
             text: std::sync::Arc::from("go https://x.test then ./src/main.rs"),
             color_lines: std::sync::Arc::from([vec![
                 Span::new("go https://x.test then ./src/main.rs").style(base_style),
@@ -786,7 +852,8 @@ mod tests {
             },
         ];
 
-        let snapshot = pane.hint_snapshot(
+        let snapshot = hint_snapshot(
+            base.clone(),
             &matches,
             &["a".to_string(), "s".to_string()],
             "",

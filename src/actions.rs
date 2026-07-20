@@ -40,7 +40,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::full();
     }
     let modes = find_pane(&ctx.state, id).map_or(TerminalKeyModes::default(), |pane| {
-        pane.terminal.snapshot.key_modes
+        pane.terminal.snapshot().key_modes
     });
     if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes)) {
         ctx.toast().push(crate::pty_events::error_toast(

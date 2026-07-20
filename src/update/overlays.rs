@@ -280,11 +280,28 @@ pub(super) fn config_file_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn workbar_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
-    // Repaint for the clock, then reschedule only while a clock segment is configured.
-    if ctx.state.config.workbar.has_clock() {
-        Update::with_command(crate::schedule_workbar_tick())
+    // Reschedule only while a clock segment is configured.
+    if !ctx.state.config.workbar.has_clock() {
+        return Update::none();
+    }
+    let command = crate::schedule_workbar_tick();
+    // The tick is 1s, but `clock_format` defaults to minute resolution. Comparing against the text
+    // the view last rendered turns ~59 of every 60 ticks into a bare reschedule instead of a
+    // full-app render that would redraw an identical badge.
+    let current = format!(
+        " {} ",
+        chrono::Local::now().format(&ctx.state.config.workbar.clock_format)
+    );
+    let changed = ctx
+        .state
+        .last_clock_text
+        .borrow()
+        .as_ref()
+        .is_none_or(|rendered| *rendered != current);
+    if changed {
+        Update::with_command(command)
     } else {
-        Update::none()
+        Update::command_only(command)
     }
 }
 
@@ -293,6 +310,11 @@ pub(super) fn workbar_command_output(
     command: String,
     output: String,
 ) -> Update {
+    // Command segments re-run on a timer and usually report the same string (a battery percentage,
+    // a branch name). Only the runs that actually change the badge are worth a frame.
+    if ctx.state.workbar_command_output.get(&command) == Some(&output) {
+        return Update::none();
+    }
     ctx.state.workbar_command_output.insert(command, output);
     Update::full()
 }

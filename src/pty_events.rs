@@ -4,13 +4,22 @@ use crate::HyprmuxApp;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{PaneId, ToastChannel};
 
-fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
+/// Why input was rejected, plus whether this call actually surfaced a toast for it.
+struct BlockedInput {
+    reason: String,
+    /// False when the 2s debounce swallowed the toast — nothing changed on screen, so the caller
+    /// must not ask for a frame. Held keys against a read-only pane would otherwise render at key
+    /// repeat rate to redraw an identical view.
+    notified: bool,
+}
+
+fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<BlockedInput> {
     let reason = ctx.state.pane_input_block_reason()?.to_string();
-    let notify = ctx
+    let notified = ctx
         .state
         .last_blocked_input_toast
         .is_none_or(|last| last.elapsed() >= std::time::Duration::from_secs(2));
-    if notify {
+    if notified {
         ctx.state.last_blocked_input_toast = Some(std::time::Instant::now());
         replace_toast(
             ctx,
@@ -18,7 +27,16 @@ fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<String> {
             info_toast(&ctx.state.theme, reason.clone()),
         );
     }
-    Some(reason)
+    Some(BlockedInput { reason, notified })
+}
+
+/// The frame a blocked-input rejection needs: one only when its toast was actually shown.
+fn blocked_input_update(blocked: &BlockedInput) -> Update {
+    if blocked.notified {
+        Update::full()
+    } else {
+        Update::none()
+    }
 }
 
 /// Show the newest state for a notification channel without disturbing unrelated toasts.
@@ -87,8 +105,8 @@ pub(crate) fn forward_key_to_pane(
     id: PaneId,
     key: KeyEvent,
 ) -> Update {
-    if input_blocked(ctx).is_some() {
-        return Update::full();
+    if let Some(blocked) = input_blocked(ctx) {
+        return blocked_input_update(&blocked);
     }
     let targets = synchronized_key_targets(&ctx.state, id);
     forward_key_to_targets(ctx, &targets, key)
@@ -137,8 +155,8 @@ pub(crate) fn send_pane_bytes(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> std::result::Result<(), String> {
-    if let Some(reason) = input_blocked(ctx) {
-        return Err(reason);
+    if let Some(blocked) = input_blocked(ctx) {
+        return Err(blocked.reason);
     }
     let client = ctx.state.session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
@@ -230,8 +248,8 @@ pub(crate) fn handle_pane_input(
         // installed still enables bracketed paste and focus reports.
         return Update::none();
     }
-    if input_blocked(ctx).is_some() {
-        return Update::full();
+    if let Some(blocked) = input_blocked(ctx) {
+        return blocked_input_update(&blocked);
     }
 
     let client = ctx.state.session_client.clone();
@@ -258,8 +276,14 @@ pub(crate) fn handle_pane_mouse(
     // hover callback runs, so on-hover focus would otherwise never fire over a full-screen TUI.
     // Forwarded mouse activity means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
-    if input_blocked(ctx).is_some() {
-        return Update::full();
+    if let Some(blocked) = input_blocked(ctx) {
+        // Pointer motion arrives continuously; without the toast there is nothing new to draw
+        // beyond whatever the hover policy already asked for.
+        return if blocked.notified {
+            Update::full()
+        } else {
+            hover
+        };
     }
 
     let client = ctx.state.session_client.clone();

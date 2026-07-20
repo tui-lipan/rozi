@@ -215,6 +215,7 @@ pub fn restore_state_from_profile(
         animation: crate::anim::GeometryAnimation::None,
         last_viewport: std::cell::Cell::new(None),
         last_content_viewport: std::cell::Cell::new(None),
+        last_clock_text: std::cell::RefCell::new(None),
         sidebar_visible,
         sidebar,
         show_palette: false,

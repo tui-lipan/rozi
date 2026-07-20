@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -68,6 +68,11 @@ pub struct State {
     pub last_viewport: Cell<Option<Rect>>,
     /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
     pub last_content_viewport: Cell<Option<Rect>>,
+    /// Clock text the workbar last actually rendered. The clock ticks every second, but the default
+    /// `clock_format` has minute resolution, so this lets the tick skip the ~59 of 60 frames that
+    /// would redraw an identical string. Recorded by the view (rather than reformatted in the
+    /// handler) so the comparison is against what is really on screen, with no sampling skew.
+    pub last_clock_text: RefCell<Option<String>>,
     pub sidebar_visible: bool,
     pub sidebar: SidebarState,
     pub show_palette: bool,
@@ -188,6 +193,7 @@ impl State {
             animation: GeometryAnimation::None,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
+            last_clock_text: RefCell::new(None),
             sidebar_visible,
             sidebar,
             show_palette: false,
@@ -274,6 +280,29 @@ impl State {
         self.session_name
             .as_deref()
             .is_some_and(is_ephemeral_session_name)
+    }
+
+    /// Whether a pane's contents reach the screen on the next frame.
+    ///
+    /// `view::render` only builds panes from the active workspace, plus the scratchpad and popup
+    /// (which live outside the workspace lists). Output for anything else — a build running on
+    /// another workspace — changes state that nothing currently draws, so the frame it would cost
+    /// is pure waste. Skipping the frame never loses content: the snapshot is still updated in
+    /// place, and whatever makes the pane visible (workspace switch, scratchpad toggle) renders
+    /// from the current snapshot.
+    ///
+    /// Deliberately conservative — the scratchpad counts as rendered even while hidden, because it
+    /// animates in and out and a stale frame there is worse than a redundant one.
+    pub fn pane_is_rendered(&self, id: PaneId) -> bool {
+        if self.scratch.as_ref().is_some_and(|pane| pane.id == id)
+            || self.popup.as_ref().is_some_and(|pane| pane.id == id)
+        {
+            return true;
+        }
+        self.workspaces[self.active_workspace]
+            .panes
+            .iter()
+            .any(|pane| pane.id == id)
     }
 
     /// Whether this client may mutate the shared layout: always true when purely local (no shared
@@ -405,5 +434,67 @@ impl State {
         } else {
             0
         }
+    }
+}
+
+#[cfg(test)]
+mod render_visibility_tests {
+    use super::*;
+    use crate::config::HyprmuxConfig;
+    use tui_lipan::prelude::Theme;
+
+    fn state_with_two_workspaces() -> State {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        state.workspaces[0].panes.clear();
+        state.workspaces[0].panes.push(Pane::new(1, 100, rect));
+        state.workspaces[1].panes.clear();
+        state.workspaces[1].panes.push(Pane::new(2, 100, rect));
+        state.active_workspace = 0;
+        state
+    }
+
+    #[test]
+    fn only_the_active_workspaces_panes_are_rendered() {
+        let state = state_with_two_workspaces();
+        assert!(state.pane_is_rendered(1));
+        // A build running here still updates its screen; it just must not cost a frame.
+        assert!(!state.pane_is_rendered(2));
+    }
+
+    #[test]
+    fn switching_workspace_moves_which_panes_are_rendered() {
+        let mut state = state_with_two_workspaces();
+        state.active_workspace = 1;
+        assert!(!state.pane_is_rendered(1));
+        assert!(state.pane_is_rendered(2));
+    }
+
+    #[test]
+    fn scratchpad_and_popup_are_rendered_from_outside_the_workspace_lists() {
+        let mut state = state_with_two_workspaces();
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        state.scratch = Some(Pane::new(7, 100, rect));
+        state.popup = Some(Pane::new(8, 100, rect));
+        // Both animate in and out, so they count as rendered even while hidden: a stale frame
+        // there is worse than a redundant one.
+        assert!(state.pane_is_rendered(7));
+        assert!(state.pane_is_rendered(8));
+    }
+
+    #[test]
+    fn an_unknown_pane_is_not_rendered() {
+        let state = state_with_two_workspaces();
+        assert!(!state.pane_is_rendered(999));
     }
 }

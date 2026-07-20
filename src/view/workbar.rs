@@ -468,11 +468,14 @@ fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
             })
         }
         WorkbarSegment::Clock => {
-            let now = chrono::Local::now();
-            Some(format!(
+            let text = format!(
                 " {} ",
-                now.format(&ctx.state.config.workbar.clock_format)
-            ))
+                chrono::Local::now().format(&ctx.state.config.workbar.clock_format)
+            );
+            // Record what actually reached the screen so `workbar_tick` can skip the frame while
+            // the formatted string is unchanged (see `State::last_clock_text`).
+            *ctx.state.last_clock_text.borrow_mut() = Some(text.clone());
+            Some(text)
         }
         WorkbarSegment::Layout => Some(format!(
             " {} ",

@@ -533,14 +533,21 @@ pub(super) fn output(
     }
     let focused = ctx.state.focused_pane;
     let bell_notifications = ctx.state.config.notifications.bell;
+    // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
+    // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
+    // Both flags only ever go false -> true here, so that is a single frame per quiet period
+    // rather than one per output chunk.
+    let mut indicator_raised = false;
     let matched = match find_pane_mut(&mut ctx.state, pane_id) {
         Some(pane) if pane.pty_generation == generation => {
             pane.terminal.process_server_output(&bytes);
             let bell = pane.terminal.take_bell();
             pane.activity.last_activity = Some(std::time::Instant::now());
             if focused != Some(pane_id) {
+                indicator_raised |= !pane.activity.has_unseen_output;
                 pane.activity.has_unseen_output = true;
                 if bell && bell_notifications {
+                    indicator_raised |= !pane.activity.bell;
                     pane.activity.bell = true;
                 }
             }
@@ -551,12 +558,20 @@ pub(super) fn output(
     if !matched {
         // Output arrived before the layout commit that introduces this pane (or its new generation).
         // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
-        // a follower's fresh pane blank until the next redraw.
+        // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
         if let Some(shared) = ctx.state.shared.as_mut() {
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
+        return Update::none();
     }
-    Update::full()
+    // The screen is already updated above; only ask for a frame when the result reaches the
+    // display. A chatty pane on an inactive workspace would otherwise drive the renderer at full
+    // rate painting a view its output never appears in (see `State::pane_is_rendered`).
+    if indicator_raised || ctx.state.pane_is_rendered(pane_id) {
+        Update::full()
+    } else {
+        Update::none()
+    }
 }
 
 pub(super) fn resized(
@@ -573,6 +588,7 @@ pub(super) fn resized(
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
         && pane.pty_generation == generation
         && pane.terminal.apply_server_resize(cols, rows)
+        && ctx.state.pane_is_rendered(pane_id)
     {
         return Update::full();
     }

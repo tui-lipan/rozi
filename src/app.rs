@@ -781,6 +781,31 @@ mod tests {
     }
 
     #[test]
+    fn theme_picker_groups_dark_and_light_presets() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 60,
+                });
+                backend.state_mut().show_theme_picker = true;
+                backend.render();
+
+                let rendered = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(rendered.contains("System"));
+                assert!(rendered.contains("Dark"));
+                assert!(rendered.contains("Light"));
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
     fn command_palette_modal_is_capped_to_sixty_five_percent_of_viewport() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)

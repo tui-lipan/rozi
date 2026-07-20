@@ -21,9 +21,10 @@ The name resolves in this order:
 3. A [built-in preset](#built-in-presets) id.
 4. Otherwise `hyprmux` warns and uses `lipan`.
 
-Pick a theme at runtime with the *Choose theme* palette command. It lists `System`, the
-built-in presets, and every custom theme file in one fuzzy-searchable modal; the active theme
-is marked `current`. Selecting one applies it immediately and writes `name` back to the config.
+Pick a theme at runtime with the *Choose theme* palette command. It groups `System`, dark
+presets, light presets, and every custom theme file in one fuzzy-searchable modal; the active
+theme is marked `current`. Selecting one applies it immediately and writes `name` back to the
+config.
 
 ## Built-in presets
 
@@ -33,15 +34,39 @@ is marked `current`. Selecting one applies it immediately and writes `name` back
 | `one-dark` | One Dark |
 | `dracula` | Dracula |
 | `nord` | Nord |
-| `gruvbox` | Gruvbox |
-| `catppuccin` | Catppuccin |
+| `gruvbox-dark` | Gruvbox Dark |
+| `catppuccin-mocha` | Catppuccin Mocha |
 | `tokyo-night` | Tokyo Night |
 | `solarized-dark` | Solarized Dark |
 | `monokai` | Monokai |
-| `ansi` | ANSI (uses the host terminal's own palette) |
+| `solarized-light` | Solarized Light |
+| `gruvbox-light` | Gruvbox Light |
+| `tokyo-night-day` | Tokyo Night Day |
+| `catppuccin-latte` | Catppuccin Latte |
+| `catppuccin-frappe` | Catppuccin Frappe |
+| `catppuccin-macchiato` | Catppuccin Macchiato |
+| `rose-pine` | Rosé Pine |
+| `rose-pine-moon` | Rosé Pine Moon |
+| `rose-pine-dawn` | Rosé Pine Dawn |
+| `kanagawa` | Kanagawa |
+| `everforest` | Everforest |
+| `ayu-dark` | Ayu Dark |
+| `ayu-mirage` | Ayu Mirage |
+| `ayu-light` | Ayu Light |
+| `nightfox` | Nightfox |
+| `nordfox` | Nordfox |
+| `night-owl` | Night Owl |
+| `material-palenight` | Material Palenight |
+| `oxocarbon` | Oxocarbon |
+| `zenburn` | Zenburn |
 
 Preset ids are case-insensitive and accept a few aliases (e.g. `onedark`, `tokyonight`,
-`solarized`).
+`solarized`, `gruvbox`, and `catppuccin`). The latter two aliases resolve to the renamed
+`gruvbox-dark` and `catppuccin-mocha` presets.
+
+`ansi` remains a valid config value for existing configurations, but is not shown in the picker.
+When `system` cannot query the host terminal's colors, hyprmux uses ANSI colors for that run and
+shows a warning. The configured name remains `system`, so probing is retried on the next launch.
 
 ## Custom theme files
 

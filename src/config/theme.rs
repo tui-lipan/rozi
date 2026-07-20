@@ -36,16 +36,25 @@ pub fn list_custom_themes() -> Vec<(String, PathBuf)> {
     entries
 }
 
-/// The ordered set of selectable themes: `System`, every built-in preset not shadowed by a
-/// same-named custom file, then every custom theme in [`themes_dir`].
+/// The ordered set of selectable themes: `System`, every picker-visible built-in preset not
+/// shadowed by a same-named custom file, then every custom theme in [`themes_dir`].
 pub fn theme_choices() -> Vec<ThemeChoice> {
     build_theme_choices(list_custom_themes())
 }
 
 fn build_theme_choices(custom: Vec<(String, PathBuf)>) -> Vec<ThemeChoice> {
     let mut choices = vec![ThemeChoice::System];
-    for preset in ThemePreset::all() {
-        if !custom.iter().any(|(name, _)| name == preset.id()) {
+    for light in [false, true] {
+        let mut presets = ThemePreset::all()
+            .into_iter()
+            .filter(|preset| {
+                *preset != ThemePreset::Ansi
+                    && preset.is_light() == light
+                    && !custom.iter().any(|(name, _)| name == preset.id())
+            })
+            .collect::<Vec<_>>();
+        presets.sort_by_key(|preset| preset.label());
+        for preset in presets {
             choices.push(ThemeChoice::Builtin(preset));
         }
     }
@@ -93,11 +102,20 @@ pub fn resolve_theme(name: &str, system_theme: Option<&Theme>) -> ResolvedTheme 
         }
     };
     match choice {
-        ThemeChoice::System => ResolvedTheme {
-            theme: system_theme.cloned().unwrap_or(fallback),
-            watch_path: None,
-            warnings,
-        },
+        ThemeChoice::System => {
+            let theme = system_theme.cloned().unwrap_or_else(|| {
+                warnings.push(
+                    "System theme unavailable because terminal colors could not be queried; using ANSI"
+                        .to_string(),
+                );
+                ThemePreset::Ansi.theme()
+            });
+            ResolvedTheme {
+                theme,
+                watch_path: None,
+                warnings,
+            }
+        }
         ThemeChoice::Builtin(preset) => ResolvedTheme {
             theme: preset.theme(),
             watch_path: None,
@@ -129,8 +147,38 @@ mod tests {
     fn theme_choices_lead_with_system_then_builtins() {
         let choices = build_theme_choices(Vec::new());
         assert_eq!(choices.first(), Some(&ThemeChoice::System));
-        assert_eq!(choices.len(), 1 + ThemePreset::all().len());
+        assert_eq!(choices.len(), ThemePreset::all().len());
         assert!(choices.contains(&ThemeChoice::Builtin(ThemePreset::Dracula)));
+        assert!(!choices.contains(&ThemeChoice::Builtin(ThemePreset::Ansi)));
+        let first_light = choices
+            .iter()
+            .position(|choice| matches!(choice, ThemeChoice::Builtin(preset) if preset.is_light()))
+            .expect("light themes should be selectable");
+        assert!(choices[1..first_light].iter().all(|choice| {
+            matches!(choice, ThemeChoice::Builtin(preset) if !preset.is_light())
+        }));
+        for section in [&choices[1..first_light], &choices[first_light..]] {
+            let labels = section.iter().map(ThemeChoice::label).collect::<Vec<_>>();
+            assert!(labels.windows(2).all(|pair| pair[0] <= pair[1]));
+        }
+        let catppuccin = choices
+            .iter()
+            .filter_map(|choice| match choice {
+                ThemeChoice::Builtin(preset) if preset.label().starts_with("Catppuccin") => {
+                    Some(preset.label())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            catppuccin,
+            [
+                "Catppuccin Frappe",
+                "Catppuccin Macchiato",
+                "Catppuccin Mocha",
+                "Catppuccin Latte",
+            ]
+        );
     }
 
     #[test]
@@ -154,5 +202,14 @@ mod tests {
         let resolved = resolve_theme("definitely-not-a-real-theme-xyz", None);
         assert!(!resolved.warnings.is_empty());
         assert!(resolved.watch_path.is_none());
+    }
+
+    #[test]
+    fn system_theme_falls_back_to_ansi_when_host_colors_are_unavailable() {
+        let resolved = resolve_theme("system", None);
+
+        assert_eq!(resolved.theme, ThemePreset::Ansi.theme());
+        assert_eq!(resolved.warnings.len(), 1);
+        assert!(resolved.warnings[0].contains("using ANSI"));
     }
 }

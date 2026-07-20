@@ -102,8 +102,9 @@ impl Default for HyprmuxThemeConfig {
     }
 }
 
-/// A selectable theme: a built-in preset, the host-derived system theme, or a named custom
-/// theme file in the themes directory.
+/// A resolved theme source: a built-in preset, the host-derived system theme, or a named custom
+/// theme file in the themes directory. Some sources, such as the ANSI fallback, are resolvable
+/// without appearing in the picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThemeChoice {
     System,

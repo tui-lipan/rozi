@@ -232,27 +232,67 @@ pub enum ThemePreset {
     OneDark,
     Dracula,
     Nord,
-    Gruvbox,
-    Catppuccin,
+    GruvboxDark,
+    CatppuccinMocha,
     TokyoNight,
     SolarizedDark,
     Monokai,
     Ansi,
+    SolarizedLight,
+    GruvboxLight,
+    TokyoNightDay,
+    CatppuccinLatte,
+    CatppuccinFrappe,
+    CatppuccinMacchiato,
+    RosePine,
+    RosePineMoon,
+    RosePineDawn,
+    Kanagawa,
+    Everforest,
+    AyuDark,
+    AyuMirage,
+    AyuLight,
+    Nightfox,
+    Nordfox,
+    NightOwl,
+    MaterialPalenight,
+    Oxocarbon,
+    Zenburn,
 }
 
 impl ThemePreset {
-    pub fn all() -> [Self; 10] {
+    pub fn all() -> [Self; 30] {
         [
             Self::Lipan,
             Self::OneDark,
             Self::Dracula,
             Self::Nord,
-            Self::Gruvbox,
-            Self::Catppuccin,
+            Self::GruvboxDark,
+            Self::CatppuccinMocha,
             Self::TokyoNight,
             Self::SolarizedDark,
             Self::Monokai,
             Self::Ansi,
+            Self::SolarizedLight,
+            Self::GruvboxLight,
+            Self::TokyoNightDay,
+            Self::CatppuccinLatte,
+            Self::CatppuccinFrappe,
+            Self::CatppuccinMacchiato,
+            Self::RosePine,
+            Self::RosePineMoon,
+            Self::RosePineDawn,
+            Self::Kanagawa,
+            Self::Everforest,
+            Self::AyuDark,
+            Self::AyuMirage,
+            Self::AyuLight,
+            Self::Nightfox,
+            Self::Nordfox,
+            Self::NightOwl,
+            Self::MaterialPalenight,
+            Self::Oxocarbon,
+            Self::Zenburn,
         ]
     }
 
@@ -262,12 +302,32 @@ impl ThemePreset {
             Self::OneDark => "one-dark",
             Self::Dracula => "dracula",
             Self::Nord => "nord",
-            Self::Gruvbox => "gruvbox",
-            Self::Catppuccin => "catppuccin",
+            Self::GruvboxDark => "gruvbox-dark",
+            Self::CatppuccinMocha => "catppuccin-mocha",
             Self::TokyoNight => "tokyo-night",
             Self::SolarizedDark => "solarized-dark",
             Self::Monokai => "monokai",
             Self::Ansi => "ansi",
+            Self::SolarizedLight => "solarized-light",
+            Self::GruvboxLight => "gruvbox-light",
+            Self::TokyoNightDay => "tokyo-night-day",
+            Self::CatppuccinLatte => "catppuccin-latte",
+            Self::CatppuccinFrappe => "catppuccin-frappe",
+            Self::CatppuccinMacchiato => "catppuccin-macchiato",
+            Self::RosePine => "rose-pine",
+            Self::RosePineMoon => "rose-pine-moon",
+            Self::RosePineDawn => "rose-pine-dawn",
+            Self::Kanagawa => "kanagawa",
+            Self::Everforest => "everforest",
+            Self::AyuDark => "ayu-dark",
+            Self::AyuMirage => "ayu-mirage",
+            Self::AyuLight => "ayu-light",
+            Self::Nightfox => "nightfox",
+            Self::Nordfox => "nordfox",
+            Self::NightOwl => "night-owl",
+            Self::MaterialPalenight => "material-palenight",
+            Self::Oxocarbon => "oxocarbon",
+            Self::Zenburn => "zenburn",
         }
     }
 
@@ -277,13 +337,45 @@ impl ThemePreset {
             Self::OneDark => "One Dark",
             Self::Dracula => "Dracula",
             Self::Nord => "Nord",
-            Self::Gruvbox => "Gruvbox",
-            Self::Catppuccin => "Catppuccin",
+            Self::GruvboxDark => "Gruvbox Dark",
+            Self::CatppuccinMocha => "Catppuccin Mocha",
             Self::TokyoNight => "Tokyo Night",
             Self::SolarizedDark => "Solarized Dark",
             Self::Monokai => "Monokai",
             Self::Ansi => "ANSI",
+            Self::SolarizedLight => "Solarized Light",
+            Self::GruvboxLight => "Gruvbox Light",
+            Self::TokyoNightDay => "Tokyo Night Day",
+            Self::CatppuccinLatte => "Catppuccin Latte",
+            Self::CatppuccinFrappe => "Catppuccin Frappe",
+            Self::CatppuccinMacchiato => "Catppuccin Macchiato",
+            Self::RosePine => "Rose Pine",
+            Self::RosePineMoon => "Rose Pine Moon",
+            Self::RosePineDawn => "Rose Pine Dawn",
+            Self::Kanagawa => "Kanagawa",
+            Self::Everforest => "Everforest",
+            Self::AyuDark => "Ayu Dark",
+            Self::AyuMirage => "Ayu Mirage",
+            Self::AyuLight => "Ayu Light",
+            Self::Nightfox => "Nightfox",
+            Self::Nordfox => "Nordfox",
+            Self::NightOwl => "Night Owl",
+            Self::MaterialPalenight => "Material Palenight",
+            Self::Oxocarbon => "Oxocarbon",
+            Self::Zenburn => "Zenburn",
         }
+    }
+
+    pub fn is_light(self) -> bool {
+        matches!(
+            self,
+            Self::SolarizedLight
+                | Self::GruvboxLight
+                | Self::TokyoNightDay
+                | Self::CatppuccinLatte
+                | Self::RosePineDawn
+                | Self::AyuLight
+        )
     }
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -297,12 +389,32 @@ impl ThemePreset {
             "one-dark" | "onedark" => Some(Self::OneDark),
             "dracula" => Some(Self::Dracula),
             "nord" => Some(Self::Nord),
-            "gruvbox" => Some(Self::Gruvbox),
-            "catppuccin" => Some(Self::Catppuccin),
+            "gruvbox-dark" | "gruvbox" => Some(Self::GruvboxDark),
+            "catppuccin-mocha" | "catppuccin" => Some(Self::CatppuccinMocha),
             "tokyo-night" | "tokyonight" => Some(Self::TokyoNight),
             "solarized-dark" | "solarized" => Some(Self::SolarizedDark),
             "monokai" => Some(Self::Monokai),
             "ansi" => Some(Self::Ansi),
+            "solarized-light" => Some(Self::SolarizedLight),
+            "gruvbox-light" => Some(Self::GruvboxLight),
+            "tokyo-night-day" => Some(Self::TokyoNightDay),
+            "catppuccin-latte" => Some(Self::CatppuccinLatte),
+            "catppuccin-frappe" => Some(Self::CatppuccinFrappe),
+            "catppuccin-macchiato" => Some(Self::CatppuccinMacchiato),
+            "rose-pine" => Some(Self::RosePine),
+            "rose-pine-moon" => Some(Self::RosePineMoon),
+            "rose-pine-dawn" => Some(Self::RosePineDawn),
+            "kanagawa" => Some(Self::Kanagawa),
+            "everforest" => Some(Self::Everforest),
+            "ayu-dark" => Some(Self::AyuDark),
+            "ayu-mirage" => Some(Self::AyuMirage),
+            "ayu-light" => Some(Self::AyuLight),
+            "nightfox" => Some(Self::Nightfox),
+            "nordfox" => Some(Self::Nordfox),
+            "night-owl" => Some(Self::NightOwl),
+            "material-palenight" => Some(Self::MaterialPalenight),
+            "oxocarbon" => Some(Self::Oxocarbon),
+            "zenburn" => Some(Self::Zenburn),
             _ => None,
         }
     }
@@ -313,12 +425,32 @@ impl ThemePreset {
             Self::OneDark => Theme::one_dark(),
             Self::Dracula => Theme::dracula(),
             Self::Nord => Theme::nord(),
-            Self::Gruvbox => Theme::gruvbox(),
-            Self::Catppuccin => Theme::catppuccin(),
+            Self::GruvboxDark => Theme::gruvbox_dark(),
+            Self::CatppuccinMocha => Theme::catppuccin_mocha(),
             Self::TokyoNight => Theme::tokyo_night(),
             Self::SolarizedDark => Theme::solarized_dark(),
             Self::Monokai => Theme::monokai(),
             Self::Ansi => Theme::ansi(),
+            Self::SolarizedLight => Theme::solarized_light(),
+            Self::GruvboxLight => Theme::gruvbox_light(),
+            Self::TokyoNightDay => Theme::tokyo_night_day(),
+            Self::CatppuccinLatte => Theme::catppuccin_latte(),
+            Self::CatppuccinFrappe => Theme::catppuccin_frappe(),
+            Self::CatppuccinMacchiato => Theme::catppuccin_macchiato(),
+            Self::RosePine => Theme::rose_pine(),
+            Self::RosePineMoon => Theme::rose_pine_moon(),
+            Self::RosePineDawn => Theme::rose_pine_dawn(),
+            Self::Kanagawa => Theme::kanagawa(),
+            Self::Everforest => Theme::everforest(),
+            Self::AyuDark => Theme::ayu_dark(),
+            Self::AyuMirage => Theme::ayu_mirage(),
+            Self::AyuLight => Theme::ayu_light(),
+            Self::Nightfox => Theme::nightfox(),
+            Self::Nordfox => Theme::nordfox(),
+            Self::NightOwl => Theme::night_owl(),
+            Self::MaterialPalenight => Theme::material_palenight(),
+            Self::Oxocarbon => Theme::oxocarbon(),
+            Self::Zenburn => Theme::zenburn(),
         }
     }
 }
@@ -342,5 +474,13 @@ mod tests {
         assert!(asymmetric.vertical.text().is_empty());
         assert!(asymmetric.horizontal.text().is_empty());
         assert!(asymmetric.normalizes_asymmetric);
+    }
+
+    #[test]
+    fn every_builtin_theme_has_a_canonical_resolvable_id() {
+        for preset in ThemePreset::all() {
+            assert_eq!(ThemePreset::parse(preset.id()), Some(preset));
+            let _ = preset.theme();
+        }
     }
 }

@@ -306,22 +306,34 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let current = &ctx.state.config.theme.name;
     let initial_selected = choices.iter().position(|choice| &choice.id() == current);
 
-    let entries: Vec<SearchEntry<usize>> = choices
-        .iter()
-        .enumerate()
-        .map(|(index, choice)| {
-            let mut entry = SearchEntry::item(choice.label(), index);
-            if Some(index) == initial_selected {
-                entry = entry.description(ItemDescription::new().right("current"));
+    let mut entries = Vec::with_capacity(choices.len() + 4);
+    let mut previous_group = None;
+    for (index, choice) in choices.iter().enumerate() {
+        let group = match choice {
+            crate::config::ThemeChoice::System => None,
+            crate::config::ThemeChoice::Builtin(preset) if preset.is_light() => Some("Light"),
+            crate::config::ThemeChoice::Builtin(_) => Some("Dark"),
+            crate::config::ThemeChoice::Custom { .. } => Some("Custom"),
+        };
+        if previous_group != group {
+            if let Some(group) = group {
+                entries.push(SearchEntry::header(group));
             }
-            entry
-        })
-        .collect();
+            previous_group = group;
+        }
+
+        let mut entry = SearchEntry::item(choice.label(), index);
+        if Some(index) == initial_selected {
+            entry = entry.description(ItemDescription::new().right("current"));
+        }
+        entries.push(entry);
+    }
 
     // Mirror the command palette so theme selection reuses the same fuzzy-search UX.
     let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search themes…")
+        .preserve_groups(false)
         .initial_selected_item_index(initial_selected)
         .sync_selection(true)
         .on_select(

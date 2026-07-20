@@ -272,17 +272,24 @@ pub(crate) fn handle_pane_mouse(
     id: PaneId,
     bytes: Vec<u8>,
 ) -> Update {
-    // A pane running mouse tracking swallows pointer motion in the framework before our per-pane
-    // hover callback runs, so on-hover focus would otherwise never fire over a full-screen TUI.
-    // Forwarded mouse activity means the pointer is over this pane, so re-apply the hover policy.
+    // A pane running mouse tracking consumes the event in the framework before this pane's
+    // `MouseRegion` runs, so the `on_mouse_down` that normally raises `Msg::FocusPane` never fires
+    // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
+    // scrolls (but deliberately not for plain motion), so reconciling from it restores
+    // click-to-focus without reintroducing hover-to-focus against the user's config.
+    let before = ctx.state.focused_pane;
+    crate::key_routing::sync_focus_from_framework(ctx);
+    let focus_moved = ctx.state.focused_pane != before;
+    // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
+    let focus_update = if focus_moved { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
         // Pointer motion arrives continuously; without the toast there is nothing new to draw
-        // beyond whatever the hover policy already asked for.
+        // beyond whatever focus already asked for.
         return if blocked.notified {
             Update::full()
         } else {
-            hover
+            focus_update
         };
     }
 
@@ -295,7 +302,7 @@ pub(crate) fn handle_pane_mouse(
             return Update::full();
         }
     }
-    hover
+    focus_update
 }
 
 /// Trailing-edge debounce window for controller PTY resizes, coalescing a resize storm (drag,

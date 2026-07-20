@@ -171,10 +171,12 @@ pub(super) fn poll_command(
         return Update::none();
     };
     if ctx.state.sidebar.command_in_flight.contains_key(&tab_id) {
-        return Update::command_only(Command::spawn(move |link: CommandLink<crate::Msg>| {
-            std::thread::sleep(COMMAND_BUSY_RETRY);
-            link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
-        }));
+        return Update::command_only(Command::after(
+            COMMAND_BUSY_RETRY,
+            move |link: CommandLink<crate::Msg>| {
+                link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
+            },
+        ));
     }
     ctx.state
         .sidebar
@@ -230,10 +232,12 @@ pub(super) fn command_output(
             },
         );
     }
-    let command = Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(std::time::Duration::from_secs(interval_secs));
-        link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
-    });
+    let command = Command::after(
+        std::time::Duration::from_secs(interval_secs),
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::SidebarCommandPoll { epoch, tab_id });
+        },
+    );
     if changed {
         Update::with_command(command)
     } else {
@@ -385,10 +389,12 @@ pub(super) fn sessions_discovered(
         }
         ctx.state.sidebar.sessions = rows;
     }
-    Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(SESSION_REFRESH_INTERVAL);
-        link.send(crate::Msg::SidebarSessionsRefresh { epoch });
-    }))
+    Update::with_command(Command::after(
+        SESSION_REFRESH_INTERVAL,
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::SidebarSessionsRefresh { epoch });
+        },
+    ))
 }
 
 pub(super) fn activate_session(

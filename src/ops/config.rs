@@ -172,8 +172,9 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         .as_argv();
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
-                std::thread::sleep(Duration::from_millis(150));
-                link.send(Msg::ThemeTick);
+                // Arming the first tick must not hold this worker for 150ms while the pollers
+                // below are still waiting to start.
+                link.send_after(Duration::from_millis(150), Msg::ThemeTick);
             }
             if start_workbar_tick {
                 link.send(Msg::WorkbarTick);

@@ -814,14 +814,16 @@ pub(super) fn pane_runtime_changed(
 const REPLAY_PROMPT_DEADLINE: std::time::Duration = std::time::Duration::from_millis(800);
 
 fn replay_input_deadline_command(epoch: u64, pane_id: PaneId, generation: u64) -> Command {
-    Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(REPLAY_PROMPT_DEADLINE);
-        link.send(crate::Msg::ReplayInputDeadline {
-            epoch,
-            pane_id,
-            generation,
-        });
-    })
+    Command::after(
+        REPLAY_PROMPT_DEADLINE,
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::ReplayInputDeadline {
+                epoch,
+                pane_id,
+                generation,
+            });
+        },
+    )
 }
 
 pub(super) fn replay_input_deadline(

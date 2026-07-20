@@ -448,8 +448,7 @@ pub(crate) fn chrome_color_animates(target: Color) -> bool {
 }
 
 pub(crate) fn schedule_theme_tick() -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        std::thread::sleep(Duration::from_millis(150));
+    Command::after(Duration::from_millis(150), move |link: CommandLink<Msg>| {
         link.send(Msg::ThemeTick);
     })
 }
@@ -457,8 +456,7 @@ pub(crate) fn schedule_theme_tick() -> Command {
 /// Low-frequency repaint so a configured clock segment advances. Only scheduled while a clock
 /// segment is present, so an idle app with the default workbar never wakes for this.
 pub(crate) fn schedule_workbar_tick() -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        std::thread::sleep(Duration::from_secs(1));
+    Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
         link.send(Msg::WorkbarTick);
     })
 }

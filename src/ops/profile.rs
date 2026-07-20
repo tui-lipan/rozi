@@ -166,15 +166,19 @@ fn profile_session_rows(
 }
 
 fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command {
-    Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        if let Ok(mut rows) =
-            crate::session::discovery::discover_sessions_excluding(current.as_deref())
-        {
-            rows.retain(|row| !row.ephemeral);
-            link.send(crate::Msg::ProfileSessionsDiscovered { epoch, rows });
-        }
-    })
+    // Recurring watch: `after` keeps the wait off the executor, so a picker left open does not
+    // hold a worker between sweeps. The discovery itself still runs on the pool.
+    Command::after(
+        std::time::Duration::from_millis(1500),
+        move |link: CommandLink<crate::Msg>| {
+            if let Ok(mut rows) =
+                crate::session::discovery::discover_sessions_excluding(current.as_deref())
+            {
+                rows.retain(|row| !row.ephemeral);
+                link.send(crate::Msg::ProfileSessionsDiscovered { epoch, rows });
+            }
+        },
+    )
 }
 
 pub(crate) fn apply_profile_sessions(

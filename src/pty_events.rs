@@ -346,10 +346,12 @@ pub(crate) fn handle_pane_resize(
 }
 
 fn schedule_pane_resize_flush(epoch: u64) -> Command {
-    Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS));
-        link.send(crate::Msg::FlushPaneResizes { epoch });
-    })
+    Command::after(
+        std::time::Duration::from_millis(RESIZE_DEBOUNCE_MS),
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::FlushPaneResizes { epoch });
+        },
+    )
 }
 
 /// Send the latest debounced size for every pane that still exists (see the controller debounce in

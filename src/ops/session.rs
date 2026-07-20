@@ -146,14 +146,18 @@ pub(crate) fn apply_discovered_sessions(
 }
 
 fn session_watch_command(epoch: u64, current_name: Option<String>) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        std::thread::sleep(SESSION_PICKER_REFRESH_INTERVAL);
-        // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
-        // the loop stop rather than clobbering the last good list.
-        if let Ok(rows) = discover_picker_sessions(current_name.as_deref()) {
-            link.send(Msg::SessionsDiscovered { epoch, rows });
-        }
-    })
+    // Recurring watch: see `profile_session_watch_command` -- the wait belongs on the timer
+    // thread, not on a pooled worker held open for the life of the picker.
+    Command::after(
+        SESSION_PICKER_REFRESH_INTERVAL,
+        move |link: CommandLink<Msg>| {
+            // Discovery runs here (off the UI thread); a failed sweep simply skips this tick and lets
+            // the loop stop rather than clobbering the last good list.
+            if let Ok(rows) = discover_picker_sessions(current_name.as_deref()) {
+                link.send(Msg::SessionsDiscovered { epoch, rows });
+            }
+        },
+    )
 }
 
 /// Build the full picker row list: every discovered session plus a row for the currently attached

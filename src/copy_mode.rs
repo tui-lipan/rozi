@@ -155,10 +155,12 @@ pub(crate) fn expire_flash(ctx: &mut Context<HyprmuxApp>, target: PaneId, id: u6
 }
 
 fn copy_flash_timer(target: PaneId, id: u64) -> Command {
-    Command::spawn(move |link: CommandLink<crate::Msg>| {
-        std::thread::sleep(copy_flash_duration());
-        link.send(crate::Msg::CopyFlashExpired(target, id));
-    })
+    Command::after(
+        copy_flash_duration(),
+        move |link: CommandLink<crate::Msg>| {
+            link.send(crate::Msg::CopyFlashExpired(target, id));
+        },
+    )
 }
 
 fn copy_flash_duration() -> Duration {

@@ -324,10 +324,12 @@ pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
         .as_mut()
         .expect("shared session checked above")
         .layout_commit_scheduled = true;
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(LAYOUT_COMMIT_DEBOUNCE_MS));
-        link.send(Msg::FlushLayoutCommit { epoch });
-    });
+    // Re-armed after every message, so during sustained output this fires ~60 times a second.
+    // `send_after` parks it on the shared timer thread instead of spawning one per window.
+    link.send_after(
+        std::time::Duration::from_millis(LAYOUT_COMMIT_DEBOUNCE_MS),
+        Msg::FlushLayoutCommit { epoch },
+    );
 }
 
 /// If this client controls a shared session and its layout differs from the last commit, publish a

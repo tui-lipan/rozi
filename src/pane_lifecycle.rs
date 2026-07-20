@@ -611,7 +611,7 @@ pub(crate) fn open_timers_command(
     open_delay: Duration,
     activate_delay: Duration,
 ) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
+    Command::after(open_delay, move |link: CommandLink<Msg>| {
         run_open_timers(epoch, id, generation, open_delay, activate_delay, link);
     })
 }
@@ -624,15 +624,16 @@ fn run_open_timers(
     activate_delay: Duration,
     link: CommandLink<Msg>,
 ) {
-    if !open_delay.is_zero() {
-        std::thread::sleep(open_delay);
-    }
+    // `open_delay` has already elapsed on the timer thread; chain the second stage there too
+    // rather than sleeping, which would park an executor worker for the whole reveal.
     link.send(Msg::FinishOpen(epoch, id, generation));
     let remaining = activate_delay.saturating_sub(open_delay);
-    if !remaining.is_zero() {
-        std::thread::sleep(remaining);
+    let activate = Msg::ActivatePane(epoch, id, generation);
+    if remaining.is_zero() {
+        link.send(activate);
+    } else {
+        link.send_after(remaining, activate);
     }
-    link.send(Msg::ActivatePane(epoch, id, generation));
 }
 
 /// Run the open/activate reveal timers for several panes at once. Panes created directly in state
@@ -646,19 +647,20 @@ pub(crate) fn open_timers_batch_command(
     open_delay: Duration,
     activate_delay: Duration,
 ) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        if !open_delay.is_zero() {
-            std::thread::sleep(open_delay);
-        }
+    Command::after(open_delay, move |link: CommandLink<Msg>| {
         for (id, generation) in &targets {
             link.send(Msg::FinishOpen(epoch, *id, *generation));
         }
+        // Second stage goes back on the timer thread; sleeping here would park an executor worker
+        // for the whole reveal, and a restored layout arms one of these per pane.
         let remaining = activate_delay.saturating_sub(open_delay);
-        if !remaining.is_zero() {
-            std::thread::sleep(remaining);
-        }
         for (id, generation) in &targets {
-            link.send(Msg::ActivatePane(epoch, *id, *generation));
+            let activate = Msg::ActivatePane(epoch, *id, *generation);
+            if remaining.is_zero() {
+                link.send(activate);
+            } else {
+                link.send_after(remaining, activate);
+            }
         }
     })
 }
@@ -669,10 +671,7 @@ pub(crate) fn prune_closed_command(
     generation: u64,
     delay: Duration,
 ) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        if !delay.is_zero() {
-            std::thread::sleep(delay);
-        }
+    Command::after(delay, move |link: CommandLink<Msg>| {
         link.send(Msg::PruneClosed(epoch, id, generation));
     })
 }
@@ -684,10 +683,7 @@ pub(crate) fn prune_closed_batch_command(
     targets: Vec<(PaneId, u64)>,
     delay: Duration,
 ) -> Command {
-    Command::spawn(move |link: CommandLink<Msg>| {
-        if !delay.is_zero() {
-            std::thread::sleep(delay);
-        }
+    Command::after(delay, move |link: CommandLink<Msg>| {
         for (id, generation) in targets {
             link.send(Msg::PruneClosed(epoch, id, generation));
         }

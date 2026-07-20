@@ -74,6 +74,7 @@ The generators produce the same bytes on every run:
 | `snapshot_rebuild` | `render_snapshot()` by screen size and `TerminalPane::process_server_output` at 64 B, 1 KiB, and 64 KiB message sizes. |
 | `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
+| `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
 
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
 than comparing incompatible corpora.
@@ -149,6 +150,43 @@ This creates dual parsing with one client, additional parsing for every attached
 full-snapshot cost that depends on message chunking as well as screen size. Compare
 `terminal_ingest`, `snapshot_rebuild`, and `session_pipeline` before optimizing this path; batching
 or coalescing can improve results without changing parser throughput itself.
+
+## What a full render actually costs
+
+`HyprmuxApp` is the only `Component` in the crate, so every `Update::full()` re-runs `view()` for
+every pane, the workbar, and the overlays — there is no smaller subtree to refresh. `app_render`
+measures that, on a 200x60 viewport with dwindle-tiled panes (Ryzen, release build):
+
+| Panes | With terminal content | Empty screens |
+| --- | --- | --- |
+| 1 | 58 µs | 55 µs |
+| 2 | 103 µs | 100 µs |
+| 4 | 202 µs | 195 µs |
+| 8 | 395 µs | 381 µs |
+| 16 | 756 µs | 720 µs |
+
+Two things follow, and both argue against scoping renders:
+
+- Cost is linear at roughly **47 µs per pane**, and styled terminal content accounts for only about
+  5% of it. The rest is per-pane chrome and tiling structure. Memoizing terminal snapshots — the
+  intuitive target — would therefore buy almost nothing.
+- Even the whole of it is small. At 8 panes, an `Update::full()` costs ~395 µs of view/layout more
+  than an `Update::paint()`. Sustained at the runtime's 60fps ceiling that is ~2.4% of one core.
+
+So splitting panes into child `Component`s with `memo_key()` has a hard ceiling of a few percent of
+a core, against a large refactor of `view/pane.rs` and real visual-regression risk. Prefer
+eliminating whole frames instead: a frame that never runs saves view, layout, draw, and terminal
+I/O, rather than just the view/layout slice measured here.
+
+Note also that a `ctx.transition`-driven color (pane focus chrome) **cannot** be animated by
+`Update::paint()`. Property transitions mark the frame full precisely because the interpolated
+value only reaches the screen through the next `view()`
+(`tui-lipan/src/app/runner/animation_ticker.rs`), while paint-only redraws the existing realized
+tree. Focus-chrome animation frames are therefore inherently full frames.
+
+Draw cost is deliberately not benchmarked here: `TestBackend::capture_frame()` allocates a heap
+`String` per cell, so it measures the harness, not the real buffer write and frame diff. Read the
+devtools metrics panel's `Draw` row for that.
 
 ## Local framework dependency
 

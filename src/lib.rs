@@ -33,7 +33,7 @@ mod send_keys;
 pub mod session;
 pub mod shared_layout;
 pub mod state;
-mod tiling;
+pub mod tiling;
 mod update;
 mod view;
 

@@ -39,6 +39,10 @@ harness = false
 name = "session_pipeline"
 harness = false
 
+[[bench]]
+name = "app_render"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

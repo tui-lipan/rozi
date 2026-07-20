@@ -674,6 +674,50 @@ fn insert_styled_span(spans: &mut Vec<Span>, col: usize, content: &str, style: S
 mod tests {
     use super::*;
 
+    /// The snapshot is rebuilt on read, so every path that changes what the pane should display
+    /// must leave the screen dirty. A write path that forgets would show stale content until
+    /// something else happened to dirty the screen — the failure mode this whole design risks.
+    #[test]
+    fn every_write_path_is_reflected_without_an_explicit_rebuild() {
+        let mut pane = TerminalPane::new(100);
+
+        pane.process_server_output(b"first-line\r\n");
+        assert!(
+            pane.snapshot().text.contains("first-line"),
+            "output must reach the snapshot"
+        );
+
+        // Reading twice with no intervening write is the cached path, and must agree.
+        let sequence = pane.snapshot().sequence;
+        assert_eq!(
+            pane.snapshot().sequence,
+            sequence,
+            "cached read must be stable"
+        );
+
+        pane.process_server_output(b"second-line\r\n");
+        let after = pane.snapshot();
+        assert!(after.text.contains("second-line"));
+        assert!(
+            after.sequence > sequence,
+            "new output must advance the snapshot sequence"
+        );
+
+        assert!(pane.apply_server_resize(40, 10));
+        assert_eq!(pane.snapshot().color_lines.len(), 10, "resize must reshape");
+
+        // Drive enough lines to build history, then scroll into it.
+        for i in 0..40 {
+            pane.process_server_output(format!("hist-{i}\r\n").as_bytes());
+        }
+        assert!(pane.set_scrollback(5));
+        assert_eq!(
+            pane.snapshot().scrollback_offset,
+            5,
+            "scrollback moves must reach the snapshot"
+        );
+    }
+
     #[test]
     fn sanitizes_verbose_elevated_windows_powershell_title() {
         assert_eq!(

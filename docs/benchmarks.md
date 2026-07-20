@@ -71,7 +71,7 @@ The generators produce the same bytes on every run:
 | Suite | What it measures |
 | --- | --- |
 | `terminal_ingest` | `TerminalScreen::process_bytes` throughput for plain log lines, SGR-heavy output, scroll regions and cursor movement, wide Unicode, and long sparse-escape lines at 80x24, 200x60, and 320x90. |
-| `snapshot_rebuild` | `render_snapshot()` by screen size and `TerminalPane::process_server_output` at 64 B, 1 KiB, and 64 KiB message sizes. |
+| `snapshot_rebuild` | `render_snapshot()` by screen size, `TerminalPane::process_server_output` at 64 B, 1 KiB, and 64 KiB message sizes, and `output_burst` rebuild-per-message vs rebuild-per-frame. |
 | `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
 | `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
@@ -150,6 +150,29 @@ This creates dual parsing with one client, additional parsing for every attached
 full-snapshot cost that depends on message chunking as well as screen size. Compare
 `terminal_ingest`, `snapshot_rebuild`, and `session_pipeline` before optimizing this path; batching
 or coalescing can improve results without changing parser throughput itself.
+
+## Snapshot rebuilds dominate output cost
+
+The expensive part of receiving output is not rendering it — it is rebuilding the render snapshot.
+`snapshot_rebuild` puts one rebuild at ~58 µs at 80x24, ~343 µs at 200x60, and ~809 µs at 320x90.
+For comparison, the whole app's view and layout for eight tiled panes is ~395 µs.
+
+`terminal_pane_process_server_output` shows the shape of the problem: 64 B and 1 KiB messages cost
+almost the same, because the cost is per *message* (one full rebuild) rather than per byte.
+
+`TerminalPane` therefore rebuilds on read rather than on write (`TerminalPane::snapshot`), leaning
+on `TerminalScreen`'s own dirty flag. Since the runtime coalesces a burst of server messages into a
+single frame, only the last snapshot is ever rendered, and `output_burst` measures what that saves:
+`per_message` rebuilds after every message (the old behavior), `per_frame` rebuilds once at the end
+(the current one).
+
+Two consequences worth preserving:
+
+- Do not reintroduce an eager `render_snapshot()` call on a write path. It reads as harmless
+  bookkeeping and silently reinstates one full rebuild per message.
+- Prefer `scrollback_offset()` / `total_scrollback_rows()` over reading the same fields off
+  `snapshot()`. `process_bytes` keeps those current on its own, so going through the snapshot
+  forces a rebuild to read one integer.
 
 ## What a full render actually costs
 

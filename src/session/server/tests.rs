@@ -39,6 +39,8 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
         exited,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
+        last_agent_probe: None,
+        last_agent_detect: None,
         initial_cursor_report_primed: false,
     }
 }
@@ -695,6 +697,8 @@ fn resize_updates_screen_and_broadcasts_ack() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -748,6 +752,8 @@ fn duplicate_spawn_is_rejected() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -793,6 +799,8 @@ fn exited_pane_can_be_respawned() {
             exited: Some(0),
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -844,6 +852,8 @@ fn attach_reports_layout_and_panes() {
         exited: None,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
+        last_agent_probe: None,
+        last_agent_detect: None,
         initial_cursor_report_primed: false,
     };
     pane.screen.process_bytes(b"ready");
@@ -919,6 +929,8 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -976,6 +988,8 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -1036,6 +1050,8 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 exited,
                 log: None,
                 runtime: protocol::PaneRuntimeState::default(),
+                last_agent_probe: None,
+                last_agent_detect: None,
                 initial_cursor_report_primed: false,
             },
         );

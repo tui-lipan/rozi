@@ -151,6 +151,38 @@ full-snapshot cost that depends on message chunking as well as screen size. Comp
 `terminal_ingest`, `snapshot_rebuild`, and `session_pipeline` before optimizing this path; batching
 or coalescing can improve results without changing parser throughput itself.
 
+## Idle server cost is per pane, and agent detection drives it
+
+An idle pane should cost nothing, so measure the *server* process (not the client) when it does not.
+Sample it directly rather than trusting `ps` averages:
+
+```bash
+SRV=<server pid>
+t0=$(awk '{print $14+$15}' /proc/$SRV/stat); sleep 6
+t1=$(awk '{print $14+$15}' /proc/$SRV/stat)
+awk -v a=$t0 -v b=$t1 'BEGIN{printf "%.2f%%\n", (b-a)/6}'
+```
+
+Add panes over the control socket (`HYPRMUX_SOCKET=… hyprmux new-pane`) and check the slope: a
+cost that scales with pane count is per-pane polling, while a flat cost is the server's own loop.
+
+Measured at idle, before and after caching agent detection:
+
+| Panes | Detect every poll | Detect on change |
+| --- | --- | --- |
+| 2 | 4.33% | 1.17% |
+| 3 | 6.33% | 1.33% |
+| 5 | 10.17% | 2.00% |
+
+That is ~1.95% per pane against ~0.28%. The cause was `foreground_job`, which must scan every
+process on the host to find a pane's process-group members, running once per pane at the 250 ms
+`RUNTIME_POLL_INTERVAL` — and every pane re-scanned the same `/proc`. Detection now runs only when
+the (cheaply known) foreground program or command phase changes, with `AGENT_DETECT_REFRESH` as a
+periodic safety net.
+
+The residual per-pane cost is that safety net. Making it cheaper again means sharing one `/proc`
+sweep across all panes in a poll cycle, so cost stops scaling with pane count at all.
+
 ## Snapshot rebuilds dominate output cost
 
 The expensive part of receiving output is not rendering it — it is rebuilding the render snapshot.

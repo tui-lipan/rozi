@@ -154,9 +154,27 @@ pub struct ServerPane {
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
+    /// Foreground identity and time of the last agent detection, so an idle pane can skip it.
+    ///
+    /// Detection sweeps every process on the host to find this pane's process-group members, which
+    /// at the 250 ms poll rate cost ~2% of a core per pane while nothing was happening. The
+    /// foreground program and command phase are both already computed cheaply, so an unchanged
+    /// pair means the sweep would rediscover exactly what is cached. See
+    /// [`AGENT_DETECT_REFRESH`](super::runtime::AGENT_DETECT_REFRESH) for the safety net that
+    /// still catches a wrapped process appearing without either changing.
+    pub last_agent_probe: Option<AgentProbe>,
+    /// When detection last actually swept, for the periodic refresh.
+    pub last_agent_detect: Option<std::time::Instant>,
     /// The framework answered ConPTY's startup cursor query before spawning. Suppress the parser's
     /// later duplicate cursor report so it cannot leak into child stdin.
     pub initial_cursor_report_primed: bool,
+}
+
+/// Cheap foreground fingerprint used to decide whether agent detection can be skipped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentProbe {
+    pub foreground_program: Option<String>,
+    pub command_phase: protocol::PaneCommandPhase,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are

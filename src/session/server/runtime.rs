@@ -17,6 +17,12 @@ use crate::session::protocol::{
 
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How often agent detection re-sweeps even when the foreground program and command phase are
+/// unchanged, so a wrapped process that appears inside an unchanged foreground (a package runner
+/// launching an agent, say) is still noticed. Detection is far too expensive to run on every
+/// [`RUNTIME_POLL_INTERVAL`]; see `ServerPane::last_agent_probe`.
+pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
+
 impl SessionServer {
     pub(super) fn set_pane_status(
         &mut self,
@@ -158,8 +164,31 @@ fn compute_runtime_state(
                 .as_ref()
                 .and_then(|pty| inspector.foreground_program(pty))
         });
+    // Agent detection sweeps every process on the host (it has to, to find this pane's
+    // process-group members), so running it on every poll cost ~2% of a core per idle pane. The
+    // foreground program and command phase above are already known and change whenever the pane
+    // starts running something new, so an unchanged pair means the sweep would rediscover the
+    // cached answer. AGENT_DETECT_REFRESH still re-sweeps periodically, catching a wrapped process
+    // that appears inside an unchanged foreground program.
     let detected_agent = if detect_agent {
-        detect_pane_agent(pane, inspector, foreground_program.as_deref())
+        let probe = AgentProbe {
+            foreground_program: foreground_program.clone(),
+            command_phase,
+        };
+        let stale = pane
+            .last_agent_probe
+            .as_ref()
+            .is_none_or(|last| *last != probe)
+            || pane
+                .last_agent_detect
+                .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH);
+        if stale {
+            pane.last_agent_probe = Some(probe);
+            pane.last_agent_detect = Some(Instant::now());
+            detect_pane_agent(pane, inspector, foreground_program.as_deref())
+        } else {
+            pane.runtime.detected_agent.clone()
+        }
     } else {
         pane.runtime.detected_agent.clone()
     };
@@ -337,6 +366,8 @@ mod tests {
             exited: None,
             log: None,
             runtime: PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
             initial_cursor_report_primed: false,
         }
     }

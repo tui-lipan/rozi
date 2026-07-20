@@ -159,6 +159,8 @@ impl SessionServer {
                         shell: request.shell,
                         env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
+                        last_agent_probe: None,
+                        last_agent_detect: None,
                         initial_cursor_report_primed: cfg!(windows),
                     },
                 );
@@ -193,6 +195,8 @@ impl SessionServer {
                             shell: request.shell,
                             env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
+                            last_agent_probe: None,
+                            last_agent_detect: None,
                             initial_cursor_report_primed: false,
                         },
                     );

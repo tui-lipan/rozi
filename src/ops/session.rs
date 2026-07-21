@@ -961,6 +961,9 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
         // protocol path has already failed: SIGTERM escalating to SIGKILL on Unix, `TerminateProcess`
         // on Windows (which takes the server's kill-on-close Job Object, and so its ConPTY children,
         // with it).
+        //
+        // Piped/remote connections always report `peer_pid() == None`, so this fallback is unreachable
+        // for `--remote` attaches — we must never `terminate_server` a local ssh pid.
         let server_pid = stream.peer_pid();
         if graceful_shutdown(&mut stream, name).is_err()
             && let Some(pid) = server_pid

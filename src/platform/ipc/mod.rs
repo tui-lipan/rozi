@@ -14,6 +14,11 @@
 //! enumeration is a `read_dir`, retirement is an unlink, and liveness is a connect attempt,
 //! everywhere.
 //!
+//! [`IpcConnection`] is an enum: the platform-local stream plus a [`piped`] variant that wraps a
+//! child process's stdin/stdout (used by remote SSH attach). Remote connections report no
+//! [`IpcConnection::peer_pid`], so forced `terminate_server` fallbacks never fire against a local
+//! ssh pid.
+//!
 //! Migrated onto this abstraction: `control.rs`, `session/client.rs`, `session/discovery.rs`,
 //! `session/server/*`, `cli.rs`, `ops/session.rs`. `main.rs` holds the bound control listener
 //! across startup the same way it held a raw `UnixListener` before.
@@ -26,6 +31,10 @@
 
 use std::io;
 use std::path::Path;
+use std::process::Child;
+
+pub(crate) mod piped;
+pub use piped::PipedConnection;
 
 // `BoundEndpoint` is part of the plan's public abstraction surface and every call site that binds
 // an endpoint does receive one, but each immediately calls `.into_listener()` inline (type
@@ -42,6 +51,25 @@ mod windows;
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener};
+
+/// Wrap a spawned child's stdin/stdout as an [`IpcConnection`].
+///
+/// Used by remote SSH attach: the child is `ssh … hyprmux --remote-serve`, and the resulting
+/// connection speaks the normal session protocol over the pipe. [`IpcConnection::peer_pid`] is
+/// `None`, so shutdown fallbacks must not call `terminate_server` on it.
+pub fn connection_from_child(mut child: Child) -> io::Result<IpcConnection> {
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdin was not piped"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "child stdout was not piped"))?;
+    Ok(IpcConnection::from_piped(
+        PipedConnection::from_child_stdio(stdin, stdout, child),
+    ))
+}
 
 /// Naming convention and enumeration for the two endpoint families this app uses: one per-process
 /// *control* endpoint (`--socket`/`HYPRMUX_SOCKET`-discoverable CLI control plane) and one

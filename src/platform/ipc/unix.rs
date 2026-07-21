@@ -50,7 +50,7 @@ impl IpcEndpoint {
     }
 
     pub fn connect(&self) -> io::Result<IpcConnection> {
-        Ok(IpcConnection(UnixStream::connect(&self.path)?))
+        Ok(IpcConnection::Local(UnixStream::connect(&self.path)?))
     }
 
     /// Whether some listener currently answers at this endpoint. Used to decide whether a socket
@@ -106,11 +106,14 @@ impl IpcListener {
     /// connection is pending - callers loop this the same way they looped `UnixListener::accept`.
     pub fn accept(&self) -> io::Result<IpcConnection> {
         let (stream, _addr) = self.0.accept()?;
-        Ok(IpcConnection(stream))
+        Ok(IpcConnection::Local(stream))
     }
 }
 
-pub struct IpcConnection(UnixStream);
+pub enum IpcConnection {
+    Local(UnixStream),
+    Piped(super::piped::PipedConnection),
+}
 
 impl IpcConnection {
     pub fn connect(endpoint: &IpcEndpoint) -> io::Result<Self> {
@@ -120,44 +123,75 @@ impl IpcConnection {
     /// Wrap an already-connected stream (e.g. one half of `UnixStream::pair()` in tests, or a
     /// freshly `accept`ed connection handled outside [`IpcListener::accept`]).
     pub fn from_unix(stream: UnixStream) -> Self {
-        Self(stream)
+        Self::Local(stream)
+    }
+
+    /// Wrap a pipe-backed duplex (remote SSH attach / tests).
+    pub fn from_piped(piped: super::piped::PipedConnection) -> Self {
+        Self::Piped(piped)
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {
-        Ok(Self(self.0.try_clone()?))
+        match self {
+            Self::Local(stream) => Ok(Self::Local(stream.try_clone()?)),
+            Self::Piped(piped) => Ok(Self::Piped(piped.try_clone()?)),
+        }
     }
 
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
-        self.0.set_nonblocking(nonblocking)
+        match self {
+            Self::Local(stream) => stream.set_nonblocking(nonblocking),
+            Self::Piped(piped) => piped.set_nonblocking(nonblocking),
+        }
     }
 
     pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        self.0.set_read_timeout(timeout)
+        match self {
+            Self::Local(stream) => stream.set_read_timeout(timeout),
+            Self::Piped(piped) => piped.set_read_timeout(timeout),
+        }
     }
 
     pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        self.0.set_write_timeout(timeout)
+        match self {
+            Self::Local(stream) => stream.set_write_timeout(timeout),
+            // Documented no-op for pipes — see [`super::piped`].
+            Self::Piped(piped) => piped.set_write_timeout(timeout),
+        }
     }
 
     /// Peer (connecting process) pid, if the platform can report one. `SO_PEERCRED` on Linux,
-    /// `LOCAL_PEERPID` on macOS. Best-effort: `None` on any failure, never panics.
+    /// `LOCAL_PEERPID` on macOS. Always `None` for [`Self::Piped`] (remote/proxy). Best-effort:
+    /// `None` on any failure, never panics. A liveness/reaping aid, not an authorization check.
     pub fn peer_pid(&self) -> Option<u32> {
-        peer_pid(&self.0)
+        match self {
+            Self::Local(stream) => peer_pid(stream),
+            Self::Piped(piped) => piped.peer_pid(),
+        }
     }
 }
 
 impl Read for IpcConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
+        match self {
+            Self::Local(stream) => stream.read(buf),
+            Self::Piped(piped) => piped.read(buf),
+        }
     }
 }
 
 impl Write for IpcConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
+        match self {
+            Self::Local(stream) => stream.write(buf),
+            Self::Piped(piped) => piped.write(buf),
+        }
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
+        match self {
+            Self::Local(stream) => stream.flush(),
+            Self::Piped(piped) => piped.flush(),
+        }
     }
 }
 
@@ -264,7 +298,7 @@ mod tests {
     #[test]
     fn peer_pid_reports_this_process() {
         let (a, _b) = UnixStream::pair().expect("socket pair");
-        let conn = IpcConnection(a);
+        let conn = IpcConnection::Local(a);
         assert_eq!(conn.peer_pid(), Some(std::process::id()));
     }
 }

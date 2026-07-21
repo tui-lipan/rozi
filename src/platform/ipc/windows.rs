@@ -168,7 +168,7 @@ impl IpcEndpoint {
                 )
             };
             if handle != INVALID_HANDLE_VALUE {
-                return Ok(IpcConnection::owning(handle, false));
+                return Ok(IpcConnection::Local(LocalConnection::owning(handle, false)));
             }
             let err = io::Error::last_os_error();
             // Every instance is momentarily busy between one client connecting and the listener
@@ -345,7 +345,7 @@ impl IpcListener {
         // The accepted connection starts blocking regardless of the listener's mode; the caller
         // (`SessionServer::accept_new`) sets whatever mode it actually wants.
         set_pipe_mode(pending, false)?;
-        Ok(IpcConnection::owning(pending, true))
+        Ok(IpcConnection::Local(LocalConnection::owning(pending, true)))
     }
 }
 
@@ -355,10 +355,9 @@ impl Drop for IpcListener {
     }
 }
 
-pub struct IpcConnection {
+pub struct LocalConnection {
     handle: OwnedHandle,
-    /// Which end of the pipe this is, which decides how [`IpcConnection::peer_pid`] asks for the
-    /// *other* end's pid.
+    /// Which end of the pipe this is, which decides how peer_pid asks for the *other* end's pid.
     server_end: bool,
     /// `Cell`s because the Unix backend's `set_*_timeout`/`set_nonblocking` take `&self` (they
     /// forward to socket options, which need no Rust-side state) and both backends must present the
@@ -369,7 +368,7 @@ pub struct IpcConnection {
     write_timeout: std::cell::Cell<Option<Duration>>,
 }
 
-impl IpcConnection {
+impl LocalConnection {
     fn owning(handle: HANDLE, server_end: bool) -> Self {
         Self {
             handle: OwnedHandle(handle),
@@ -384,13 +383,64 @@ impl IpcConnection {
 // SAFETY: as for `IpcListener` - a kernel handle has no thread affinity, and the connection is
 // owned by exactly one thread at a time (moved into a per-connection worker in `control.rs`, held by
 // the single-threaded server loop otherwise).
+unsafe impl Send for LocalConnection {}
 unsafe impl Send for IpcConnection {}
+
+pub enum IpcConnection {
+    Local(LocalConnection),
+    Piped(super::piped::PipedConnection),
+}
 
 impl IpcConnection {
     pub fn connect(endpoint: &IpcEndpoint) -> io::Result<Self> {
         endpoint.connect()
     }
 
+    pub fn from_piped(piped: super::piped::PipedConnection) -> Self {
+        Self::Piped(piped)
+    }
+
+    /// A second handle to the same pipe instance, so a caller can read on one and write on the
+    /// other (`control.rs` does exactly this).
+    pub fn try_clone(&self) -> io::Result<Self> {
+        match self {
+            Self::Local(local) => Ok(Self::Local(local.try_clone()?)),
+            Self::Piped(piped) => Ok(Self::Piped(piped.try_clone()?)),
+        }
+    }
+
+    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        match self {
+            Self::Local(local) => local.set_nonblocking(nonblocking),
+            Self::Piped(piped) => piped.set_nonblocking(nonblocking),
+        }
+    }
+
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        match self {
+            Self::Local(local) => local.set_read_timeout(timeout),
+            Self::Piped(piped) => piped.set_read_timeout(timeout),
+        }
+    }
+
+    pub fn set_write_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        match self {
+            Self::Local(local) => local.set_write_timeout(timeout),
+            Self::Piped(piped) => piped.set_write_timeout(timeout),
+        }
+    }
+
+    /// The pid of the process at the *other* end. Best-effort; `None` on any failure.
+    /// Always `None` for [`Self::Piped`] (remote/proxy).
+    pub fn peer_pid(&self) -> Option<u32> {
+        match self {
+            Self::Local(local) => local.peer_pid(),
+            Self::Piped(piped) => piped.peer_pid(),
+        }
+    }
+}
+
+impl LocalConnection {
     /// A second handle to the same pipe instance, so a caller can read on one and write on the
     /// other (`control.rs` does exactly this).
     ///
@@ -472,6 +522,15 @@ impl IpcConnection {
 
 impl Read for IpcConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Local(local) => local.read(buf),
+            Self::Piped(piped) => piped.read(buf),
+        }
+    }
+}
+
+impl Read for LocalConnection {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let deadline = self
             .read_timeout
             .get()
@@ -519,6 +578,21 @@ impl Read for IpcConnection {
 }
 
 impl Write for IpcConnection {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Local(local) => local.write(buf),
+            Self::Piped(piped) => piped.write(buf),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Local(local) => local.flush(),
+            Self::Piped(piped) => piped.flush(),
+        }
+    }
+}
+
+impl Write for LocalConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -580,7 +654,7 @@ enum Waited {
     WouldBlock,
 }
 
-impl IpcConnection {
+impl LocalConnection {
     /// Decide what a zero-byte non-waiting operation should do, in the three cases the caller can
     /// have asked for:
     ///

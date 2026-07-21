@@ -71,6 +71,7 @@ Full docs live in [`docs/`](docs/):
 - [Benchmarks & profiling](docs/benchmarks.md) - Criterion suites, baselines, stress tests, and Samply.
 - [Vim/Neovim navigator](integrations/vim-hyprmux-navigator/) - seamless editor split and hyprmux pane navigation.
 - [Sessions](docs/sessions.md) - always-server model, ephemeral vs named sessions, rename, and lifecycle.
+- [Remote SSH sessions](docs/remote.md) - `--remote` attach, bootstrap/install, and local-vs-remote features.
 
 For framework/internal architecture notes, see [AGENTS.md](AGENTS.md).
 

@@ -198,7 +198,8 @@ Detach leaves the server running for later reattach; a clean quit shuts an ephem
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
-share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol v11). One client holds the
+share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
+range; this build max/min is 12). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -227,8 +228,8 @@ Major module map:
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move/` / `anim.rs` - Window-manager
   layout, placement, floating and tiled movement, split dragging, keyboard resizing, and animations.
-- `session/` / `ops/session.rs` - Multi-client session protocol (v9), server/client, discovery,
-  bootstrap, attach/kill, and layout-control lease.
+- `session/` / `ops/session.rs` - Multi-client session protocol (negotiated version range),
+  server/client, discovery, bootstrap, attach/kill, layout-control lease, and `--remote` SSH proxy.
 - `layout_tree_ser.rs` - Serde-stable tree shared by profile TOML and session layout documents.
 - `shared_layout.rs` - Server-authoritative shared layout document, conversions, and the follower
   reconciler (`apply_shared_layout`).
@@ -357,19 +358,21 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   `PaneIdentity::env` adds never-persisted per-spawn variables (the file tree passes the activated
   path as `HYPRMUX_FILE` so a `run`/`popup` command never has a filename spliced into it).
 - `[[hooks]]` runs client-side commands for 15 UI events and injects `HYPRMUX_EVENT`, event fields,
-  and `HYPRMUX_SOCKET`; see `docs/hooks.md`.
+  and `HYPRMUX_SOCKET` (plus `HYPRMUX_REMOTE_HOST` when attached via `--remote`); see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
 - `[[rules]]` applies first-match command substring placement to interactive command-carrying pane
   spawns, including control `new-pane` and `[keys] run`.
 - `[workbar]` supports built-in segments, text placeholders, and timed shell command segments; each
- segment renders as a themed badge whose color can be overridden by theme role via a segment table,
- and `[pane].workbar_powerline` toggles trailing-badge chaining.
+  segment renders as a themed badge whose color can be overridden by theme role via a segment table,
+  and `[pane].workbar_powerline` toggles trailing-badge chaining.
 - `[theme].name` selects built-in, `system`, or custom themes from `~/.config/hyprmux/themes/`.
 - `[profile] default` selects a startup profile from `~/.config/hyprmux/profiles/`.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
   <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
+- `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
+  `docs/remote.md`. `HYPRMUX_REMOTE_BINARY` forces which local binary is installed on the remote.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
   crate uses `terminal`, `terminal-serde`, `theme-reload`, and `devtools`.
 
@@ -385,6 +388,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - [docs/profiles.md](docs/profiles.md) - Named profiles and profile picker.
 - [docs/project-profiles.md](docs/project-profiles.md) - Profile format and pane identity.
 - [docs/sessions.md](docs/sessions.md) - Local vs attached sessions and detach/reattach semantics.
+- [docs/remote.md](docs/remote.md) - SSH `--remote` attach, bootstrap/install, and feature split.
 - [docs/control.md](docs/control.md) - Control socket CLI and JSON protocol.
 - [docs/hooks.md](docs/hooks.md) - Hook syntax, event fields, environment, and execution semantics.
 - [docs/benchmarks.md](docs/benchmarks.md) - Benchmarks, baselines, live stress, and profiling.

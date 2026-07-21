@@ -27,6 +27,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Benchmarks & profiling](benchmarks.md) | Criterion targets, baseline comparisons, live stress recipes, and Samply profiling. |
 | [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) | Seamless navigation between editor splits and hyprmux panes. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
+| [Remote SSH sessions](remote.md) | `--remote` attach over SSH, bootstrap/install, protocol negotiation, and feature split. |
 
 ## At a glance
 

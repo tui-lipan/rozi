@@ -462,6 +462,45 @@ asks the controller to grant rather than stealing). This needs no configuration 
 notification debounce and client heartbeat are fixed built-in constants - see
 [Shared live layouts](sessions.md#shared-live-layouts).
 
+## `[remote]`
+
+SSH attach for session servers on another host (`hyprmux --remote <alias-or-url>`). The client and
+config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `default_host` | _none_ | Reserved; prefer an explicit `--remote` argument. |
+| `connection_timeout_secs` | `15` | Passed to ssh as `ConnectTimeout`. |
+| `server_alive_interval_secs` | `15` | ssh `ServerAliveInterval` for the proxy connection. |
+| `server_alive_count_max` | `3` | ssh `ServerAliveCountMax`. |
+| `install` | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Interactive TTYs may copy a compatible binary to `~/.local/bin/hyprmux` on the remote when missing; non-interactive runs never mutate the remote. |
+
+### `[remote.hosts.<alias>]`
+
+Optional per-alias overrides. The alias matches a bare `--remote <alias>` argument.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `host` | alias name | SSH hostname when different from the alias. |
+| `user` | ssh_config / current user | Remote login user. |
+| `port` | ssh default | Remote SSH port. |
+| `identity_file` | _none_ | Path to an identity file (`~` expands). |
+| `ssh_args` | `[]` | Extra arguments inserted into the ssh command line. |
+| `binary_path` | _none_ | Absolute path to hyprmux on the remote; skips probe/install. |
+
+```toml
+[remote]
+install = "prompt"
+connection_timeout_secs = 15
+
+[remote.hosts.workbox]
+user = "raz"
+port = 22
+identity_file = "~/.ssh/id_ed25519"
+# binary_path = "/usr/local/bin/hyprmux"
+ssh_args = ["-o", "ProxyJump=bastion"]
+```
+
 ## `[scratchpad]`
 
 The dropdown scratchpad (toggle: `` ` ``). The shell stays alive while hidden.

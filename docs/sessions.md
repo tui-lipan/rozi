@@ -46,7 +46,13 @@ hyprmux new review --profile dev # create "review" from profile "dev"
 hyprmux --session dev --server  # run the server process directly
 hyprmux list-sessions           # list connectable sessions with pane/layout status
 hyprmux kill-session dev        # attach-handshake then request a clean Shutdown
+hyprmux --remote workbox dev    # same attach/launch surface on a remote host over SSH
+hyprmux list-sessions --remote workbox
+hyprmux kill-session dev --remote workbox
 ```
+
+For SSH attach, bootstrap/install, protocol negotiation, and the local-vs-remote feature split, see
+[Remote SSH sessions](remote.md).
 
 The positional target performs exactly three steps: attach if that session is running; otherwise
 launch the canonical same-name profile; otherwise report an error suggesting `hyprmux new <name>`.
@@ -313,5 +319,8 @@ started once. The attach handshake has a timeout so an unresponsive socket does 
 
 Known limitation: `list-sessions` reports connectable session sockets only; stale or foreign sockets
 are skipped so the command does not hang.
-The session wire protocol is version 11. After upgrading hyprmux, restart existing named session
-servers before attaching with the new client.
+
+Client and server negotiate a session wire protocol version in a supported range (this build speaks
+protocol 12). After upgrading hyprmux, restart existing named session servers before attaching when
+the new client's minimum is higher than the old server's maximum — otherwise attach fails with a
+message naming both sides. See [Remote SSH sessions](remote.md#protocol-negotiation).

@@ -148,7 +148,9 @@ the focused pane's working directory. **Git** shows only paths git reports as ch
 their directories, with `M`/`A`/`D`/`?` markers and `+N -M` diff stats; it is rooted at the
 repository rather than the pane's directory, so a pane sitting in `src/` still sees changes across
 the whole repo. Both re-root when focus moves or the pane reports a new working directory, and a
-pane on a remote host says so instead of showing a tree that does not exist locally.
+pane on a remote host says so instead of showing a tree that does not exist locally. The same applies
+when the whole UI is attached with [`--remote`](remote.md): the Files/Git tabs report that the tree
+follows the remote session host; browsing remote directories over the session is not wired yet.
 
 Both tabs are inert until visible: the tree mounts only as the active tab of a visible sidebar, and
 directory reads and `git status` both run off the UI thread. Git status is refreshed when the

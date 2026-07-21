@@ -1271,7 +1271,8 @@ mod tests {
     #[test]
     fn negotiate_protocol_table() {
         // (client_max, client_min, server_max, server_min, expected Ok(effective) or Err(older))
-        let cases: &[(u32, u32, u32, u32, std::result::Result<u32, ProtocolSide>)] = &[
+        type Case = (u32, u32, u32, u32, std::result::Result<u32, ProtocolSide>);
+        let cases: &[Case] = &[
             (12, 12, 12, 12, Ok(12)),
             (13, 12, 12, 12, Ok(12)),
             (12, 12, 13, 12, Ok(12)),

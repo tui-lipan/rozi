@@ -98,11 +98,18 @@ hyprmux new dev             # explicitly create a fresh named session
 hyprmux new review --profile dev # create from a reusable launch recipe
 hyprmux list-sessions       # list connectable named sessions
 hyprmux kill-session dev    # request clean shutdown of a named session
+hyprmux list-sessions --remote workbox
+hyprmux kill-session dev --remote workbox
 ```
 
 An unknown positional target errors instead of silently creating a session. `attach` and `new` are
 reserved command words; use `hyprmux --session attach` or `hyprmux --session new` to target those
 literal names. See [Sessions](sessions.md) for profile resolution and attach/detach semantics.
+
+The per-run control socket always belongs to the **local UI process**. When you are attached with
+`--remote`, automation against that UI still uses the local `HYPRMUX_SOCKET` / `--socket` path.
+`list-sessions --remote` and `kill-session --remote` are separate SSH helpers that talk to hyprmux
+on the remote host; they are not control-socket commands. See [Remote SSH sessions](remote.md).
 
 ## Wire protocol
 

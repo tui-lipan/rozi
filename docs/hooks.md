@@ -61,6 +61,7 @@ Hook commands inherit the client process environment and receive these additiona
 | --- | --- |
 | `HYPRMUX_EVENT` | The event id from the table above. Always set. |
 | `HYPRMUX_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `hyprmux --socket`, not a raw named-pipe name. |
+| `HYPRMUX_REMOTE_HOST` | Set when the UI is attached via `--remote`; the resolved remote host string. Hooks still run on the **client** machine. |
 | `HYPRMUX_<FIELD>` | One variable for each field listed for the event. Field names are uppercased; underscores are retained. |
 
 All injected values are strings. Optional event values are represented by an empty string rather

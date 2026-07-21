@@ -89,7 +89,8 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
   selection color.
 - **OSC52 clipboard** - programs running in a pane can set the system clipboard via the OSC52
   escape sequence. This is enabled by default and can be turned off with
-  `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard).
+  `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard). Under
+  [`--remote`](remote.md), OSC52 still targets the **local** client clipboard.
 - **Paste** (`v`, `Ctrl+V`, or *Paste from clipboard* in the palette) reads the system clipboard
   and sends it to the focused pane's PTY, wrapped in bracketed-paste markers so shells/editors that
   opt in treat it as one paste instead of simulated keystrokes.

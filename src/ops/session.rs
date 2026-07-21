@@ -191,6 +191,7 @@ pub(crate) fn current_session_row(state: &crate::state::State) -> Option<Discove
     Some(DiscoveredSession {
         name,
         ephemeral: state.is_ephemeral_session(),
+        host: None,
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
             panes: state.workspaces.iter().map(|w| w.panes.len()).sum(),
             has_layout: true,

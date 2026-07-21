@@ -25,6 +25,15 @@ pub struct DiscoveredSession {
     pub status: DiscoveredSessionStatus,
     /// Auto-managed per-process session (`eph-*`), disposable and not user-named.
     pub ephemeral: bool,
+    /// Remote host alias/URL when discovered over `--remote`; `None` for local.
+    pub host: Option<String>,
+}
+
+/// Where to discover sessions from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SessionSource {
+    Local,
+    Remote(crate::session::remote::RemoteTarget),
 }
 
 /// Whether `name` is a well-formed *attach target*. Like [`valid_session_name`] but permits the
@@ -151,7 +160,148 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
         name: name.to_string(),
         ephemeral: crate::state::is_ephemeral_session_name(name),
         status,
+        host: None,
     })
+}
+
+/// Discover sessions from a local runtime dir or a remote host (one ssh round-trip).
+pub fn discover_sessions_from(
+    source: &SessionSource,
+    config: &crate::config::HyprmuxRemoteConfig,
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    match source {
+        SessionSource::Local => discover_sessions(),
+        SessionSource::Remote(target) => discover_remote_sessions(target, config),
+    }
+}
+
+fn discover_remote_sessions(
+    target: &crate::session::remote::RemoteTarget,
+    config: &crate::config::HyprmuxRemoteConfig,
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    use std::process::{Command, Stdio};
+
+    let resolved = crate::session::remote::ResolvedRemote::resolve(target, config);
+    let host_label = resolved
+        .alias
+        .clone()
+        .unwrap_or_else(|| resolved.host.clone());
+    if !crate::platform::command::program_exists("ssh") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "ssh was not found on PATH",
+        ));
+    }
+    let remote_bin = resolved
+        .binary_path
+        .clone()
+        .unwrap_or_else(|| "hyprmux".to_string());
+    let mut command = Command::new("ssh");
+    command.arg("-T").arg("-o").arg("BatchMode=yes");
+    if let Some(port) = resolved.port {
+        command.arg("-p").arg(port.to_string());
+    }
+    if let Some(identity) = &resolved.identity_file {
+        command.arg("-i").arg(crate::config::expand_path(identity));
+    }
+    for arg in &resolved.ssh_args {
+        command.arg(arg);
+    }
+    command.arg(resolved.ssh_destination());
+    command.arg("--");
+    command.arg(&remote_bin);
+    command.arg("list-sessions");
+    command.arg("--format");
+    command.arg("json");
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(format!(
+            "remote list-sessions failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    parse_remote_list_json(&output.stdout, Some(host_label))
+}
+
+/// Parse `list-sessions --format json` output (also used by remote discovery).
+pub fn parse_remote_list_json(
+    bytes: &[u8],
+    host: Option<String>,
+) -> std::io::Result<Vec<DiscoveredSession>> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        name: String,
+        status: String,
+        #[serde(default)]
+        panes: Option<usize>,
+        #[serde(default)]
+        clients: Option<u32>,
+        #[serde(default)]
+        layout: Option<bool>,
+        #[serde(default)]
+        created_from_profile: Option<String>,
+        #[serde(default)]
+        ephemeral: bool,
+    }
+    let rows: Vec<Row> = serde_json::from_slice(bytes).map_err(std::io::Error::other)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let status = match row.status.as_str() {
+                "running" => DiscoveredSessionStatus::Running {
+                    panes: row.panes.unwrap_or(0),
+                    clients: row.clients.unwrap_or(0),
+                    has_layout: row.layout.unwrap_or(false),
+                    created_from_profile: row.created_from_profile,
+                },
+                "busy" => DiscoveredSessionStatus::Busy,
+                _ => DiscoveredSessionStatus::Unknown,
+            };
+            DiscoveredSession {
+                name: row.name,
+                status,
+                ephemeral: row.ephemeral,
+                host: host.clone(),
+            }
+        })
+        .collect())
+}
+
+/// Serialize discovered sessions as JSON (for `list-sessions --format json`).
+pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json::Error> {
+    let value: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            let mut obj = serde_json::json!({
+                "name": row.name,
+                "ephemeral": row.ephemeral,
+            });
+            if let Some(host) = &row.host {
+                obj["host"] = serde_json::json!(host);
+            }
+            match &row.status {
+                DiscoveredSessionStatus::Running {
+                    panes,
+                    clients,
+                    has_layout,
+                    created_from_profile,
+                } => {
+                    obj["status"] = serde_json::json!("running");
+                    obj["panes"] = serde_json::json!(panes);
+                    obj["clients"] = serde_json::json!(clients);
+                    obj["layout"] = serde_json::json!(has_layout);
+                    if let Some(profile) = created_from_profile {
+                        obj["created_from_profile"] = serde_json::json!(profile);
+                    }
+                }
+                DiscoveredSessionStatus::Busy => obj["status"] = serde_json::json!("busy"),
+                DiscoveredSessionStatus::Unknown => obj["status"] = serde_json::json!("unknown"),
+            }
+            obj
+        })
+        .collect();
+    serde_json::to_string_pretty(&value)
 }
 
 #[cfg(test)]
@@ -176,5 +326,28 @@ mod tests {
         assert!(!valid_attach_target(""));
         assert!(!valid_attach_target("bad/name"));
         assert!(!valid_attach_target("bad name"));
+    }
+
+    #[test]
+    fn list_json_round_trips_through_parser() {
+        let rows = vec![DiscoveredSession {
+            name: "dev".into(),
+            ephemeral: false,
+            host: Some("workbox".into()),
+            status: DiscoveredSessionStatus::Running {
+                panes: 2,
+                clients: 1,
+                has_layout: true,
+                created_from_profile: Some("work".into()),
+            },
+        }];
+        let json = sessions_to_json(&rows).unwrap();
+        let parsed = parse_remote_list_json(json.as_bytes(), Some("workbox".into())).unwrap();
+        assert_eq!(parsed[0].name, "dev");
+        assert_eq!(parsed[0].host.as_deref(), Some("workbox"));
+        assert!(matches!(
+            parsed[0].status,
+            DiscoveredSessionStatus::Running { panes: 2, .. }
+        ));
     }
 }

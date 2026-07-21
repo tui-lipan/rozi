@@ -49,10 +49,21 @@ pub(crate) enum ParsedCli {
     RemoteServe {
         name: String,
     },
-    ListSessions,
+    ListSessions {
+        format: ListFormat,
+        remote: Option<String>,
+    },
     KillSession {
         name: String,
+        remote: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ListFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
@@ -66,15 +77,64 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             "--help" | "-h" => return Ok(ParsedCli::Help),
             "--version" | "-V" => return Ok(ParsedCli::Version),
             "list-sessions" => {
-                reject_trailing_control_args(&mut iter, "list-sessions")?;
-                return Ok(ParsedCli::ListSessions);
+                let mut format = ListFormat::Text;
+                let mut remote = None;
+                while let Some(flag) = iter.next() {
+                    match flag.as_str() {
+                        "--format" => {
+                            let value = iter
+                                .next()
+                                .ok_or_else(|| "--format requires text or json".to_string())?;
+                            format = match value.as_str() {
+                                "text" => ListFormat::Text,
+                                "json" => ListFormat::Json,
+                                other => {
+                                    return Err(format!(
+                                        "unknown list-sessions --format `{other}` (expected text or json)"
+                                    ));
+                                }
+                            };
+                        }
+                        "--remote" => {
+                            let target = iter.next().ok_or_else(|| {
+                                "list-sessions --remote requires a host alias or ssh:// URL"
+                                    .to_string()
+                            })?;
+                            session::remote::parse_remote_target(&target)?;
+                            remote = Some(target);
+                        }
+                        other => {
+                            return Err(format!(
+                                "unexpected argument `{other}` after list-sessions"
+                            ));
+                        }
+                    }
+                }
+                return Ok(ParsedCli::ListSessions { format, remote });
             }
             "kill-session" => {
                 let name = iter
                     .next()
                     .ok_or_else(|| "kill-session requires a session name".to_string())?;
-                reject_trailing_control_args(&mut iter, "kill-session")?;
-                return Ok(ParsedCli::KillSession { name });
+                let mut remote = None;
+                while let Some(flag) = iter.next() {
+                    match flag.as_str() {
+                        "--remote" => {
+                            let target = iter.next().ok_or_else(|| {
+                                "kill-session --remote requires a host alias or ssh:// URL"
+                                    .to_string()
+                            })?;
+                            session::remote::parse_remote_target(&target)?;
+                            remote = Some(target);
+                        }
+                        other => {
+                            return Err(format!(
+                                "unexpected argument `{other}` after kill-session"
+                            ));
+                        }
+                    }
+                }
+                return Ok(ParsedCli::KillSession { name, remote });
             }
             "attach" => {
                 if cli.attach_session.is_some() {
@@ -500,33 +560,64 @@ pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_list_sessions_cli() -> Result<()> {
-    for session in session::discovery::discover_sessions()? {
-        match session.status {
-            session::discovery::DiscoveredSessionStatus::Running {
-                panes,
-                clients,
-                has_layout,
-                ..
-            } => println!(
-                "{}\trunning\tpanes={}\tclients={}\tlayout={}",
-                session.name,
-                panes,
-                clients,
-                if has_layout { "yes" } else { "no" }
-            ),
-            session::discovery::DiscoveredSessionStatus::Busy => {
-                println!("{}\tbusy\tpanes=?\tclients=?\tlayout=?", session.name)
-            }
-            session::discovery::DiscoveredSessionStatus::Unknown => {
-                println!("{}\tunknown\tpanes=?\tclients=?\tlayout=?", session.name)
+pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) -> Result<()> {
+    let rows = if let Some(remote) = remote {
+        let target = session::remote::parse_remote_target(remote).map_err(std::io::Error::other)?;
+        let config = crate::config::load_config().config.remote;
+        session::discovery::discover_sessions_from(
+            &session::discovery::SessionSource::Remote(target),
+            &config,
+        )?
+    } else {
+        session::discovery::discover_sessions()?
+    };
+    match format {
+        ListFormat::Json => {
+            println!(
+                "{}",
+                session::discovery::sessions_to_json(&rows).map_err(std::io::Error::other)?
+            );
+        }
+        ListFormat::Text => {
+            for session in rows {
+                let host = session
+                    .host
+                    .as_deref()
+                    .map(|host| format!("\thost={host}"))
+                    .unwrap_or_default();
+                match session.status {
+                    session::discovery::DiscoveredSessionStatus::Running {
+                        panes,
+                        clients,
+                        has_layout,
+                        ..
+                    } => println!(
+                        "{}\trunning\tpanes={}\tclients={}\tlayout={}{host}",
+                        session.name,
+                        panes,
+                        clients,
+                        if has_layout { "yes" } else { "no" }
+                    ),
+                    session::discovery::DiscoveredSessionStatus::Busy => {
+                        println!("{}\tbusy\tpanes=?\tclients=?\tlayout=?{host}", session.name)
+                    }
+                    session::discovery::DiscoveredSessionStatus::Unknown => {
+                        println!(
+                            "{}\tunknown\tpanes=?\tclients=?\tlayout=?{host}",
+                            session.name
+                        )
+                    }
+                }
             }
         }
     }
     Ok(())
 }
 
-pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
+pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
+    if let Some(remote) = remote {
+        return run_kill_session_remote(name, remote);
+    }
     use crate::session::protocol::{
         ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
     };
@@ -570,6 +661,41 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
     }
 }
 
+fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let target = session::remote::parse_remote_target(remote)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+    let config = crate::config::load_config().config.remote;
+    let resolved = session::remote::ResolvedRemote::resolve(&target, &config);
+    let remote_bin = resolved
+        .binary_path
+        .clone()
+        .unwrap_or_else(|| "hyprmux".to_string());
+    let mut command = Command::new("ssh");
+    command.arg("-T").arg("-o").arg("BatchMode=yes");
+    if let Some(port) = resolved.port {
+        command.arg("-p").arg(port.to_string());
+    }
+    if let Some(identity) = &resolved.identity_file {
+        command.arg("-i").arg(crate::config::expand_path(identity));
+    }
+    for arg in &resolved.ssh_args {
+        command.arg(arg);
+    }
+    command.arg(resolved.ssh_destination());
+    command.arg("--");
+    command.arg(&remote_bin);
+    command.arg("kill-session");
+    command.arg(name);
+    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    let status = command.status()?;
+    if !status.success() {
+        std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
 pub(crate) fn print_help() {
     let endpoint_help = endpoint_help();
     println!(
@@ -595,8 +721,8 @@ USAGE:
     hyprmux --session <NAME> [--read-only]
     hyprmux --remote <HOST|ssh://URL> [TARGET] [--read-only]
     hyprmux --pick
-    hyprmux list-sessions
-    hyprmux kill-session <NAME>
+    hyprmux list-sessions [--format text|json] [--remote <HOST>]
+    hyprmux kill-session <NAME> [--remote <HOST>]
     hyprmux --server <NAME>
     hyprmux --session <NAME> --server
 
@@ -906,11 +1032,29 @@ mod tests {
     fn cli_parses_session_verbs_and_attach() {
         assert!(matches!(
             parse_cli_args(vec!["list-sessions".into()]).expect("parses"),
-            ParsedCli::ListSessions
+            ParsedCli::ListSessions {
+                format: ListFormat::Text,
+                remote: None
+            }
         ));
         assert!(matches!(
             parse_cli_args(vec!["kill-session".into(), "dev".into()]).expect("parses"),
-            ParsedCli::KillSession { name } if name == "dev"
+            ParsedCli::KillSession {
+                name,
+                remote: None
+            } if name == "dev"
+        ));
+        assert!(matches!(
+            parse_cli_args(vec![
+                "list-sessions".into(),
+                "--format".into(),
+                "json".into()
+            ])
+            .expect("parses"),
+            ParsedCli::ListSessions {
+                format: ListFormat::Json,
+                remote: None
+            }
         ));
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
         assert_eq!(attached.attach_session.as_deref(), Some("dev"));

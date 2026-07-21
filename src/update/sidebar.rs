@@ -729,6 +729,7 @@ mod tests {
         crate::session::discovery::DiscoveredSession {
             name: name.to_string(),
             ephemeral: false,
+            host: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: 1,
                 clients: 0,

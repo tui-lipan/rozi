@@ -514,8 +514,12 @@ pub fn run() -> Result<()> {
         Ok(cli::ParsedCli::Control(command)) => return cli::run_control_cli(command),
         Ok(cli::ParsedCli::Server { name, fresh }) => return cli::run_server_cli(&name, fresh),
         Ok(cli::ParsedCli::RemoteServe { name }) => return cli::run_remote_serve_cli(&name),
-        Ok(cli::ParsedCli::ListSessions) => return cli::run_list_sessions_cli(),
-        Ok(cli::ParsedCli::KillSession { name }) => return cli::run_kill_session_cli(&name),
+        Ok(cli::ParsedCli::ListSessions { format, remote }) => {
+            return cli::run_list_sessions_cli(format, remote.as_deref());
+        }
+        Ok(cli::ParsedCli::KillSession { name, remote }) => {
+            return cli::run_kill_session_cli(&name, remote.as_deref());
+        }
         Ok(cli::ParsedCli::Run(args)) => args,
         Err(message) => {
             eprintln!("{message}");
@@ -1195,6 +1199,7 @@ mod tests {
                         crate::session::discovery::DiscoveredSession {
                             name: session_name,
                             ephemeral: true,
+                            host: None,
                             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                                 panes: 1,
                                 clients: 1,
@@ -1205,6 +1210,7 @@ mod tests {
                         crate::session::discovery::DiscoveredSession {
                             name: "shared-dev".to_string(),
                             ephemeral: false,
+                            host: None,
                             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                                 panes: 2,
                                 clients: 1,

@@ -149,6 +149,7 @@ fn profile_session_rows(
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
+            host: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state
@@ -194,6 +195,7 @@ pub(crate) fn apply_profile_sessions(
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
+            host: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state

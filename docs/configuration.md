@@ -250,7 +250,7 @@ Pane focus and chrome behavior.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
-| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. `keep_open = true` launch identities normally replace an exited command with a shell, so they generally do not reach this state. |
+| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. This governs panes with no launch command of their own (a plain shell you typed `exit` in); a pane launched with a command is governed by that command's `keep_open` instead, which replaces the dead PTY with a live shell rather than retaining a husk. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
@@ -487,11 +487,75 @@ session sizing behavior.
 | `visible` | `false` | Initial visibility. `toggle-sidebar` changes only the current client until the next config reload; reload reapplies this value. |
 | `width` | `32` | Requested width in columns, clamped to `16..=80`. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
-| `tabs` | `["agents", "panes", "sessions"]` | Ordered tabs. Built-in names are reserved and each tab identity must be unique. |
+| `tabs` | `["agents", "panes", "sessions"]` | Ordered tabs. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
+
+### File tree tabs
+
+`files` and `git` are two views of one file tree. `files` browses the focused pane's working
+directory; `git` shows only the paths git reports as changed, grouped under their directories, with
+`+N -M` diff stats. Both follow focus: change pane or `cd`, and the tree re-roots.
+
+Neither runs anything until its tab is the visible sidebar's active tab, and directory reads and
+`git status` both run off the UI thread. Git status is refreshed when the focused pane's command
+finishes rather than on a timer, so a build or checkout updates the tab immediately while reading
+costs nothing.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `root` | `"cwd"` for `files`, `"repo"` for `git` | `cwd` roots at the focused pane's directory; `repo` roots at the git repository containing it, so changes elsewhere stay visible from a subdirectory. Falls back to `cwd` outside a repository. |
+| `show_hidden` | `false` | Show dot-prefixed entries. |
+| `icons` | `false` | Show file-kind icons. Off by default because the glyphs assume a Nerd Font. |
+| `explorer` | `false` | Show a fuzzy-find input above the tree. Respects `.gitignore`/`.ignore`. |
+| `diff_stats` | `false` for `files`, `true` for `git` | Show `+N -M` beside change markers. |
+| `max_entries` | `2000` | Cap entries read per directory (1-10000). |
+| `on_click` | `{ send = "{path}" }` | What activating a row does; `{path}` is the activated path. |
+
+```toml
+[sidebar]
+visible = true
+tabs = ["agents", "files", "git"]
+```
+
+Both take the same table form as custom tabs when you want options. TOML inline tables must stay on
+one line:
+
+```toml
+tabs = ["agents", { name = "files", label = "", show_hidden = true, explorer = true, on_click = { send = "nvim {path}\n" } }, "git"]
+```
+
+`label` is ignored for a built-in, which keeps its own name. Clicking a directory expands it;
+clicking a file runs `on_click`. The default types the path at the prompt without a newline, so
+nothing executes until you press Enter.
+
+#### Opening a diff viewer or editor from a row
+
+A `run` action opens the command in a new pane and `popup` opens it in a centered floating pane, so
+a row click can launch a full-screen TUI. The activated path is **not** substituted into those
+commands — a repository can contain a file named `; rm -rf ~`, and a command line assembled from a
+filename would execute it. Instead the path arrives as the `HYPRMUX_FILE` environment variable, so
+the command references it as `"$HYPRMUX_FILE"`: a quoted expansion is one word, never re-parsed for
+command syntax.
+
+```toml
+# lazygit scoped to the clicked file
+{ name = "git", label = "", on_click = { run = "lazygit -f \"$HYPRMUX_FILE\"" } }
+
+# the file's diff in a floating popup, closing when the pager quits
+{ name = "git", label = "", on_click = { popup = "git diff -- \"$HYPRMUX_FILE\"", keep_open = false } }
+
+# open the clicked file in an editor pane
+{ name = "files", label = "", on_click = { run = "$EDITOR \"$HYPRMUX_FILE\"" } }
+```
+
+Quote the expansion (`"$HYPRMUX_FILE"`, or `"%HYPRMUX_FILE%"` under `cmd.exe`) so paths containing
+spaces arrive as one argument. `send` is unaffected: it starts no process, and its `{path}`
+substitution is plain typed text — see [the sidebar security notes](sidebar.md#security) before
+adding a trailing newline to a `send` action.
 
 Each custom table needs a unique non-empty `name`, a non-empty display `label`, and exactly one of
 `entries` or `command`. Launcher entries require exactly one of `run`, `send`, or `popup` and execute
-with the same behavior as user-defined `[keys]` commands. Command tabs may provide an `on_click`
+with the same behavior as user-defined `[keys]` commands, including `keep_open` (default `true`, so a
+launcher entry's output survives the command exiting). Command tabs may provide an `on_click`
 action with the same shape. They poll only while active and visible, run immediately on activation,
 and have a five-second minimum interval. Output, runtime, rows, and row lengths are bounded; see the
 [Sidebar security policy](sidebar.md#security).
@@ -503,7 +567,7 @@ width = 32
 position = "right"
 tabs = [
   "panes",
-  { name = "deploy", label = "Deploy", entries = [{ label = "Build", run = "cargo build" }, { label = "Test", send = "cargo test\n" }, { label = "Logs", popup = "journalctl -f" }] },
+  { name = "deploy", label = "Deploy", entries = [{ label = "Build", run = "cargo build" }, { label = "Test", send = "cargo test\n" }, { label = "Logs", popup = "journalctl -f", keep_open = false }] },
   { name = "todos", label = "Todos", command = "task list --plain", interval = 30, on_click = { send = "task view {line}\n" } },
 ]
 ```
@@ -671,6 +735,17 @@ alt-t = { run = "btop" }
 - `popup = "<command>"` runs the command in a centered transient popup instead of a workspace pane.
 - Exactly one of `run`/`send`/`popup` must be set; a table with multiple values or none is warned about and
   skipped.
+- `keep_open` (default `true`, `run` and `popup` only) preserves command output after exit. A `run`
+  pane prints the exit status and replaces the dead PTY with a shell. A `popup` prints the status
+  and retains its final screen as a read-only result; Enter, Escape, or Space dismisses it. Set
+  `keep_open = false` for a program that owns the pane for its whole life and should take the pane
+  down with it:
+
+```toml
+[keys]
+"prefix g" = { run = "lazygit", keep_open = false }
+"prefix b" = { run = "cargo build" }               # holds, so build errors stay on screen
+```
 - The map key here is the trigger itself (`prefix g`, `alt-t`, ...), parsed the same way as a
   binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
 - Each command shows up in the help overlay (under "Custom") and the command palette with a

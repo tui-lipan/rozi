@@ -18,9 +18,10 @@ tabs = ["agents", "panes", "sessions"]
 sidebar yields space before the pane canvas is allowed to fall below its minimum, and always leaves
 at least one canvas column. `position` is `left` or `right`.
 
-The built-in IDs are `agents`, `panes`, and `sessions`. IDs are stable machine identities used for
-selection and reload reconciliation, while custom `label` values are display-only. Duplicate IDs
-are skipped after the first. See [Configuration](configuration.md#sidebar) for custom launcher and
+The built-in IDs are `agents`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine
+identities used for selection and reload reconciliation, while custom `label` values are
+display-only. Duplicate IDs are skipped after the first. See
+[Configuration](configuration.md#sidebar) for file tree options and for custom launcher and
 command-backed table syntax.
 
 ## Built-in Tabs
@@ -75,6 +76,26 @@ replacement if it disappeared. Incompatible sessions are rejected. Leaving a dis
 session requires clicking the target row a second time; this confirmation is independent from the
 session picker's confirmation.
 
+The **Files** and **Git** tabs are two projections of one lazy-loading file tree. **Files** browses
+the focused pane's working directory. **Git** shows only paths git reports as changed, grouped under
+their directories, with `M`/`A`/`D`/`?` markers and `+N -M` diff stats; it is rooted at the
+repository rather than the pane's directory, so a pane sitting in `src/` still sees changes across
+the whole repo. Both re-root when focus moves or the pane reports a new working directory, and a
+pane on a remote host says so instead of showing a tree that does not exist locally.
+
+Both tabs are inert until visible: the tree mounts only as the active tab of a visible sidebar, and
+directory reads and `git status` both run off the UI thread. Git status is refreshed when the
+focused pane's command finishes rather than on a timer, so a build, commit, or checkout updates the
+tab immediately while reading it costs nothing. Change markers are text rather than Nerd Font
+glyphs, and icons are off by default, so neither tab assumes a patched font.
+
+The tree scrolls internally and is not part of the sidebar's own scroll view. It does not join the
+keyboard focus ring: keys belong to the panes, so the tree is mouse- and wheel-driven like the rest
+of the sidebar. Clicking a directory expands or collapses it. Clicking a file runs the tab's
+`on_click`, which defaults to typing the path at the focused pane's prompt without a newline — so a
+click inserts the path and nothing runs until you press Enter. Only files run the action;
+activating a directory never does.
+
 ## User Tabs
 
 Launcher tabs render configured entries and reuse the same actions as user-defined `[keys]`
@@ -105,6 +126,20 @@ account through the resolved `command_shell`; hyprmux never chooses an extra `/b
 polling. Command output is untrusted display data and is sanitized and bounded before storage.
 Because `{line}` can contain command syntax, use it only where literal terminal input is intended;
 the receiving program or shell still decides how that typed text is interpreted when submitted.
+
+The file tree's `{path}` placeholder follows the same rule for the same reason. A path comes from
+the filesystem, so a checked-out repository can contain a filename carrying command syntax.
+Substitution happens only into `send` text, `run` and `popup` configurations containing `{path}` are
+rejected with a warning, and the default action appends no newline — the path is typed at the prompt
+and nothing runs until the user submits it. File tree clicks also carry the config generation, so a
+click queued across a config reload cannot act on a replaced tab.
+
+A file tree `run`/`popup` action still receives the activated path, as the `HYPRMUX_FILE`
+environment variable rather than as text spliced into the command. The command decides where the
+value goes by referencing `"$HYPRMUX_FILE"`, and a quoted parameter expansion is a single word that
+the shell does not re-scan for operators — so a file named `; rm -rf ~` reaches the command as an
+argument instead of a second command. This is what makes launching a diff viewer or editor for the
+clicked file safe; see [Configuration](configuration.md#opening-a-diff-viewer-or-editor-from-a-row).
 
 ## Actions
 

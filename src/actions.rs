@@ -81,10 +81,29 @@ pub(crate) fn execute_user_command_action(
     ctx: &mut Context<HyprmuxApp>,
     action: &UserCommandAction,
 ) -> Update {
+    execute_user_command_action_with_env(ctx, action, Vec::new())
+}
+
+/// Run a user command with extra environment for this spawn only.
+///
+/// `env` is how a caller hands an untrusted value — a filename from the file tree, say — to a
+/// command line without ever putting it *in* that command line. The command references it as
+/// `"$VAR"`, which the shell expands as a single word rather than re-parsing for command syntax.
+/// `Send` ignores it: it starts no process, it only types text into an existing one.
+pub(crate) fn execute_user_command_action_with_env(
+    ctx: &mut Context<HyprmuxApp>,
+    action: &UserCommandAction,
+    env: Vec<(String, String)>,
+) -> Update {
     match action {
-        UserCommandAction::Run(command) => {
+        UserCommandAction::Run { command, keep_open } => {
             let identity = PaneIdentity {
                 command: Some(command.clone()),
+                keep_open: *keep_open,
+                // `cargo build` means "build the project I am looking at"; without this the command
+                // runs wherever the session server was started.
+                cwd: crate::pane_lifecycle::focused_local_cwd(&ctx.state),
+                env,
                 ..PaneIdentity::default()
             };
             crate::pane_lifecycle::spawn_interactive_pane(
@@ -109,18 +128,24 @@ pub(crate) fn execute_user_command_action(
             }
             Update::full()
         }
-        UserCommandAction::Popup(command) => {
-            crate::popup::open(ctx, command.clone(), None, None, None, None).unwrap_or_else(
-                |error| {
-                    ctx.toast().push(crate::pty_events::error_toast(
-                        &ctx.state.theme,
-                        "Popup failed",
-                        error,
-                    ));
-                    Update::full()
-                },
-            )
-        }
+        UserCommandAction::Popup { command, keep_open } => crate::popup::open(
+            ctx,
+            command.clone(),
+            None,
+            None,
+            None,
+            None,
+            *keep_open,
+            env,
+        )
+        .unwrap_or_else(|error| {
+            ctx.toast().push(crate::pty_events::error_toast(
+                &ctx.state.theme,
+                "Popup failed",
+                error,
+            ));
+            Update::full()
+        }),
     }
 }
 
@@ -234,7 +259,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
         Action::RunUserCommand(index) => matches!(
             state.config.user_commands.get(index).map(|cmd| &cmd.action),
-            Some(UserCommandAction::Run(_) | UserCommandAction::Popup(_))
+            Some(UserCommandAction::Run { .. } | UserCommandAction::Popup { .. })
         ),
         _ => false,
     }

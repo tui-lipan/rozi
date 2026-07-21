@@ -42,6 +42,13 @@ pub enum Msg {
         tab_id: crate::config::SidebarTabId,
         entry_index: usize,
     },
+    SidebarTreeActivate {
+        config_epoch: u64,
+        tab_id: crate::config::SidebarTabId,
+        path: String,
+        /// Directories only expand; their activation must not run the tab's action.
+        is_dir: bool,
+    },
     SidebarCommandPoll {
         epoch: u64,
         tab_id: crate::config::SidebarTabId,

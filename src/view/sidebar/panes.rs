@@ -1,5 +1,6 @@
 use tui_lipan::prelude::*;
 
+use super::row::{self, Row};
 use crate::{HyprmuxApp, Msg};
 
 pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
@@ -19,61 +20,26 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
             || format!("Workspace {}", workspace_index + 1),
             |name| format!("{}  {}", workspace_index + 1, name),
         );
-        let mut section = VStack::new().gap(0).child(
-            Text::new(format!(" {workspace_label}"))
-                .style(super::super::fg_only(&ctx.state.theme.accent).bold())
-                .height(Length::Px(1)),
-        );
+        let mut section = VStack::new()
+            .gap(0)
+            .child(row::header(ctx, workspace_label, false));
         for pane in panes {
             let id = pane.id;
-            let focused = ctx.state.focused_pane == Some(id);
-            let marker = if focused { "▎" } else { " " };
-            let title = pane.display_title(pane.terminal.title());
             let program = pane
                 .terminal
                 .foreground_program
                 .as_deref()
                 .unwrap_or("shell");
-            let row = HStack::new()
-                .gap(1)
-                .height(Length::Px(2))
-                .style(if focused {
-                    Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
-                } else {
-                    Style::default()
-                })
-                .child(
-                    VStack::new()
-                        .gap(0)
-                        .width(Length::Auto)
-                        .height(Length::Px(2))
-                        .child(
-                            Text::new(marker)
-                                .height(Length::Px(1))
-                                .style(super::super::fg_only(&ctx.state.theme.accent)),
-                        )
-                        .child(
-                            Text::new(marker)
-                                .height(Length::Px(1))
-                                .style(super::super::fg_only(&ctx.state.theme.accent)),
-                        ),
-                )
-                .child(
-                    VStack::new()
-                        .gap(0)
-                        .child(
-                            Text::new(title).style(super::super::fg_only(&ctx.state.theme.primary)),
-                        )
-                        .child(
-                            Text::new(program.to_string())
-                                .style(super::super::fg_only(&ctx.state.theme.muted)),
-                        ),
-                );
+            let content = Row::new(pane.display_title(pane.terminal.title()))
+                .marked(ctx.state.focused_pane == Some(id))
+                .title_style(super::super::fg_only(&ctx.state.theme.primary))
+                .detail(program, super::super::fg_only(&ctx.state.theme.muted))
+                .build(ctx);
             section = section.child(
                 MouseRegion::new()
                     .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
                     .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
-                    .child(row)
+                    .child(content)
                     .key(format!("sidebar-pane-{id}")),
             );
         }
@@ -82,9 +48,6 @@ pub(super) fn panes_tab(ctx: &Context<HyprmuxApp>) -> Element {
     if any {
         body.into()
     } else {
-        VStack::new()
-            .padding((0, 0, 0, 1))
-            .child(Text::new("No panes").style(super::super::fg_only(&ctx.state.theme.muted)))
-            .into()
+        row::empty(ctx, "No panes")
     }
 }

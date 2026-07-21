@@ -6,7 +6,7 @@ use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::ops::theme::{pane_frame_background, terminal_palette};
-use crate::pane_lifecycle::{pane_env, request_pane_spawn};
+use crate::pane_lifecycle::{PaneSpawnRequest, pane_env, request_pane_spawn};
 use crate::state::{Pane, SCRATCH_PANE_ID};
 use crate::view;
 
@@ -107,24 +107,21 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         pane.opening = false;
         pane.terminal_active = true;
         let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
-        let command = pane.identity.command.clone();
-        let cwd = pane.identity.cwd.clone();
+        let identity = pane.identity.clone();
         let cols = pane.terminal.cols;
         let rows = pane.terminal.rows;
         ctx.state.scratch = Some(pane);
         request_pane_spawn(
             &mut ctx.state,
-            SCRATCH_PANE_ID,
-            generation,
-            command,
-            cwd,
-            cols,
-            rows,
-            false,
-            env,
-            None,
-            palette,
-            false,
+            PaneSpawnRequest {
+                pane_id: SCRATCH_PANE_ID,
+                generation,
+                identity,
+                cols,
+                rows,
+                env,
+                palette,
+            },
         );
     }
 

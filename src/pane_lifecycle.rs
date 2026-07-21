@@ -14,17 +14,30 @@ use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
-pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
-    let previous_focused = workspace.focused_pane;
-    // A new pane opens in the focused pane's local working directory, never a remote SSH path.
-    let mut identity = PaneIdentity::default();
-    if let Some(cwd) = previous_focused
+/// The focused pane's local working directory, if it has a usable one.
+///
+/// Anything spawned *from* a pane — a split, a `[keys]`/sidebar `run` command, a popup — opens where
+/// that pane is, which is almost never where the session server was started. A remote SSH path is
+/// never returned: it does not name a directory on this machine.
+pub(crate) fn focused_local_cwd(state: &State) -> Option<String> {
+    focused_local_cwd_ref(state).map(str::to_string)
+}
+
+/// [`focused_local_cwd`] without the allocation. See [`Pane::local_cwd_ref`].
+pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
+    let workspace = &state.workspaces[state.active_workspace];
+    workspace
+        .focused_pane
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
-        .and_then(|pane| pane.local_cwd())
-    {
-        identity.cwd = Some(cwd);
-    }
+        .and_then(|pane| pane.local_cwd_ref())
+}
+
+pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let previous_focused = ctx.state.workspaces[ctx.state.active_workspace].focused_pane;
+    let identity = PaneIdentity {
+        cwd: focused_local_cwd(&ctx.state),
+        ..PaneIdentity::default()
+    };
 
     spawn_interactive_pane(ctx, ctx.state.active_workspace, previous_focused, identity).1
 }
@@ -130,11 +143,9 @@ pub(crate) fn spawn_pane_in_workspace(
     pane.opening = true;
 
     let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+    let identity = pane.identity.clone();
     let command = pane.identity.command.clone();
     let cwd = pane.identity.cwd.clone();
-    let title = pane.identity.custom_title.clone();
-    let keep_open = pane.identity.keep_open;
-    let replay = pane.identity.replay;
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
 
@@ -159,17 +170,15 @@ pub(crate) fn spawn_pane_in_workspace(
 
     request_pane_spawn(
         &mut ctx.state,
-        id,
-        generation,
-        command.clone(),
-        cwd.clone(),
-        cols,
-        rows,
-        keep_open,
-        env,
-        title,
-        palette,
-        replay,
+        PaneSpawnRequest {
+            pane_id: id,
+            generation,
+            identity,
+            cols,
+            rows,
+            env,
+            palette,
+        },
     );
     crate::events::emit(
         &ctx.state,
@@ -244,39 +253,56 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     request_pane_spawn(
         &mut ctx.state,
-        id,
-        generation,
-        identity.command,
-        identity.cwd,
-        cols,
-        rows,
-        identity.keep_open,
-        env,
-        identity.custom_title,
-        palette,
-        identity.replay,
+        PaneSpawnRequest {
+            pane_id: id,
+            generation,
+            identity,
+            cols,
+            rows,
+            env,
+            palette,
+        },
     );
     crate::update::schedule_layout_commit(ctx);
     Update::full()
 }
 
+/// One pane spawn addressed to the session server.
+///
+/// The launch fields travel as the pane's own [`PaneIdentity`] rather than as loose arguments so a
+/// caller cannot spawn a pane whose wire request disagrees with the identity it just stored. That
+/// is not hypothetical: `keep_open` and `replay` were adjacent positional `bool`s, and the popup
+/// path passed a literal `false` for `keep_open` while its identity asked to hold the pane open.
+pub(crate) struct PaneSpawnRequest {
+    pub pane_id: PaneId,
+    pub generation: u64,
+    pub identity: PaneIdentity,
+    pub cols: u16,
+    pub rows: u16,
+    pub env: Vec<(String, String)>,
+    pub palette: TerminalColorPalette,
+}
+
 /// Spawn a pane on the session server, or queue it if no client is connected yet (initial attach
 /// or a reconnect window). Queued spawns are flushed by [`crate::update`] once the client arrives.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn request_pane_spawn(
-    state: &mut State,
-    pane_id: PaneId,
-    generation: u64,
-    command: Option<String>,
-    cwd: Option<String>,
-    cols: u16,
-    rows: u16,
-    keep_open: bool,
-    env: Vec<(String, String)>,
-    title: Option<String>,
-    palette: TerminalColorPalette,
-    replay: bool,
-) {
+pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
+    let PaneSpawnRequest {
+        pane_id,
+        generation,
+        identity,
+        cols,
+        rows,
+        env,
+        palette,
+    } = request;
+    let PaneIdentity {
+        command,
+        cwd,
+        keep_open,
+        replay,
+        custom_title: title,
+        ..
+    } = identity;
     // A replay command (see `PaneIdentity::replay`) spawns a plain interactive shell and is
     // injected as type-ahead input after the spawn succeeds (see `State::pending_replay_inputs`),
     // so aliases/functions/rc-file PATH resolve and the prompt's title integration runs first.
@@ -517,6 +543,10 @@ pub(crate) fn handle_prune_closed(
     if !should_prune_closed(&ctx.state, id, generation) {
         return Update::none();
     }
+    if id == crate::state::POPUP_PANE_ID {
+        ctx.state.popup = None;
+        return Update::full();
+    }
     remove_pane(&mut ctx.state, id);
     if ctx
         .state
@@ -536,6 +566,13 @@ pub(crate) fn handle_prune_closed(
 }
 
 fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
+    if state
+        .popup
+        .as_ref()
+        .is_some_and(|pane| pane.id == id && pane.pty_generation == generation && pane.closing)
+    {
+        return true;
+    }
     state
         .workspaces
         .iter()
@@ -601,6 +638,8 @@ pub(crate) fn pane_env(
     if let Some(path) = control_socket_path {
         env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
     }
+    // Per-spawn additions last so a caller-supplied value wins over the standard set.
+    env.extend(pane.identity.env.iter().cloned());
     env
 }
 
@@ -706,22 +745,33 @@ mod tests {
         }
     }
 
+    /// A queued spawn request carrying `identity`, with the boilerplate a test does not care about.
+    fn spawn_request(pane_id: PaneId, generation: u64, identity: PaneIdentity) -> PaneSpawnRequest {
+        PaneSpawnRequest {
+            pane_id,
+            generation,
+            identity,
+            cols: 80,
+            rows: 24,
+            env: Vec::new(),
+            palette: TerminalColorPalette::default(),
+        }
+    }
+
     #[test]
     fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         request_pane_spawn(
             &mut state,
-            7,
-            3,
-            Some("n".to_string()),
-            None,
-            80,
-            24,
-            false,
-            Vec::new(),
-            None,
-            TerminalColorPalette::default(),
-            true,
+            spawn_request(
+                7,
+                3,
+                PaneIdentity {
+                    command: Some("n".to_string()),
+                    replay: true,
+                    ..PaneIdentity::default()
+                },
+            ),
         );
         // No client yet: the spawn is queued, with the replay command stripped from the wire
         // request and parked for post-spawn injection instead.
@@ -735,17 +785,14 @@ mod tests {
         // A non-replay command rides the wire request as before.
         request_pane_spawn(
             &mut state,
-            8,
-            4,
-            Some("htop".to_string()),
-            None,
-            80,
-            24,
-            false,
-            Vec::new(),
-            None,
-            TerminalColorPalette::default(),
-            false,
+            spawn_request(
+                8,
+                4,
+                PaneIdentity {
+                    command: Some("htop".to_string()),
+                    ..PaneIdentity::default()
+                },
+            ),
         );
         assert_eq!(
             state.pending_spawns[1].command.as_deref(),
@@ -760,17 +807,15 @@ mod tests {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         request_pane_spawn(
             &mut state,
-            7,
-            3,
-            Some("n".to_string()),
-            None,
-            80,
-            24,
-            false,
-            Vec::new(),
-            None,
-            TerminalColorPalette::default(),
-            true,
+            spawn_request(
+                7,
+                3,
+                PaneIdentity {
+                    command: Some("n".to_string()),
+                    replay: true,
+                    ..PaneIdentity::default()
+                },
+            ),
         );
         // An entry whose spawn already went out (not queued) can never complete after a
         // disconnect, and its key could be minted again once the generation counter restarts.
@@ -795,6 +840,27 @@ mod tests {
 
         state.workspaces[0].panes[0].closing = false;
         assert!(!should_prune_closed(&state, 1, 42));
+    }
+
+    #[test]
+    fn popup_prune_waits_for_matching_closing_generation() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut popup = Pane::new(
+            crate::state::POPUP_PANE_ID,
+            100,
+            FloatRect {
+                x: 10.0,
+                y: 5.0,
+                w: 40.0,
+                h: 12.0,
+            },
+        );
+        popup.pty_generation = 7;
+        popup.closing = true;
+        state.popup = Some(popup);
+
+        assert!(should_prune_closed(&state, crate::state::POPUP_PANE_ID, 7));
+        assert!(!should_prune_closed(&state, crate::state::POPUP_PANE_ID, 6));
     }
 
     #[test]

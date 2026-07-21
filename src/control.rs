@@ -108,6 +108,10 @@ pub enum ControlCommand {
         width: Option<f32>,
         height: Option<f32>,
         title: Option<String>,
+        /// Hold the popup open after the command exits, matching the `[keys]` `popup` default; set
+        /// `false` for a program that owns the popup for its whole life.
+        #[serde(default)]
+        keep_open: Option<bool>,
     },
     Subscribe {
         #[serde(default)]
@@ -456,6 +460,7 @@ mod tests {
                 width: Some(0.7),
                 height: Some(0.5),
                 title: Some("pick".into()),
+                keep_open: Some(false),
             },
             source_pane: None,
         };

@@ -15,6 +15,12 @@ pub struct PaneIdentity {
     /// functions, and rc-file `PATH` additions, and the shell prompt (with its title/OSC
     /// integration) must come up first. Never persisted; restore derives it.
     pub replay: bool,
+    /// Extra environment for this spawn only, merged over the standard pane environment.
+    ///
+    /// This is how a command line receives untrusted values such as a filename: the value never
+    /// enters the command string, so the shell expands `"$VAR"` as one word instead of re-parsing
+    /// it for command syntax. Never persisted — a restored pane re-derives whatever it needs.
+    pub env: Vec<(String, String)>,
 }
 
 impl PaneIdentity {

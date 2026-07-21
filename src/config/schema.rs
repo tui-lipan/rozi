@@ -562,12 +562,45 @@ impl PartialEq for HyprmuxHintConfig {
 }
 
 /// What a user-defined keybinding does: `Run` spawns a new pane running the shell command;
-/// `Send` writes literal text to the focused pane's PTY (TOML escapes like `\n` already work).
+/// `Send` writes literal text to the focused pane's PTY (TOML escapes like `\n` already work);
+/// `Popup` runs the command in a centered floating pane.
+///
+/// `keep_open` preserves command output after exit instead of tearing the pane down. A `Run` pane
+/// then becomes an interactive shell; a `Popup` remains as a read-only result. It defaults to
+/// `true` because a user command names a specific thing to run, and its output is the reason it was
+/// run at all. Long-lived programs that own the pane for their whole life (`nvim`, `lazygit`) are
+/// the case worth setting `keep_open = false` on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UserCommandAction {
-    Run(String),
+    Run { command: String, keep_open: bool },
     Send(String),
-    Popup(String),
+    Popup { command: String, keep_open: bool },
+}
+
+impl UserCommandAction {
+    /// A `run` action with the default hold-after-exit behavior.
+    pub fn run(command: impl Into<String>) -> Self {
+        Self::Run {
+            command: command.into(),
+            keep_open: true,
+        }
+    }
+
+    /// A `popup` action with the default hold-after-exit behavior.
+    pub fn popup(command: impl Into<String>) -> Self {
+        Self::Popup {
+            command: command.into(),
+            keep_open: true,
+        }
+    }
+
+    /// The command line or literal text the action carries, for labels and detail lines.
+    pub fn target(&self) -> &str {
+        match self {
+            Self::Run { command, .. } | Self::Popup { command, .. } => command,
+            Self::Send(text) => text,
+        }
+    }
 }
 
 pub const SIDEBAR_MIN_WIDTH: u16 = 16;
@@ -610,11 +643,97 @@ pub struct SidebarLauncherEntry {
     pub action: UserCommandAction,
 }
 
+/// Which projection a file-tree sidebar tab shows. The two tabs are one integration over the same
+/// widget: `Files` browses the tree, `Changes` shows only paths git reports as changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarTreeView {
+    Files,
+    Changes,
+}
+
+impl SidebarTreeView {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Files => "files",
+            Self::Changes => "git",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Changes => "Git",
+        }
+    }
+}
+
+/// Where a file-tree tab is rooted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SidebarTreeRoot {
+    /// The focused pane's working directory: browse where you are.
+    #[default]
+    Cwd,
+    /// The git repository containing that directory, so changes elsewhere in the repo are still
+    /// visible from a subdirectory. Falls back to the working directory outside a repository.
+    Repo,
+}
+
+impl SidebarTreeRoot {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cwd" | "pane" => Some(Self::Cwd),
+            "repo" | "repository" | "root" => Some(Self::Repo),
+            _ => None,
+        }
+    }
+}
+
+pub const SIDEBAR_TREE_MAX_ENTRIES_LIMIT: usize = 10_000;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidebarTreeConfig {
+    pub root: SidebarTreeRoot,
+    pub show_hidden: bool,
+    /// Show file-kind icons. Off by default: the glyphs assume a Nerd Font, and the rest of the
+    /// sidebar is text-only.
+    pub icons: bool,
+    /// Show the fuzzy-find input above the tree.
+    pub explorer: bool,
+    /// Show `+N -M` diff stats beside change markers.
+    pub diff_stats: bool,
+    pub max_entries: usize,
+    /// What activating a row does. `{path}` is replaced with the activated path.
+    pub on_click: Option<UserCommandAction>,
+}
+
+impl SidebarTreeConfig {
+    /// Defaults per view: browsing wants the pane's directory and no change noise, while the
+    /// changes view is only useful repo-wide and with diff stats on.
+    pub fn for_view(view: SidebarTreeView) -> Self {
+        Self {
+            root: match view {
+                SidebarTreeView::Files => SidebarTreeRoot::Cwd,
+                SidebarTreeView::Changes => SidebarTreeRoot::Repo,
+            },
+            show_hidden: false,
+            icons: false,
+            explorer: false,
+            diff_stats: view == SidebarTreeView::Changes,
+            max_entries: 2_000,
+            on_click: Some(UserCommandAction::Send("{path}".to_string())),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidebarTab {
     Agents,
     Panes,
     Sessions,
+    Tree {
+        view: SidebarTreeView,
+        config: SidebarTreeConfig,
+    },
     Launcher {
         name: SidebarTabId,
         label: String,
@@ -635,6 +754,7 @@ impl SidebarTab {
             Self::Agents => SidebarTabId::new("agents"),
             Self::Panes => SidebarTabId::new("panes"),
             Self::Sessions => SidebarTabId::new("sessions"),
+            Self::Tree { view, .. } => SidebarTabId::new(view.id()),
             Self::Launcher { name, .. } | Self::Command { name, .. } => name.clone(),
         }
     }
@@ -644,8 +764,15 @@ impl SidebarTab {
             Self::Agents => "Agents",
             Self::Panes => "Panes",
             Self::Sessions => "Sessions",
+            Self::Tree { view, .. } => view.label(),
             Self::Launcher { label, .. } | Self::Command { label, .. } => label,
         }
+    }
+
+    /// Whether the tab body manages its own scrolling. The file tree scrolls internally, so the
+    /// sidebar must not wrap it in a second scroll view.
+    pub fn scrolls_itself(&self) -> bool {
+        matches!(self, Self::Tree { .. })
     }
 }
 
@@ -679,11 +806,15 @@ impl UserCommand {
     /// static label of their own the way a built-in command does.
     pub fn label(&self) -> String {
         match &self.action {
-            UserCommandAction::Run(command) => format!("Run: {}", truncate_for_label(command)),
+            UserCommandAction::Run { command, .. } => {
+                format!("Run: {}", truncate_for_label(command))
+            }
             UserCommandAction::Send(text) => {
                 format!("Send: {}", truncate_for_label(&escape_for_label(text)))
             }
-            UserCommandAction::Popup(command) => format!("Popup: {}", truncate_for_label(command)),
+            UserCommandAction::Popup { command, .. } => {
+                format!("Popup: {}", truncate_for_label(command))
+            }
         }
     }
 }
@@ -931,7 +1062,7 @@ mod tests {
     #[test]
     fn user_command_label_describes_run_and_send() {
         let run = UserCommand {
-            action: UserCommandAction::Run("lazygit".to_string()),
+            action: UserCommandAction::run("lazygit".to_string()),
             binding: KeyBinding::from_str("ctrl-a g").unwrap(),
         };
         assert_eq!(run.label(), "Run: lazygit");
@@ -946,7 +1077,7 @@ mod tests {
     #[test]
     fn user_command_label_truncates_long_commands() {
         let run = UserCommand {
-            action: UserCommandAction::Run("x".repeat(60)),
+            action: UserCommandAction::run("x".repeat(60)),
             binding: KeyBinding::from_str("ctrl-a g").unwrap(),
         };
         let label = run.label();

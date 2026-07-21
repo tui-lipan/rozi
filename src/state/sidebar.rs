@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::config::{SidebarConfig, SidebarTabId};
+use crate::session::protocol::PaneCommandPhase;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SidebarCommandRow {
@@ -26,6 +27,17 @@ pub struct SidebarState {
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
     pub pending_session_open: Option<String>,
+    /// Resolved roots for the file-tree tabs: the focused pane's local working directory, and the
+    /// git repository containing it. Both are recomputed only when the pane's reported directory
+    /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.
+    pub tree_cwd: Option<String>,
+    pub tree_repo: Option<String>,
+    /// Monotonic token handed to `FileTree::git_refresh_token`. The widget ignores a token that
+    /// does not increase, so this only ever counts up.
+    pub git_refresh_token: u64,
+    /// Focused pane and its last observed command phase, used to refresh git status on the edge
+    /// into `Completed` — the moment a command has finished changing the working tree.
+    pub last_command_phase: Option<(crate::state::PaneId, PaneCommandPhase)>,
 }
 
 impl SidebarState {

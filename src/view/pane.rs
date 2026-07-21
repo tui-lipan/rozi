@@ -255,6 +255,7 @@ pub(crate) fn pane_element(
         snapshot.cursor_visible,
         ctx.state.hint_mode.as_ref().map(|hints| hints.target),
         id,
+        exited,
     );
     let mut selection_style = theme.text_selection;
     if ctx
@@ -815,8 +816,9 @@ fn terminal_cursor_visible(
     snapshot_cursor_visible: bool,
     hint_target: Option<PaneId>,
     id: PaneId,
+    exited: bool,
 ) -> bool {
-    snapshot_cursor_visible && hint_target != Some(id)
+    snapshot_cursor_visible && hint_target != Some(id) && !exited
 }
 
 #[cfg(test)]
@@ -824,12 +826,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hint_mode_only_suppresses_snapshot_cursor_visibility() {
-        assert!(!terminal_cursor_visible(true, Some(7), 7));
-        assert!(terminal_cursor_visible(true, Some(7), 8));
-        assert!(terminal_cursor_visible(true, None, 7));
-        assert!(!terminal_cursor_visible(false, None, 7));
-        assert!(!terminal_cursor_visible(false, Some(8), 7));
+    fn hint_mode_and_exit_state_suppress_snapshot_cursor_visibility() {
+        assert!(!terminal_cursor_visible(true, Some(7), 7, false));
+        assert!(terminal_cursor_visible(true, Some(7), 8, false));
+        assert!(terminal_cursor_visible(true, None, 7, false));
+        assert!(!terminal_cursor_visible(false, None, 7, false));
+        assert!(!terminal_cursor_visible(false, Some(8), 7, false));
+        assert!(!terminal_cursor_visible(true, None, 7, true));
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {

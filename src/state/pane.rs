@@ -102,9 +102,18 @@ impl Pane {
 
     /// A local working directory safe to reuse for spawning, falling back to launch identity.
     pub fn local_cwd(&self) -> Option<String> {
+        self.local_cwd_ref().map(str::to_string)
+    }
+
+    /// [`local_cwd`](Self::local_cwd) without the allocation, for callers that only compare it.
+    /// The sidebar checks this on every message, including output from off-screen panes that
+    /// otherwise cost nothing to handle, so that check must not allocate a string to throw away.
+    pub fn local_cwd_ref(&self) -> Option<&str> {
         self.terminal
-            .local_working_directory()
-            .or_else(|| self.identity.cwd.clone())
+            .cwd
+            .as_deref()
+            .filter(|_| self.terminal.cwd_host.is_none())
+            .or(self.identity.cwd.as_deref())
     }
 }
 

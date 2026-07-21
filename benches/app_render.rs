@@ -115,6 +115,107 @@ fn app_render(c: &mut Criterion) {
     group.finish();
 }
 
+/// What the sidebar adds to every full frame.
+///
+/// The sidebar rebuilds its whole body on each render: the agents tab walks every pane in every
+/// workspace and allocates per-row strings, and the file tree tabs re-expand a directory listing.
+/// A mux renders on every batch of terminal output, so this is the cost of having the sidebar open
+/// at all — measured per tab against the same frame with it hidden.
+fn sidebar_render(c: &mut Criterion) {
+    use hyprmux::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
+
+    let corpus = support::sgr_heavy();
+    let filled: Vec<u8> = corpus.iter().copied().take(64 * 1024).collect();
+    const PANES: usize = 8;
+
+    let tree_tab = |view: SidebarTreeView| SidebarTab::Tree {
+        view,
+        config: SidebarTreeConfig::for_view(view),
+    };
+    let cases: Vec<(&str, Option<SidebarTab>)> = vec![
+        ("hidden", None),
+        ("panes", Some(SidebarTab::Panes)),
+        ("agents", Some(SidebarTab::Agents)),
+        ("files", Some(tree_tab(SidebarTreeView::Files))),
+        ("git", Some(tree_tab(SidebarTreeView::Changes))),
+    ];
+
+    let mut group = c.benchmark_group("sidebar_render");
+    for (name, tab) in cases {
+        group.bench_function(BenchmarkId::from_parameter(name), |b| {
+            let mut backend = backend_with_panes(PANES, &filled);
+            if let Some(tab) = tab.clone() {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(tab.id());
+                state.config.sidebar.tabs = vec![tab];
+                // The file tree roots at the focused pane's directory; point it at this repo so the
+                // benchmark reads a real listing rather than an empty one.
+                state.workspaces[0].panes[0].terminal.cwd =
+                    Some(env!("CARGO_MANIFEST_DIR").to_string());
+                state.sidebar.tree_cwd = Some(env!("CARGO_MANIFEST_DIR").to_string());
+                state.sidebar.tree_repo = Some(env!("CARGO_MANIFEST_DIR").to_string());
+                // Agent rows only exist for panes the server detected an agent in.
+                for pane in &mut state.workspaces[0].panes {
+                    pane.terminal.detected_agent =
+                        Some(hyprmux::session::protocol::DetectedAgent {
+                            kind: hyprmux::session::protocol::AgentKind::Claude,
+                            state: hyprmux::session::protocol::DetectedAgentState::Working,
+                        });
+                }
+            }
+            // Warm the tree's background directory load before timing.
+            for _ in 0..20 {
+                backend.render();
+                let _ = backend.pump();
+            }
+            b.iter(|| {
+                backend.render();
+                black_box(backend.element());
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Per-message overhead of the post-update chokepoints in `update::handle_msg`.
+///
+/// `SessionOutput` is the highest-frequency message in the app — one per batch of PTY bytes — and
+/// every one of them pays for the sidebar's root sync and the focus chokepoint regardless of
+/// whether the sidebar is even visible. This measures that fixed cost against the message itself.
+fn message_overhead(c: &mut Criterion) {
+    let corpus = support::sgr_heavy();
+    let filled: Vec<u8> = corpus.iter().copied().take(64 * 1024).collect();
+    let chunk: Vec<u8> = corpus.iter().copied().take(512).collect();
+
+    let mut group = c.benchmark_group("message_overhead");
+    for cwd in ["none", "deep"] {
+        group.bench_function(BenchmarkId::from_parameter(cwd), |b| {
+            let mut backend = backend_with_panes(8, &filled);
+            let (pane_id, generation) = {
+                let state = backend.state_mut();
+                if cwd == "deep" {
+                    // A realistic reported directory: the sync compares this on every message.
+                    state.workspaces[0].panes[0].terminal.cwd =
+                        Some("/home/user/work/projects/hyprmux/src/view/sidebar".to_string());
+                }
+                let pane = &state.workspaces[0].panes[0];
+                (pane.id, pane.pty_generation)
+            };
+            let epoch = backend.state().runtime_epoch;
+            b.iter(|| {
+                let _ = backend.dispatch(hyprmux::Msg::SessionOutput {
+                    epoch,
+                    pane_id,
+                    generation,
+                    bytes: chunk.clone(),
+                });
+            });
+        });
+    }
+    group.finish();
+}
+
 fn main() {
     // Criterion's harness runs on the main thread; re-host it on a deep stack so the dwindle
     // layout recursion at 16 panes does not overflow.
@@ -123,6 +224,8 @@ fn main() {
         .spawn(|| {
             let mut criterion = Criterion::default().configure_from_args();
             app_render(&mut criterion);
+            sidebar_render(&mut criterion);
+            message_overhead(&mut criterion);
             criterion.final_summary();
         })
         .expect("spawn bench thread")

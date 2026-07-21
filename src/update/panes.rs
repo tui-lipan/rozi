@@ -202,12 +202,14 @@ pub(super) fn activate_pane(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
+    let focused = ctx.state.focused_pane == Some(id)
+        || (id == crate::state::POPUP_PANE_ID && ctx.state.popup.is_some());
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.pty_generation != generation {
             return Update::none();
         }
         pane.terminal_active = true;
-        if !pane.closing && ctx.state.focused_pane == Some(id) {
+        if !pane.closing && focused {
             request_pane_focus(ctx, id);
         }
     }

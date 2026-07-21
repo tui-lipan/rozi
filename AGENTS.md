@@ -353,7 +353,9 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 - `HYPRMUX_CONFIG` selects an alternate config file.
 - `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
-- `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes.
+- `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes;
+  `PaneIdentity::env` adds never-persisted per-spawn variables (the file tree passes the activated
+  path as `HYPRMUX_FILE` so a `run`/`popup` command never has a filename spliced into it).
 - `[[hooks]]` runs client-side commands for 15 UI events and injects `HYPRMUX_EVENT`, event fields,
   and `HYPRMUX_SOCKET`; see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.

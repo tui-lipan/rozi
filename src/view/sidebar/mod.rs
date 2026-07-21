@@ -1,6 +1,8 @@
 mod agents;
 mod panes;
+mod row;
 mod sessions;
+mod tree;
 mod user_tabs;
 
 use tui_lipan::prelude::*;
@@ -59,12 +61,14 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
             Msg::SidebarTabSelected(tab_ids[event.index].clone())
         }));
 
-    let body = tabs.get(active).map_or_else(
+    let active_tab = tabs.get(active);
+    let body = active_tab.map_or_else(
         || placeholder(ctx, "No sidebar tabs configured"),
         |tab| match tab {
             SidebarTab::Panes => panes::panes_tab(ctx),
             SidebarTab::Agents => agents::agents_tab(ctx),
             SidebarTab::Sessions => sessions::sessions_tab(ctx),
+            SidebarTab::Tree { view, config } => tree::tree_tab(ctx, *view, config),
             SidebarTab::Launcher { name, entries, .. } => {
                 user_tabs::launcher_tab(ctx, name, entries)
             }
@@ -73,6 +77,17 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
             }
         },
     );
+    // A tab that scrolls internally (the file tree) is placed directly; wrapping it would nest two
+    // scroll views and leave the wheel ambiguous.
+    let body: Element = if active_tab.is_some_and(SidebarTab::scrolls_itself) {
+        body
+    } else {
+        ScrollView::new()
+            .scrollbar(true)
+            .scrollbar_config(scrollbar_config())
+            .child(body)
+            .into()
+    };
 
     Frame::new()
         .border(false)
@@ -106,7 +121,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
                                 .padding((1, 0, 0, 0))
                                 .width(Length::Flex(1))
                                 .height(Length::Flex(1))
-                                .child(ScrollView::new().scrollbar(true).child(body)),
+                                .child(body),
                         ),
                 )
                 .child(
@@ -115,6 +130,16 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
                 ),
         )
         .into()
+}
+
+/// Scrollbar presentation shared by every scrolling surface in the sidebar, including the file
+/// tree's own. A right half block sits against the panel's right edge, so the bar reads as a thin
+/// rule beside the content instead of the default full-cell block.
+///
+/// The tab strip is deliberately excluded: it hides its scrollbar entirely (`h_scrollbar(false)`),
+/// so there is no thumb to style.
+pub(super) fn scrollbar_config() -> ScrollbarConfig {
+    ScrollbarConfig::new().thumb('▐')
 }
 
 fn placeholder(ctx: &Context<HyprmuxApp>, text: &str) -> Element {

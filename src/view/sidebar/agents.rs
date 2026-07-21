@@ -1,5 +1,6 @@
 use tui_lipan::prelude::*;
 
+use super::row::{self, Row};
 use crate::session::protocol::pane_status;
 use crate::state::{PaneId, State};
 use crate::{HyprmuxApp, Msg};
@@ -276,29 +277,13 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
 }
 
 fn truncate_reason(value: &str) -> String {
-    const MAX_CHARS: usize = 28;
-    if value.chars().count() <= MAX_CHARS {
-        value.to_string()
-    } else {
-        let mut value = value
-            .chars()
-            .take(MAX_CHARS.saturating_sub(1))
-            .collect::<String>();
-        value.push('…');
-        value
-    }
+    row::truncate(value, 28)
 }
 
 pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
     let groups = agent_groups(&ctx.state);
     if groups.is_empty() {
-        return VStack::new()
-            .padding((0, 0, 0, 1))
-            .child(
-                Text::new("No agents detected")
-                    .style(super::super::fg_only(&ctx.state.theme.muted)),
-            )
-            .into();
+        return row::empty(ctx, "No agents detected");
     }
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
@@ -325,16 +310,6 @@ fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
     finished_unseen && !working && !blocked
 }
 
-/// The theme's plain foreground, used where a status should read as ordinary text rather than carry
-/// a semantic color.
-fn primary_color(theme: &Theme) -> Color {
-    theme
-        .primary
-        .fg
-        .map(|paint| paint.color())
-        .unwrap_or(Color::Reset)
-}
-
 /// The status word a row displays. A finished-unseen agent reads "done" regardless of the raw
 /// status the agent last reported, which is usually "idle" — idle describes the pane, done
 /// describes the run that just ended.
@@ -346,11 +321,10 @@ fn row_status_label(status: &str, finished_unseen: bool) -> String {
 }
 
 /// The glyph and color a row shows: the plain status glyph, except a finished-unseen agent shows a
-/// filled dot in plain foreground — the fill pulls the eye to a completed run without spending a
-/// semantic status color on it. `bool` is whether the working spinner should animate.
+/// filled success-colored dot. `bool` is whether the working spinner should animate.
 fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Color, bool) {
     if is_finished_quiet(status, finished_unseen) {
-        return ("●".to_string(), primary_color(theme), false);
+        return ("●".to_string(), theme.status.success, false);
     }
     let working = status.trim().eq_ignore_ascii_case(pane_status::WORKING);
     let (glyph, color) = status_glyph(status, theme);
@@ -420,58 +394,23 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow, indent: bool) -> Element 
             .height(Length::Px(1))
             .into()
     };
-    let status_label = row_status_label(status, row.finished_unseen);
-    let mut detail = HStack::new()
-        .gap(1)
-        .height(Length::Px(1))
-        .child(Text::new(status_label).style(Style::new().fg(color)));
+    let id = row.pane_id;
+    let mut content = Row::new(row.title)
+        .marked(ctx.state.focused_pane == Some(id))
+        .indent(indent)
+        .glyph(status_icon)
+        .title_style(super::super::fg_only(&ctx.state.theme.primary))
+        .detail(
+            row_status_label(status, row.finished_unseen),
+            Style::new().fg(color),
+        );
     if let Some(reason) = row.reason.as_deref() {
-        detail = detail.child(
-            Text::new(truncate_reason(reason))
-                .style(super::super::fg_only(&ctx.state.theme.muted).dim()),
+        content = content.detail(
+            truncate_reason(reason),
+            super::super::fg_only(&ctx.state.theme.muted).dim(),
         );
     }
-    let id = row.pane_id;
-    let focused = ctx.state.focused_pane == Some(id);
-    let marker = if focused { "▎" } else { " " };
-    let content = HStack::new()
-        .gap(0)
-        .height(Length::Px(2))
-        .style(if focused {
-            Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
-        } else {
-            Style::default()
-        })
-        .child(
-            VStack::new()
-                .gap(0)
-                .width(Length::Auto)
-                .height(Length::Px(2))
-                .child(
-                    Text::new(marker)
-                        .height(Length::Px(1))
-                        .style(super::super::fg_only(&ctx.state.theme.accent)),
-                )
-                .child(
-                    Text::new(marker)
-                        .height(Length::Px(1))
-                        .style(super::super::fg_only(&ctx.state.theme.accent)),
-                ),
-        )
-        .child({
-            let mut cells = HStack::new().gap(1).height(Length::Px(2));
-            if indent {
-                cells = cells.child(Text::new(" "));
-            }
-            cells.child(status_icon).child(
-                VStack::new()
-                    .gap(0)
-                    .child(
-                        Text::new(row.title).style(super::super::fg_only(&ctx.state.theme.primary)),
-                    )
-                    .child(detail),
-            )
-        });
+    let content = content.build(ctx);
     MouseRegion::new()
         .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
         .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
@@ -577,6 +516,7 @@ mod tests {
         // Quiescent statuses gain the filled pulse and stop the spinner.
         assert_eq!(row_glyph("idle", true, &theme).0, "●");
         assert_eq!(row_glyph("done", true, &theme).0, "●");
+        assert_eq!(row_glyph("idle", true, &theme).1, theme.status.success);
         assert!(!row_glyph("idle", true, &theme).2);
         // Blocked and working keep their own glyph regardless of an unseen finish.
         assert_eq!(row_glyph("blocked", true, &theme).0, "!");

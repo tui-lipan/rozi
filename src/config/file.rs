@@ -119,6 +119,7 @@ pub(super) struct UserCommandTableSpec {
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
+    pub(super) keep_open: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -134,7 +135,9 @@ pub(super) struct SidebarFileConfig {
 #[serde(untagged)]
 pub(super) enum SidebarTabSpec {
     Name(String),
-    Table(SidebarTabTableSpec),
+    // Boxed: the table form carries every built-in file-tree option, so inlining it would make each
+    // bare tab name in the list as large as the fullest table.
+    Table(Box<SidebarTabTableSpec>),
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -146,6 +149,13 @@ pub(super) struct SidebarTabTableSpec {
     pub(super) command: Option<String>,
     pub(super) interval: Option<u64>,
     pub(super) on_click: Option<UserCommandTableSpec>,
+    // Built-in file-tree options; only meaningful when `name` is `files` or `git`.
+    pub(super) root: Option<String>,
+    pub(super) show_hidden: Option<bool>,
+    pub(super) icons: Option<bool>,
+    pub(super) explorer: Option<bool>,
+    pub(super) diff_stats: Option<bool>,
+    pub(super) max_entries: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -155,6 +165,7 @@ pub(super) struct SidebarLauncherEntrySpec {
     pub(super) run: Option<String>,
     pub(super) send: Option<String>,
     pub(super) popup: Option<String>,
+    pub(super) keep_open: Option<bool>,
 }
 
 impl SidebarLauncherEntrySpec {
@@ -163,6 +174,7 @@ impl SidebarLauncherEntrySpec {
             run: self.run,
             send: self.send,
             popup: self.popup,
+            keep_open: self.keep_open,
         }
     }
 }

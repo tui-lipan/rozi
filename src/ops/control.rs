@@ -85,7 +85,17 @@ pub(crate) fn handle_control_request(
             width,
             height,
             title,
-        } => match crate::popup::open(ctx, command, cwd, width, height, title) {
+            keep_open,
+        } => match crate::popup::open(
+            ctx,
+            command,
+            cwd,
+            width,
+            height,
+            title,
+            keep_open.unwrap_or(true),
+            Vec::new(),
+        ) {
             Ok(update) => {
                 let _ = envelope.reply.send(ControlResponse::empty());
                 return update;

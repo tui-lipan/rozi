@@ -275,9 +275,17 @@ impl SessionServer {
                     }
                     TerminalPtyEvent::Exited(code) => {
                         pane.pty = None;
+                        // `command.is_some()` is what divides this from the client's
+                        // `[pane] hold_on_exit`: a pane launched with a command is held here, as a
+                        // live shell with the command's output above it, while a plain shell pane
+                        // has nothing to hold open and falls through to the client, which decides
+                        // whether to retain the exited husk. The two never both apply.
                         let keep_open =
                             pane.keep_open && pane.command.is_some() && !pane.command_completed;
                         if keep_open {
+                            if id == crate::state::POPUP_PANE_ID {
+                                return self.retain_completed_popup(id, generation, code);
+                            }
                             return self.replace_with_keep_open_shell(id, generation, code);
                         }
                         pane.exited = Some(code);
@@ -301,6 +309,42 @@ impl SessionServer {
                 }
             }
         }
+    }
+
+    /// Preserve a popup's final screen after its command exits without turning the transient
+    /// result into an interactive shell.
+    fn retain_completed_popup(
+        &mut self,
+        id: PaneId,
+        generation: u64,
+        code: i32,
+    ) -> Option<ServerOutbound> {
+        let outcome = if code == 0 {
+            "done".to_string()
+        } else {
+            format!("exit {code}")
+        };
+        let banner = format!("\r\n\x1b[2m[{outcome}]  Enter/Esc/Space: close\x1b[0m\r\n");
+        let bytes = banner.into_bytes();
+        let pane = self.panes.get_mut(&id)?;
+        pane.screen.process_bytes(&bytes);
+        if let Some(log) = pane.log.as_mut() {
+            let _ = log.file.write_all(&bytes);
+        }
+        pane.exited = Some(code);
+
+        self.dirty = true;
+        self.sync_pane_runtime(id, generation);
+        self.broadcast_outbound(&ServerOutbound::PaneOutput {
+            pane_id: id,
+            generation,
+            bytes,
+        });
+        Some(ServerOutbound::Control(ServerMessage::Exited {
+            pane_id: id,
+            generation,
+            code,
+        }))
     }
 
     /// A `keep_open` pane's command has exited: report its status into the pane's own output, then

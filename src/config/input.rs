@@ -179,10 +179,19 @@ pub(super) fn parse_user_command_action(
     let choices = usize::from(run.as_ref().is_some_and(|v| !v.is_empty()))
         + usize::from(send.is_some())
         + usize::from(popup.is_some());
+    // A command pane holds after its command exits unless the config says otherwise; see
+    // `UserCommandAction`.
+    let keep_open = table.keep_open.unwrap_or(true);
     let action = match choices {
-        1 if run.as_ref().is_some_and(|v| !v.is_empty()) => UserCommandAction::Run(run.unwrap()),
+        1 if run.as_ref().is_some_and(|v| !v.is_empty()) => UserCommandAction::Run {
+            command: run.unwrap(),
+            keep_open,
+        },
         1 if send.is_some() => UserCommandAction::Send(send.unwrap()),
-        1 => UserCommandAction::Popup(popup.unwrap()),
+        1 => UserCommandAction::Popup {
+            command: popup.unwrap(),
+            keep_open,
+        },
         0 => {
             warnings.push(format!(
                 "{context} needs a `run`, `send`, or `popup` value; skipped"
@@ -267,13 +276,72 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(commands.len(), 2);
         assert!(commands.iter().any(|command| {
-            command.action == UserCommandAction::Run("lazygit".into())
+            command.action == UserCommandAction::run("lazygit")
                 && command.binding == KeyBinding::from_str("ctrl-a g").unwrap()
         }));
         assert!(commands.iter().any(|command| {
             command.action == UserCommandAction::Send("echo hi\n".into())
                 && command.binding == KeyBinding::from_str("alt-g").unwrap()
         }));
+    }
+
+    /// A `run`/`popup` command pane preserves output after its command exits by default, so a build
+    /// that fails in milliseconds remains readable. `send` carries no pane of its own and so has
+    /// nothing to hold.
+    #[test]
+    fn run_and_popup_commands_hold_the_pane_open_unless_opted_out() {
+        let mut commands = Vec::new();
+        let mut warnings = Vec::new();
+        build_key_overrides(
+            keys(concat!(
+                "[keys]\n",
+                "\"ctrl-a b\" = { run = \"cargo build\" }\n",
+                "\"ctrl-a l\" = { run = \"lazygit\", keep_open = false }\n",
+                "\"ctrl-a d\" = { popup = \"date\" }\n",
+                "\"ctrl-a f\" = { popup = \"fzf\", keep_open = false }\n",
+            )),
+            &InputConfig::default(),
+            &mut commands,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let action = |trigger: &str| {
+            let binding = KeyBinding::from_str(trigger).unwrap();
+            commands
+                .iter()
+                .find(|command| command.binding == binding)
+                .map(|command| command.action.clone())
+                .unwrap_or_else(|| panic!("{trigger} is bound"))
+        };
+        assert_eq!(
+            action("ctrl-a b"),
+            UserCommandAction::Run {
+                command: "cargo build".into(),
+                keep_open: true
+            }
+        );
+        assert_eq!(
+            action("ctrl-a l"),
+            UserCommandAction::Run {
+                command: "lazygit".into(),
+                keep_open: false
+            }
+        );
+        assert_eq!(
+            action("ctrl-a d"),
+            UserCommandAction::Popup {
+                command: "date".into(),
+                keep_open: true
+            }
+        );
+        assert_eq!(
+            action("ctrl-a f"),
+            UserCommandAction::Popup {
+                command: "fzf".into(),
+                keep_open: false
+            }
+        );
     }
 
     #[test]

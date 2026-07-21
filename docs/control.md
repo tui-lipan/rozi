@@ -144,8 +144,12 @@ Examples:
 Responses have `ok`, and either `data` or `error`.
 
 Popup dimensions are viewport fractions, clamped to `0.2`-`0.95`; omitted dimensions default to
-`0.6`. Only one popup may exist at a time. It closes when its command exits, when its backdrop is
-clicked, or through the normal close action. Escape is sent to the popup application.
+`0.6`. Only one popup may exist at a time. `cwd` defaults to the focused pane's working directory.
+`keep_open` defaults to `true`: the popup holds after its command exits, printing the exit status
+and retaining its final screen as a read-only result, so short commands stay readable. Enter,
+Escape, or Space dismisses a completed popup. Pass `"keep_open":false` to have the popup close with
+its command. A popup also closes when its backdrop is clicked or through the normal close action;
+while the command is running, Escape is sent to the popup application.
 
 Subscriptions support `pane-spawned`, `pane-exited`, `pane-status-changed`, `focus-changed`,
 `workspace-switched`, `session-attached`, `session-detached`, `session-renamed`,

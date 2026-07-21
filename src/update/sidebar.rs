@@ -284,10 +284,103 @@ pub(super) fn command_row_activate(
 }
 
 fn resolve_row_action(action: &UserCommandAction, line: &str) -> UserCommandAction {
+    substitute(action, "{line}", line)
+}
+
+fn substitute(action: &UserCommandAction, placeholder: &str, value: &str) -> UserCommandAction {
     match action {
-        UserCommandAction::Send(text) => UserCommandAction::Send(text.replace("{line}", line)),
+        UserCommandAction::Send(text) => UserCommandAction::Send(text.replace(placeholder, value)),
         // Config validation rejects placeholders here; run/popup commands are always fixed.
         action => action.clone(),
+    }
+}
+
+/// Activate a file-tree row: run the tab's `on_click` with `{path}` replaced by the activated path.
+///
+/// A directory activation only expands the tree (handled in the widget); running the action for it
+/// would type the directory's path at the prompt just because it was opened, so directories are
+/// dropped here.
+pub(super) fn tree_activate(
+    ctx: &mut Context<HyprmuxApp>,
+    config_epoch: u64,
+    tab_id: SidebarTabId,
+    path: String,
+    is_dir: bool,
+) -> Update {
+    if is_dir || config_epoch != ctx.state.sidebar.config_epoch {
+        return Update::none();
+    }
+    let action = ctx
+        .state
+        .config
+        .sidebar
+        .tabs
+        .iter()
+        .find_map(|tab| match tab {
+            SidebarTab::Tree { config, .. } if tab.id() == tab_id => config.on_click.clone(),
+            _ => None,
+        });
+    action.map_or_else(Update::none, |action| {
+        // `send` gets the path substituted as literal keystrokes. `run`/`popup` never do — a path
+        // comes from the filesystem and must not compose a command line — so they receive it as
+        // `$HYPRMUX_FILE` instead, which a shell expands as one word inside quotes.
+        let with_path = substitute(&action, "{path}", &path);
+        let env = vec![("HYPRMUX_FILE".to_string(), path)];
+        crate::actions::execute_user_command_action_with_env(ctx, &with_path, env)
+    })
+}
+
+/// The git repository containing `cwd`, found by walking ancestors for a `.git` entry. `.git` is a
+/// file rather than a directory inside worktrees and submodules, so this tests existence, not kind.
+fn discover_repo_root(cwd: &str) -> Option<String> {
+    std::path::Path::new(cwd)
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .map(|dir| dir.to_string_lossy().into_owned())
+}
+
+fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
+    // The widget ignores a token that does not increase, so this only counts up.
+    sidebar.git_refresh_token = sidebar.git_refresh_token.saturating_add(1);
+}
+
+/// File-tree chokepoint: keep the resolved roots in step with the focused pane, and refresh git
+/// status when a command finishes.
+///
+/// Runs after every message like the focus chokepoint, so the common case must be cheap: it
+/// compares the pane's reported directory against the cached one and does nothing when unchanged.
+/// The ancestor walk only runs when the directory actually changed, which is user-paced — a shell
+/// re-reporting the same directory on every prompt costs one string comparison.
+pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
+    // Compared as a borrow: this runs per message, including output from off-screen panes that the
+    // session handler deliberately makes free, so the steady state must not allocate.
+    if crate::pane_lifecycle::focused_local_cwd_ref(&ctx.state)
+        != ctx.state.sidebar.tree_cwd.as_deref()
+    {
+        let cwd = crate::pane_lifecycle::focused_local_cwd(&ctx.state);
+        ctx.state.sidebar.tree_repo = cwd.as_deref().and_then(discover_repo_root);
+        ctx.state.sidebar.tree_cwd = cwd;
+        bump_git_refresh(&mut ctx.state.sidebar);
+    }
+
+    // A command finishing is the moment the working tree most likely changed, and it is a far
+    // better refresh trigger than a timer: no polling while the user reads, immediate feedback
+    // after a build, commit, or checkout.
+    let phase = ctx.state.focused_pane.and_then(|id| {
+        crate::pane_lifecycle::find_pane(&ctx.state, id)
+            .map(|pane| (id, pane.terminal.command_phase))
+    });
+    if phase != ctx.state.sidebar.last_command_phase {
+        ctx.state.sidebar.last_command_phase = phase;
+        if matches!(
+            phase,
+            Some((
+                _,
+                crate::session::protocol::PaneCommandPhase::Completed { .. }
+            ))
+        ) {
+            bump_git_refresh(&mut ctx.state.sidebar);
+        }
     }
 }
 
@@ -451,6 +544,246 @@ mod tests {
             .expect("spawn sidebar test")
             .join()
             .expect("sidebar test completes");
+    }
+
+    /// A scratch directory scoped to this process and test name, matching how the rest of the
+    /// suite isolates filesystem fixtures. Removed first so a previous crashed run cannot leak in.
+    struct ScratchDir(std::path::PathBuf);
+
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "hyprmux-sidebar-tree-{name}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("scratch dir");
+            Self(path)
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A repository whose `.git` is a plain file, the shape git uses for worktrees and submodules.
+    /// Testing existence rather than directory-ness is what makes those work.
+    #[test]
+    fn repo_root_walks_ancestors_and_accepts_a_git_file() {
+        let dir = ScratchDir::new("gitfile");
+        let repo = dir.path().join("repo");
+        let nested = repo.join("src/deep");
+        std::fs::create_dir_all(&nested).expect("nested dirs");
+        std::fs::write(repo.join(".git"), "gitdir: /elsewhere").expect("git file");
+
+        let repo_str = repo.to_string_lossy().into_owned();
+        assert_eq!(
+            discover_repo_root(&nested.to_string_lossy()),
+            Some(repo_str.clone())
+        );
+        assert_eq!(discover_repo_root(&repo_str), Some(repo_str));
+        assert_eq!(discover_repo_root(&dir.path().to_string_lossy()), None);
+    }
+
+    /// The roots follow the focused pane, and a repeated directory report — which a shell emits at
+    /// every prompt — must not redo the ancestor walk or churn the git refresh token.
+    #[test]
+    fn tree_roots_track_the_focused_pane_and_settle_when_unchanged() {
+        let dir = ScratchDir::new("roots");
+        let repo = dir.path().join("repo");
+        let nested = repo.join("src");
+        std::fs::create_dir_all(&nested).expect("nested dirs");
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        let nested = nested.to_string_lossy().into_owned();
+        let repo = repo.to_string_lossy().into_owned();
+        let outside = dir.path().to_string_lossy().into_owned();
+
+        on_test_thread(move || {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let pane = backend.state().workspaces[0].panes[0].id;
+            {
+                let state = backend.state_mut();
+                state.focused_pane = Some(pane);
+                state.workspaces[0].focused_pane = Some(pane);
+                state.workspaces[0].panes[0].terminal.cwd = Some(nested.clone());
+            }
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .expect("sync runs after any message");
+            assert_eq!(backend.state().sidebar.tree_cwd.as_deref(), Some(&*nested));
+            assert_eq!(backend.state().sidebar.tree_repo.as_deref(), Some(&*repo));
+            let settled = backend.state().sidebar.git_refresh_token;
+            assert!(settled > 0, "resolving a root schedules a git refresh");
+
+            // Same directory reported again: no walk, no refresh.
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .expect("repeat sync");
+            assert_eq!(backend.state().sidebar.git_refresh_token, settled);
+
+            // Leaving the repository clears the repo root but keeps the working directory.
+            backend.state_mut().workspaces[0].panes[0].terminal.cwd = Some(outside.clone());
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .expect("cwd change sync");
+            assert_eq!(backend.state().sidebar.tree_cwd.as_deref(), Some(&*outside));
+            assert_eq!(backend.state().sidebar.tree_repo, None);
+            assert!(backend.state().sidebar.git_refresh_token > settled);
+        });
+    }
+
+    /// Git status is refreshed on the edge into `Completed` — the moment a command finished
+    /// changing the working tree — rather than on a timer.
+    #[test]
+    fn finishing_a_command_refreshes_git_status_once() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let pane = backend.state().workspaces[0].panes[0].id;
+            {
+                let state = backend.state_mut();
+                state.focused_pane = Some(pane);
+                state.workspaces[0].focused_pane = Some(pane);
+                state.workspaces[0].panes[0].terminal.command_phase =
+                    crate::session::protocol::PaneCommandPhase::Executing;
+            }
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .expect("observe executing");
+            let running = backend.state().sidebar.git_refresh_token;
+
+            backend.state_mut().workspaces[0].panes[0]
+                .terminal
+                .command_phase = crate::session::protocol::PaneCommandPhase::Completed {
+                exit_status: Some(0),
+            };
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .expect("observe completion");
+            let finished = backend.state().sidebar.git_refresh_token;
+            assert_eq!(finished, running + 1, "one refresh per finished command");
+
+            // Still completed on the next message: no repeat refresh.
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .expect("steady state");
+            assert_eq!(backend.state().sidebar.git_refresh_token, finished);
+        });
+    }
+
+    /// Activating a file runs the tab's action; activating a directory only expands it in the
+    /// widget and must not run the action, and a stale config epoch drops the click entirely. A
+    /// dropped activation returns `Update::none()`, so `dispatch` reports no redraw.
+    #[test]
+    fn tree_activation_runs_for_files_and_skips_directories_and_stale_clicks() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Tree {
+                view: crate::config::SidebarTreeView::Files,
+                config: crate::config::SidebarTreeConfig::for_view(
+                    crate::config::SidebarTreeView::Files,
+                ),
+            }];
+            backend.state_mut().sidebar.config_epoch = 6;
+            let activate = |backend: &mut TestBackend<HyprmuxApp>, is_dir: bool, epoch: u64| {
+                backend
+                    .dispatch(crate::Msg::SidebarTreeActivate {
+                        config_epoch: epoch,
+                        tab_id: SidebarTabId::new("files"),
+                        path: "/repo/src/main.rs".to_string(),
+                        is_dir,
+                    })
+                    .expect("tree click")
+            };
+
+            // A file activation runs the action (a send, which redraws); a directory and a stale
+            // click are both dropped without running anything.
+            assert!(activate(&mut backend, false, 6), "file runs the action");
+            assert!(!activate(&mut backend, true, 6), "directory only expands");
+            assert!(!activate(&mut backend, false, 5), "stale epoch is dropped");
+        });
+    }
+
+    /// A `run` action opens a pane whose command is untouched, with the activated path handed over
+    /// as `HYPRMUX_FILE`. This is what lets a diff viewer be scoped to the clicked file without the
+    /// filename ever entering the command line: a repository can contain a file named
+    /// `; rm -rf ~`, and the spawned command string must not be able to carry it.
+    #[test]
+    fn tree_run_actions_pass_the_path_as_env_never_in_the_command() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut config =
+                crate::config::SidebarTreeConfig::for_view(crate::config::SidebarTreeView::Changes);
+            config.on_click = Some(UserCommandAction::run("git diff -- \"$HYPRMUX_FILE\""));
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Tree {
+                view: crate::config::SidebarTreeView::Changes,
+                config,
+            }];
+            backend.state_mut().sidebar.config_epoch = 1;
+            backend.state_mut().pending_spawns.clear();
+
+            let hostile = "/repo/; rm -rf ~/.rs";
+            backend
+                .dispatch(crate::Msg::SidebarTreeActivate {
+                    config_epoch: 1,
+                    tab_id: SidebarTabId::new("git"),
+                    path: hostile.to_string(),
+                    is_dir: false,
+                })
+                .expect("file click");
+
+            let spawn = backend
+                .state()
+                .pending_spawns
+                .last()
+                .cloned()
+                .expect("run action queues a pane spawn");
+            // The command is exactly what the config said — the path is nowhere in it.
+            assert_eq!(
+                spawn.command.as_deref(),
+                Some("git diff -- \"$HYPRMUX_FILE\"")
+            );
+            assert!(
+                !spawn.command.as_deref().unwrap().contains("rm -rf"),
+                "the filename never reaches the command line"
+            );
+            // It arrives as environment instead, verbatim.
+            assert!(
+                spawn
+                    .env
+                    .iter()
+                    .any(|(key, value)| key == "HYPRMUX_FILE" && value == hostile),
+                "the activated path is handed over as HYPRMUX_FILE: {:?}",
+                spawn.env
+            );
+        });
+    }
+
+    /// `{path}` is substituted only into `send` text; a `run`/`popup` command is left as-is because
+    /// config validation already rejected the placeholder there.
+    #[test]
+    fn path_substitution_is_literal_and_send_only() {
+        assert_eq!(
+            substitute(
+                &UserCommandAction::Send("{path}".into()),
+                "{path}",
+                "/repo/src/main.rs"
+            ),
+            UserCommandAction::Send("/repo/src/main.rs".into())
+        );
+        assert_eq!(
+            substitute(
+                &UserCommandAction::run("ls {path}"),
+                "{path}",
+                "/etc/passwd"
+            ),
+            UserCommandAction::run("ls {path}")
+        );
     }
 
     #[test]
@@ -642,9 +975,89 @@ mod tests {
             )
         );
         assert_eq!(
-            resolve_row_action(&UserCommandAction::Run("show fixed".to_string()), "ignored"),
-            UserCommandAction::Run("show fixed".to_string())
+            resolve_row_action(&UserCommandAction::run("show fixed".to_string()), "ignored"),
+            UserCommandAction::run("show fixed".to_string())
         );
+    }
+
+    /// Build a one-entry launcher tab and activate it, returning the spawn request it queued. With
+    /// no session client attached the request lands in `pending_spawns` instead of going out on the
+    /// wire, which is exactly the payload worth asserting on.
+    fn activate_launcher(
+        action: UserCommandAction,
+        cwd: Option<&str>,
+    ) -> crate::state::PendingPaneSpawn {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let id = SidebarTabId::new("launch");
+        backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
+            name: id.clone(),
+            label: "Launch".to_string(),
+            entries: vec![crate::config::SidebarLauncherEntry {
+                label: "Entry".to_string(),
+                action,
+            }],
+        }];
+        backend.state_mut().sidebar.config_epoch = 1;
+        if let Some(cwd) = cwd {
+            let focused = backend.state().workspaces[0].panes[0].id;
+            backend.state_mut().workspaces[0].focused_pane = Some(focused);
+            backend.state_mut().focused_pane = Some(focused);
+            backend.state_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd.to_string());
+        }
+        backend.state_mut().pending_spawns.clear();
+        backend
+            .dispatch(crate::Msg::SidebarLauncherActivate {
+                config_epoch: 1,
+                tab_id: id,
+                entry_index: 0,
+            })
+            .expect("launcher click");
+        backend
+            .state()
+            .pending_spawns
+            .last()
+            .cloned()
+            .expect("launcher click queues a spawn")
+    }
+
+    /// A launcher `run` opens where the focused pane is, not where the session server was started:
+    /// `cargo build` means "build the project I am looking at". It also holds the pane after the
+    /// command exits, so a build that fails in milliseconds leaves its errors on screen.
+    #[test]
+    fn launcher_run_inherits_the_focused_pane_cwd_and_holds_the_pane_open() {
+        on_test_thread(|| {
+            let spawn = activate_launcher(
+                UserCommandAction::run("cargo build"),
+                Some("/home/x/work/hyprmux"),
+            );
+            assert_eq!(spawn.command.as_deref(), Some("cargo build"));
+            assert_eq!(spawn.cwd.as_deref(), Some("/home/x/work/hyprmux"));
+            assert!(spawn.keep_open);
+        });
+    }
+
+    /// The popup carries the same two properties. Its `keep_open` used to be dropped between the
+    /// identity and the wire request, so a popup running a fast command flashed and vanished.
+    #[test]
+    fn launcher_popup_inherits_cwd_and_keeps_its_identity_keep_open() {
+        on_test_thread(|| {
+            let spawn = activate_launcher(UserCommandAction::popup("date"), Some("/home/x/notes"));
+            assert_eq!(spawn.pane_id, crate::state::POPUP_PANE_ID);
+            assert_eq!(spawn.cwd.as_deref(), Some("/home/x/notes"));
+            assert!(
+                spawn.keep_open,
+                "the wire request must agree with the pane identity"
+            );
+
+            let opt_out = activate_launcher(
+                UserCommandAction::Popup {
+                    command: "fzf".to_string(),
+                    keep_open: false,
+                },
+                None,
+            );
+            assert!(!opt_out.keep_open);
+        });
     }
 
     #[test]
@@ -657,7 +1070,7 @@ mod tests {
                 label: "Launch".to_string(),
                 entries: vec![crate::config::SidebarLauncherEntry {
                     label: "Run".to_string(),
-                    action: UserCommandAction::Run("printf safe".to_string()),
+                    action: UserCommandAction::run("printf safe".to_string()),
                 }],
             }];
             backend.state_mut().sidebar.config_epoch = 4;
@@ -698,7 +1111,7 @@ mod tests {
                 label: "Rows".to_string(),
                 command: "printf row".to_string(),
                 interval_secs: 30,
-                on_click: Some(UserCommandAction::Run("printf fixed".to_string())),
+                on_click: Some(UserCommandAction::run("printf fixed".to_string())),
             }];
             backend.state_mut().sidebar.config_epoch = 2;
             backend.state_mut().sidebar.command_output.insert(

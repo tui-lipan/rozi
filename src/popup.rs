@@ -1,10 +1,14 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::geometry::workspace_tile_bounds;
+use crate::anim::GeometryAnimation;
+use crate::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::ops::theme::{pane_frame_background, terminal_palette};
-use crate::pane_lifecycle::{pane_env, request_pane_spawn};
+use crate::pane_lifecycle::{
+    PaneSpawnRequest, focused_local_cwd, open_timers_command, pane_env, prune_closed_command,
+    request_pane_spawn,
+};
 use crate::state::{POPUP_PANE_ID, Pane, PaneIdentity};
 
 pub(crate) fn popup_rect(bounds: FloatRect, top_gap: f32, width: f32, height: f32) -> FloatRect {
@@ -29,6 +33,8 @@ pub(crate) fn open(
     width: Option<f32>,
     height: Option<f32>,
     title: Option<String>,
+    keep_open: bool,
+    env: Vec<(String, String)>,
 ) -> std::result::Result<Update, String> {
     if ctx.state.popup.is_some() {
         return Err("a popup is already open".to_string());
@@ -49,8 +55,11 @@ pub(crate) fn open(
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
         command: Some(command),
-        cwd,
-        keep_open: false,
+        // A popup runs where the user is looking, not where the server happens to live; an explicit
+        // cwd from the control socket still wins.
+        cwd: cwd.or_else(|| focused_local_cwd(&ctx.state)),
+        keep_open,
+        env,
         custom_title: title,
         ..PaneIdentity::default()
     };
@@ -64,43 +73,69 @@ pub(crate) fn open(
         ),
     );
     pane.terminal.set_palette(palette);
-    pane.opening = false;
-    pane.terminal_active = true;
+    pane.opening = true;
     let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
     ctx.state.popup_return_focus = ctx.state.focused_pane;
     ctx.state.popup = Some(pane);
+    ctx.state.animation = GeometryAnimation::Spawn;
+    let open_delay = crate::anim::open_delay(ctx.state.config.animations);
+    let activate_delay = crate::anim::activation_delay(ctx.state.config.animations);
     request_pane_spawn(
         &mut ctx.state,
+        PaneSpawnRequest {
+            pane_id: POPUP_PANE_ID,
+            generation,
+            identity,
+            cols,
+            rows,
+            env,
+            palette,
+        },
+    );
+    Ok(Update::with_command(open_timers_command(
+        ctx.state.runtime_epoch,
         POPUP_PANE_ID,
         generation,
-        identity.command,
-        identity.cwd,
-        cols,
-        rows,
-        false,
-        env,
-        identity.custom_title,
-        palette,
-        false,
-    );
-    request_pane_focus(ctx, POPUP_PANE_ID);
-    Ok(Update::full())
+        open_delay,
+        activate_delay,
+    )))
 }
 
 pub(crate) fn close(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if let Some(pane) = ctx.state.popup.take()
-        && let Some(client) = ctx.state.session_client.clone()
-    {
-        client.kill(POPUP_PANE_ID, pane.pty_generation);
+    let Some(pane) = ctx.state.popup.as_mut().filter(|pane| !pane.closing) else {
+        return Update::none();
+    };
+    let generation = pane.pty_generation;
+    if let Some(client) = ctx.state.session_client.clone() {
+        client.kill(POPUP_PANE_ID, generation);
     }
-    restore_focus(ctx)
+    pane.opening = false;
+    pane.closing = true;
+    pane.terminal.kill();
+    ctx.state.animation = GeometryAnimation::Close;
+    restore_focus(ctx);
+    Update::with_command(prune_closed_command(
+        ctx.state.runtime_epoch,
+        POPUP_PANE_ID,
+        generation,
+        crate::anim::close_delay(ctx.state.config.animations),
+    ))
 }
 
 pub(crate) fn handle_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
-    ctx.state.popup = None;
-    restore_focus(ctx)
+    if let Some(pane) = ctx.state.popup.as_mut()
+        && pane.identity.keep_open
+    {
+        return Update::full();
+    }
+
+    close(ctx)
+}
+
+pub(crate) fn dismisses_completed(key: KeyEvent) -> bool {
+    key.is(KeyCode::Enter) || key.is(KeyCode::Esc) || key.is(KeyCode::Char(' '))
 }
 
 /// Tear down an open popup before detaching or leaving the session. The popup pane is
@@ -130,7 +165,16 @@ pub(crate) fn placement(
     ctx: &Context<HyprmuxApp>,
 ) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
-    let rect = pane.floating_rect;
+    let target = if pane.opening || pane.closing {
+        close_rect(pane.floating_rect)
+    } else {
+        pane.floating_rect
+    };
+    let rect = ctx.transition(
+        format!("hyprmux-pane-rect-{}", pane.id),
+        target,
+        app.transition_config_for(ctx, pane, false),
+    );
     Some((
         rect,
         crate::view::pane_element(
@@ -162,6 +206,23 @@ pub(crate) fn backdrop(ctx: &Context<HyprmuxApp>) -> Option<(FloatRect, Element)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_popup_dismiss_keys_are_plain_enter_escape_and_space() {
+        let key = |code, mods| KeyEvent { code, mods };
+        assert!(dismisses_completed(key(KeyCode::Enter, KeyMods::NONE)));
+        assert!(dismisses_completed(key(KeyCode::Esc, KeyMods::NONE)));
+        assert!(dismisses_completed(key(KeyCode::Char(' '), KeyMods::NONE)));
+        assert!(!dismisses_completed(key(KeyCode::Char('x'), KeyMods::NONE)));
+        assert!(!dismisses_completed(key(
+            KeyCode::Enter,
+            KeyMods {
+                ctrl: true,
+                ..KeyMods::NONE
+            }
+        )));
+    }
+
     #[test]
     fn popup_rect_is_centered_and_clamped() {
         let rect = popup_rect(

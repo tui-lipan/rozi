@@ -15,6 +15,16 @@ pub(crate) fn handle_key_routing(
     key: KeyEvent,
     source_pane: Option<PaneId>,
 ) -> (bool, Update) {
+    if ctx
+        .state
+        .popup
+        .as_ref()
+        .is_some_and(|pane| matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_)))
+        && crate::popup::dismisses_completed(key)
+    {
+        return (true, crate::popup::close(ctx));
+    }
+
     match ctx.state.mode {
         Mode::Normal => {
             if let Some(id) = source_pane {

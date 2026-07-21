@@ -3,11 +3,74 @@ use std::collections::HashSet;
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_WIDTH, SidebarConfig,
-    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId,
+    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_WIDTH,
+    SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
+    SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
 };
 
-const BUILTIN_TABS: &[&str] = &["agents", "panes", "sessions"];
+const BUILTIN_TABS: &[&str] = &["agents", "panes", "sessions", "files", "git"];
+
+/// The built-in tabs that a table form may *configure* rather than merely name. The other built-ins
+/// take no options, so a table naming one is a mistake worth warning about.
+fn tree_view(name: &str) -> Option<SidebarTreeView> {
+    match name {
+        "files" => Some(SidebarTreeView::Files),
+        "git" => Some(SidebarTreeView::Changes),
+        _ => None,
+    }
+}
+
+fn build_tree_tab(
+    view: SidebarTreeView,
+    table: super::file::SidebarTabTableSpec,
+    warnings: &mut Vec<String>,
+) -> SidebarTab {
+    let name = view.id();
+    let mut config = SidebarTreeConfig::for_view(view);
+    if table.entries.is_some() || table.command.is_some() || table.interval.is_some() {
+        warnings.push(format!(
+            "Sidebar tab `{name}` is a reserved built-in file tree; ignoring `entries`/`command`/`interval` (rename the tab to keep those as a custom tab)"
+        ));
+    }
+    if let Some(root) = table.root {
+        match SidebarTreeRoot::parse(&root) {
+            Some(root) => config.root = root,
+            None => warnings.push(format!(
+                "Sidebar tab `{name}` root `{root}` is unknown (expected `cwd` or `repo`)"
+            )),
+        }
+    }
+    if let Some(show_hidden) = table.show_hidden {
+        config.show_hidden = show_hidden;
+    }
+    if let Some(icons) = table.icons {
+        config.icons = icons;
+    }
+    if let Some(explorer) = table.explorer {
+        config.explorer = explorer;
+    }
+    if let Some(diff_stats) = table.diff_stats {
+        config.diff_stats = diff_stats;
+    }
+    if let Some(max_entries) = table.max_entries {
+        let clamped = max_entries.clamp(1, SIDEBAR_TREE_MAX_ENTRIES_LIMIT);
+        if clamped != max_entries {
+            warnings.push(format!(
+                "Sidebar tab `{name}` max_entries {max_entries} out of range; clamped to {clamped}"
+            ));
+        }
+        config.max_entries = clamped;
+    }
+    if let Some(action) = table.on_click {
+        config.on_click = parse_sidebar_action(
+            action,
+            &format!("Sidebar tab `{name}` on_click"),
+            "{path}",
+            warnings,
+        );
+    }
+    SidebarTab::Tree { view, config }
+}
 
 pub(super) fn apply_sidebar_config(
     sidebar: &mut SidebarConfig,
@@ -48,15 +111,33 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                 "agents" => SidebarTab::Agents,
                 "panes" => SidebarTab::Panes,
                 "sessions" => SidebarTab::Sessions,
-                _ => {
-                    warnings.push(format!("Unknown built-in sidebar tab `{name}`; skipped"));
-                    continue;
-                }
+                other => match tree_view(other) {
+                    Some(view) => SidebarTab::Tree {
+                        view,
+                        config: SidebarTreeConfig::for_view(view),
+                    },
+                    None => {
+                        warnings.push(format!("Unknown built-in sidebar tab `{name}`; skipped"));
+                        continue;
+                    }
+                },
             },
             SidebarTabSpec::Table(table) => {
                 let name = table.name.trim();
                 if name.is_empty() {
                     warnings.push("Sidebar tab name must not be empty; skipped".to_string());
+                    continue;
+                }
+                // A table naming a built-in file tree configures it; every other built-in name is
+                // still reserved, since those tabs take no options.
+                if let Some(view) = tree_view(name) {
+                    let tab = build_tree_tab(view, *table, warnings);
+                    let id = tab.id();
+                    if !seen.insert(id.clone()) {
+                        warnings.push(format!("Duplicate sidebar tab `{}`; skipped", id.as_str()));
+                        continue;
+                    }
+                    tabs.push(tab);
                     continue;
                 }
                 if BUILTIN_TABS.contains(&name) {
@@ -85,6 +166,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                                 let action = parse_sidebar_action(
                                     entry.action(),
                                     &format!("Sidebar entry `{label}` in `{name}`"),
+                                    "{line}",
                                     warnings,
                                 )?;
                                 Some(SidebarLauncherEntry { label, action })
@@ -108,6 +190,7 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
                             parse_sidebar_action(
                                 action,
                                 &format!("Sidebar tab `{name}` on_click"),
+                                "{line}",
                                 warnings,
                             )
                         });
@@ -138,20 +221,25 @@ fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<Sideb
     tabs
 }
 
+/// Parse a sidebar action, rejecting `placeholder` in `run`/`popup`. Substitution is only ever
+/// performed into `send` text, which reaches the pane as literal keystrokes; a `run` or `popup`
+/// command line is executed, and must never be assembled out of command output or a filename that
+/// happens to live in the repository.
 fn parse_sidebar_action(
     raw: super::file::UserCommandTableSpec,
     context: &str,
+    placeholder: &str,
     warnings: &mut Vec<String>,
 ) -> Option<super::schema::UserCommandAction> {
     let action = parse_user_command_action(raw, context, warnings)?;
     if matches!(
         &action,
-        super::schema::UserCommandAction::Run(command)
-            | super::schema::UserCommandAction::Popup(command)
-            if command.contains("{line}")
+        super::schema::UserCommandAction::Run { command, .. }
+            | super::schema::UserCommandAction::Popup { command, .. }
+            if command.contains(placeholder)
     ) {
         warnings.push(format!(
-            "{context} uses `{{line}}` in run/popup; only send actions support this placeholder; skipped"
+            "{context} uses `{placeholder}` in run/popup; only send actions support this placeholder; skipped"
         ));
         None
     } else {
@@ -185,6 +273,139 @@ mod tests {
                 SidebarTabId::new("sessions")
             ]
         );
+    }
+
+    fn tree(config: &SidebarConfig, id: &str) -> SidebarTreeConfig {
+        config
+            .tabs
+            .iter()
+            .find_map(|tab| match tab {
+                SidebarTab::Tree { config, .. } if tab.id() == SidebarTabId::new(id) => {
+                    Some(config.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("`{id}` is a file tree tab"))
+    }
+
+    /// Bare `files` / `git` names work, and each carries the defaults that make its view useful:
+    /// browsing is rooted at the pane's directory without diff noise, while the changes view is
+    /// repo-rooted with diff stats, since changes elsewhere in the repo matter from a subdirectory.
+    #[test]
+    fn file_tree_tabs_parse_by_name_with_per_view_defaults() {
+        let (config, warnings) = parse(r#"tabs = ["files", "git"]"#);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            config
+                .tabs
+                .iter()
+                .map(SidebarTab::label)
+                .collect::<Vec<_>>(),
+            vec!["Files", "Git"]
+        );
+
+        let files = tree(&config, "files");
+        assert_eq!(files.root, SidebarTreeRoot::Cwd);
+        assert!(!files.diff_stats);
+        let git = tree(&config, "git");
+        assert_eq!(git.root, SidebarTreeRoot::Repo);
+        assert!(git.diff_stats);
+        // Both default to typing the activated path at the prompt.
+        assert_eq!(
+            files.on_click,
+            Some(super::super::schema::UserCommandAction::Send(
+                "{path}".into()
+            ))
+        );
+
+        // Only the file trees scroll internally; every other tab is wrapped by the sidebar.
+        assert!(config.tabs.iter().all(SidebarTab::scrolls_itself));
+        assert!(!SidebarTab::Panes.scrolls_itself());
+    }
+
+    #[test]
+    fn file_tree_table_form_overrides_options() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = [{ name = "files", label = "", show_hidden = true, icons = true, explorer = true, diff_stats = true, max_entries = 50, root = "repo", on_click = { send = "nvim {path}\n" } }]
+            "#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let files = tree(&config, "files");
+        assert_eq!(files.root, SidebarTreeRoot::Repo);
+        assert!(files.show_hidden && files.icons && files.explorer && files.diff_stats);
+        assert_eq!(files.max_entries, 50);
+        assert_eq!(
+            files.on_click,
+            Some(super::super::schema::UserCommandAction::Send(
+                "nvim {path}\n".into()
+            ))
+        );
+        // A built-in keeps its own label; the table's empty label is not an error here.
+        assert_eq!(config.tabs[0].label(), "Files");
+    }
+
+    /// `{path}` may only reach the pane as literal keystrokes. A `run`/`popup` command line is
+    /// executed, and a filename in the repository must never be able to compose one.
+    #[test]
+    fn file_tree_rejects_path_placeholder_in_executed_actions() {
+        let (config, warnings) =
+            parse(r#"tabs = [{ name = "files", label = "", on_click = { run = "rm {path}" } }]"#);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("{path}"), "{warnings:?}");
+        assert_eq!(tree(&config, "files").on_click, None);
+
+        // The supported way to scope a command to the clicked file: the path is referenced through
+        // the environment, so nothing is spliced into the command line and it is accepted.
+        let (config, warnings) = parse(
+            r#"tabs = [{ name = "git", label = "", on_click = { run = "lazygit -f \"$HYPRMUX_FILE\"" } }]"#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            tree(&config, "git").on_click,
+            Some(super::super::schema::UserCommandAction::run(
+                "lazygit -f \"$HYPRMUX_FILE\""
+            ))
+        );
+    }
+
+    #[test]
+    fn file_tree_options_are_validated_and_clamped() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = [
+              { name = "files", label = "", root = "elsewhere", max_entries = 0 },
+              { name = "git", label = "", command = "ls" },
+            ]
+            "#,
+        );
+        assert_eq!(tree(&config, "files").root, SidebarTreeRoot::Cwd);
+        assert_eq!(tree(&config, "files").max_entries, 1);
+        assert!(
+            warnings.iter().any(|w| w.contains("elsewhere")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("max_entries")),
+            "{warnings:?}"
+        );
+        // A file tree takes no `command`; saying so beats silently ignoring it.
+        assert!(
+            warnings.iter().any(|w| w.contains("built-in file tree")),
+            "{warnings:?}"
+        );
+    }
+
+    /// The other built-ins take no options, so their names stay reserved for the table form.
+    #[test]
+    fn non_tree_builtin_names_remain_reserved() {
+        let (config, warnings) =
+            parse(r#"tabs = ["files", { name = "panes", label = "Mine", command = "ls" }]"#);
+        assert!(
+            warnings.iter().any(|w| w.contains("reserved")),
+            "{warnings:?}"
+        );
+        assert_eq!(config.tabs.len(), 1);
     }
 
     #[test]

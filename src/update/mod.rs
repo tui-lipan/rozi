@@ -48,6 +48,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             tab_id,
             entry_index,
         } => sidebar::launcher_activate(ctx, config_epoch, tab_id, entry_index),
+        Msg::SidebarTreeActivate {
+            config_epoch,
+            tab_id,
+            path,
+            is_dir,
+        } => sidebar::tree_activate(ctx, config_epoch, tab_id, path, is_dir),
         Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
         Msg::SidebarCommandOutput {
             epoch,
@@ -265,6 +271,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     };
 
     clear_finished_unseen_on_focus(ctx);
+    sidebar::sync_tree_roots(ctx);
 
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();

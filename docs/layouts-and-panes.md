@@ -87,10 +87,20 @@ the resulting layout and respawn generation propagate to followers.
 ## Popup runner
 
 A popup is a transient, centered pane launched through the control socket or a `[keys]`
-`popup = "command"` entry. Unlike the reusable bottom-anchored scratchpad, it is one-shot: process
-exit removes it, only one can be open, and it is never part of a workspace or shared layout.
-Clicking outside closes it. Escape is not intercepted, so interactive tools such as `fzf` and
-`lazygit` receive it normally.
+`popup = "command"` entry. Unlike the reusable bottom-anchored scratchpad, it is one-shot: only one
+can be open, and it is never part of a workspace or shared layout. It opens in the focused pane's
+working directory unless the caller names one.
+
+By default the popup holds after its command exits (`keep_open`, see
+[configuration](configuration.md#keys)): its final output and exit status remain as a read-only
+result, so a popup running something short like `date` stays readable instead of flashing. Press
+Enter, Escape, or Space to dismiss a completed popup. Set `keep_open = false` for a program that
+owns the popup for its whole life, and the popup closes with it.
+
+Close a popup by clicking outside it or with the normal *Close pane* action (`prefix w`). While its
+command is running, Escape is deliberately not intercepted, so interactive tools such as `fzf` and
+`lazygit` receive it normally. Popup entry and dismissal use the same configured spawn and close
+transitions as workspace panes.
 
 ## Titlebars
 

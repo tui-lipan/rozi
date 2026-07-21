@@ -1,5 +1,6 @@
 use tui_lipan::prelude::*;
 
+use super::row::{self, Row};
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::{HyprmuxApp, Msg};
 
@@ -28,20 +29,14 @@ fn session_detail(entry: &DiscoveredSession, current: bool) -> String {
 
 pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
     if ctx.state.sidebar.sessions.is_empty() {
-        return VStack::new()
-            .padding((0, 0, 0, 1))
-            .child(
-                Text::new("No sessions discovered")
-                    .style(super::super::fg_only(&ctx.state.theme.muted)),
-            )
-            .into();
+        return row::empty(ctx, "No sessions discovered");
     }
     ctx.state
         .sidebar
         .sessions
         .iter()
         .cloned()
-        .fold(VStack::new().gap(1), |body, entry| {
+        .fold(VStack::new().gap(0), |body, entry| {
             let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
             let pending =
                 ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str());
@@ -50,7 +45,6 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
             } else {
                 entry.name.clone()
             };
-            let marker = if current { "▎" } else { " " };
             let detail = if pending {
                 "click again · ends temporary session".to_string()
             } else {
@@ -62,38 +56,11 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
                 super::super::fg_only(&ctx.state.theme.muted)
             };
             let key_name = entry.name.clone();
-            let content = HStack::new()
-                .gap(1)
-                .height(Length::Px(2))
-                .style(if current {
-                    Style::new().bg(ctx.state.theme.surface.element.elevate(0.04))
-                } else {
-                    Style::default()
-                })
-                .child(
-                    VStack::new()
-                        .gap(0)
-                        .width(Length::Auto)
-                        .height(Length::Px(2))
-                        .child(
-                            Text::new(marker)
-                                .height(Length::Px(1))
-                                .style(super::super::fg_only(&ctx.state.theme.accent)),
-                        )
-                        .child(
-                            Text::new(marker)
-                                .height(Length::Px(1))
-                                .style(super::super::fg_only(&ctx.state.theme.accent)),
-                        ),
-                )
-                .child(
-                    VStack::new()
-                        .gap(0)
-                        .child(
-                            Text::new(label).style(super::super::fg_only(&ctx.state.theme.primary)),
-                        )
-                        .child(Text::new(detail).style(detail_style)),
-                );
+            let content = Row::new(label)
+                .marked(current)
+                .title_style(super::super::fg_only(&ctx.state.theme.primary))
+                .detail(detail, detail_style)
+                .build(ctx);
             body.child(
                 MouseRegion::new()
                     .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))

@@ -1176,3 +1176,58 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         "the command's exit status was not reported; screen was:\n{text}"
     );
 }
+
+#[test]
+fn keep_open_popup_retains_output_without_starting_a_shell() {
+    let mut server = SessionServer::new_named("dev");
+    let (_client, _stream) = attach_client(&mut server);
+    let pane_id = crate::state::POPUP_PANE_ID;
+
+    let result = server.spawn_pane(SpawnRequest {
+        pane_id,
+        generation: 1,
+        command: Some("printf 'popup result\\n'; exit 3".to_string()),
+        cwd: None,
+        title: None,
+        cols: 40,
+        rows: 10,
+        keep_open: true,
+        env: Vec::new(),
+        palette: test_palette(),
+        shell: test_shell(),
+        command_shell: test_command_shell(),
+    });
+    assert!(matches!(
+        result,
+        ServerMessage::SpawnResult { ok: true, .. }
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut saw_exit = false;
+    while Instant::now() < deadline {
+        while let Ok(event) = server.event_rx.try_recv() {
+            if let Some(outbound) = server.handle_event(event) {
+                saw_exit |= matches!(
+                    outbound,
+                    ServerOutbound::Control(ServerMessage::Exited { .. })
+                );
+                server.broadcast_outbound(&outbound);
+            }
+        }
+        if server.panes.get(&pane_id).and_then(|pane| pane.exited) == Some(3) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let pane = server.panes.get_mut(&pane_id).expect("popup still exists");
+    assert_eq!(pane.exited, Some(3));
+    assert!(
+        pane.pty.is_none(),
+        "a completed popup must remain read-only"
+    );
+    assert!(saw_exit, "the client must be told the popup completed");
+    let text = pane.screen.snapshot();
+    assert!(text.contains("popup result"));
+    assert!(text.contains("[exit 3]  Enter/Esc/Space: close"));
+}

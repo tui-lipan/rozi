@@ -10,8 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hyprmux::platform::ipc::{IpcConnection, IpcEndpoint};
 use hyprmux::session::protocol::{
-    ClientMessage, Frame, FrameDecoder, PROTOCOL_VERSION, ServerMessage, write_control_frame,
-    write_pane_input_frame,
+    ClientMessage, Frame, FrameDecoder, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
+    write_control_frame, write_pane_input_frame,
 };
 use hyprmux::session::server::{
     ServerSettings, SessionServer, bind_session_socket, session_endpoint,
@@ -260,6 +260,7 @@ pub(crate) fn attach_message(session: &str, label: &str) -> ClientMessage {
     ClientMessage::Attach {
         session: session.to_string(),
         protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: label.to_string(),
         read_only: false,
     }

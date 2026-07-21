@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
-use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+use crate::session::protocol::{
+    ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
+};
 
 const QUERY_TIMEOUT: Duration = Duration::from_millis(60);
 
@@ -100,6 +102,7 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
                 &ClientMessage::Query {
                     session: name.to_string(),
                     protocol_version: PROTOCOL_VERSION,
+                    min_protocol_version: MIN_SUPPORTED_PROTOCOL,
                 },
             )
             .is_err()

@@ -489,7 +489,9 @@ pub(crate) fn run_list_sessions_cli() -> Result<()> {
 }
 
 pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
-    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+    use crate::session::protocol::{
+        ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
+    };
 
     let path = session::server::session_socket_path(name)?;
     if !path.exists() {
@@ -504,6 +506,7 @@ pub(crate) fn run_kill_session_cli(name: &str) -> Result<()> {
                 &ClientMessage::Attach {
                     session: name.to_string(),
                     protocol_version: PROTOCOL_VERSION,
+                    min_protocol_version: MIN_SUPPORTED_PROTOCOL,
                     label: crate::platform::user::current_user_label(),
                     read_only: false,
                 },

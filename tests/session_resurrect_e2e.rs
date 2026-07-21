@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
 use hyprmux::session::protocol::{
-    ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
+    ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
 use hyprmux::shared_layout::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
@@ -49,6 +49,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_control(&ClientMessage::Attach {
         session: session.clone(),
         protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: "snapshot-writer".into(),
         read_only: false,
     });

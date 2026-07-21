@@ -90,6 +90,7 @@ pub fn attached_message() -> ServerMessage {
     ServerMessage::Attached {
         created_from_profile: None,
         protocol_version: PROTOCOL_VERSION,
+        effective_protocol: PROTOCOL_VERSION,
         session: "benchmark-session".to_string(),
         client_id: 7,
         panes: layout

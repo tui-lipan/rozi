@@ -984,12 +984,15 @@ fn graceful_shutdown(
     stream: &mut crate::platform::ipc::IpcConnection,
     name: &str,
 ) -> std::io::Result<()> {
-    use crate::session::protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage};
+    use crate::session::protocol::{
+        ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
+    };
     crate::session::protocol::write_frame(
         stream,
         &ClientMessage::Attach {
             session: name.to_string(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
             label: crate::platform::user::current_user_label(),
             read_only: false,
         },

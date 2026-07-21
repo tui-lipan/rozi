@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
 use hyprmux::session::protocol::{
-    ClientMessage, Frame, PROTOCOL_VERSION, ServerMessage, WirePalette,
+    ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
 use hyprmux::shared_layout::{SHARED_LAYOUT_VERSION, SharedLayout};
 use tui_lipan::prelude::TerminalColorPalette;
@@ -51,6 +51,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     });
     let ServerMessage::Attached {
         protocol_version,
+        effective_protocol,
         session: attached_session,
         client_id: first_client_id,
         controller,
@@ -62,6 +63,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     };
     assert_eq!(attached_session, session);
     assert_eq!(protocol_version, PROTOCOL_VERSION);
+    assert_eq!(effective_protocol, PROTOCOL_VERSION);
     assert_eq!(controller, Some(first_client_id));
     assert_eq!(created_from_profile, None);
 
@@ -196,6 +198,7 @@ fn attach_message(session: &str, label: &str) -> ClientMessage {
     ClientMessage::Attach {
         session: session.to_string(),
         protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         label: label.to_string(),
         read_only: false,
     }

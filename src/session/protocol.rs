@@ -1,3 +1,21 @@
+//! Session wire protocol.
+//!
+//! # Version negotiation
+//!
+//! [`PROTOCOL_VERSION`] is this build's maximum supported wire version.
+//! [`MIN_SUPPORTED_PROTOCOL`] is the oldest version this build can still speak.
+//!
+//! Clients advertise both on [`ClientMessage::Attach`] / [`ClientMessage::Query`]. The server
+//! chooses `effective = min(client_max, server_max)` and accepts only when that value sits in both
+//! sides' supported ranges. The negotiated value is echoed as `effective_protocol` on
+//! [`ServerMessage::Attached`] / [`ServerMessage::SessionInfo`].
+//!
+//! Within a supported range, wire changes must be additive with `serde` defaults so older peers can
+//! ignore new fields. Anything that breaks that contract must bump [`MIN_SUPPORTED_PROTOCOL`].
+//!
+//! Servers at protocol 11 and earlier still enforce exact equality, so a newer client cannot
+//! negotiate down against them — restart the remote/local server after upgrading.
+
 use std::io::{Read, Write};
 
 use serde::{Deserialize, Serialize};
@@ -6,9 +24,13 @@ use tui_lipan::prelude::*;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
-/// Protocol version shared by clients and session servers. Spawn requests carry resolved launch
-/// policy, and pane metadata includes server-authoritative runtime state.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// Maximum wire protocol version this build speaks.
+pub const PROTOCOL_VERSION: u32 = 12;
+/// Oldest wire protocol version this build can still speak.
+///
+/// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
+/// server still rejects anything other than exact equality.
+pub const MIN_SUPPORTED_PROTOCOL: u32 = 12;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -246,7 +268,12 @@ pub struct ClientInfo {
 pub enum ClientMessage {
     Attach {
         session: String,
+        /// Client's maximum supported protocol version.
         protocol_version: u32,
+        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
+        /// default of `0` as "exactly `protocol_version`".
+        #[serde(default)]
+        min_protocol_version: u32,
         label: String,
         read_only: bool,
     },
@@ -259,7 +286,12 @@ pub enum ClientMessage {
     /// without any replay seeding. Cheap enough to run against many sockets concurrently.
     Query {
         session: String,
+        /// Client's maximum supported protocol version.
         protocol_version: u32,
+        /// Client's minimum supported protocol version. Missing on pre-negotiation peers; treat a
+        /// default of `0` as "exactly `protocol_version`".
+        #[serde(default)]
+        min_protocol_version: u32,
     },
     SpawnPane {
         pane_id: PaneId,
@@ -373,7 +405,11 @@ pub enum ServerMessage {
         message: String,
     },
     Attached {
+        /// Server's maximum supported protocol version.
         protocol_version: u32,
+        /// Negotiated wire version for this connection. Missing (`0`) on pre-negotiation peers.
+        #[serde(default)]
+        effective_protocol: u32,
         session: String,
         client_id: ClientId,
         panes: Vec<PaneMeta>,
@@ -391,6 +427,9 @@ pub enum ServerMessage {
         panes: usize,
         clients: u32,
         has_layout: bool,
+        /// Negotiated wire version for this probe. Missing (`0`) on pre-negotiation peers.
+        #[serde(default)]
+        effective_protocol: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_from_profile: Option<String>,
     },
@@ -475,6 +514,94 @@ pub enum Frame<C> {
         generation: u64,
         bytes: Vec<u8>,
     },
+}
+
+/// Normalize a peer-advertised minimum: missing/`0` means "exactly `max`" (pre-negotiation peers).
+pub fn normalize_min_protocol(max: u32, min: u32) -> u32 {
+    if min == 0 { max } else { min }
+}
+
+/// Error from [`negotiate_protocol`] when the advertised ranges do not overlap.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolMismatch {
+    pub client_max: u32,
+    pub client_min: u32,
+    pub server_max: u32,
+    pub server_min: u32,
+    pub older_side: ProtocolSide,
+}
+
+/// Which peer is too old for the other side's range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProtocolSide {
+    Client,
+    Server,
+}
+
+impl ProtocolMismatch {
+    pub fn message(&self) -> String {
+        let older = match self.older_side {
+            ProtocolSide::Client => "client",
+            ProtocolSide::Server => "server",
+        };
+        format!(
+            "client protocol {}-{} is incompatible with server protocol {}-{} ({older} is older)",
+            self.client_min, self.client_max, self.server_min, self.server_max
+        )
+    }
+}
+
+/// Choose the effective wire version for a client/server pair.
+///
+/// `effective = min(client_max, server_max)`, accepted only when it falls within both sides'
+/// supported ranges. A `client_min` of `0` is treated as "exactly `client_max`".
+pub fn negotiate_protocol(
+    client_max: u32,
+    client_min: u32,
+    server_max: u32,
+    server_min: u32,
+) -> std::result::Result<u32, ProtocolMismatch> {
+    let client_min = normalize_min_protocol(client_max, client_min);
+    let effective = client_max.min(server_max);
+    if effective < client_min || effective < server_min {
+        let older_side = if client_max < server_min {
+            ProtocolSide::Client
+        } else {
+            ProtocolSide::Server
+        };
+        return Err(ProtocolMismatch {
+            client_max,
+            client_min,
+            server_max,
+            server_min,
+            older_side,
+        });
+    }
+    Ok(effective)
+}
+
+/// Attach message using this build's supported protocol range.
+pub fn attach_message(
+    session: impl Into<String>,
+    label: impl Into<String>,
+    read_only: bool,
+) -> ClientMessage {
+    ClientMessage::Attach {
+        session: session.into(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+        label: label.into(),
+        read_only,
+    }
+}
+
+/// Query message using this build's supported protocol range.
+pub fn query_message(session: impl Into<String>) -> ClientMessage {
+    ClientMessage::Query {
+        session: session.into(),
+        protocol_version: PROTOCOL_VERSION,
+        min_protocol_version: MIN_SUPPORTED_PROTOCOL,
+    }
 }
 
 pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> std::io::Result<()> {
@@ -780,6 +907,7 @@ mod tests {
         let msg = ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
             label: "alice".into(),
             read_only: false,
         };
@@ -914,13 +1042,21 @@ mod tests {
         let value = serde_json::to_value(ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
             label: "alice".into(),
             read_only: true,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"attach","session":"dev","protocol_version":11,"label":"alice","read_only":true})
+            serde_json::json!({
+                "type":"attach",
+                "session":"dev",
+                "protocol_version":12,
+                "min_protocol_version":12,
+                "label":"alice",
+                "read_only":true
+            })
         );
         assert_eq!(
             serde_json::to_value(ClientMessage::SetSessionOrigin {
@@ -936,11 +1072,17 @@ mod tests {
         let value = serde_json::to_value(ClientMessage::Query {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"query","session":"dev","protocol_version":11})
+            serde_json::json!({
+                "type":"query",
+                "session":"dev",
+                "protocol_version":12,
+                "min_protocol_version":12
+            })
         );
     }
 
@@ -1010,10 +1152,19 @@ mod tests {
                 panes: 2,
                 clients: 1,
                 has_layout: true,
+                effective_protocol: PROTOCOL_VERSION,
                 created_from_profile: Some("work".into()),
             })
             .unwrap(),
-            serde_json::json!({"type":"session-info","session":"dev","panes":2,"clients":1,"has_layout":true,"created_from_profile":"work"})
+            serde_json::json!({
+                "type":"session-info",
+                "session":"dev",
+                "panes":2,
+                "clients":1,
+                "has_layout":true,
+                "effective_protocol":12,
+                "created_from_profile":"work"
+            })
         );
     }
 
@@ -1037,6 +1188,7 @@ mod tests {
         let attach = ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
             label: "alice".into(),
             read_only: false,
         };
@@ -1112,5 +1264,95 @@ mod tests {
             .unwrap(),
             serde_json::json!({"type":"error","code":"bad","message":"no"})
         );
+    }
+
+    #[test]
+    fn negotiate_protocol_table() {
+        // (client_max, client_min, server_max, server_min, expected Ok(effective) or Err(older))
+        let cases: &[(u32, u32, u32, u32, std::result::Result<u32, ProtocolSide>)] = &[
+            (12, 12, 12, 12, Ok(12)),
+            (13, 12, 12, 12, Ok(12)),
+            (12, 12, 13, 12, Ok(12)),
+            (14, 12, 13, 12, Ok(13)),
+            (11, 11, 12, 12, Err(ProtocolSide::Client)),
+            (13, 13, 12, 12, Err(ProtocolSide::Server)),
+            (12, 0, 12, 12, Ok(12)), // missing min => exactly max
+            (11, 0, 12, 12, Err(ProtocolSide::Client)),
+        ];
+        for &(client_max, client_min, server_max, server_min, expected) in cases {
+            let result = negotiate_protocol(client_max, client_min, server_max, server_min);
+            match expected {
+                Ok(effective) => {
+                    assert_eq!(
+                        result,
+                        Ok(effective),
+                        "client {client_min}-{client_max} vs server {server_min}-{server_max}"
+                    );
+                }
+                Err(older) => {
+                    let err = result.expect_err("expected mismatch");
+                    assert_eq!(err.older_side, older);
+                    let message = err.message();
+                    assert!(message.contains("incompatible"), "{message}");
+                    assert!(
+                        message.contains("client") && message.contains("server"),
+                        "mismatch must name both sides: {message}"
+                    );
+                    assert!(
+                        message.contains(match older {
+                            ProtocolSide::Client => "client is older",
+                            ProtocolSide::Server => "server is older",
+                        }),
+                        "{message}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn attach_without_min_protocol_deserializes_as_legacy_exact() {
+        let value = serde_json::json!({
+            "type": "attach",
+            "session": "dev",
+            "protocol_version": 12,
+            "label": "alice",
+            "read_only": false
+        });
+        let decoded: ClientMessage = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            decoded,
+            ClientMessage::Attach {
+                session: "dev".into(),
+                protocol_version: 12,
+                min_protocol_version: 0,
+                label: "alice".into(),
+                read_only: false,
+            }
+        );
+    }
+
+    #[test]
+    fn attached_without_effective_protocol_deserializes_as_zero() {
+        let value = serde_json::json!({
+            "type": "attached",
+            "protocol_version": 12,
+            "session": "dev",
+            "client_id": 1,
+            "panes": [],
+            "layout_rev": 0,
+            "layout": null,
+            "controller": null,
+            "clients": [],
+            "input_locked": false
+        });
+        let decoded: ServerMessage = serde_json::from_value(value).unwrap();
+        let ServerMessage::Attached {
+            effective_protocol, ..
+        } = decoded
+        else {
+            panic!("expected Attached");
+        };
+        assert_eq!(effective_protocol, 0);
     }
 }

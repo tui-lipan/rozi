@@ -198,6 +198,8 @@ struct ClientConn {
     last_pong: Instant,
     last_ping: Instant,
     ping_seq: u64,
+    /// Negotiated wire protocol for this attached client. Zero until attach succeeds.
+    effective_protocol: u32,
     /// True while this client has an unanswered request for the control lease.
     requesting_control: bool,
     /// When the controller was last notified of this client's request, for per-requester debounce.
@@ -222,6 +224,7 @@ impl ClientConn {
             last_pong: now,
             last_ping: now,
             ping_seq: 0,
+            effective_protocol: 0,
             requesting_control: false,
             last_request_notify: None,
         }

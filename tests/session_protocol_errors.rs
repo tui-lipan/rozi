@@ -14,6 +14,7 @@ fn version_mismatch_is_refused_without_stopping_the_listener() {
     client.write_control(&ClientMessage::Attach {
         session: server.session().to_string(),
         protocol_version: PROTOCOL_VERSION + 1,
+        min_protocol_version: PROTOCOL_VERSION + 1,
         label: "future-client".to_string(),
         read_only: false,
     });

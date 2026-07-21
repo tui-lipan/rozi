@@ -110,9 +110,17 @@ impl SessionServer {
             ClientMessage::Attach {
                 session,
                 protocol_version,
+                min_protocol_version,
                 label,
                 read_only,
-            } => self.handle_attach(client_id, session, protocol_version, label, read_only),
+            } => self.handle_attach(
+                client_id,
+                session,
+                protocol_version,
+                min_protocol_version,
+                label,
+                read_only,
+            ),
             ClientMessage::SetSessionOrigin { profile } => {
                 if self.created_from_profile.is_none()
                     && self.origin_seed_client == Some(client_id)
@@ -140,7 +148,8 @@ impl SessionServer {
             ClientMessage::Query {
                 session,
                 protocol_version,
-            } => self.handle_query(session, protocol_version),
+                min_protocol_version,
+            } => self.handle_query(session, protocol_version, min_protocol_version),
             ClientMessage::SetPaneLogging {
                 pane_id,
                 generation,
@@ -369,20 +378,27 @@ impl SessionServer {
         client_id: ClientId,
         session: String,
         protocol_version: u32,
+        min_protocol_version: u32,
         label: String,
         read_only: bool,
     ) -> Vec<(Target, ServerMessage)> {
-        if protocol_version != PROTOCOL_VERSION {
-            return vec![(
-                Target::Sender,
-                ServerMessage::Error {
-                    code: "protocol-mismatch".to_string(),
-                    message: format!(
-                        "client protocol {protocol_version} is incompatible with server protocol {PROTOCOL_VERSION}"
-                    ),
-                },
-            )];
-        }
+        let effective = match protocol::negotiate_protocol(
+            protocol_version,
+            min_protocol_version,
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+        ) {
+            Ok(effective) => effective,
+            Err(mismatch) => {
+                return vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: "protocol-mismatch".to_string(),
+                        message: mismatch.message(),
+                    },
+                )];
+            }
+        };
         if session != self.session_name {
             return vec![(
                 Target::Sender,
@@ -400,6 +416,7 @@ impl SessionServer {
             client.label = Some(label);
             client.read_only = read_only;
             client.last_pong = Instant::now();
+            client.effective_protocol = effective;
         }
         // First attacher is auto-granted the layout-control lease.
         let granted = if self.controller.is_none() && !read_only {
@@ -411,6 +428,7 @@ impl SessionServer {
         let clients = self.client_roster();
         let attached = ServerMessage::Attached {
             protocol_version: PROTOCOL_VERSION,
+            effective_protocol: effective,
             session,
             client_id,
             panes: self.pane_meta(),
@@ -439,18 +457,25 @@ impl SessionServer {
         &mut self,
         session: String,
         protocol_version: u32,
+        min_protocol_version: u32,
     ) -> Vec<(Target, ServerMessage)> {
-        if protocol_version != PROTOCOL_VERSION {
-            return vec![(
-                Target::Sender,
-                ServerMessage::Error {
-                    code: "protocol-mismatch".to_string(),
-                    message: format!(
-                        "client protocol {protocol_version} is incompatible with server protocol {PROTOCOL_VERSION}"
-                    ),
-                },
-            )];
-        }
+        let effective = match protocol::negotiate_protocol(
+            protocol_version,
+            min_protocol_version,
+            PROTOCOL_VERSION,
+            protocol::MIN_SUPPORTED_PROTOCOL,
+        ) {
+            Ok(effective) => effective,
+            Err(mismatch) => {
+                return vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: "protocol-mismatch".to_string(),
+                        message: mismatch.message(),
+                    },
+                )];
+            }
+        };
         if session != self.session_name {
             return vec![(
                 Target::Sender,
@@ -475,6 +500,7 @@ impl SessionServer {
                 panes,
                 clients: self.attached_count(),
                 has_layout: self.layout.is_some(),
+                effective_protocol: effective,
                 created_from_profile: self.created_from_profile.clone(),
             },
         )]

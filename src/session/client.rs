@@ -9,7 +9,9 @@ use tui_lipan::prelude::*;
 
 use crate::platform::ipc::{IpcConnection, IpcEndpoint};
 use crate::session::protocol::Frame;
-use crate::session::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage, WirePalette};
+use crate::session::protocol::{
+    self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
+};
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
@@ -88,12 +90,11 @@ impl SessionClient {
         reader.set_read_timeout(Some(Duration::from_secs(2)))?;
         protocol::write_frame(
             &mut stream,
-            &ClientMessage::Attach {
-                session: session.into(),
-                protocol_version: PROTOCOL_VERSION,
-                label: crate::platform::user::current_user_label(),
+            &protocol::attach_message(
+                session,
+                crate::platform::user::current_user_label(),
                 read_only,
-            },
+            ),
         )?;
         let attached = protocol::read_frame::<_, ServerMessage>(&mut reader)?;
         reader.set_read_timeout(None)?;
@@ -268,10 +269,30 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
         };
         return Err(io::Error::new(io::ErrorKind::InvalidData, detail));
     }
-    if !matches!(attached, ServerMessage::Attached { .. }) {
+    let ServerMessage::Attached {
+        protocol_version: server_max,
+        effective_protocol,
+        ..
+    } = attached
+    else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("attach handshake failed: {attached:?}"),
+        ));
+    };
+    // Pre-negotiation servers omit effective_protocol (serde default 0) and echo their own
+    // protocol_version; treat that echo as the effective version.
+    let effective = if *effective_protocol == 0 {
+        *server_max
+    } else {
+        *effective_protocol
+    };
+    if !(MIN_SUPPORTED_PROTOCOL..=PROTOCOL_VERSION).contains(&effective) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "runs an incompatible hyprmux version (negotiated protocol {effective}; client supports {MIN_SUPPORTED_PROTOCOL}-{PROTOCOL_VERSION}); kill it and start a new one"
+            ),
         ));
     }
     Ok(())
@@ -327,6 +348,7 @@ mod tests {
     fn attached_message() -> ServerMessage {
         ServerMessage::Attached {
             protocol_version: PROTOCOL_VERSION,
+            effective_protocol: PROTOCOL_VERSION,
             session: "test".to_string(),
             client_id: 7,
             panes: Vec::new(),

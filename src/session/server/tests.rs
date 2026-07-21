@@ -65,6 +65,7 @@ fn attach_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
         ClientMessage::Attach {
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
             label: format!("client-{id}"),
             read_only: false,
         },
@@ -84,6 +85,7 @@ fn attach_read_only_client(server: &mut SessionServer) -> (ClientId, UnixStream)
         ClientMessage::Attach {
             session: server.session_name.clone(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
             label: format!("viewer-{id}"),
             read_only: true,
         },
@@ -132,6 +134,7 @@ fn attach_reports_protocol_mismatch() {
         ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION + 1,
+            min_protocol_version: PROTOCOL_VERSION + 1,
             label: "client".into(),
             read_only: false,
         },
@@ -194,7 +197,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
     );
     assert_eq!(server.created_from_profile.as_deref(), Some("work"));
 
-    let query = server.handle_query("dev".into(), PROTOCOL_VERSION);
+    let query = server.handle_query("dev".into(), PROTOCOL_VERSION, PROTOCOL_VERSION);
     assert!(matches!(
         query.as_slice(),
         [(
@@ -260,6 +263,7 @@ fn query_registers_nothing_and_seeds_nothing() {
         ClientMessage::Query {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
         },
     );
     assert!(matches!(
@@ -872,6 +876,7 @@ fn attach_reports_layout_and_panes() {
         ClientMessage::Attach {
             session: "dev".into(),
             protocol_version: PROTOCOL_VERSION,
+            min_protocol_version: PROTOCOL_VERSION,
             label: "client".into(),
             read_only: false,
         },

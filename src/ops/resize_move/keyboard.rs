@@ -9,7 +9,7 @@ use crate::tiling::{
     focused_is_first_in_nearest_axis_split, nearest_split_available, resize_tiled_split,
 };
 
-use super::float::{ensure_tile_tree, layout_has_resizable_splits};
+use super::float::{ensure_tile_tree, layout_has_resizable_splits, resize_focused_float};
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
 
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
@@ -17,6 +17,10 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+    // A floating pane has no split to push against; it resizes its own rect instead.
+    if resize_focused_float(ctx, direction) {
         return;
     }
     let workspace_index = ctx.state.active_workspace;

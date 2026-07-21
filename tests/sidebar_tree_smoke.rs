@@ -1,8 +1,9 @@
-use hyprmux::HyprmuxApp;
 use hyprmux::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
+use hyprmux::input::Action;
+use hyprmux::{HyprmuxApp, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
-use tui_lipan::prelude::Rect;
+use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
 
 /// A scratch git repository with one committed file, one modified, and one untracked, so the
 /// changes view has something of each kind to project.
@@ -321,9 +322,8 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             };
             settle(&mut backend);
 
-            // The tab-active background comes from the theme's active border color; the same color
-            // the workbar and sidebar tab strips use for the selected item.
-            let selection_bg = backend.state().theme.border_active;
+            // The cursor shares the pointer-hover lift, one visual language across every tab.
+            let selection_bg = backend.state().theme.surface.element.elevate(0.08);
 
             // Find and click the `src` directory row.
             let row_text = |backend: &TestBackend<HyprmuxApp>, row: u16| -> String {
@@ -357,14 +357,57 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 "clicking the directory expanded it: {after:?}"
             );
 
-            // The selected `src` row is painted with the tab-active background.
+            // Park the pointer outside the sidebar first: hover and the keyboard cursor share one
+            // highlight, so a row still under the mouse is lit for a reason that has nothing to do
+            // with selection.
+            let _ = backend.send_mouse(MouseEvent {
+                x: 80,
+                y: 20,
+                kind: MouseKind::Moved,
+                mods: Default::default(),
+            });
+            settle(&mut backend);
+
+            // A click is a one-shot gesture, not a "this row is now current" state: the sidebar is
+            // a `FocusScope::Exclude` subtree, so clicking never focuses the tree and the row the
+            // widget selected internally leaves no mark behind.
             let src_after = (3u16..16)
                 .find(|&row| row_text(&backend, row).contains("src"))
                 .expect("src row still visible after expand");
             let bg = backend.capture_frame().cell(3, src_after).bg;
-            assert_eq!(
+            assert_ne!(
                 bg, selection_bg,
-                "selected row uses the tab-active background, got {bg:?}"
+                "an unfocused tree must not paint a selection background"
+            );
+
+            // Entering the sidebar with the keyboard is what makes the cursor real. `focus-sidebar`
+            // is the only way in, precisely because Tab and clicks cannot get here.
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+            let focused_row = (3u16..16)
+                .find(|&row| row_text(&backend, row).contains("src"))
+                .expect("src row visible while focused");
+            let focused_bg = backend.capture_frame().cell(3, focused_row).bg;
+            assert_eq!(
+                focused_bg, selection_bg,
+                "a focused tree paints the cursor with the shared row highlight, got {focused_bg:?}"
+            );
+
+            // Escape hands the keyboard back and the cursor goes quiet again.
+            let _ = backend.send_key(KeyEvent {
+                code: KeyCode::Esc,
+                mods: KeyMods::NONE,
+            });
+            settle(&mut backend);
+            let blurred_row = (3u16..16)
+                .find(|&row| row_text(&backend, row).contains("src"))
+                .expect("src row visible after blur");
+            let blurred_bg = backend.capture_frame().cell(3, blurred_row).bg;
+            assert_ne!(
+                blurred_bg, selection_bg,
+                "Escape leaves the sidebar and clears the cursor"
             );
         })
         .expect("spawn click smoke thread")

@@ -1,9 +1,10 @@
 use tui_lipan::prelude::*;
 
-use super::row::{self, Row};
+use super::row::{self, Row, RowTarget, SidebarRow};
+use crate::HyprmuxApp;
+use crate::platform::paths::path_segments;
 use crate::session::protocol::pane_status;
 use crate::state::{PaneId, State};
-use crate::{HyprmuxApp, Msg};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentRow {
@@ -12,7 +13,12 @@ pub(crate) struct AgentRow {
     pub pane_index: usize,
     pub title: String,
     pub status: Option<String>,
-    pub reason: Option<String>,
+    /// What the agent is doing right now, for the detail line. See [`activity_text`].
+    pub activity: Option<String>,
+    /// How long the current status has held, sampled when the row was built.
+    pub age: Option<std::time::Duration>,
+    /// How long the agent's last completed run took. Fixed once banked; see [`row_duration`].
+    pub run: Option<std::time::Duration>,
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
     /// The agent finished a run (went quiescent) since the pane was last focused; drives the filled
@@ -64,6 +70,62 @@ fn status_rank(status: Option<&str>, finished_unseen: bool) -> u8 {
     }
 }
 
+/// What the agent is currently doing, for the row's detail line.
+///
+/// The reason it published alongside its status is the authoritative answer, but only agents with a
+/// status integration set one. Everything else falls back to the terminal title: agents write their
+/// current task there, which makes it the only activity signal a detected-only agent offers.
+fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<String> {
+    if let Some(reason) = pane
+        .reported_status
+        .as_ref()
+        .and_then(|status| status.reason.as_deref())
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+    {
+        return Some(reason.to_string());
+    }
+    let title = pane.title()?;
+    let title = strip_title_decoration(&title);
+    if title.is_empty()
+        || title.eq_ignore_ascii_case(kind_label)
+        || is_cwd_echo(title, pane.cwd.as_deref())
+    {
+        return None;
+    }
+    Some(title.to_string())
+}
+
+/// Drop the status glyph agents prefix their title with (`✳`, `⏺`, `●`). The row already has a
+/// glyph column, so a second one beside the text is noise. Only non-ASCII symbols go — ASCII
+/// punctuation is load-bearing in a real title (`~/repo`, `[2/7] running tests`).
+fn strip_title_decoration(title: &str) -> &str {
+    title
+        .trim_start_matches(|ch: char| {
+            ch.is_whitespace() || (!ch.is_ascii() && !ch.is_alphanumeric())
+        })
+        .trim()
+}
+
+/// Whether a terminal title is just the working directory. A shell sets its title to `$PWD`, so an
+/// agent that never set one of its own leaves a stale path there — and the project header already
+/// says where the row is, so echoing it into the activity slot spends the line on nothing.
+fn is_cwd_echo(title: &str, cwd: Option<&str>) -> bool {
+    let Some(cwd) = cwd else {
+        return false;
+    };
+    if crate::platform::paths::paths_equal(title, cwd) {
+        return true;
+    }
+    // `~/repo` against `/home/you/repo`: the last segment is what the two spellings share. A
+    // one-word activity that happens to match the directory name is lost to this, which is a fair
+    // trade for never presenting a path as a task.
+    match (path_segments(title).last(), path_segments(cwd).last()) {
+        (Some(title), Some(cwd)) => title.eq_ignore_ascii_case(cwd),
+        _ => false,
+    }
+}
+
 pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
     let mut rows = state
         .workspaces
@@ -101,11 +163,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                                 .agent_status()
                                 .unwrap_or_else(|| detected_status(detected.state).to_string()),
                         ),
-                        reason: pane
-                            .terminal
-                            .reported_status
-                            .as_ref()
-                            .and_then(|status| status.reason.clone()),
+                        activity: activity_text(&pane.terminal, detected.kind.label()),
+                        age: pane.terminal.status_age(),
+                        run: pane.terminal.last_run,
                         cwd_host: cwd
                             .is_some()
                             .then(|| pane.terminal.cwd_host.clone())
@@ -211,22 +271,6 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     groups
 }
 
-/// Whether a path uses the Windows drive/UNC shape. Unix paths may legally contain `\` inside a
-/// segment name, so backslash splitting must be reserved for paths that are actually Windows-like.
-fn is_windows_path_shape(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    path.starts_with("\\\\")
-        || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
-}
-
-fn path_segments(path: &str) -> Vec<&str> {
-    if is_windows_path_shape(path) {
-        path.split(['\\', '/']).filter(|s| !s.is_empty()).collect()
-    } else {
-        path.split('/').filter(|s| !s.is_empty()).collect()
-    }
-}
-
 /// Display label for a project group: the directory basename, optionally prefixed with its parent
 /// segment for disambiguation, plus an `@host` suffix for a remote cwd. A root-only path (`/`,
 /// `C:\`) has no basename and shows the path itself.
@@ -276,30 +320,107 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
     }
 }
 
-fn truncate_reason(value: &str) -> String {
-    row::truncate(value, 28)
+/// Compact elapsed time for the sidebar's narrow detail line: one unit, no padding. Resolution
+/// coarsens as the number grows, because past a minute nobody reads the seconds.
+fn format_age(age: std::time::Duration) -> String {
+    let secs = age.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 60 * 60 {
+        format!("{}m", secs / 60)
+    } else if secs < 24 * 60 * 60 {
+        format!("{}h", secs / (60 * 60))
+    } else {
+        format!("{}d", secs / (24 * 60 * 60))
+    }
 }
 
-pub(super) fn agents_tab(ctx: &Context<HyprmuxApp>) -> Element {
+/// Whether the glyph column already says this. The four known statuses each have their own glyph,
+/// so spelling them out again in the detail line only spends width; anything else falls through to
+/// a bare `•` in [`status_glyph`], where the word is the only signal there is.
+fn status_is_canonical(status: &str) -> bool {
+    let status = normalized_status(status);
+    [
+        pane_status::WORKING,
+        pane_status::BLOCKED,
+        pane_status::DONE,
+        pane_status::IDLE,
+    ]
+    .iter()
+    .any(|known| status.eq_ignore_ascii_case(known))
+}
+
+/// The elapsed time a row shows, and whether it is still advancing.
+///
+/// A running state reports how long it has held. A finished one reports how long the run *took* and
+/// then stops: the attention pulse already says the finish is recent, so a number climbing after
+/// the work ended would measure nothing anyone asked about. An idle agent reports nothing — how
+/// long a state that prompts no action has lasted is decoration, not a signal, and it would be the
+/// only figure here that measures the reader rather than the agent.
+fn row_duration(row: &AgentRow) -> Option<(String, bool)> {
+    let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
+    let label = row_status_label(status, row.finished_unseen);
+    let label = normalized_status(&label);
+    if label.eq_ignore_ascii_case(pane_status::IDLE) {
+        return None;
+    }
+    if label.eq_ignore_ascii_case(pane_status::DONE) {
+        // Absent when this client never saw the run start — better nothing than a wrong number.
+        return row.run.map(|run| (format_age(run), false));
+    }
+    row.age.map(|age| (format_age(age), true))
+}
+
+/// Every *advancing* duration the Agents tab is currently showing, joined. This is what the
+/// once-a-second tick compares against its previous value, so a minute of `12m` costs one
+/// comparison per second rather than sixty repaints — and a screen of finished runs, whose numbers
+/// are frozen, stops the tick entirely.
+pub(super) fn duration_digest(state: &State) -> Option<String> {
+    let digest = agent_rows(state)
+        .iter()
+        .filter_map(row_duration)
+        .filter_map(|(text, advancing)| advancing.then_some(text))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!digest.is_empty()).then_some(digest)
+}
+
+/// Character budget for the activity text. The detail line is the narrowest thing in the sidebar,
+/// so the width actually available to it — the configured sidebar width less the row chrome and
+/// whatever the duration column took — beats a fixed guess that overflows a narrow sidebar and
+/// wastes a wide one.
+fn activity_budget(width: u16, duration: Option<&str>) -> usize {
+    // Gutter, glyph, their gaps, the divider, and the scrollbar column.
+    let chrome = 5;
+    let duration = duration.map_or(0, |text| text.chars().count() + 1);
+    (usize::from(width))
+        .saturating_sub(chrome)
+        .saturating_sub(duration)
+        .max(8)
+}
+
+pub(super) fn agents_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     let groups = agent_groups(&ctx.state);
     if groups.is_empty() {
-        return row::empty(ctx, "No agents detected");
+        return Vec::new();
     }
     // A lone fallback group renders flat, exactly as before grouping existed; a known project is
     // always headed, even alone — which project the agents operate in is the point of the tab.
     let show_headers = groups.len() > 1 || groups[0].project.is_some();
-    let mut body = VStack::new().gap(1);
+    let mut rows = Vec::new();
     for group in groups {
-        let mut section = VStack::new().gap(0);
+        if !rows.is_empty() {
+            rows.push(SidebarRow::spacer());
+        }
         if show_headers {
-            section = section.child(group_header(ctx, &group));
+            rows.push(SidebarRow::header(group_header(ctx, &group)));
         }
         for row in group.rows {
-            section = section.child(agent_row(ctx, row, show_headers));
+            let id = row.pane_id;
+            rows.push(SidebarRow::item(agent_row(ctx, row), RowTarget::Pane(id)));
         }
-        body = body.child(section);
     }
-    body.into()
+    rows
 }
 
 /// Whether a row is in the "finished a run, not looked at yet" state: quiescent (neither working
@@ -331,56 +452,21 @@ fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Col
     (glyph.to_string(), color, working)
 }
 
-/// One-line project header: the group's most urgent status as a glyph (rows are status-sorted, so
-/// the first row carries it), aligned with the row glyph column, then the project label. A quiet
-/// group with an unseen finish still pulses so the header alone flags a project worth revisiting.
+/// One-line project header: the project label alone, at the same column every other tab's headers
+/// use.
+///
+/// It deliberately carries no aggregated status glyph. Groups never collapse, so every row it would
+/// summarize is already on screen directly beneath it — and the glyph plus the nesting it forced
+/// cost four cells on every row of the narrowest surface in the app.
 fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
-    let status = group
-        .rows
-        .first()
-        .and_then(|row| row.status.clone())
-        .unwrap_or_else(|| pane_status::IDLE.to_string());
-    let finished_unseen = group.rows.iter().any(|row| row.finished_unseen);
-    let (glyph, color, spinner) = row_glyph(&status, finished_unseen, &ctx.state.theme);
-    let label = group.project.as_deref().unwrap_or("elsewhere");
-    let label_style = if group.project.is_some() {
-        super::super::fg_only(&ctx.state.theme.accent).bold()
-    } else {
-        super::super::fg_only(&ctx.state.theme.muted).bold()
-    };
-    // The glyph column is one cell wide with a space on each side; a spinner has to be built from
-    // those three pieces rather than a single formatted string so the animated cell stays its own
-    // widget.
-    let glyph_cell: Element = if spinner {
-        HStack::new()
-            .gap(0)
-            .height(Length::Px(1))
-            .child(Text::new(" "))
-            .child(
-                Spinner::new()
-                    .style(Style::new().fg(color))
-                    .width(Length::Px(1))
-                    .height(Length::Px(1)),
-            )
-            .child(Text::new(" "))
-            .into()
-    } else {
-        Text::new(format!(" {glyph} "))
-            .style(Style::new().fg(color))
-            .into()
-    };
-    HStack::new()
-        .gap(0)
-        .height(Length::Px(1))
-        .child(glyph_cell)
-        .child(Text::new(label.to_string()).style(label_style))
-        .into()
+    match group.project.as_deref() {
+        Some(label) => row::header(ctx, label, false),
+        None => row::header(ctx, "elsewhere", true),
+    }
 }
 
-/// A two-line agent row. `indent` nests the row under a project header: the status icon moves to
-/// the header's label column so groups read as a tree; a flat (headerless) list keeps the icon at
-/// the header glyph column.
-fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow, indent: bool) -> Element {
+/// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
+fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
     let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &ctx.state.theme);
     let status_icon: Element = if spinner {
@@ -394,28 +480,38 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow, indent: bool) -> Element 
             .height(Length::Px(1))
             .into()
     };
-    let id = row.pane_id;
-    let mut content = Row::new(row.title)
-        .marked(ctx.state.focused_pane == Some(id))
-        .indent(indent)
+    let duration = row_duration(&row).map(|(text, _)| text);
+    let mut content = Row::new(row.title.clone())
+        .active(ctx.state.focused_pane == Some(row.pane_id))
         .glyph(status_icon)
         .title_style(super::super::fg_only(&ctx.state.theme.primary))
-        .detail(
-            row_status_label(status, row.finished_unseen),
-            Style::new().fg(color),
+        // Which workspace the agent lives on. Groups are projects, and a project's agents can be
+        // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
+        // that two rows cannot be watched side by side.
+        .badge(
+            super::workspace_badge(&ctx.state, row.workspace_index),
+            super::super::fg_only(&ctx.state.theme.muted).dim(),
         );
-    if let Some(reason) = row.reason.as_deref() {
+
+    // Detail line: how long, then what. It always names a subject, so the duration is never a bare
+    // number with nothing to modify — the activity when the agent published one, and the status
+    // word otherwise. A canonical status yields to a real activity, since its glyph already carries
+    // it; a custom one like "compacting" keeps its word either way, having only a `•` to lean on.
+    if let Some(duration) = duration.as_deref() {
+        content = content.detail(duration.to_string(), Style::new().fg(color));
+    }
+    let label = row_status_label(status, row.finished_unseen);
+    if !status_is_canonical(&label) || row.activity.is_none() {
+        content = content.detail(label, Style::new().fg(color));
+    }
+    if let Some(activity) = row.activity.as_deref() {
+        let budget = activity_budget(ctx.state.config.sidebar.width, duration.as_deref());
         content = content.detail(
-            truncate_reason(reason),
+            row::truncate(activity, budget),
             super::super::fg_only(&ctx.state.theme.muted).dim(),
         );
     }
-    let content = content.build(ctx);
-    MouseRegion::new()
-        .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
-        .on_click(ctx.link().callback(move |_| Msg::SidebarFocusPane(id)))
-        .child(content)
-        .key(format!("sidebar-agent-{id}"))
+    content
 }
 
 #[cfg(test)]
@@ -606,6 +702,155 @@ mod tests {
     }
 
     #[test]
+    fn activity_prefers_a_reported_reason_over_the_terminal_title() {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.title = Some("✳ writing the parser".into());
+        pane.reported_status = Some(PaneStatus {
+            value: "working".into(),
+            reason: Some("running tests".into()),
+            set_at: 1,
+        });
+        assert_eq!(
+            activity_text(&pane, "Claude Code").as_deref(),
+            Some("running tests")
+        );
+
+        // No reason: the title carries it, minus the agent's own status glyph.
+        pane.reported_status = None;
+        assert_eq!(
+            activity_text(&pane, "Claude Code").as_deref(),
+            Some("writing the parser")
+        );
+
+        // A blank reason is not an answer; fall through to the title rather than showing nothing.
+        pane.reported_status = Some(PaneStatus {
+            value: "working".into(),
+            reason: Some("   ".into()),
+            set_at: 1,
+        });
+        assert_eq!(
+            activity_text(&pane, "Claude Code").as_deref(),
+            Some("writing the parser")
+        );
+    }
+
+    #[test]
+    fn activity_drops_a_title_that_says_nothing_the_row_does_not_already() {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.cwd = Some("/home/you/repo".into());
+
+        // The shell's `$PWD` title, in both spellings, and the bare directory name.
+        for echo in ["/home/you/repo", "~/repo", "repo"] {
+            pane.title = Some(echo.to_string());
+            assert_eq!(activity_text(&pane, "Claude Code"), None, "{echo}");
+        }
+
+        // The agent's own name is already the row's title.
+        pane.title = Some("Claude Code".into());
+        assert_eq!(activity_text(&pane, "Claude Code"), None);
+
+        // Decoration alone leaves nothing behind.
+        pane.title = Some("✳".into());
+        assert_eq!(activity_text(&pane, "Claude Code"), None);
+
+        // A real task survives, and ASCII punctuation in it is left alone.
+        pane.title = Some("[2/7] ~/repo cleanup".into());
+        assert_eq!(
+            activity_text(&pane, "Claude Code").as_deref(),
+            Some("[2/7] ~/repo cleanup")
+        );
+    }
+
+    #[test]
+    fn durations_coarsen_and_idle_rows_show_none() {
+        use std::time::Duration;
+        assert_eq!(format_age(Duration::from_secs(0)), "0s");
+        assert_eq!(format_age(Duration::from_secs(59)), "59s");
+        assert_eq!(format_age(Duration::from_secs(60)), "1m");
+        assert_eq!(format_age(Duration::from_secs(59 * 60 + 59)), "59m");
+        assert_eq!(format_age(Duration::from_secs(60 * 60)), "1h");
+        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60 - 1)), "23h");
+        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60)), "1d");
+
+        let row = |status: &str, finished_unseen: bool| AgentRow {
+            pane_id: 1,
+            workspace_index: 0,
+            pane_index: 0,
+            title: "Claude Code".into(),
+            status: Some(status.to_string()),
+            activity: None,
+            age: Some(Duration::from_secs(90)),
+            run: Some(Duration::from_secs(12 * 60)),
+            cwd: None,
+            cwd_host: None,
+            finished_unseen,
+        };
+        // A live state reports how long it has held, and keeps advancing.
+        assert_eq!(
+            row_duration(&row("working", false)),
+            Some(("1m".into(), true))
+        );
+        assert_eq!(
+            row_duration(&row("compacting", false)),
+            Some(("1m".into(), true))
+        );
+        // Idle times nothing: the row still gets its second line, but from the status word alone.
+        assert_eq!(row_duration(&row("idle", false)), None);
+        // A finished run reports what it cost — the banked 12m, not the 90s since it stopped — and
+        // stops advancing, so the tick has nothing left to refresh.
+        assert_eq!(
+            row_duration(&row("idle", true)),
+            Some(("12m".into(), false))
+        );
+        assert_eq!(
+            row_duration(&row("done", false)),
+            Some(("12m".into(), false))
+        );
+    }
+
+    /// A client that attached after a run had already finished never saw it start, so there is no
+    /// honest length to show. Nothing beats a number invented from the wrong clock.
+    #[test]
+    fn a_finished_run_with_no_banked_length_shows_no_duration() {
+        let row = AgentRow {
+            pane_id: 1,
+            workspace_index: 0,
+            pane_index: 0,
+            title: "Claude Code".into(),
+            status: Some("done".into()),
+            activity: None,
+            age: Some(std::time::Duration::from_secs(90)),
+            run: None,
+            cwd: None,
+            cwd_host: None,
+            finished_unseen: false,
+        };
+        assert_eq!(row_duration(&row), None);
+    }
+
+    #[test]
+    fn only_statuses_without_a_glyph_of_their_own_keep_their_word() {
+        for canonical in ["working", " BLOCKED ", "Done", "idle"] {
+            assert!(status_is_canonical(canonical), "{canonical}");
+        }
+        for custom in ["compacting", "waiting-on-ci", "review"] {
+            assert!(!status_is_canonical(custom), "{custom}");
+        }
+    }
+
+    #[test]
+    fn activity_budget_tracks_the_configured_width() {
+        // A default 32-wide sidebar, after a "12m" column.
+        assert_eq!(activity_budget(32, Some("12m")), 23);
+        // No duration column hands its width back to the text.
+        assert_eq!(activity_budget(32, None), 27);
+        // A wider sidebar spends the whole difference on the activity.
+        assert_eq!(activity_budget(48, Some("12m")), 39);
+        // A sidebar too narrow to budget for still gets a floor rather than zero.
+        assert_eq!(activity_budget(8, Some("12m")), 8);
+    }
+
+    #[test]
     fn reported_status_overrides_detected_state() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         let pane = &mut state.workspaces[0].panes[0];
@@ -620,6 +865,6 @@ mod tests {
         });
         let rows = agent_rows(&state);
         assert_eq!(rows[0].status.as_deref(), Some("blocked"));
-        assert_eq!(rows[0].reason.as_deref(), Some("approval"));
+        assert_eq!(rows[0].activity.as_deref(), Some("approval"));
     }
 }

@@ -585,7 +585,7 @@ mod tests {
                 "name = \"dev\"\n",
                 "synchronized = true\n",
                 "layout = \"master\"\n",
-                "split_ratios = [0.4000000059604645]\n",
+                "split_ratios = [0.4]\n",
                 "focused_pane = 2\n",
                 "panes = []\n",
                 "\n",

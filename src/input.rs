@@ -26,6 +26,8 @@ pub enum Action {
     RenamePane,
     RenameWorkspace,
     Paste,
+    /// Trade slots with the directional neighbor, keeping the layout's shape. Contrast [`Self::Move`],
+    /// which lifts the pane out and re-inserts it beside that neighbor, reshaping the tree.
     Swap(Direction),
     CycleFocus(bool),
     PromoteToMaster,
@@ -63,6 +65,9 @@ pub enum Action {
     ToggleWorkbarPosition,
     ToggleWorkbarPowerline,
     ToggleSidebar,
+    /// Move keyboard focus into the sidebar's row list. The sidebar is outside the Tab ring and
+    /// click-to-focus, so this is the only way in.
+    FocusSidebar,
     SidebarNextTab,
     SidebarPrevTab,
     ToggleAnimations,
@@ -154,6 +159,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::ToggleWorkbarPosition,
     Action::ToggleWorkbarPowerline,
     Action::ToggleSidebar,
+    Action::FocusSidebar,
     Action::SidebarNextTab,
     Action::SidebarPrevTab,
     Action::ToggleAnimations,
@@ -247,6 +253,7 @@ impl Action {
             Action::ToggleWorkbarPosition => "toggle-workbar-position",
             Action::ToggleWorkbarPowerline => "toggle-workbar-powerline",
             Action::ToggleSidebar => "toggle-sidebar",
+            Action::FocusSidebar => "focus-sidebar",
             Action::SidebarNextTab => "sidebar-next-tab",
             Action::SidebarPrevTab => "sidebar-prev-tab",
             Action::ToggleAnimations => "toggle-animations",

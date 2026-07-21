@@ -38,6 +38,25 @@ pub struct SidebarState {
     /// Focused pane and its last observed command phase, used to refresh git status on the edge
     /// into `Completed` — the moment a command has finished changing the working tree.
     pub last_command_phase: Option<(crate::state::PaneId, PaneCommandPhase)>,
+    /// Whether the row list currently owns keyboard focus. Mirrored from the body widget's
+    /// `on_focus`/`on_blur` rather than set directly, so it cannot disagree with the framework
+    /// about where focus actually is — clicking a pane blurs the body and clears this on its own.
+    pub focused: bool,
+    /// Row index of the keyboard cursor. `List` keeps no selection state of its own — it is fully
+    /// controlled — so the cursor lives here and moves in response to the widget's `on_select`.
+    /// Reset whenever the row list is replaced wholesale, which is a tab change.
+    pub cursor: usize,
+    /// Ignore stale pointer position after keyboard navigation changes the row cursor. The next
+    /// real mouse movement clears this, matching `List`/`Tree` item-hover behavior.
+    pub suppress_row_hover: bool,
+    /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the
+    /// once-a-second duration ticks into a bare reschedule instead of a repaint, the same way the
+    /// workbar clock avoids redrawing an identical badge.
+    pub last_agent_durations: Option<String>,
+    /// Whether a duration tick chain is currently running. Several sites can want one — a tab
+    /// change, revealing the sidebar, an agent changing state — and without this each would start
+    /// its own chain, so the sidebar would repaint once a second per arming.
+    pub agent_tick_armed: bool,
 }
 
 impl SidebarState {

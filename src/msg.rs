@@ -31,11 +31,23 @@ pub enum Msg {
     SelectTheme(usize),
     ThemeTick,
     WorkbarTick,
+    /// Advance the Agents sidebar's elapsed-time column. Self-rescheduling while the tab is showing
+    /// a duration; see [`crate::update::sidebar::arm_agent_tick`].
+    AgentTick,
     /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
     /// A `WorkbarSegment::Command` poller produced fresh output: (command string, first output line).
     WorkbarCommandOutput(String, String),
     SidebarTabSelected(crate::config::SidebarTabId),
+    SidebarPointerMoved,
+    /// A row in the sidebar's list was activated by Enter or by a click — `List` routes both
+    /// through `on_activate`, so the two gestures cannot drift apart. The index is resolved
+    /// against a freshly rebuilt row list, which is a pure function of `State`.
+    SidebarRowActivate(usize),
+    /// Escape while the row list has focus: hand the keyboard back to the pane.
+    SidebarBlur,
+    /// Tab / Shift-Tab while the row list has focus.
+    SidebarCycleTab(bool),
     SidebarFocusPane(PaneId),
     SidebarLauncherActivate {
         config_epoch: u64,

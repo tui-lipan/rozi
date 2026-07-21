@@ -3,6 +3,7 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::config::{SidebarTab, SidebarTabId, UserCommandAction};
 use crate::state::{SidebarCommandOutput, SidebarCommandRow};
+use crate::view::sidebar::RowTarget;
 
 const SESSION_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -72,6 +73,41 @@ pub(crate) fn request_command_poll(ctx: &Context<HyprmuxApp>) {
     }
 }
 
+/// Start the Agents tab's elapsed-time tick unless one is already running or there is nothing to
+/// advance. Sent rather than returned as a command so the call sites — which already return
+/// commands of their own — do not have to compose two.
+pub(crate) fn arm_agent_tick(ctx: &mut Context<HyprmuxApp>) {
+    if ctx.state.sidebar.agent_tick_armed
+        || crate::view::sidebar::agent_durations(&ctx.state).is_none()
+    {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    ctx.state.sidebar.agent_tick_armed = true;
+    link.send(crate::Msg::AgentTick);
+}
+
+/// One step of the Agents tab's elapsed-time refresh: reschedule while the column is on screen,
+/// repaint only when the text it would show actually differs. A row sitting at `12m` therefore
+/// costs one string comparison a second rather than sixty repaints, and the chain stops outright
+/// once nothing is showing a duration.
+pub(super) fn agent_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let current = crate::view::sidebar::agent_durations(&ctx.state);
+    if current.is_none() {
+        ctx.state.sidebar.agent_tick_armed = false;
+        ctx.state.sidebar.last_agent_durations = None;
+        return Update::none();
+    }
+    let command = crate::schedule_agent_tick();
+    if ctx.state.sidebar.last_agent_durations == current {
+        return Update::command_only(command);
+    }
+    ctx.state.sidebar.last_agent_durations = current;
+    Update::with_command(command)
+}
+
 pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> Update {
     if ctx
         .state
@@ -87,6 +123,15 @@ pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> U
         ctx.state.sidebar.invalidate_sessions();
         ctx.state.sidebar.invalidate_commands();
         ctx.state.sidebar.active_tab = Some(id);
+        // A different tab is a different row list; carrying the old index over would drop the
+        // cursor somewhere arbitrary.
+        ctx.state.sidebar.cursor = 0;
+        // Clicking the tab strip does not move focus — the strip is not focusable and the sidebar
+        // is outside click-to-focus — but the body it was on unmounts, and focus goes with it. The
+        // file tree feels this worst: each tree keys on its root, so even Files -> Git is a
+        // remount, and without this the keyboard would be left pointing at nothing.
+        refocus_body(ctx);
+        arm_agent_tick(ctx);
         if sessions_active(ctx) {
             open_sessions(ctx)
         } else {
@@ -97,14 +142,87 @@ pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> U
     }
 }
 
+/// Re-aim keyboard focus at the active tab's body after the previous one unmounted. A no-op unless
+/// the sidebar already had the keyboard — switching tabs with the mouse must not steal it.
+fn refocus_body(ctx: &mut Context<HyprmuxApp>) {
+    if !ctx.state.sidebar.focused {
+        return;
+    }
+    let key = crate::view::sidebar_focus_key(ctx);
+    ctx.request_focus(key);
+}
+
 pub(crate) fn visibility_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
+    // Hiding the sidebar unmounts the body, so hand the keyboard back before it disappears rather
+    // than leaving focus on a widget that is about to stop existing.
+    if !ctx.state.sidebar_visible && ctx.state.sidebar.focused {
+        ctx.state.sidebar.focused = false;
+        release_focus(ctx);
+    }
     ctx.state.sidebar.invalidate_sessions();
     ctx.state.sidebar.invalidate_commands();
+    arm_agent_tick(ctx);
     if sessions_active(ctx) {
         open_sessions(ctx)
     } else {
         start_active_command(ctx)
     }
+}
+
+/// `focus-sidebar`: reveal the sidebar if it is hidden, then move keyboard focus into its row list.
+/// The body sits in a `FocusScope::Exclude` subtree, so an explicit keyed request is the only way
+/// in — Tab and clicks deliberately cannot do this.
+pub(crate) fn focus_body(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let command = if ctx.state.sidebar_visible {
+        None
+    } else {
+        ctx.state.sidebar_visible = true;
+        visibility_changed(ctx).command
+    };
+    // Resolves after reconciliation, so requesting it in the same pass that reveals the sidebar is
+    // fine even though the body has not mounted yet.
+    let key = crate::view::sidebar_focus_key(ctx);
+    ctx.request_focus(key);
+    // The request resolves after reconciliation, so record the intent now. Nothing can read this
+    // back off the framework — the body sits in a `FocusScope::Exclude` subtree, which is invisible
+    // to `has_focus_within_key` — so `ops::focus` retracts it whenever focus goes elsewhere.
+    ctx.state.sidebar.focused = true;
+    ctx.state.sidebar.suppress_row_hover = true;
+    ctx.state.commands_dirty = true;
+    Update::with_command(command)
+}
+
+/// Escape from the sidebar: give the keyboard back to the focused pane.
+pub(crate) fn blur_body(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.sidebar.focused {
+        return Update::none();
+    }
+    ctx.state.sidebar.focused = false;
+    ctx.state.commands_dirty = true;
+    release_focus(ctx);
+    Update::full()
+}
+
+/// Drop focus from the sidebar body and hand it to the focused pane when there is one to hand it
+/// to. The unconditional `blur` matters: a pane whose terminal has not come up yet refuses focus,
+/// and without this the sidebar would keep the keyboard with no way out.
+fn release_focus(ctx: &mut Context<HyprmuxApp>) {
+    ctx.blur();
+    crate::ops::focus::request_current_pane_focus(ctx);
+}
+
+/// Tab / Shift-Tab while the body has focus. Cycling remounts the body under a new key, so focus
+/// has to be re-requested for the tab the user just landed on.
+pub(crate) fn cycle_tab(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update {
+    if !ctx.state.sidebar_visible {
+        return Update::none();
+    }
+    ctx.state.sidebar.cycle(&ctx.state.config.sidebar, forward);
+    ctx.state.sidebar.cursor = 0;
+    ctx.state.sidebar.suppress_row_hover = true;
+    let update = visibility_changed(ctx);
+    refocus_body(ctx);
+    update
 }
 
 fn open_sessions(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -131,6 +249,89 @@ fn start_active_command(ctx: &mut Context<HyprmuxApp>) -> Update {
         Update::with_command(update.command)
     } else {
         Update::full()
+    }
+}
+
+/// Move the keyboard cursor by `delta` selectable rows, stopping at the ends rather than wrapping —
+/// the row list is a panel, not a carousel, and wrapping past the last agent back to the first reads
+/// as a glitch. Headers and spacers are stepped over rather than landed on.
+pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+        return Update::none();
+    };
+    let rows = crate::view::sidebar::body_rows(ctx, &tab);
+    let selectable: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.selectable())
+        .map(|(index, _)| index)
+        .collect();
+    if selectable.is_empty() {
+        return Update::none();
+    }
+    let current = crate::view::sidebar::resolve_cursor(ctx.state.sidebar.cursor, &rows);
+    let position = current
+        .and_then(|current| selectable.iter().position(|index| *index == current))
+        .unwrap_or(0);
+    let next = position
+        .saturating_add_signed(delta)
+        .min(selectable.len() - 1);
+    let cursor = selectable[next];
+    if ctx.state.sidebar.cursor == cursor {
+        return Update::none();
+    }
+    ctx.state.sidebar.cursor = cursor;
+    ctx.state.sidebar.suppress_row_hover = true;
+    Update::full()
+}
+
+/// A real pointer move ends keyboard modality and lets row hover follow the pointer again.
+pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !ctx.state.sidebar.suppress_row_hover {
+        return Update::none();
+    }
+    ctx.state.sidebar.suppress_row_hover = false;
+    Update::full()
+}
+
+/// Enter: run whatever the row under the cursor does — the same path a click on it takes.
+pub(crate) fn activate_cursor(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+        return Update::none();
+    };
+    let rows = crate::view::sidebar::body_rows(ctx, &tab);
+    match crate::view::sidebar::resolve_cursor(ctx.state.sidebar.cursor, &rows) {
+        Some(index) => row_activate(ctx, index),
+        None => Update::none(),
+    }
+}
+
+/// A row was activated by Enter or by a click. The index is resolved against a freshly rebuilt row
+/// list — the same pure function of `State` the view rendered from — so both gestures land on the
+/// same handler and a row list that changed underneath simply resolves to nothing.
+pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+        return Update::none();
+    };
+    let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
+    if index >= rows.len() {
+        return Update::none();
+    }
+    match rows.swap_remove(index).target {
+        RowTarget::Inert => Update::none(),
+        RowTarget::Pane(id) => focus_pane(ctx, id),
+        RowTarget::Session(entry) => activate_session(ctx, *entry),
+        RowTarget::Launcher {
+            config_epoch,
+            tab_id,
+            entry_index,
+        } => launcher_activate(ctx, config_epoch, tab_id, entry_index),
+        RowTarget::CommandRow {
+            config_epoch,
+            tab_id,
+            output_epoch,
+            line,
+        } => command_row_activate(ctx, config_epoch, tab_id, output_epoch, line),
     }
 }
 

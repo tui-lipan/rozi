@@ -10,7 +10,8 @@ use crate::state::{
 };
 use crate::tiling::{
     adjust_ratio_value, adjust_tree_split_for_focused, append_tiled_window,
-    flip_tree_split_for_focused, ratio_at, remove_tiled_window, swap_tree_leaves,
+    flip_tree_split_for_focused, move_tiled_window_around_target, ratio_at, remove_tiled_window,
+    swap_tree_leaves,
 };
 
 use super::float::{
@@ -124,6 +125,7 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
     };
     if flip_tree_split_for_focused(tree, focused, 0).is_some() {
         workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
         state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -158,6 +160,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
         let workspace = &mut ctx.state.workspaces[workspace_index];
         workspace.layout_kind = workspace.layout_kind.toggled();
         workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
         workspace.layout_kind.label()
     };
     ctx.state.animation = GeometryAnimation::AxisChange;
@@ -209,18 +212,59 @@ pub(super) fn master_available_width(tile_bounds: FloatRect) -> f32 {
     (tile_bounds.w - gap).max(1.0)
 }
 
+/// Lift the focused pane out of its slot and re-insert it beside its directional neighbor,
+/// reshaping the tree — the keyboard equivalent of dropping a pane onto another with the mouse.
+/// A floating pane has no slot to leave, so it slides instead.
 pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    reorder_focused_in_direction(ctx, direction);
+    if super::float::move_focused_float(ctx, direction) {
+        return;
+    }
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let top_gap = ctx.state.workspace_top_gap();
+    let tile_gap = ctx.state.tile_gap();
+    let workspace_index = ctx.state.active_workspace;
+    let Some(focused) = ctx.state.focused_pane else {
+        return;
+    };
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+
+    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let tiled_ids = workspace.active_tiled_ids_by_pane_order();
+    if !tiled_ids.contains(&focused) {
+        return;
+    }
+    let placements: Vec<_> = workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+        .into_iter()
+        .filter(|placement| tiled_ids.contains(&placement.id))
+        .collect();
+    // Unlike a swap, this never consults `last_move_swap`: a move reshapes the tree, so there is no
+    // slot left to return to. `move_tiled_window_around_target` clears the hint for the same reason.
+    let Some(target) = strict_directional_neighbor(&placements, focused, direction) else {
+        return;
+    };
+
+    // The pane travels past its neighbor and docks on the far side, so moving left/up lands it
+    // first (leading) in the new split and right/down lands it second — the same convention
+    // `layout::drop_split_for_target` uses for a mouse drop.
+    let axis = crate::ops::focus::split_axis_for_direction(direction);
+    let moving_first = matches!(direction, Direction::Left | Direction::Up);
+    if move_tiled_window_around_target(workspace, focused, target, axis, moving_first) {
+        workspace.focused_pane = Some(focused);
+        ctx.state.focused_pane = Some(focused);
+        ctx.state.animation = GeometryAnimation::AxisChange;
+    }
 }
 
-/// Exchange the focused pane with its directional neighbor, keeping focus on the moved pane.
-/// This trades the two panes' slots in place. No-op for a floating/fullscreen focus or when
-/// there is no neighbor in that direction.
+/// Exchange the focused pane with its directional neighbor. The two trade slots in place, so the
+/// layout keeps its shape. A floating pane has nothing to trade with, so it slides instead.
 pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
-    reorder_focused_in_direction(ctx, direction);
-}
-
-fn reorder_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+    if super::float::move_focused_float(ctx, direction) {
+        return;
+    }
     let bounds = ctx
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
@@ -279,6 +323,7 @@ fn swap_tiled_neighbor_in_direction(
             return_direction: opposite_direction(direction),
             target: target_id,
         });
+        workspace.last_directional_focus = None;
     }
     swapped
 }
@@ -394,8 +439,68 @@ mod tests {
     use crate::{HyprmuxApp, Msg};
     use tui_lipan::TestBackend;
 
+    /// The two directional pane actions are different operations on the same neighbor: `Swap`
+    /// trades slots and leaves the tree's shape alone, `Move` lifts the pane out and re-inserts it
+    /// beside that neighbor. Same start, same direction, different trees.
     #[test]
-    fn directional_move_swaps_with_neighbor_instead_of_splitting_target() {
+    fn swap_keeps_the_tree_shape_where_move_reshapes_it() {
+        in_test_stack(|| {
+            let tree_after = |action: fn(Direction) -> Action| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(TEST_VIEWPORT);
+                {
+                    let state = backend.state_mut();
+                    let (_, workspace) = three_pane_stack_workspace();
+                    state.workspaces[state.active_workspace] = workspace;
+                    state.focused_pane = Some(1);
+                    state.workspaces[state.active_workspace].focused_pane = Some(1);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::RunAction(action(Direction::Right)))
+                    .expect("dispatch directional pane action");
+                let state = backend.state_mut();
+                state.workspaces[state.active_workspace].tile_tree.clone()
+            };
+
+            // Swap: 1 and 2 exchange leaves; every split and ratio is where it was.
+            assert_eq!(
+                tree_after(Action::Swap),
+                Some(DwindleTree::Split {
+                    axis: SplitAxis::Horizontal,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Leaf(2)),
+                    second: Box::new(DwindleTree::Split {
+                        axis: SplitAxis::Vertical,
+                        ratio: 0.5,
+                        first: Box::new(DwindleTree::Leaf(1)),
+                        second: Box::new(DwindleTree::Leaf(3)),
+                    }),
+                }),
+                "swap must not restructure the tree"
+            );
+
+            // Move: 1 vacates the left column (which collapses) and docks to the right of 2.
+            assert_eq!(
+                tree_after(Action::Move),
+                Some(DwindleTree::Split {
+                    axis: SplitAxis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(DwindleTree::Split {
+                        axis: SplitAxis::Horizontal,
+                        ratio: 0.5,
+                        first: Box::new(DwindleTree::Leaf(2)),
+                        second: Box::new(DwindleTree::Leaf(1)),
+                    }),
+                    second: Box::new(DwindleTree::Leaf(3)),
+                }),
+                "move must re-insert the pane beside its neighbor"
+            );
+        });
+    }
+
+    #[test]
+    fn directional_swap_trades_slots_instead_of_splitting_target() {
         let (bounds, mut workspace) = three_pane_stack_workspace();
 
         assert!(swap_tiled_neighbor_in_direction(
@@ -424,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn directional_move_returns_to_the_previous_stacked_slot() {
+    fn directional_swap_returns_to_the_previous_stacked_slot() {
         let (bounds, mut workspace) = three_pane_stack_workspace();
 
         assert!(swap_tiled_neighbor_in_direction(
@@ -448,7 +553,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_directional_move_requires_horizontal_overlap() {
+    fn vertical_directional_swap_requires_horizontal_overlap() {
         let (bounds, mut workspace) = three_pane_stack_workspace();
 
         assert!(!swap_tiled_neighbor_in_direction(

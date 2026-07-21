@@ -240,9 +240,107 @@ pub fn paths_equal(a: &str, b: &str) -> bool {
     }
 }
 
+/// Whether a path uses the Windows drive/UNC shape. Unix paths may legally contain `\` inside a
+/// segment name, so backslash splitting must be reserved for paths that are actually Windows-like.
+pub fn is_windows_path_shape(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with("\\\\")
+        || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
+}
+
+/// A path's non-empty components, split on whichever separators the path's own shape implies.
+pub fn path_segments(path: &str) -> Vec<&str> {
+    if is_windows_path_shape(path) {
+        path.split(['\\', '/']).filter(|s| !s.is_empty()).collect()
+    } else {
+        path.split('/').filter(|s| !s.is_empty()).collect()
+    }
+}
+
+/// The last component of a path — the directory or file name. `None` for a root-only path (`/`,
+/// `C:\`), which has no leaf to name.
+pub fn path_leaf(path: &str) -> Option<&str> {
+    path_segments(path).last().copied()
+}
+
+/// The user's home directory for *display* purposes: `$HOME`, or `%USERPROFILE%` on Windows.
+///
+/// Deliberately separate from [`PlatformEnv::home`], which stays Unix-only because the XDG-style
+/// directory tiers must not silently fall back to a Windows profile path. This one only ever feeds
+/// text on screen, where a Windows user does want to see `~`.
+fn display_home() -> Option<String> {
+    let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var(key)
+        .ok()
+        .map(|home| home.trim_end_matches(['/', '\\']).to_string())
+        .filter(|home| !home.is_empty())
+}
+
+/// Replace a leading home-directory prefix with `~`, for paths shown to the user. Returned
+/// unchanged when the path lies outside the home directory or there is no home directory to
+/// compare against.
+///
+/// Only ever apply this to a *local* path: a remote shell's home is not this machine's, so
+/// compressing a reported remote directory would claim a relationship that does not exist.
+pub fn compress_home(path: &str) -> String {
+    let Some(home) = display_home() else {
+        return path.to_string();
+    };
+    // A trailing separator is a spelling difference, not a different directory, and it must not be
+    // what stops `/home/you/` from matching `/home/you`.
+    let path = match path.trim_end_matches(['/', '\\']) {
+        "" => path,
+        trimmed => trimmed,
+    };
+    if paths_equal(path, &home) {
+        return "~".to_string();
+    }
+    // The separator must be part of the match, or `/home/youssef` would compress against
+    // `/home/you`.
+    for separator in ['/', '\\'] {
+        let prefix = format!("{home}{separator}");
+        if path.len() > prefix.len() && paths_equal(&path[..prefix.len()], &prefix) {
+            return format!("~{separator}{}", &path[prefix.len()..]);
+        }
+    }
+    path.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_leaf_and_segments_respect_the_path_shape() {
+        assert_eq!(path_leaf("/home/you/repo"), Some("repo"));
+        assert_eq!(path_leaf("/home/you/repo/"), Some("repo"));
+        assert_eq!(path_leaf("/"), None);
+        assert_eq!(path_leaf("C:\\Users\\you\\repo"), Some("repo"));
+        // A Unix directory whose name contains a backslash is one segment, not two.
+        assert_eq!(
+            path_segments("/home/you/my\\dir"),
+            vec!["home", "you", "my\\dir"]
+        );
+    }
+
+    #[test]
+    fn compress_home_only_matches_a_whole_leading_component() {
+        let restore = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+        let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        unsafe { std::env::set_var(key, "/home/you") };
+
+        assert_eq!(compress_home("/home/you/Work/repo"), "~/Work/repo");
+        assert_eq!(compress_home("/home/you"), "~");
+        assert_eq!(compress_home("/home/you/"), "~");
+        // A sibling whose name merely starts with the home path is not under it.
+        assert_eq!(compress_home("/home/youssef/repo"), "/home/youssef/repo");
+        assert_eq!(compress_home("/srv/build"), "/srv/build");
+
+        match restore {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
 
     fn env_with_home(home: &str) -> PlatformEnv {
         PlatformEnv {

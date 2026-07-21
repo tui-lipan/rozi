@@ -25,6 +25,15 @@ pub(crate) fn handle_key_routing(
         return (true, crate::popup::close(ctx));
     }
 
+    // The sidebar's row list and file tree are ordinary focusable widgets, so they consume their
+    // own movement keys and only what they ignore reaches here. `FileTree` has no key-handler prop,
+    // so claiming these at the root is also the one place that covers both widgets identically.
+    if ctx.state.sidebar.focused
+        && let Some(update) = handle_sidebar_key(ctx, key)
+    {
+        return (true, update);
+    }
+
     match ctx.state.mode {
         Mode::Normal => {
             if let Some(id) = source_pane {
@@ -44,6 +53,49 @@ pub(crate) fn handle_key_routing(
         }
         Mode::Hint => crate::hints::handle_hint_key(ctx, key),
     }
+}
+
+/// Keys hyprmux claims while the sidebar body has focus.
+///
+/// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
+/// composed row lists have no widget behind them, so hyprmux owns their cursor too. `PAGE_ROWS` is a
+/// fixed step rather than a viewport-derived one — the row list is short and the view follows the
+/// cursor anyway, so measuring the viewport buys nothing.
+const PAGE_ROWS: isize = 5;
+
+fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Update> {
+    use crate::update::sidebar;
+    match key.code {
+        KeyCode::Esc => return Some(sidebar::blur_body(ctx)),
+        // Tab cycles sidebar tabs rather than the focus ring: the sidebar is deliberately outside
+        // that ring, and this leaves the arrow keys free for the tree's expand/collapse.
+        KeyCode::Tab if !key.mods.shift => return Some(sidebar::cycle_tab(ctx, true)),
+        KeyCode::BackTab | KeyCode::Tab => return Some(sidebar::cycle_tab(ctx, false)),
+        _ => {}
+    }
+    if tree_tab_active(ctx) {
+        return None;
+    }
+    // `j`/`k` alongside the arrows, matching resize and copy mode — and matching the file tree,
+    // whose widget keymap has included the vim keys all along.
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),
+        KeyCode::Down | KeyCode::Char('j') => Some(sidebar::move_cursor(ctx, 1)),
+        KeyCode::PageUp => Some(sidebar::move_cursor(ctx, -PAGE_ROWS)),
+        KeyCode::PageDown => Some(sidebar::move_cursor(ctx, PAGE_ROWS)),
+        KeyCode::Home | KeyCode::Char('g') => Some(sidebar::move_cursor(ctx, isize::MIN)),
+        KeyCode::End | KeyCode::Char('G') => Some(sidebar::move_cursor(ctx, isize::MAX)),
+        KeyCode::Enter => Some(sidebar::activate_cursor(ctx)),
+        _ => None,
+    }
+}
+
+/// The file tree owns its own keyboard navigation; the composed row lists do not.
+fn tree_tab_active(ctx: &Context<HyprmuxApp>) -> bool {
+    matches!(
+        crate::view::sidebar::active_tab(ctx),
+        Some(crate::config::SidebarTab::Tree { .. })
+    )
 }
 
 fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {

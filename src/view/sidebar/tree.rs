@@ -1,6 +1,5 @@
 use tui_lipan::prelude::*;
 
-use super::row;
 use crate::config::{SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView};
 use crate::{HyprmuxApp, Msg};
 
@@ -17,20 +16,15 @@ pub(super) fn tree_tab(
 ) -> Element {
     let theme = &ctx.state.theme;
     let Some(root) = root_for(ctx, config.root) else {
-        return row::empty(ctx, empty_reason(ctx, config.root));
+        return super::placeholder(ctx, empty_reason(ctx, config.root));
     };
 
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
     let config_epoch = ctx.state.sidebar.config_epoch;
 
-    // The selected row reads like the active workspace/sidebar tab, so the three selection surfaces
-    // are one visual language. The tree never takes keyboard focus, so it always renders the
-    // unfocused selection — but both are set so it looks right regardless.
-    let selection = Style::new()
-        .fg(theme.surface.backdrop)
-        .bg(theme.border_active)
-        .bold();
+    // The same lift the composed row lists use, so the cursor means one thing across every tab.
+    let selection = super::row_highlight(theme);
 
     let mut tree = FileTree::new(root.clone())
         .show_hidden(config.show_hidden)
@@ -46,9 +40,10 @@ pub(super) fn tree_tab(
         // cannot assume the user's terminal font has them, and the rest of the sidebar is text.
         .git_icon_style(GitIconStyle::Text)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)
-        // Keyboard focus belongs to the panes. The sidebar is mouse-driven throughout, so the tree
-        // must not enter the focus ring and start swallowing keys meant for the terminal.
-        .focusable(false)
+        // Focusable so the selected row can be a real keyboard cursor, but never a tab stop: the
+        // focus ring belongs to the panes, and the enclosing `FocusScope::Exclude` additionally
+        // keeps clicks from focusing it. `focus-sidebar` is the only way in.
+        .focusable(true)
         .tab_stop(false)
         .directory_label_style(super::super::fg_only(&theme.accent))
         .file_label_style(super::super::fg_only(&theme.primary))
@@ -76,9 +71,12 @@ pub(super) fn tree_tab(
             "Directory is empty"
         })
         .empty_text_style(super::super::fg_only(&theme.muted))
-        .item_hover_style(Style::new().bg(theme.surface.element.elevate(0.08)))
+        .item_hover_style(super::row_highlight(theme))
         .selection_style(selection)
-        .unfocused_selection_style(selection)
+        // With the keyboard elsewhere the cursor leaves no mark: a click here is a one-shot action,
+        // not a "this row is now current" state, and a highlight parked on the last-clicked file
+        // claims otherwise. Hover is what gives the mouse its feedback.
+        .unfocused_selection_style(Style::default())
         // A single click both expands a directory and, in the widget, "activates" it. Activation is
         // what runs the tab's action, and running it for a directory would type the directory's
         // path at the prompt just because it was opened. Only files carry the action; the widget
@@ -102,9 +100,19 @@ pub(super) fn tree_tab(
             .explorer_match_style(super::super::fg_only(&theme.accent).bold());
     }
 
-    // Keyed on the root so switching projects remounts the tree rather than reusing another
-    // directory's expansion and selection state.
-    tree.key(format!("sidebar-tree-{}-{root}", view.id()))
+    tree.key(tree_key(view, &root))
+}
+
+/// Keyed on the root so switching projects remounts the tree rather than reusing another
+/// directory's expansion and selection state. Built here rather than inline so `focus-sidebar` can
+/// aim at the same key the view is about to render.
+pub(super) fn tree_key(view: SidebarTreeView, root: &str) -> String {
+    format!("{}-{}-{root}", crate::view::sidebar_body_key(), view.id())
+}
+
+/// The directory a tab is rooted at, exposed so the focus key can be derived without rendering.
+pub(super) fn tree_root(ctx: &Context<HyprmuxApp>, config: &SidebarTreeConfig) -> Option<String> {
+    root_for(ctx, config.root)
 }
 
 /// The directory a tab is rooted at. `Repo` falls back to the working directory when it is not

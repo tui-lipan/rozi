@@ -69,6 +69,12 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     } else if state.mode == Mode::Hint {
         trailing.push(TrailingChip::badge(" HINT ", text_fg, theme.status.info));
     }
+    // Not a `Mode`: the sidebar owning the keyboard is ordinary widget focus, and the framework is
+    // the authority on that. Mirroring it into a mode would be a second source of truth that goes
+    // stale the moment a click moves focus somewhere else.
+    if state.sidebar.focused {
+        trailing.push(TrailingChip::badge(" SIDEBAR ", text_fg, theme.status.info));
+    }
     // Keep session identity in the configured session badge and collaboration state in one chip.
     // A normal solo client needs no status; read-only remains visible because it explains why
     // typing is blocked.

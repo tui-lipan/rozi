@@ -4,7 +4,7 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{closest_pane_to_rect, directional_score};
 use crate::layout::{placement_for, workspace_target_rects};
-use crate::state::{Direction, Pane, PaneId, State, Workspace};
+use crate::state::{Direction, DirectionalFocusHint, Pane, PaneId, State, Workspace};
 use crate::tiling::{self, append_tiled_window, remove_tiled_window};
 use crate::view;
 
@@ -126,7 +126,7 @@ fn focus_in_direction_with_wrap(
         focus_pane(state, id);
         return Some(id);
     };
-    let next = candidates
+    let geometric = candidates
         .iter()
         .filter(|candidate| candidate.id != focused)
         .filter_map(|candidate| {
@@ -136,34 +136,155 @@ fn focus_in_direction_with_wrap(
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(id, _)| id)
         .or_else(|| {
-            wrap.then(|| cycle_focus_id(&candidates, focused, direction))
+            wrap.then(|| wrapped_focus_id(&candidates, current, direction))
                 .flatten()
         });
+    let remembered = remembered_focus_target(workspace, &candidates, focused, direction);
+    let next = prefer_aligned_focus_target(&candidates, current, direction, remembered, geometric);
 
     if let Some(next_id) = next {
         focus_pane(state, next_id);
+        state.workspaces[state.active_workspace].last_directional_focus =
+            Some(DirectionalFocusHint {
+                pane: next_id,
+                entry_direction: direction,
+                target: focused,
+            });
         Some(next_id)
     } else {
         None
     }
 }
 
-pub(crate) fn cycle_focus_id(
+fn remembered_focus_target(
+    workspace: &Workspace,
     candidates: &[tiling::PanePlacement],
     focused: PaneId,
     direction: Direction,
 ) -> Option<PaneId> {
-    let index = candidates
-        .iter()
-        .position(|candidate| candidate.id == focused)
-        .unwrap_or(0);
-    let next_index = match direction {
-        Direction::Left | Direction::Up => index
-            .checked_sub(1)
-            .unwrap_or_else(|| candidates.len().saturating_sub(1)),
-        Direction::Right | Direction::Down => (index + 1) % candidates.len(),
+    let hint = workspace.last_directional_focus?;
+    (hint.pane == focused
+        && split_axis_for_direction(direction) == split_axis_for_direction(hint.entry_direction)
+        && candidates
+            .iter()
+            .any(|candidate| candidate.id == hint.target))
+    .then_some(hint.target)
+}
+
+fn prefer_aligned_focus_target(
+    candidates: &[tiling::PanePlacement],
+    current: &tiling::PanePlacement,
+    direction: Direction,
+    remembered: Option<PaneId>,
+    geometric: Option<PaneId>,
+) -> Option<PaneId> {
+    let (Some(remembered), Some(geometric)) = (remembered, geometric) else {
+        return geometric;
     };
-    candidates.get(next_index).map(|candidate| candidate.id)
+    let remembered_rect = candidates
+        .iter()
+        .find(|candidate| candidate.id == remembered)?
+        .rect;
+    let geometric_rect = candidates
+        .iter()
+        .find(|candidate| candidate.id == geometric)?
+        .rect;
+    if cross_axis_gap(current.rect, remembered_rect, direction)
+        <= cross_axis_gap(current.rect, geometric_rect, direction)
+    {
+        Some(remembered)
+    } else {
+        Some(geometric)
+    }
+}
+
+fn wrapped_focus_id(
+    candidates: &[tiling::PanePlacement],
+    current: &tiling::PanePlacement,
+    direction: Direction,
+) -> Option<PaneId> {
+    candidates
+        .iter()
+        .filter(|candidate| candidate.id != current.id)
+        .min_by(|a, b| compare_wrap_candidates(current.rect, a.rect, b.rect, direction))
+        .map(|candidate| candidate.id)
+}
+
+fn compare_wrap_candidates(
+    current: FloatRect,
+    a: FloatRect,
+    b: FloatRect,
+    direction: Direction,
+) -> std::cmp::Ordering {
+    let rank = |candidate: FloatRect| {
+        let (current_start, current_end, candidate_start, candidate_end, opposite_edge) =
+            match direction {
+                Direction::Left => (
+                    current.y,
+                    current.y + current.h,
+                    candidate.y,
+                    candidate.y + candidate.h,
+                    -(candidate.x + candidate.w),
+                ),
+                Direction::Right => (
+                    current.y,
+                    current.y + current.h,
+                    candidate.y,
+                    candidate.y + candidate.h,
+                    candidate.x,
+                ),
+                Direction::Up => (
+                    current.x,
+                    current.x + current.w,
+                    candidate.x,
+                    candidate.x + candidate.w,
+                    -(candidate.y + candidate.h),
+                ),
+                Direction::Down => (
+                    current.x,
+                    current.x + current.w,
+                    candidate.x,
+                    candidate.x + candidate.w,
+                    candidate.y,
+                ),
+            };
+        let cross_gap = interval_gap(current_start, current_end, candidate_start, candidate_end);
+        let center_offset =
+            ((candidate_start + candidate_end) - (current_start + current_end)).abs();
+        (cross_gap, opposite_edge, center_offset)
+    };
+    let a = rank(a);
+    let b = rank(b);
+    a.0.total_cmp(&b.0)
+        .then_with(|| a.1.total_cmp(&b.1))
+        .then_with(|| a.2.total_cmp(&b.2))
+}
+
+fn cross_axis_gap(current: FloatRect, candidate: FloatRect, direction: Direction) -> f32 {
+    match direction {
+        Direction::Left | Direction::Right => interval_gap(
+            current.y,
+            current.y + current.h,
+            candidate.y,
+            candidate.y + candidate.h,
+        ),
+        Direction::Up | Direction::Down => interval_gap(
+            current.x,
+            current.x + current.w,
+            candidate.x,
+            candidate.x + candidate.w,
+        ),
+    }
+}
+
+fn interval_gap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
+    if b_end < a_start {
+        a_start - b_end
+    } else if b_start > a_end {
+        b_start - a_end
+    } else {
+        0.0
+    }
 }
 
 /// Move focus to the next/previous tiled pane in `tiled_ids()` order, wrapping around. If
@@ -220,6 +341,7 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
         state.focused_pane = Some(focused);
         state.workspaces[state.active_workspace].focused_pane = Some(focused);
         state.workspaces[state.active_workspace].last_move_swap = None;
+        state.workspaces[state.active_workspace].last_directional_focus = None;
         true
     } else {
         false
@@ -381,6 +503,7 @@ fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
     std::mem::swap(&mut a.start_axis, &mut b.start_axis);
     std::mem::swap(&mut a.split_ratios, &mut b.split_ratios);
     std::mem::swap(&mut a.last_move_swap, &mut b.last_move_swap);
+    std::mem::swap(&mut a.last_directional_focus, &mut b.last_directional_focus);
     std::mem::swap(&mut a.name, &mut b.name);
 }
 
@@ -393,6 +516,7 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
     to.start_axis = from.start_axis;
     to.split_ratios.clone_from(&from.split_ratios);
     to.last_move_swap = from.last_move_swap.take();
+    to.last_directional_focus = from.last_directional_focus.take();
     to.name = from.name.take();
 }
 
@@ -406,6 +530,14 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
 /// participate; the scratchpad keeps its own focus lifecycle and must not hijack `focused_pane`.
 pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
     if !ctx.state.config.pane.focus_on_hover {
+        return Update::none();
+    }
+    // Hover-focus is ambient: it follows the pointer with no intent behind it. While the app owns
+    // the keyboard — the sidebar, or resize/copy/hint mode — that must not override the mode the
+    // user deliberately entered. Reaching the sidebar with the mouse means crossing panes, and that
+    // transit would otherwise hand the keyboard back before the click arrived. Clicking a pane is
+    // still a deliberate act and still leaves, so there is always a way out.
+    if ctx.state.sidebar.focused || ctx.state.mode != crate::state::Mode::Normal {
         return Update::none();
     }
     if ctx.state.focused_pane == Some(id) {
@@ -429,6 +561,7 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
     let previous = state.focused_pane;
+    state.workspaces[state.active_workspace].last_directional_focus = None;
     if let Some(pane) = state.workspaces[state.active_workspace]
         .panes
         .iter_mut()
@@ -585,7 +718,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
     if crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
-        ctx.request_focus(view::pane_terminal_key(id));
+        focus_key(ctx, view::pane_terminal_key(id));
     }
 }
 
@@ -595,36 +728,47 @@ pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
+/// Every "give focus to something that is not the sidebar" goes through here.
+///
+/// The sidebar body lives in a `FocusScope::Exclude` subtree, and an excluded subtree is invisible
+/// to `has_focus_within_key` — so hyprmux cannot ask the framework whether the sidebar still holds
+/// the keyboard. `sidebar.focused` is therefore app-owned intent, and this is the one place that
+/// has to retract it.
+fn focus_key(ctx: &mut Context<HyprmuxApp>, key: impl Into<tui_lipan::Key>) {
+    ctx.state.sidebar.focused = false;
+    ctx.request_focus(key);
+}
+
 pub(crate) fn request_search_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::search_input_key());
+    focus_key(ctx, view::search_input_key());
 }
 
 pub(crate) fn request_rename_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::rename_input_key());
+    focus_key(ctx, view::rename_input_key());
 }
 
 pub(crate) fn request_rename_session_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::rename_session_input_key());
+    focus_key(ctx, view::rename_session_input_key());
 }
 
 pub(crate) fn request_save_profile_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::save_profile_key());
+    focus_key(ctx, view::save_profile_key());
 }
 
 pub(crate) fn request_profile_picker_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::profile_picker_key());
+    focus_key(ctx, view::profile_picker_key());
 }
 
 pub(crate) fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::theme_picker_key());
+    focus_key(ctx, view::theme_picker_key());
 }
 
 pub(crate) fn request_palette_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::palette_key());
+    focus_key(ctx, view::palette_key());
 }
 
 pub(crate) fn request_session_picker_focus(ctx: &mut Context<HyprmuxApp>) {
-    ctx.request_focus(view::session_picker_key());
+    focus_key(ctx, view::session_picker_key());
 }
 
 pub(crate) fn total_visible_panes(state: &State) -> usize {
@@ -662,6 +806,41 @@ mod tests {
         state
     }
 
+    fn state_with_floating(placements: &[(PaneId, FloatRect)]) -> State {
+        let ids = placements.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let mut state = state_with_tiled(&ids);
+        for pane in &mut state.workspaces[0].panes {
+            pane.floating = true;
+            pane.floating_rect = placements
+                .iter()
+                .find_map(|(id, rect)| (*id == pane.id).then_some(*rect))
+                .expect("pane placement");
+        }
+        state
+    }
+
+    fn assert_directional_sequence(
+        placements: &[(PaneId, FloatRect)],
+        start: PaneId,
+        directions: &[Direction],
+        expected: &[PaneId],
+    ) {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_floating(placements);
+        state.focused_pane = Some(start);
+        for (&direction, &expected) in directions.iter().zip(expected) {
+            assert_eq!(
+                focus_in_direction(&mut state, direction, viewport),
+                Some(expected)
+            );
+        }
+    }
+
     #[test]
     fn cycle_focus_wraps_in_both_directions() {
         let mut state = state_with_tiled(&[1, 2, 3]);
@@ -693,6 +872,177 @@ mod tests {
             Some(1)
         );
         assert_eq!(state.focused_pane, Some(1));
+    }
+
+    #[test]
+    fn directional_focus_wraps_within_the_same_row_or_column() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3, 4]);
+        state.workspaces[0].layout_kind = LayoutKind::Grid;
+
+        state.focused_pane = Some(2);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Right, viewport),
+            Some(1)
+        );
+
+        state.focused_pane = Some(1);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(2)
+        );
+
+        state.focused_pane = Some(3);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Down, viewport),
+            Some(1)
+        );
+
+        state.focused_pane = Some(1);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn directional_focus_returns_to_the_pane_that_entered_a_spanning_pane() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let vertical = [
+            (
+                1,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                2,
+                FloatRect {
+                    x: 51.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                3,
+                FloatRect {
+                    x: 0.0,
+                    y: 15.0,
+                    w: 100.0,
+                    h: 14.0,
+                },
+            ),
+        ];
+        for source in [1, 2] {
+            for return_direction in [Direction::Down, Direction::Up] {
+                let mut state = state_with_floating(&vertical);
+                state.focused_pane = Some(source);
+                assert_eq!(
+                    focus_in_direction(&mut state, Direction::Down, viewport),
+                    Some(3)
+                );
+                assert_eq!(
+                    focus_in_direction(&mut state, return_direction, viewport),
+                    Some(source)
+                );
+            }
+        }
+        let mut state = state_with_floating(&vertical);
+        state.focused_pane = Some(3);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(1)
+        );
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(2)
+        );
+        for direction in [Direction::Up, Direction::Down] {
+            assert_directional_sequence(&vertical, 2, &[direction; 3], &[3, 2, 3]);
+        }
+
+        let horizontal = [
+            (
+                1,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                2,
+                FloatRect {
+                    x: 0.0,
+                    y: 15.0,
+                    w: 49.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                3,
+                FloatRect {
+                    x: 51.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 29.0,
+                },
+            ),
+        ];
+        for source in [1, 2] {
+            for return_direction in [Direction::Right, Direction::Left] {
+                let mut state = state_with_floating(&horizontal);
+                state.focused_pane = Some(source);
+                assert_eq!(
+                    focus_in_direction(&mut state, Direction::Right, viewport),
+                    Some(3)
+                );
+                assert_eq!(
+                    focus_in_direction(&mut state, return_direction, viewport),
+                    Some(source)
+                );
+            }
+        }
+        let mut state = state_with_floating(&horizontal);
+        state.focused_pane = Some(3);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(1)
+        );
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(2)
+        );
+        for direction in [Direction::Left, Direction::Right] {
+            assert_directional_sequence(&horizontal, 2, &[direction; 3], &[3, 2, 3]);
+        }
+        assert_directional_sequence(
+            &horizontal,
+            3,
+            &[Direction::Up, Direction::Down, Direction::Up],
+            &[1, 2, 1],
+        );
+        assert_directional_sequence(
+            &horizontal,
+            3,
+            &[Direction::Down, Direction::Up, Direction::Down],
+            &[2, 1, 2],
+        );
     }
 
     #[test]

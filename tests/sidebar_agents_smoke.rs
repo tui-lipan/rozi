@@ -25,10 +25,16 @@ fn agent_pane(
         kind,
         state: DetectedAgentState::Idle,
     });
+    // Dated now, so the rendered elapsed time is a plausible small value rather than the decades
+    // an epoch-anchored stamp would produce.
+    let set_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     pane.terminal.reported_status = status.map(|(value, reason)| PaneStatus {
         value: value.to_string(),
         reason: reason.map(str::to_string),
-        set_at: 1,
+        set_at,
     });
     pane.terminal.cwd = cwd.map(str::to_string);
     pane
@@ -81,6 +87,12 @@ fn agents_tab_renders_project_groups() {
                     ),
                     done,
                     agent_pane(4, AgentKind::Aider, None, None),
+                    agent_pane(
+                        6,
+                        AgentKind::OpenCode,
+                        Some(("compacting", None)),
+                        Some("/home/x/oss/tools"),
+                    ),
                 ];
             }
             backend.render();
@@ -105,7 +117,13 @@ fn agents_tab_renders_project_groups() {
             assert!(api < line_index("Codex"));
             assert!(hyprmux_group < line_index("Claude Code"));
             assert!(elsewhere < line_index("Aider"));
-            assert!(sidebar.iter().any(|line| line.contains("blocked")));
+            // The detail line spends its width on what the agent is doing and how long it has been
+            // at it, not on repeating a status the glyph column already carries.
+            assert!(sidebar.iter().any(|line| line.contains("needs approval")));
+            assert!(sidebar.iter().any(|line| line.contains("0s")));
+            assert!(!sidebar.iter().any(|line| line.contains("blocked")));
+            // An agent-defined status has no glyph of its own, so its word survives.
+            assert!(sidebar.iter().any(|line| line.contains("compacting")));
             // A finished-unseen agent shows the filled attention pulse.
             assert!(sidebar.iter().any(|line| line.contains('●')));
         })

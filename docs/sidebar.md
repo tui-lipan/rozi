@@ -26,9 +26,33 @@ command-backed table syntax.
 
 ## Built-in Tabs
 
-The **Panes** tab groups every live workspace pane under its workspace,
-shows the pane title and current foreground program, marks local focus, and switches workspace and
-focus when a row is clicked.
+The **Panes** tab groups every live workspace pane under its workspace, marks local focus, and
+switches workspace and focus when a row is clicked. Group headers read `Workspace 2`, or
+`Workspace 2: mine` when the workspace carries a custom name — the number stays visible either way,
+since that is what keybindings address.
+
+A row names the pane, badges the current foreground program on the right, and shows the working
+directory beneath:
+
+```text
+▎ hyprmux                  bash
+▎ ~/Work/Projects/hyprmux
+  nvim src/view/sidebar/p… nvim
+  ~/Work/Projects/hyprmux
+  service                  psql
+  …/deploy/backend/api/service
+```
+
+The name is a user-set title where there is one. Otherwise the terminal title is used only when a
+program actually chose it (`nvim src/main.rs`); a shell sets the title to its prompt — the same
+`user@host:` on every row followed by a path that clips before it says anything — so those rows are
+named by the working directory's leaf instead, which is the part that differs between panes. The
+directory line clips from the *left* (`…/deploy/backend/api/service`), because the tail is what
+identifies a path.
+
+`$HOME` shows as `~`. A directory the shell reports on another machine keeps its full path and
+gains an `@host` suffix, uncompressed — a remote home is not this machine's. When nothing is known
+about where a pane is, the program takes the second line instead so the row keeps its shape.
 
 The **Agents** tab lists detected coding-agent processes from every workspace. The session server
 inspects the foreground process group and its arguments, so agents launched through Node, Python,
@@ -36,18 +60,61 @@ shell, and package-manager wrappers are recognized without relying only on the e
 `HYPRMUX_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
 common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
-normalized agent name, inferred or reported status, and a shortened reason; clicking a row switches
-workspace and focuses it. Closing panes, the scratchpad, and popups are excluded.
+normalized agent name over a detail line carrying how long the current status has held and what the
+agent is doing; clicking a row switches workspace and focuses it. Closing panes, the scratchpad, and
+popups are excluded.
+
+The right edge of the name line carries the agent's workspace as `2`, or `2:mine` when the
+workspace has a custom name, matching how the workbar's workspace tabs spell the same thing. Groups are
+projects and a project's agents can be spread across workspaces, so this is the cross-reference to
+the Panes tab, which groups the other way round. A long agent name truncates rather than pushing
+the badge off the edge.
+
+The detail line reads `<elapsed> <activity>`. Elapsed time is dated from the reported status'
+server-side timestamp where there is one, so it survives a detach and reattach, and otherwise from
+the moment this client saw the state change. It coarsens as it grows (`45s`, `12m`, `3h`, `2d`). An
+idle agent shows no elapsed time: how long a state that prompts no action has lasted measures the
+reader rather than the agent. Its row still gets a second line, carrying the status word alone, so
+rows stay two lines tall whatever the state.
+
+A finished run is the exception: it reports how long the run *took*, measured when it ended, and
+that number never moves again. The attention pulse already says the finish is recent, so a figure
+climbing after the work stopped would measure nothing worth knowing. A client that attached after a
+run had already finished never saw it start and shows no duration at all rather than an invented
+one.
+
+Activity is the reason published alongside a reported status, falling back to the terminal title the
+agent set — agents write their current task there, which is the only activity signal a detected-only
+agent offers. A title is dropped when it says nothing the row does not already: the working
+directory in any spelling (`/home/you/repo`, `~/repo`, `repo`), or the agent's own name. Leading
+status glyphs agents decorate their titles with are stripped, since the row has its own glyph
+column. The text is truncated to the configured sidebar width.
+
+The detail line always names a subject, so the elapsed time is never a bare number with nothing to
+modify. Where there is an activity, that is the subject and the status word is dropped — `working`,
+`blocked`, `done`, and `idle` each have their own themed glyph, so repeating them in text would only
+spend width. Where there is no activity, the status word takes the slot instead (`idle`). A
+custom status such as `compacting` renders as a neutral `•` and keeps its word either way, having
+no glyph of its own to lean on.
 
 Agents are grouped by project: the working directory the session server reports for the pane. Each
-group is headed by the directory basename plus the group's most urgent status glyph; two projects
-sharing a basename are disambiguated with one parent segment (`work/api`, `oss/api`), and a remote
-working directory gains an `@host` suffix. Group order is alphabetical and stable — never by
+group is headed by the directory basename alone; two projects sharing a basename are disambiguated
+with one parent segment (`work/api`, `oss/api`), and a remote working directory gains an `@host`
+suffix. The header carries no aggregated status glyph and its rows are not nested under it — groups
+never collapse, so every row a summary glyph would stand for is already on screen directly beneath
+it, and the glyph plus the indent it forced cost four cells on every row of the narrowest surface in
+the app. Group order is alphabetical and stable — never by
 status, so blocks do not jump while agents change state. Agents without a usable working directory
 collect in a trailing `elsewhere` group; when that is the only group, rows render flat with no
 header. Within a group, statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
 Well-known statuses are matched case-insensitively and use themed status glyphs, while custom
 status spelling is shown unchanged.
+
+Elapsed times refresh once a second, and only while the Agents tab is the visible tab with at least
+one row showing a still-advancing one — a screen of finished runs, whose figures are frozen, stops
+the refresh entirely — as does a screen of idle agents, which show no elapsed time at all. It
+repaints only when the text it would draw actually changed, so a row sitting at `12m` costs a
+comparison per second rather than sixty redraws.
 
 When an agent finishes a run — its effective status goes from `working` to a quiescent state such
 as `idle` or `done` — the row shows a filled attention dot in the success color instead of the calm
@@ -89,12 +156,10 @@ focused pane's command finishes rather than on a timer, so a build, commit, or c
 tab immediately while reading it costs nothing. Change markers are text rather than Nerd Font
 glyphs, and icons are off by default, so neither tab assumes a patched font.
 
-The tree scrolls internally and is not part of the sidebar's own scroll view. It does not join the
-keyboard focus ring: keys belong to the panes, so the tree is mouse- and wheel-driven like the rest
-of the sidebar. Clicking a directory expands or collapses it. Clicking a file runs the tab's
-`on_click`, which defaults to typing the path at the focused pane's prompt without a newline — so a
-click inserts the path and nothing runs until you press Enter. Only files run the action;
-activating a directory never does.
+The tree scrolls internally and is not part of the sidebar's own scroll view. Clicking a directory
+expands or collapses it. Clicking a file runs the tab's `on_click`, which defaults to typing the
+path at the focused pane's prompt without a newline — so a click inserts the path and nothing runs
+until you press Enter. Only files run the action; activating a directory never does.
 
 ## User Tabs
 
@@ -141,15 +206,48 @@ the shell does not re-scan for operators — so a file named `; rm -rf ~` reache
 argument instead of a second command. This is what makes launching a diff viewer or editor for the
 clicked file safe; see [Configuration](configuration.md#opening-a-diff-viewer-or-editor-from-a-row).
 
+## Keyboard Navigation
+
+The sidebar has three states: hidden, visible but passive, and visible with the keyboard in it.
+While it is passive it shows no selection at all — the row cursor is a keyboard affordance, so with
+the keyboard elsewhere nothing is highlighted and the mouse gets its feedback from hover instead. A
+click is a one-shot gesture that runs the row's action and leaves focus in the pane; it never parks
+a highlight on the row it touched.
+
+`focus-sidebar` moves the keyboard into the row list, revealing the sidebar first if it was hidden.
+This is the only way in. The sidebar is deliberately outside the Tab ring, so Tab still belongs to
+the focused pane's program, and it is outside click-to-focus, so clicking a row cannot take the
+keyboard away from a running command by accident.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move the cursor. Section headers are skipped, never selected. |
+| `PageUp` / `PageDown` | Move by a screenful. |
+| `Enter` | Activate the row — the same action a click on it would run. |
+| `←` / `→` | Collapse and expand directories in the Files and Git tabs. |
+| `Tab` / `Shift-Tab` | Cycle sidebar tabs. |
+| `Esc` | Leave the sidebar and give the keyboard back to the focused pane. |
+
+A ` SIDEBAR ` badge appears in the workbar while the sidebar holds the keyboard, alongside the
+`RESIZE` / `COPY` / `HINT` mode badges. It is not a mode: the sidebar owning the keyboard is
+ordinary widget focus, so anything that moves focus elsewhere — clicking a pane, hiding the
+sidebar — clears it without a separate exit step.
+
+Rows distinguish *current* from *selected*. The accent bar marks the current thing (the focused
+pane, the attached session) and stays put; the selection highlight marks where the cursor is. Both
+can be visible at once, and on the same row.
+
 ## Actions
 
-- `toggle-sidebar` shows or hides the sidebar for this client.
+- `toggle-sidebar` shows or hides the sidebar for this client. Bound to `<prefix> b` / `Alt+b`.
+- `focus-sidebar` moves the keyboard into the row list, revealing the sidebar first if needed.
+  Bound to `<prefix> B` / `Alt+Shift+B`.
 - `sidebar-next-tab` and `sidebar-prev-tab` cycle configured tabs while visible.
 - `focus-next-blocked-pane` scans all workspaces in pane order, wraps after the focused pane, and
   focuses the next pane whose reported status is `blocked`. It skips closing and special panes and
   does nothing when the current pane is the only blocked pane.
-- All four are unbound by default and can be assigned under `[keys]` or invoked with
-  `hyprmux run-action <id>`.
+- `focus-next-blocked-pane` and the two tab-cycling actions are unbound by default. All five can be
+  rebound under `[keys]` or invoked with `hyprmux run-action <id>`.
 
 Visibility and the active tab are local runtime state. A config reload reapplies `visible` and
 reconciles the selected tab by stable ID; if that tab was removed, the first configured tab becomes

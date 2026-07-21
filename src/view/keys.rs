@@ -48,6 +48,12 @@ pub fn palette_key() -> &'static str {
     "hyprmux-command-palette"
 }
 
+/// The sidebar's row list — the `request_focus` target for every tab except the file tree, which
+/// mounts under its own root-derived key.
+pub fn sidebar_body_key() -> &'static str {
+    "hyprmux-sidebar-body"
+}
+
 pub fn appearance_palette_key() -> &'static str {
     "hyprmux-appearance-palette"
 }

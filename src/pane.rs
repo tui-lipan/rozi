@@ -28,6 +28,14 @@ pub struct TerminalPane {
     /// sidebar's "unseen finish" pulse so a completed run does not blend into panes that were idle
     /// all along. Never set for `blocked`, which already has its own attention glyph.
     pub finished_unseen: bool,
+    /// When this pane's effective agent status last changed, used for the sidebar's "how long has
+    /// it been like this" duration. Client-local, so it restarts at a detach/reattach; a reported
+    /// status carries the server's own `set_at` and is preferred over this where it exists.
+    pub status_since: Option<std::time::Instant>,
+    /// How long the agent's last `working` stretch lasted, captured as it ended. A finished run
+    /// reports what it cost, not how long ago it stopped — the attention pulse already says the
+    /// finish is recent, and a number that climbs after the work is over says nothing.
+    pub last_run: Option<std::time::Duration>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -82,6 +90,8 @@ impl TerminalPane {
             reported_status: None,
             detected_agent: None,
             finished_unseen: false,
+            status_since: None,
+            last_run: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -106,6 +116,8 @@ impl TerminalPane {
             self.reported_status = None;
             self.detected_agent = None;
             self.finished_unseen = false;
+            self.status_since = None;
+            self.last_run = None;
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -510,6 +522,25 @@ impl TerminalPane {
                 }
             });
         Some(value.to_string())
+    }
+
+    /// How long this pane's effective agent status has held, for the sidebar's duration column.
+    ///
+    /// A reported status is dated by the server's own `set_at`, which survives a client
+    /// detach/reattach; an inferred state has only the client-local `status_since` edge, which does
+    /// not. Wall-clock skew against a server on another host can only ever shorten the answer,
+    /// never invent one, because the subtraction saturates at zero.
+    pub fn status_age(&self) -> Option<std::time::Duration> {
+        if let Some(status) = self.reported_status.as_ref() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            return Some(std::time::Duration::from_secs(
+                now.saturating_sub(status.set_at),
+            ));
+        }
+        self.status_since.map(|since| since.elapsed())
     }
 
     pub fn status_text(&self) -> String {

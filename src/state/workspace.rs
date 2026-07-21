@@ -1,8 +1,15 @@
 use crate::tiling::{DwindleTree, collect_tree_leaves};
 
-use super::{DEFAULT_RATIO, LayoutKind, MoveSwapHint, Pane, PaneId, SplitAxis};
+use super::{DEFAULT_RATIO, Direction, LayoutKind, MoveSwapHint, Pane, PaneId, SplitAxis};
 
 pub const WORKSPACE_COUNT: usize = 9;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirectionalFocusHint {
+    pub pane: PaneId,
+    pub entry_direction: Direction,
+    pub target: PaneId,
+}
 
 pub struct Workspace {
     pub panes: Vec<Pane>,
@@ -13,6 +20,7 @@ pub struct Workspace {
     pub start_axis: SplitAxis,
     pub split_ratios: Vec<f32>,
     pub last_move_swap: Option<MoveSwapHint>,
+    pub last_directional_focus: Option<DirectionalFocusHint>,
     /// User-assigned label shown in the workbar in place of (or alongside) the workspace
     /// number. `None` keeps the default numeric display.
     pub name: Option<String>,
@@ -33,6 +41,7 @@ impl Workspace {
             },
             split_ratios: vec![DEFAULT_RATIO; 16],
             last_move_swap: None,
+            last_directional_focus: None,
             name: None,
         }
     }

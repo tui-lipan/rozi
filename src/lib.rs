@@ -14,7 +14,7 @@ mod copy_mode;
 pub mod events;
 mod geometry;
 mod hints;
-mod input;
+pub mod input;
 mod key_routing;
 mod layout;
 pub mod layout_tree_ser;
@@ -40,4 +40,4 @@ mod view;
 pub use app::HyprmuxApp;
 pub use msg::Msg;
 
-pub(crate) use app::{schedule_theme_tick, schedule_workbar_tick};
+pub(crate) use app::{schedule_agent_tick, schedule_theme_tick, schedule_workbar_tick};

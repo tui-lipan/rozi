@@ -317,6 +317,7 @@ pub(crate) fn apply_shared_layout(
             .as_ref()
             .and_then(|tree| dwindle_from_shared(tree, &known));
         ws.last_move_swap = None;
+        ws.last_directional_focus = None;
 
         // Reattach the workspace's still-closing panes after the rebuilt live set.
         let mut panes = rebuilt;

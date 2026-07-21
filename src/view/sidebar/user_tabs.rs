@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
-use super::row::{self, Row};
+use super::row::{self, Row, RowTarget, SidebarRow};
+use crate::HyprmuxApp;
 use crate::config::{SidebarLauncherEntry, SidebarTabId, UserCommandAction};
-use crate::{HyprmuxApp, Msg};
 
 /// The glyph and human name for what activating an entry does. The glyph sits in the same column as
 /// the agent tab's status glyph so launcher rows line up with the built-in lists.
@@ -14,21 +14,18 @@ fn action_glyph(action: &UserCommandAction) -> (&'static str, &'static str) {
     }
 }
 
-pub(super) fn launcher_tab(
+pub(super) fn launcher_rows(
     ctx: &Context<HyprmuxApp>,
     tab_id: &SidebarTabId,
     entries: &[SidebarLauncherEntry],
-) -> Element {
-    if entries.is_empty() {
-        return row::empty(ctx, "No launcher entries");
-    }
+) -> Vec<SidebarRow> {
     let config_epoch = ctx.state.sidebar.config_epoch;
     entries
         .iter()
         .enumerate()
-        .fold(VStack::new().gap(0), |body, (index, entry)| {
+        .map(|(entry_index, entry)| {
             let (glyph, kind) = action_glyph(&entry.action);
-            let content = Row::new(entry.label.clone())
+            let row = Row::new(entry.label.clone())
                 .title_style(super::super::fg_only(&ctx.state.theme.primary))
                 .glyph(
                     Text::new(glyph)
@@ -42,42 +39,33 @@ pub(super) fn launcher_tab(
                 .detail(
                     row::truncate(entry.action.target(), 24),
                     super::super::fg_only(&ctx.state.theme.muted).dim(),
-                )
-                .build(ctx);
-            let id = tab_id.clone();
-            body.child(
-                MouseRegion::new()
-                    .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
-                    .on_click(ctx.link().callback(move |_| Msg::SidebarLauncherActivate {
-                        config_epoch,
-                        tab_id: id.clone(),
-                        entry_index: index,
-                    }))
-                    .child(content)
-                    .key(format!("sidebar-launcher-{}-{index}", tab_id.as_str())),
+                );
+            SidebarRow::item(
+                row,
+                RowTarget::Launcher {
+                    config_epoch,
+                    tab_id: tab_id.clone(),
+                    entry_index,
+                },
             )
         })
-        .into()
+        .collect()
 }
 
-pub(super) fn command_tab(
+pub(super) fn command_rows(
     ctx: &Context<HyprmuxApp>,
     tab_id: &SidebarTabId,
     clickable: bool,
-) -> Element {
+) -> Vec<SidebarRow> {
     let Some(output) = ctx.state.sidebar.command_output.get(tab_id) else {
-        return row::empty(ctx, "Loading…");
+        return Vec::new();
     };
-    if output.rows.is_empty() {
-        return row::empty(ctx, "No output");
-    }
     let config_epoch = ctx.state.sidebar.config_epoch;
     let output_epoch = output.epoch;
     output
         .rows
         .iter()
-        .enumerate()
-        .fold(VStack::new().gap(0), |body, (index, row)| {
+        .map(|row| {
             let (glyph, style) = if row.error {
                 ("!", Style::new().fg(ctx.state.theme.status.error))
             } else if clickable {
@@ -85,39 +73,29 @@ pub(super) fn command_tab(
             } else {
                 (" ", super::super::fg_only(&ctx.state.theme.primary))
             };
-            let content = Row::new(row.display.clone())
+            let glyph_style = if row.error {
+                Style::new().fg(ctx.state.theme.status.error)
+            } else {
+                super::super::fg_only(&ctx.state.theme.muted)
+            };
+            let built = Row::new(row.display.clone())
                 .title_style(style)
-                .glyph(
-                    Text::new(glyph)
-                        .style(if row.error {
-                            Style::new().fg(ctx.state.theme.status.error)
-                        } else {
-                            super::super::fg_only(&ctx.state.theme.muted)
-                        })
-                        .height(Length::Px(1)),
-                )
-                .build(ctx);
+                .glyph(Text::new(glyph).style(glyph_style).height(Length::Px(1)));
+            // An error row carries no command to re-run, and a tab without `on_click` has nothing to
+            // do with any row; both stay in the list as context but refuse selection and activation.
             if clickable && !row.error {
-                let id = tab_id.clone();
-                let line = row.raw.clone();
-                body.child(
-                    MouseRegion::new()
-                        .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
-                        .on_click(
-                            ctx.link()
-                                .callback(move |_| Msg::SidebarCommandRowActivate {
-                                    config_epoch,
-                                    tab_id: id.clone(),
-                                    output_epoch,
-                                    line: line.clone(),
-                                }),
-                        )
-                        .child(content)
-                        .key(format!("sidebar-command-{}-{index}", tab_id.as_str())),
+                SidebarRow::item(
+                    built,
+                    RowTarget::CommandRow {
+                        config_epoch,
+                        tab_id: tab_id.clone(),
+                        output_epoch,
+                        line: row.raw.clone(),
+                    },
                 )
             } else {
-                body.child(content)
+                SidebarRow::header(built.build(ctx, false))
             }
         })
-        .into()
+        .collect()
 }

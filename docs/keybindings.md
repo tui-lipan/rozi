@@ -76,13 +76,35 @@ Key handling is the same on Windows, with two things worth knowing:
 | Toggle fullscreen | `f` |
 | Rename pane | `n` |
 | Paste from clipboard | `v` or `Ctrl+V` |
-| Move pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
-| Swap pane with neighbor | `modifier`+`Ctrl`+`h/j/k/l` or `modifier`+`Ctrl`+`←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
+| Swap pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
+| Move pane left / down / up / right | `Ctrl+h/j/k/l` or `Ctrl+←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
 | Promote pane to master | `.` (also palette) |
 | Respawn exited pane | *Respawn exited pane* appears in the command palette when the focused pane is retained after exit (no default key; action id `respawn-pane`) |
 
-**Swap vs. Move:** *Move* re-inserts the focused pane at a neighbor's split (changing the
-tree); *Swap* exchanges the two panes' positions in place without restructuring.
+**Swap vs. Move** are two different operations on the same neighbor, and both keep focus on the
+pane you started with:
+
+- **Swap** exchanges the two panes' slots. The layout keeps exactly the shape it had — only the
+  contents of two slots change places. This is the everyday one, so it gets `Shift`.
+- **Move** lifts the pane out of the layout and re-inserts it beside that neighbor, so the slot it
+  vacated collapses and the layout changes shape. It is the keyboard equivalent of dragging a pane
+  onto another one with the mouse. Moving left/up docks the pane before its neighbor, right/down
+  after it.
+
+Starting from pane `A` on the left with `B` over `C` on the right, pressing *right* on `A` gives:
+
+```text
+    start            swap A→B          move A→B
++-----+-----+     +-----+-----+     +-----+-----+
+|     |  B  |     |     |  A  |     |  B  |  A  |
+|  A  +-----+     |  B  +-----+     +-----+-----+
+|     |  C  |     |     |  C  |     |     C     |
++-----+-----+     +-----+-----+     +-----------+
+```
+
+When the focused pane is **floating** it holds no slot, so there is nothing to trade and nothing to
+re-insert beside: both actions slide it across the workspace by one step instead (4% of the canvas,
+at least one cell), clamped so a sliver stays on screen.
 
 **Paste** reads the system clipboard and sends it to the focused pane's PTY, wrapped in
 bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
@@ -90,7 +112,10 @@ simulated keystrokes. `Ctrl+V` works directly in normal mode without entering th
 
 ### Focus
 
-Spatial focus moves to the nearest pane in a direction (not just the next in a list).
+Spatial focus moves to the nearest pane in a direction (not just the next in a list). At an edge,
+focus wraps to the opposite edge while preserving the current row or column when possible. When
+multiple panes feed into one spanning pane, continuing or reversing direction returns to the pane
+focus entered from.
 
 | Command | Keys |
 | --- | --- |
@@ -213,14 +238,21 @@ second confirmation.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Toggle sidebar (`toggle-sidebar`) | *(no default)* | Show or hide the current client's docked sidebar. It remains available while the scratchpad is open. |
+| Toggle sidebar (`toggle-sidebar`) | `b` | Show or hide the current client's docked sidebar. It remains available while the scratchpad is open. |
+| Focus sidebar (`focus-sidebar`) | `shift-b` | Move the keyboard into the sidebar's row list, revealing the sidebar first if it was hidden. |
 | Next sidebar tab (`sidebar-next-tab`) | *(no default)* | Cycle forward through configured tabs while the sidebar is visible. |
 | Previous sidebar tab (`sidebar-prev-tab`) | *(no default)* | Cycle backward through configured tabs while the sidebar is visible. |
 | Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next pane reporting `blocked`; wraps after the current focus and skips closing/special panes. |
 
-All four actions are available from the command palette and `hyprmux run-action`. Bind them under
-`[keys]` if desired. The Panes and Agents tabs focus rows across workspaces; Sessions discovers and
-attaches to running sessions while active. See [Sidebar](sidebar.md).
+All five actions are available from the command palette and `hyprmux run-action`, and all are
+rebindable under `[keys]`.
+
+Once the sidebar has the keyboard, `↑`/`↓` move the cursor (skipping section headers), `Enter`
+activates the row exactly as a click would, `←`/`→` expand and collapse directories in the Files and
+Git tabs, `Tab`/`Shift-Tab` cycle sidebar tabs, and `Esc` returns the keyboard to the focused pane.
+The sidebar is deliberately excluded from the Tab focus ring and from click-to-focus, so `Tab` keeps
+reaching the focused pane's program and clicking a row never steals the keyboard from a running
+command. See [Sidebar](sidebar.md).
 
 > All commands above can be rebound from `hyprmux.toml`. See the `[keys]` section in
 > [Configuration](configuration.md). The help overlay (`?`) always shows your *active* bindings.
@@ -246,9 +278,13 @@ including the workspace digits and mouse gestures.
 
 ## Resize mode
 
-Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use `h/j/k/l` to
-adjust the focused pane's split ratios, and `Esc` to leave. The workbar shows a green
+Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use `h/j/k/l` (or the
+arrow keys) to adjust the focused pane's split ratios, and `Esc` to leave. The workbar shows a green
 **RESIZE hjkl Esc** indicator while active.
+
+A **floating** pane has no split to adjust, so it resizes its own rectangle instead: `l`/`j` grow it
+and `h`/`k` shrink it, anchored at its top-left corner so it stays put while changing size. Pair
+this with `Shift+h/j/k/l` to move the pane, since resize mode never repositions it.
 
 ## Hint mode
 

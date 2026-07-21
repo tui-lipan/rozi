@@ -693,15 +693,29 @@ fn status_is(value: Option<&str>, needle: &str) -> bool {
     value.is_some_and(|value| value.trim().eq_ignore_ascii_case(needle))
 }
 
-/// Update the pane's "unseen finish" pulse from an agent-status transition. Arms it on a
-/// `working` -> quiescent edge (the run finished while you were looking elsewhere) and disarms it
-/// the moment the agent resumes `working`, so a spinning agent never wears a completed-dot. A
-/// `blocked` outcome is deliberately left un-armed: it already has its own loud glyph, and arming
-/// here would let the sidebar's pulse override it. A separate focus chokepoint clears the flag once
-/// the pane is actually looked at.
-fn update_finished_unseen(pane: &mut crate::pane::TerminalPane, previous: Option<&str>) {
+/// React to an agent-status transition. `previous_age` is how long the outgoing status had held,
+/// sampled before it was overwritten.
+///
+/// Stamps `status_since` so the sidebar can show how long the current state has held, banks the
+/// length of a `working` stretch as it ends so a finished run can report what it cost, and updates
+/// the "unseen finish" pulse: armed on a `working` -> quiescent edge (the run finished while you
+/// were looking elsewhere), disarmed the moment the agent resumes `working`, so a spinning agent
+/// never wears a completed-dot. A `blocked` outcome is deliberately left un-armed: it already has
+/// its own loud glyph, and arming here would let the sidebar's pulse override it. A separate focus
+/// chokepoint clears the flag once the pane is actually looked at.
+fn update_agent_status_edge(
+    pane: &mut crate::pane::TerminalPane,
+    previous: Option<&str>,
+    previous_age: Option<std::time::Duration>,
+) {
     let current = pane.agent_status();
     let current = current.as_deref();
+    if current != previous {
+        if status_is(previous, crate::session::protocol::pane_status::WORKING) {
+            pane.last_run = previous_age;
+        }
+        pane.status_since = Some(std::time::Instant::now());
+    }
     if status_is(current, crate::session::protocol::pane_status::WORKING) {
         pane.finished_unseen = false;
     } else if status_is(previous, crate::session::protocol::pane_status::WORKING)
@@ -734,6 +748,8 @@ pub(super) fn pane_runtime_changed(
     {
         let previous = pane.terminal.reported_status.clone();
         let previous_agent_status = pane.terminal.agent_status();
+        // Sampled before the incoming runtime state overwrites the status it dates.
+        let previous_age = pane.terminal.status_age();
         pane.terminal.runtime_sequence = state.sequence;
         pane.terminal.cwd = state.cwd;
         pane.terminal.cwd_host = state.cwd_host;
@@ -742,7 +758,11 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.last_exit_status = state.last_exit_status;
         pane.terminal.reported_status = state.status;
         pane.terminal.detected_agent = state.detected_agent;
-        update_finished_unseen(&mut pane.terminal, previous_agent_status.as_deref());
+        update_agent_status_edge(
+            &mut pane.terminal,
+            previous_agent_status.as_deref(),
+            previous_age,
+        );
         if previous != pane.terminal.reported_status {
             transition = Some((
                 previous,
@@ -803,6 +823,9 @@ pub(super) fn pane_runtime_changed(
     if at_prompt {
         flush_replay_input(ctx, pane_id, generation);
     }
+    // An agent that just started working is the moment a row first gains an elapsed time, and the
+    // Agents tab may already be open with nothing ticking.
+    crate::update::sidebar::arm_agent_tick(ctx);
     Update::full()
 }
 
@@ -1051,11 +1074,11 @@ mod tests {
     fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
         // working -> idle arms the pulse.
         let mut pane = agent_pane("idle");
-        update_finished_unseen(&mut pane, Some("working"));
+        update_agent_status_edge(&mut pane, Some("working"), None);
         assert!(pane.finished_unseen);
 
         // A later idle -> idle poll leaves it armed until the pane is looked at.
-        update_finished_unseen(&mut pane, Some("idle"));
+        update_agent_status_edge(&mut pane, Some("idle"), None);
         assert!(pane.finished_unseen);
 
         // Resuming work disarms it: a spinning agent must not wear a completed dot.
@@ -1064,14 +1087,66 @@ mod tests {
             reason: None,
             set_at: 2,
         });
-        update_finished_unseen(&mut pane, Some("idle"));
+        update_agent_status_edge(&mut pane, Some("idle"), None);
         assert!(!pane.finished_unseen);
+    }
+
+    /// The duration column is only honest if the stamp moves on a real state change and holds
+    /// still across the repeated polls that report the same state.
+    #[test]
+    fn status_since_stamps_transitions_and_survives_unchanged_polls() {
+        let mut pane = agent_pane("working");
+        assert!(pane.status_since.is_none());
+        update_agent_status_edge(&mut pane, Some("idle"), None);
+        let stamped = pane.status_since.expect("a transition stamps the pane");
+
+        update_agent_status_edge(&mut pane, Some("working"), None);
+        assert_eq!(pane.status_since, Some(stamped));
+
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "idle".into(),
+            reason: None,
+            set_at: 2,
+        });
+        update_agent_status_edge(&mut pane, Some("working"), None);
+        assert!(pane.status_since.expect("re-stamped") > stamped);
+    }
+
+    /// A finished run reports what it cost. The number is banked as the run ends and never moves
+    /// again, so it cannot drift into meaning "how long ago it stopped".
+    #[test]
+    fn finishing_a_run_banks_its_length_and_freezes_it() {
+        let run = std::time::Duration::from_secs(12 * 60);
+        let mut pane = agent_pane("idle");
+        update_agent_status_edge(&mut pane, Some("working"), Some(run));
+        assert_eq!(pane.last_run, Some(run));
+
+        // Repeated idle polls afterwards leave the banked run alone.
+        update_agent_status_edge(
+            &mut pane,
+            Some("idle"),
+            Some(std::time::Duration::from_secs(1)),
+        );
+        assert_eq!(pane.last_run, Some(run));
+
+        // Only a `working` stretch is banked; leaving any other state does not overwrite it.
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "working".into(),
+            reason: None,
+            set_at: 2,
+        });
+        update_agent_status_edge(
+            &mut pane,
+            Some("blocked"),
+            Some(std::time::Duration::from_secs(3)),
+        );
+        assert_eq!(pane.last_run, Some(run));
     }
 
     #[test]
     fn finished_unseen_ignores_working_to_blocked() {
         let mut pane = agent_pane("blocked");
-        update_finished_unseen(&mut pane, Some("working"));
+        update_agent_status_edge(&mut pane, Some("working"), None);
         assert!(!pane.finished_unseen);
     }
 

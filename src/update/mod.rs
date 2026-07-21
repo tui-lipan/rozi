@@ -38,10 +38,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ThemeTick => overlays::theme_tick(ctx),
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
+        Msg::AgentTick => sidebar::agent_tick(ctx),
         Msg::WorkbarCommandOutput(command, output) => {
             overlays::workbar_command_output(ctx, command, output)
         }
         Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
+        Msg::SidebarPointerMoved => sidebar::pointer_moved(ctx),
+        Msg::SidebarRowActivate(index) => sidebar::row_activate(ctx, index),
+        Msg::SidebarBlur => sidebar::blur_body(ctx),
+        Msg::SidebarCycleTab(forward) => sidebar::cycle_tab(ctx, forward),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
         Msg::SidebarLauncherActivate {
             config_epoch,

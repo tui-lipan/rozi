@@ -410,6 +410,8 @@ mod tests {
 
     #[test]
     fn parses_builtin_launcher_and_command_tabs() {
+        // TOML 1.1 allows multiline inline tables (and trailing commas), which is what real
+        // sidebar configs use once tabs grow beyond a one-liner.
         let (config, warnings) = parse(
             r#"
             visible = true
@@ -417,8 +419,18 @@ mod tests {
             position = "right"
             tabs = [
               "panes",
-              { name = "deploy", label = "Deploy", entries = [{ label = "Build", run = "cargo build" }, { label = "Test", send = "cargo test\n" }, { label = "Logs", popup = "journalctl -f" }] },
-              { name = "todos", label = "Todos", command = "task list --plain", interval = 30, on_click = { send = "task view {line}\n" } }
+              { name = "deploy", label = "Deploy", entries = [
+                { label = "Build", run = "cargo build" },
+                { label = "Test", send = "cargo test\n" },
+                { label = "Logs", popup = "journalctl -f" },
+              ] },
+              {
+                name = "todos",
+                label = "Todos",
+                command = "task list --plain",
+                interval = 30,
+                on_click = { send = "task view {line}\n" },
+              },
             ]
         "#,
         );

@@ -12,7 +12,8 @@ use crate::layout::{
 };
 use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus};
 use crate::state::{
-    self, LayoutKind, MoveSession, PaneId, ResizeCorner, ResizeSession, State, TileGap, Workspace,
+    self, Direction, LayoutKind, MoveSession, PaneId, ResizeCorner, ResizeSession, State, TileGap,
+    Workspace,
 };
 use crate::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
@@ -32,6 +33,94 @@ pub(super) fn ensure_tile_tree(workspace: &mut Workspace) {
     if workspace.tile_tree.is_none() {
         workspace.tile_tree = layout::effective_tile_tree(workspace, None);
     }
+}
+
+/// One keyboard step along a workspace axis of `available` cells. Proportional so it feels like
+/// the tiled `RATIO_STEP`, but snapped to whole cells: a floating pane's PTY is sized in cells, so
+/// a fractional step would drift the border without ever changing the terminal.
+fn float_keyboard_step(available: f32) -> f32 {
+    (state::RATIO_STEP * available).round().max(1.0)
+}
+
+fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
+    match direction {
+        Direction::Left => (-float_keyboard_step(bounds.w), 0.0),
+        Direction::Right => (float_keyboard_step(bounds.w), 0.0),
+        Direction::Up => (0.0, -float_keyboard_step(bounds.h)),
+        Direction::Down => (0.0, float_keyboard_step(bounds.h)),
+    }
+}
+
+/// Translate the focused floating pane one step. Returns whether the focus was floating at all, so
+/// `super::tiling::reorder_focused_in_direction` can fall through to the tiled reorder when it was
+/// not.
+pub(super) fn move_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
+    let Some(id) = ctx.state.focused_pane else {
+        return false;
+    };
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let (dx, dy) = float_keyboard_delta(direction, bounds);
+    let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
+        return false;
+    };
+    if !pane.floating || pane.fullscreen {
+        return false;
+    }
+    // Same clamp as the pointer drag, so a pane can be parked partly offscreen either way.
+    let moved = clamp_floating_rect(
+        FloatRect {
+            x: pane.floating_rect.x + dx,
+            y: pane.floating_rect.y + dy,
+            ..pane.floating_rect
+        },
+        bounds,
+    );
+    if moved != pane.floating_rect {
+        pane.floating_rect = moved;
+        // Snap, matching the pointer drag. Held keys repeat faster than a glide completes, so each
+        // step would restart the previous one mid-flight and the pane would trail the keypresses.
+        ctx.state.animation = GeometryAnimation::None;
+    }
+    true
+}
+
+/// Grow (`Right`/`Down`) or shrink (`Left`/`Up`) the focused floating pane one step, anchored at
+/// its top-left corner - dragging the top-left instead would walk the pane across the workspace as
+/// it resized. Returns whether the focus was floating at all.
+pub(super) fn resize_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
+    let Some(id) = ctx.state.focused_pane else {
+        return false;
+    };
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let (dx, dy) = float_keyboard_delta(direction, bounds);
+    let Some(pane) = active_pane_mut(&mut ctx.state, id) else {
+        return false;
+    };
+    if !pane.floating || pane.fullscreen {
+        return false;
+    }
+    let mut resized =
+        resize_float_rect_from_corner(pane.floating_rect, ResizeCorner::LowerRight, dx, dy, bounds);
+    // A pane already flush against the right or bottom edge cannot grow that way, which would
+    // leave the key dead. Fall back to the opposite corner so it grows inward instead.
+    if resized == pane.floating_rect {
+        resized = resize_float_rect_from_corner(
+            pane.floating_rect,
+            ResizeCorner::UpperLeft,
+            -dx,
+            -dy,
+            bounds,
+        );
+    }
+    if resized != pane.floating_rect {
+        pane.floating_rect = resized;
+        ctx.state.animation = GeometryAnimation::None;
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -403,6 +492,145 @@ mod tests {
     use crate::tiling::DwindleTree;
     use crate::{HyprmuxApp, Msg};
     use tui_lipan::TestBackend;
+
+    /// A backend whose active workspace holds one focused floating pane at `rect`, in a 100x30
+    /// viewport. `RATIO_STEP` (4%) of that canvas rounds to a 4-column / 1-row keyboard step.
+    fn floating_backend(rect: FloatRect) -> TestBackend<HyprmuxApp> {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        {
+            let state = backend.state_mut();
+            let workspace = &mut state.workspaces[state.active_workspace];
+            workspace.panes.clear();
+            let mut pane = Pane::new(1, 100, rect);
+            pane.floating = true;
+            pane.opening = false;
+            workspace.panes.push(pane);
+            workspace.focused_pane = Some(1);
+            state.focused_pane = Some(1);
+        }
+        backend.render();
+        backend
+    }
+
+    fn floating_rect(backend: &mut TestBackend<HyprmuxApp>) -> FloatRect {
+        let state = backend.state_mut();
+        state.workspaces[state.active_workspace].panes[0].floating_rect
+    }
+
+    #[test]
+    fn both_directional_actions_slide_a_floating_pane() {
+        in_test_stack(|| {
+            let start = FloatRect {
+                x: 20.0,
+                y: 8.0,
+                w: 40.0,
+                h: 12.0,
+            };
+            // A float occupies no slot: it has nothing to trade with and nothing to be re-inserted
+            // beside, so `Swap` and `Move` both degrade to the same translation.
+            for action in [crate::input::Action::Swap, crate::input::Action::Move] {
+                let mut backend = floating_backend(start);
+
+                backend
+                    .dispatch(Msg::RunAction(action(Direction::Right)))
+                    .expect("dispatch slide right");
+                backend
+                    .dispatch(Msg::RunAction(action(Direction::Up)))
+                    .expect("dispatch slide up");
+
+                let moved = floating_rect(&mut backend);
+                assert_eq!(
+                    (moved.x, moved.y),
+                    (start.x + 4.0, start.y - 1.0),
+                    "a floating pane should translate by one keyboard step per press"
+                );
+                assert_eq!(
+                    (moved.w, moved.h),
+                    (start.w, start.h),
+                    "sliding must not change the pane's size"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn resize_mode_grows_and_shrinks_a_floating_pane() {
+        in_test_stack(|| {
+            let start = FloatRect {
+                x: 20.0,
+                y: 8.0,
+                w: 40.0,
+                h: 12.0,
+            };
+            let mut backend = floating_backend(start);
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::EnterResizeMode))
+                .expect("enter resize mode");
+
+            let key = |code| KeyEvent {
+                code,
+                mods: KeyMods::default(),
+            };
+            let _ = backend.send_key(key(KeyCode::Char('l')));
+            let _ = backend.send_key(key(KeyCode::Char('j')));
+
+            let grown = floating_rect(&mut backend);
+            assert_eq!(
+                (grown.w, grown.h),
+                (start.w + 4.0, start.h + 1.0),
+                "`l`/`j` should grow a floating pane"
+            );
+            assert_eq!(
+                (grown.x, grown.y),
+                (start.x, start.y),
+                "resizing anchors the top-left corner"
+            );
+
+            let _ = backend.send_key(key(KeyCode::Char('h')));
+            let _ = backend.send_key(key(KeyCode::Char('k')));
+            let shrunk = floating_rect(&mut backend);
+            assert_eq!(
+                (shrunk.w, shrunk.h),
+                (start.w, start.h),
+                "`h`/`k` should shrink it back"
+            );
+        });
+    }
+
+    #[test]
+    fn resize_mode_grows_a_flush_floating_pane_inward() {
+        in_test_stack(|| {
+            // Flush against the right edge: the bottom-right corner has nowhere to go.
+            let start = FloatRect {
+                x: 60.0,
+                y: 8.0,
+                w: 40.0,
+                h: 12.0,
+            };
+            let mut backend = floating_backend(start);
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::EnterResizeMode))
+                .expect("enter resize mode");
+
+            let _ = backend.send_key(KeyEvent {
+                code: KeyCode::Char('l'),
+                mods: KeyMods::default(),
+            });
+
+            let grown = floating_rect(&mut backend);
+            assert_eq!(
+                (grown.x, grown.w),
+                (start.x - 4.0, start.w + 4.0),
+                "growing at the workspace edge should extend the other side, not no-op"
+            );
+        });
+    }
 
     #[test]
     fn follower_mouse_resize_leaves_the_layout_untouched() {

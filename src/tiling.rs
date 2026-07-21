@@ -41,6 +41,7 @@ pub fn append_tiled_window(workspace: &mut Workspace, id: PaneId) {
         workspace.start_axis,
     ));
     workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
 }
 
 pub fn remove_tiled_window(workspace: &mut Workspace, id: PaneId) {
@@ -51,6 +52,7 @@ pub fn remove_tiled_window(workspace: &mut Workspace, id: PaneId) {
     workspace.tile_tree = tree;
     if removed {
         workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
     }
 }
 
@@ -303,6 +305,7 @@ pub fn move_tiled_window_around_target(
     };
     workspace.tile_tree = Some(inserted);
     workspace.last_move_swap = None;
+    workspace.last_directional_focus = None;
     true
 }
 

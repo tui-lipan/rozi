@@ -516,11 +516,20 @@ visible = true
 tabs = ["agents", "files", "git"]
 ```
 
-Both take the same table form as custom tabs when you want options. TOML inline tables must stay on
-one line:
+Both take the same table form as custom tabs when you want options:
 
 ```toml
-tabs = ["agents", { name = "files", label = "", show_hidden = true, explorer = true, on_click = { send = "nvim {path}\n" } }, "git"]
+tabs = [
+  "agents",
+  {
+    name = "files",
+    label = "",
+    show_hidden = true,
+    explorer = true,
+    on_click = { send = "nvim {path}\n" },
+  },
+  "git",
+]
 ```
 
 `label` is ignored for a built-in, which keeps its own name. Clicking a directory expands it;
@@ -567,8 +576,18 @@ width = 32
 position = "right"
 tabs = [
   "panes",
-  { name = "deploy", label = "Deploy", entries = [{ label = "Build", run = "cargo build" }, { label = "Test", send = "cargo test\n" }, { label = "Logs", popup = "journalctl -f", keep_open = false }] },
-  { name = "todos", label = "Todos", command = "task list --plain", interval = 30, on_click = { send = "task view {line}\n" } },
+  { name = "deploy", label = "Deploy", entries = [
+    { label = "Build", run = "cargo build" },
+    { label = "Test", send = "cargo test\n" },
+    { label = "Logs", popup = "journalctl -f", keep_open = false },
+  ] },
+  {
+    name = "todos",
+    label = "Todos",
+    command = "task list --plain",
+    interval = 30,
+    on_click = { send = "task view {line}\n" },
+  },
 ]
 ```
 
@@ -699,13 +718,13 @@ the plus shortcut because `+` is a modifier separator.
 
 Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,
-`swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
+`move-left/down/up/right`, `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-devtools`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-workbar-powerline`, `toggle-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
+`toggle-workbar-powerline`, `toggle-sidebar`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,

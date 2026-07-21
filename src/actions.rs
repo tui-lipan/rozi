@@ -343,6 +343,11 @@ fn execute_action_inner(
             request_current_pane_focus(ctx);
             Update::full()
         }
+        Action::Swap(direction) => {
+            swap_focused_in_direction(ctx, direction);
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
         Action::SwitchWorkspace(index) => {
             switch_workspace(&mut ctx.state, index);
             request_current_pane_focus(ctx);
@@ -366,11 +371,6 @@ fn execute_action_inner(
         Action::RenamePane => open_rename_pane(ctx),
         Action::RenameWorkspace => crate::ops::identity::open_rename_workspace(ctx),
         Action::Paste => paste_from_focused_pane(ctx),
-        Action::Swap(direction) => {
-            swap_focused_in_direction(ctx, direction);
-            request_current_pane_focus(ctx);
-            Update::full()
-        }
         Action::CycleFocus(forward) => {
             if let Some(id) = cycle_focus_in_tiled_order(&mut ctx.state, forward) {
                 request_pane_focus(ctx, id);
@@ -483,6 +483,7 @@ fn execute_action_inner(
             ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
             crate::update::sidebar::visibility_changed(ctx)
         }
+        Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
             if ctx.state.sidebar_visible {
                 ctx.state.sidebar.cycle(&ctx.state.config.sidebar, true);

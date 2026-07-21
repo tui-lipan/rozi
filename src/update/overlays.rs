@@ -79,6 +79,9 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
         // The scratchpad manages its own focus (the scratch terminal on show, the previously
         // focused pane on hide); don't override it.
         Action::ToggleScratchpad => {}
+        // `focus-sidebar` exists to move focus off the pane. Falling through to the catch-all would
+        // hand it straight back and make the action look dead.
+        Action::FocusSidebar => {}
         Action::ToggleLayout if cycle_layout_in_palette => {}
         _ => request_current_pane_focus(ctx),
     }

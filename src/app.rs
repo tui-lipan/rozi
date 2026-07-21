@@ -461,6 +461,15 @@ pub(crate) fn schedule_workbar_tick() -> Command {
     })
 }
 
+/// Low-frequency repaint so the Agents sidebar's elapsed-time column advances. Only scheduled
+/// while that column is actually on screen, so a hidden sidebar or a screen of idle agents never
+/// wakes the app for this.
+pub(crate) fn schedule_agent_tick() -> Command {
+    Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
+        link.send(Msg::AgentTick);
+    })
+}
+
 fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
     ClipboardConfig {
         enable_osc52: config.clipboard.enable_osc52,

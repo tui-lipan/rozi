@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
-use super::row::{self, Row};
+use super::row::{Row, RowTarget, SidebarRow};
+use crate::HyprmuxApp;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
-use crate::{HyprmuxApp, Msg};
 
 fn session_detail(entry: &DiscoveredSession, current: bool) -> String {
     match &entry.status {
@@ -27,16 +27,13 @@ fn session_detail(entry: &DiscoveredSession, current: bool) -> String {
     }
 }
 
-pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
-    if ctx.state.sidebar.sessions.is_empty() {
-        return row::empty(ctx, "No sessions discovered");
-    }
+pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     ctx.state
         .sidebar
         .sessions
         .iter()
         .cloned()
-        .fold(VStack::new().gap(0), |body, entry| {
+        .map(|entry| {
             let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
             let pending =
                 ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str());
@@ -46,7 +43,7 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
                 entry.name.clone()
             };
             let detail = if pending {
-                "click again · ends temporary session".to_string()
+                "press again · ends temporary session".to_string()
             } else {
                 session_detail(&entry, current)
             };
@@ -55,22 +52,11 @@ pub(super) fn sessions_tab(ctx: &Context<HyprmuxApp>) -> Element {
             } else {
                 super::super::fg_only(&ctx.state.theme.muted)
             };
-            let key_name = entry.name.clone();
-            let content = Row::new(label)
-                .marked(current)
+            let row = Row::new(label)
+                .active(current)
                 .title_style(super::super::fg_only(&ctx.state.theme.primary))
-                .detail(detail, detail_style)
-                .build(ctx);
-            body.child(
-                MouseRegion::new()
-                    .hover_effect(VisualEffect::transform_bg(ColorTransform::Lighten(0.08)))
-                    .on_click(
-                        ctx.link()
-                            .callback(move |_| Msg::SidebarSessionActivate(entry.clone())),
-                    )
-                    .child(content)
-                    .key(format!("sidebar-session-{key_name}")),
-            )
+                .detail(detail, detail_style);
+            SidebarRow::item(row, RowTarget::Session(Box::new(entry)))
         })
-        .into()
+        .collect()
 }

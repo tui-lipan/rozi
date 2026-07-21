@@ -490,6 +490,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         client: None,
         autostart: true,
         read_only: false,
+        remote_host: None,
         intent: crate::state::AttachIntent::Plain,
         left: None,
     });
@@ -546,6 +547,7 @@ pub(crate) fn attach_session_by_name(
         client: None,
         autostart,
         read_only: false,
+        remote_host: None,
         intent: crate::state::AttachIntent::Plain,
         left,
     });
@@ -673,6 +675,7 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
         client: None,
         autostart: true,
         read_only: false,
+        remote_host: None,
         intent,
         left: None,
     });

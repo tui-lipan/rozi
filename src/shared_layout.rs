@@ -674,6 +674,7 @@ mod reconciler_tests {
                 client: Some(client),
                 autostart: false,
                 read_only: false,
+                remote_host: None,
                 intent: crate::state::AttachIntent::Plain,
                 left: None,
             });

@@ -128,15 +128,19 @@ fn root_for(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> Option<String> 
     }
 }
 
-/// Why there is no tree to show. A focused pane on a remote host reports a directory that does not
-/// exist on this machine, which is worth saying plainly rather than showing an empty tree.
+/// Why there is no tree to show. A focused pane whose directory is not on this client (OSC7
+/// `cwd_host`, or a `--remote` session) is worth saying plainly rather than showing an empty tree.
 fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static str {
-    let remote = ctx
-        .state
-        .focused_pane
-        .and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id))
-        .is_some_and(|pane| pane.terminal.cwd_host.is_some());
+    let remote = ctx.state.remote_host.is_some()
+        || ctx
+            .state
+            .focused_pane
+            .and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id))
+            .is_some_and(|pane| pane.terminal.cwd_host.is_some());
     match (remote, root) {
+        (true, _) if ctx.state.remote_host.is_some() => {
+            "File tree follows the remote host (listing over the session is not wired yet)"
+        }
         (true, _) => "Pane is on a remote host",
         (false, SidebarTreeRoot::Repo) => "No repository here",
         (false, SidebarTreeRoot::Cwd) => "No working directory",

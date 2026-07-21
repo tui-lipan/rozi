@@ -102,7 +102,7 @@ pub(crate) fn execute_user_command_action_with_env(
                 keep_open: *keep_open,
                 // `cargo build` means "build the project I am looking at"; without this the command
                 // runs wherever the session server was started.
-                cwd: crate::pane_lifecycle::focused_local_cwd(&ctx.state),
+                cwd: crate::pane_lifecycle::focused_spawn_cwd(&ctx.state),
                 env,
                 ..PaneIdentity::default()
             };

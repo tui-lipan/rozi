@@ -623,6 +623,7 @@ pub(crate) fn open_named_target(
         client: None,
         autostart: true,
         read_only: false,
+        remote_host: None,
         intent: attach_intent.clone(),
         left,
     });
@@ -689,6 +690,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
         client: None,
         autostart: true,
         read_only: false,
+        remote_host: None,
         intent: crate::state::AttachIntent::ProfileSeed {
             profile: entry.name.clone(),
             path: entry.path.clone(),

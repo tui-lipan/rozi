@@ -221,11 +221,13 @@ impl From<TerminalCommandPhase> for PaneCommandPhase {
 /// reports with native process-inspection fallbacks per [`PaneCwdSource`]'s precedence order.
 ///
 /// `cwd` is always the *best available displayable* path regardless of source; `cwd_host` is set
-/// only when that path names a location on a different host than the server (a remote `OSC 7`
-/// report over SSH, for instance) - callers that need a *local* filesystem path (e.g. "open a new
-/// pane in the same directory") must treat a present `cwd_host` as disqualifying, never pass such a
-/// path to a local spawn's working directory, and should prefer `cwd_source` for that check rather
-/// than string-matching hostnames themselves.
+/// only when that path names a location on a different host than the **session server** (a remote
+/// `OSC 7` report over SSH into the server's machine, for instance). Under `--remote`, the server
+/// still owns this comparison — paths on the remote session host have `cwd_host = None` even though
+/// they are not on the client's machine. Client-local filesystem consumers (file tree, profile
+/// save of paths) must therefore also check whether the client is remote-attached before treating
+/// a `cwd_host`-free path as local. Spawn requests sent to the session server may still carry the
+/// server-relative cwd.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PaneRuntimeState {
     pub cwd: Option<String>,

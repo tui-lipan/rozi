@@ -119,6 +119,10 @@ pub struct State {
     pub event_hub: crate::events::EventHub,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
+    /// When attached via `--remote`, the remote host alias/URL; `None` for local sessions.
+    /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
+    /// remote when this is set, even if `cwd_host` is `None` (server-relative).
+    pub remote_host: Option<String>,
     pub created_from_profile: Option<String>,
     pub deferred_profile_seed: Option<(String, PathBuf)>,
     pub pending_profile_loaded: Option<(String, PathBuf, String)>,
@@ -233,6 +237,7 @@ impl State {
             event_hub: crate::events::EventHub::default(),
             session_client: None,
             session_name: None,
+            remote_host: None,
             created_from_profile: None,
             deferred_profile_seed: None,
             pending_profile_loaded: None,

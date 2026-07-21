@@ -18,13 +18,17 @@ use crate::{HyprmuxApp, Msg};
 ///
 /// Anything spawned *from* a pane — a split, a `[keys]`/sidebar `run` command, a popup — opens where
 /// that pane is, which is almost never where the session server was started. A remote SSH path is
-/// never returned: it does not name a directory on this machine.
+/// never returned: it does not name a directory on this machine. When the client is `--remote`
+/// attached, every server cwd is treated as non-local even if `cwd_host` is unset.
 pub(crate) fn focused_local_cwd(state: &State) -> Option<String> {
     focused_local_cwd_ref(state).map(str::to_string)
 }
 
 /// [`focused_local_cwd`] without the allocation. See [`Pane::local_cwd_ref`].
 pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
+    if state.remote_host.is_some() {
+        return None;
+    }
     let workspace = &state.workspaces[state.active_workspace];
     workspace
         .focused_pane
@@ -32,10 +36,26 @@ pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
         .and_then(|pane| pane.local_cwd_ref())
 }
 
+/// Cwd to send with a server spawn request. Under `--remote`, inherits the server-relative path.
+pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
+    if state.remote_host.is_some() {
+        let workspace = &state.workspaces[state.active_workspace];
+        return workspace
+            .focused_pane
+            .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
+            .and_then(|pane| {
+                pane.terminal
+                    .working_directory()
+                    .or_else(|| pane.identity.cwd.clone())
+            });
+    }
+    focused_local_cwd(state)
+}
+
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let previous_focused = ctx.state.workspaces[ctx.state.active_workspace].focused_pane;
     let identity = PaneIdentity {
-        cwd: focused_local_cwd(&ctx.state),
+        cwd: focused_spawn_cwd(&ctx.state),
         ..PaneIdentity::default()
     };
 

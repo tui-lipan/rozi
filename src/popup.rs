@@ -6,7 +6,7 @@ use crate::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
 use crate::ops::theme::{pane_frame_background, terminal_palette};
 use crate::pane_lifecycle::{
-    PaneSpawnRequest, focused_local_cwd, open_timers_command, pane_env, prune_closed_command,
+    PaneSpawnRequest, focused_spawn_cwd, open_timers_command, pane_env, prune_closed_command,
     request_pane_spawn,
 };
 use crate::state::{POPUP_PANE_ID, Pane, PaneIdentity};
@@ -57,7 +57,7 @@ pub(crate) fn open(
         command: Some(command),
         // A popup runs where the user is looking, not where the server happens to live; an explicit
         // cwd from the control socket still wins.
-        cwd: cwd.or_else(|| focused_local_cwd(&ctx.state)),
+        cwd: cwd.or_else(|| focused_spawn_cwd(&ctx.state)),
         keep_open,
         env,
         custom_title: title,

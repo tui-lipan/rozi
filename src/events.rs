@@ -161,7 +161,7 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
     if commands.is_empty() {
         return;
     }
-    let env = hook_env(event, state.control_socket_path.as_deref());
+    let env = hook_env_for_state(event, state);
     let runner = crate::platform::command::resolve_command_shell(
         state.config.command_shell.as_deref(),
         &crate::platform::command::ShellEnv::from_process(),
@@ -190,6 +190,18 @@ fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec
             value.clone(),
         )
     }));
+    env
+}
+
+/// Build hook environment, including the remote host when the client is `--remote` attached.
+pub(crate) fn hook_env_for_state(
+    event: &Event,
+    state: &crate::state::State,
+) -> Vec<(String, String)> {
+    let mut env = hook_env(event, state.control_socket_path.as_deref());
+    if let Some(host) = &state.remote_host {
+        env.push(("HYPRMUX_REMOTE_HOST".to_string(), host.clone()));
+    }
     env
 }
 

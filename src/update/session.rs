@@ -73,6 +73,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
         client: None,
         autostart,
         read_only,
+        remote_host: ctx.state.remote_host.clone(),
         intent: crate::state::AttachIntent::Plain,
         left: None,
     });
@@ -136,6 +137,9 @@ pub(super) fn attached(
     ctx.state.runtime_epoch = epoch;
     ctx.state.session_client = Some(client);
     ctx.state.session_name = Some(session.clone());
+    if let Some(host) = pending.remote_host {
+        ctx.state.remote_host = Some(host);
+    }
     ctx.state.created_from_profile = created_from_profile;
     ctx.state.session_attached = true;
     crate::update::sidebar::invalidate_sessions(ctx);
@@ -1304,6 +1308,7 @@ mod tests {
                         client: Some(client),
                         autostart: true,
                         read_only: false,
+                        remote_host: None,
                         intent: crate::state::AttachIntent::ProfileSeed {
                             profile: "legacy-profile".into(),
                             path: path.clone(),

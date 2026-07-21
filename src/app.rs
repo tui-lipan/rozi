@@ -198,6 +198,10 @@ impl Component for HyprmuxApp {
                 client: None,
                 autostart,
                 read_only: self.read_only,
+                remote_host: self.remote.as_ref().map(|target| match target {
+                    crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
+                    crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
+                }),
                 intent: self.startup_profile.as_ref().map_or(
                     crate::state::AttachIntent::Plain,
                     |profile| {
@@ -212,6 +216,10 @@ impl Component for HyprmuxApp {
                     },
                 ),
                 left: None,
+            });
+            ctx.state.remote_host = self.remote.as_ref().map(|target| match target {
+                crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
+                crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
             });
             SessionStart::Attach {
                 epoch,
@@ -488,6 +496,9 @@ pub(crate) fn schedule_agent_tick() -> Command {
 }
 
 fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
+    // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
+    // that is what we want: copy from a remote pane reaches the local clipboard. Disabling
+    // `enable_osc52` drops OSC52 without redirecting copies to the remote host.
     ClipboardConfig {
         enable_osc52: config.clipboard.enable_osc52,
         ..ClipboardConfig::default()

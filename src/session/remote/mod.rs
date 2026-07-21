@@ -4,11 +4,13 @@
 //! `ssh … hyprmux --remote-serve <NAME>`, which proxies to the remote host's local session
 //! endpoint. The session server itself is unchanged.
 
+mod bootstrap;
 mod connect;
 mod preamble;
 mod proxy;
 mod target;
 
+pub use bootstrap::ensure_remote_binary;
 pub use connect::connect_remote;
 #[allow(unused_imports)] // public API surface for remote attach callers
 pub use preamble::RemotePreamble;

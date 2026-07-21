@@ -51,10 +51,9 @@ pub fn connect_remote(
         ));
     }
 
-    let remote_bin = resolved
-        .binary_path
-        .clone()
-        .unwrap_or_else(|| "hyprmux".to_string());
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+    let remote_bin = super::ensure_remote_binary(target, config, interactive)
+        .map_err(RemoteConnectError::Message)?;
 
     let mut command = Command::new("ssh");
     command.arg("-T"); // no tty — raw protocol bytes on the pipe

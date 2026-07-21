@@ -25,6 +25,8 @@ pub struct HyprmuxApp {
     startup_autostart: bool,
     startup_create_only: bool,
     read_only: bool,
+    /// When set, attach through SSH to this remote target instead of a local endpoint.
+    remote: Option<crate::session::remote::RemoteTarget>,
     /// Whether a bare launch should open the session picker before attaching (`--pick` or
     /// `[session] startup = "picker"`). Only honored when there is no target/`--session` and at
     /// least one named session exists at startup.
@@ -61,6 +63,7 @@ impl Default for HyprmuxApp {
             startup_autostart: true,
             startup_create_only: false,
             read_only: false,
+            remote: None,
             want_startup_picker: false,
             watch_hangup: false,
             event_hub: events::EventHub::default(),
@@ -82,6 +85,7 @@ impl HyprmuxApp {
         startup_autostart: bool,
         startup_create_only: bool,
         read_only: bool,
+        remote: Option<crate::session::remote::RemoteTarget>,
         want_startup_picker: bool,
     ) -> Self {
         Self {
@@ -96,6 +100,7 @@ impl HyprmuxApp {
             startup_autostart,
             startup_create_only,
             read_only,
+            remote,
             want_startup_picker,
             watch_hangup: true,
             event_hub: events::EventHub::default(),
@@ -177,7 +182,7 @@ impl Component for HyprmuxApp {
         )
         .as_argv();
 
-        let start = if self.want_startup_picker && has_named_session() {
+        let start = if self.want_startup_picker && self.remote.is_none() && has_named_session() {
             let epoch = ops::session::open_startup_session_picker(ctx);
             SessionStart::Picker { epoch }
         } else {
@@ -218,6 +223,8 @@ impl Component for HyprmuxApp {
 
         let startup_read_only = self.read_only;
         let watch_hangup = self.watch_hangup;
+        let remote = self.remote.clone();
+        let remote_config = self.config.remote.clone();
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             link.send(Msg::CommandLinkReady(link.clone()));
             ops::config::spawn_config_watcher(&link);
@@ -247,7 +254,17 @@ impl Component for HyprmuxApp {
                 } => {
                     let session_link = link.clone();
                     std::thread::spawn(move || {
-                        if create_only {
+                        if let Some(remote) = remote {
+                            crate::session::bootstrap::attach_remote_session_client(
+                                epoch,
+                                name,
+                                startup_read_only,
+                                create_only,
+                                remote,
+                                remote_config,
+                                session_link,
+                            );
+                        } else if create_only {
                             crate::session::bootstrap::create_session_client(
                                 epoch,
                                 name,
@@ -496,6 +513,7 @@ pub fn run() -> Result<()> {
         }
         Ok(cli::ParsedCli::Control(command)) => return cli::run_control_cli(command),
         Ok(cli::ParsedCli::Server { name, fresh }) => return cli::run_server_cli(&name, fresh),
+        Ok(cli::ParsedCli::RemoteServe { name }) => return cli::run_remote_serve_cli(&name),
         Ok(cli::ParsedCli::ListSessions) => return cli::run_list_sessions_cli(),
         Ok(cli::ParsedCli::KillSession { name }) => return cli::run_kill_session_cli(&name),
         Ok(cli::ParsedCli::Run(args)) => args,
@@ -637,6 +655,7 @@ pub fn run() -> Result<()> {
     // Open the picker at startup only for a bare launch (no explicit attach target). The
     // "any named session exists" gate is checked in `init` so it reflects live state at mount.
     let want_startup_picker = attach_session.is_none()
+        && cli.remote.is_none()
         && (cli.pick || config.session.startup == config::SessionStartup::Picker);
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
@@ -673,6 +692,17 @@ pub fn run() -> Result<()> {
         // Ctrl-q is unbound: hyprmux's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 
+    let remote = match cli.remote.as_deref() {
+        Some(raw) => match crate::session::remote::parse_remote_target(raw) {
+            Ok(target) => Some(target),
+            Err(err) => {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
+
     app.mount(HyprmuxApp::new(
         config,
         theme,
@@ -685,6 +715,7 @@ pub fn run() -> Result<()> {
         startup_autostart,
         startup_create_only,
         cli.read_only,
+        remote,
         want_startup_picker,
     ))
     .run()

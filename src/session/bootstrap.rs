@@ -34,7 +34,7 @@ pub(crate) fn attach_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, link);
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, link);
 }
 
 pub(crate) fn create_session_client(
@@ -43,7 +43,27 @@ pub(crate) fn create_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, true, read_only, true, link);
+    attach_session_client_with_profile(epoch, name, true, read_only, true, None, link);
+}
+
+pub(crate) fn attach_remote_session_client(
+    epoch: u64,
+    name: String,
+    read_only: bool,
+    create_only: bool,
+    remote: super::remote::RemoteTarget,
+    remote_config: crate::config::HyprmuxRemoteConfig,
+    link: CommandLink<Msg>,
+) {
+    attach_session_client_with_profile(
+        epoch,
+        name,
+        true,
+        read_only,
+        create_only,
+        Some((remote, remote_config)),
+        link,
+    );
 }
 
 fn attach_session_client_with_profile(
@@ -52,10 +72,27 @@ fn attach_session_client_with_profile(
     autostart: bool,
     read_only: bool,
     create_only: bool,
+    remote: Option<(
+        super::remote::RemoteTarget,
+        crate::config::HyprmuxRemoteConfig,
+    )>,
     link: CommandLink<Msg>,
 ) {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    if let Some((target, remote_config)) = remote {
+        attach_remote(
+            epoch,
+            name,
+            read_only,
+            create_only,
+            target,
+            remote_config,
+            link,
+        );
+        return;
+    }
 
     let Ok(path) = super::server::session_socket_path(&name) else {
         link.send(Msg::SessionAttachFailed {
@@ -191,6 +228,64 @@ fn attach_session_client_with_profile(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+        }
+    }
+}
+
+fn attach_remote(
+    epoch: u64,
+    name: String,
+    read_only: bool,
+    create_only: bool,
+    target: super::remote::RemoteTarget,
+    remote_config: crate::config::HyprmuxRemoteConfig,
+    link: CommandLink<Msg>,
+) {
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    match super::remote::connect_remote(&target, &name, &remote_config) {
+        Ok((stream, preamble)) => {
+            if create_only && !preamble.server_started {
+                // Drop the pipe without attaching — session already existed remotely.
+                drop(stream);
+                link.send(Msg::SessionAttachFailed {
+                    epoch,
+                    message: format!("Session `{name}` is already running on the remote host"),
+                });
+                return;
+            }
+            match super::client::SessionClient::from_stream_attached(
+                stream,
+                name.clone(),
+                tx,
+                read_only,
+            ) {
+                Ok((client, attached)) => {
+                    link.send(Msg::SessionConnected {
+                        epoch,
+                        name: name.clone(),
+                        client,
+                    });
+                    link.send(server_message_to_msg(epoch, Frame::Control(attached)));
+                    for message in rx {
+                        link.send(server_message_to_msg(epoch, message));
+                    }
+                    link.send(Msg::SessionDisconnected { epoch, name });
+                }
+                Err(err) => {
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!("Remote session `{name}`: {err}"),
+                    });
+                }
+            }
+        }
+        Err(err) => {
+            link.send(Msg::SessionAttachFailed {
+                epoch,
+                message: format!("Remote attach to `{name}` failed: {err}"),
+            });
         }
     }
 }

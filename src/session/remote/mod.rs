@@ -1,0 +1,81 @@
+//! Remote SSH session attach (`--remote`).
+//!
+//! The local client speaks the normal session protocol over a pipe to
+//! `ssh … hyprmux --remote-serve <NAME>`, which proxies to the remote host's local session
+//! endpoint. The session server itself is unchanged.
+
+mod connect;
+mod preamble;
+mod proxy;
+mod target;
+
+pub use connect::connect_remote;
+#[allow(unused_imports)] // public API surface for remote attach callers
+pub use preamble::RemotePreamble;
+pub use proxy::run_remote_serve;
+pub use target::{RemoteTarget, parse_remote_target};
+
+use crate::config::{HyprmuxRemoteConfig, RemoteHostConfig};
+
+/// Resolved SSH destination after merging CLI target with `[remote]` / `[remote.hosts.*]` config.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedRemote {
+    pub alias: Option<String>,
+    pub host: String,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+    pub ssh_args: Vec<String>,
+    pub binary_path: Option<String>,
+}
+
+impl ResolvedRemote {
+    pub fn resolve(target: &RemoteTarget, config: &HyprmuxRemoteConfig) -> Self {
+        let alias_key = match target {
+            RemoteTarget::Alias(alias) => Some(alias.as_str()),
+            RemoteTarget::Url { .. } => None,
+        };
+        let host_cfg: Option<&RemoteHostConfig> =
+            alias_key.and_then(|alias| config.hosts.get(alias));
+
+        match target {
+            RemoteTarget::Alias(alias) => {
+                let host = host_cfg
+                    .and_then(|h| h.host.clone())
+                    .unwrap_or_else(|| alias.clone());
+                Self {
+                    alias: Some(alias.clone()),
+                    host,
+                    user: host_cfg.and_then(|h| h.user.clone()),
+                    port: host_cfg.and_then(|h| h.port),
+                    identity_file: host_cfg.and_then(|h| h.identity_file.clone()),
+                    ssh_args: host_cfg.map(|h| h.ssh_args.clone()).unwrap_or_default(),
+                    binary_path: host_cfg.and_then(|h| h.binary_path.clone()),
+                }
+            }
+            RemoteTarget::Url { user, host, port } => {
+                // URL fields win; fall back to default_host table only for ssh_args / binary when
+                // the URL host matches a configured alias name.
+                let host_cfg = config.hosts.get(host);
+                Self {
+                    alias: None,
+                    host: host.clone(),
+                    user: user
+                        .clone()
+                        .or_else(|| host_cfg.and_then(|h| h.user.clone())),
+                    port: port.or_else(|| host_cfg.and_then(|h| h.port)),
+                    identity_file: host_cfg.and_then(|h| h.identity_file.clone()),
+                    ssh_args: host_cfg.map(|h| h.ssh_args.clone()).unwrap_or_default(),
+                    binary_path: host_cfg.and_then(|h| h.binary_path.clone()),
+                }
+            }
+        }
+    }
+
+    pub fn ssh_destination(&self) -> String {
+        match &self.user {
+            Some(user) => format!("{user}@{}", self.host),
+            None => self.host.clone(),
+        }
+    }
+}

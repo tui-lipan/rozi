@@ -206,6 +206,62 @@ impl Default for HyprmuxSessionConfig {
     }
 }
 
+/// When `--remote` finds no compatible binary on the far side (Phase 4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RemoteInstallPolicy {
+    /// Prompt interactively; never mutate in non-interactive mode.
+    #[default]
+    Prompt,
+    Never,
+    Always,
+}
+
+impl RemoteInstallPolicy {
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "prompt" => Some(Self::Prompt),
+            "never" => Some(Self::Never),
+            "always" => Some(Self::Always),
+            _ => None,
+        }
+    }
+}
+
+/// Per-alias `[remote.hosts.<name>]` settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RemoteHostConfig {
+    pub host: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub identity_file: Option<String>,
+    pub ssh_args: Vec<String>,
+    pub binary_path: Option<String>,
+}
+
+/// `[remote]` configuration for SSH session attach.
+#[derive(Clone, Debug)]
+pub struct HyprmuxRemoteConfig {
+    pub default_host: Option<String>,
+    pub hosts: HashMap<String, RemoteHostConfig>,
+    pub connection_timeout_secs: u64,
+    pub server_alive_interval_secs: u64,
+    pub server_alive_count_max: u64,
+    pub install: RemoteInstallPolicy,
+}
+
+impl Default for HyprmuxRemoteConfig {
+    fn default() -> Self {
+        Self {
+            default_host: None,
+            hosts: HashMap::new(),
+            connection_timeout_secs: 15,
+            server_alive_interval_secs: 15,
+            server_alive_count_max: 3,
+            install: RemoteInstallPolicy::default(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct HyprmuxPaneConfig {
     /// Keep naturally exited panes in the layout so they can be respawned in place.
@@ -470,6 +526,7 @@ pub struct HyprmuxConfig {
     pub theme: HyprmuxThemeConfig,
     pub profile: HyprmuxProfileConfig,
     pub session: HyprmuxSessionConfig,
+    pub remote: HyprmuxRemoteConfig,
     pub layout: HyprmuxLayoutConfig,
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
@@ -858,6 +915,7 @@ impl Default for HyprmuxConfig {
             theme: HyprmuxThemeConfig::default(),
             profile: HyprmuxProfileConfig::default(),
             session: HyprmuxSessionConfig::default(),
+            remote: HyprmuxRemoteConfig::default(),
             layout: HyprmuxLayoutConfig::default(),
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),

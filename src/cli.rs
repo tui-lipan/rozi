@@ -17,6 +17,8 @@ pub(crate) struct CliArgs {
     /// given or no named session exists.
     pub(crate) pick: bool,
     pub(crate) read_only: bool,
+    /// SSH remote host alias or `ssh://` URL (`--remote`).
+    pub(crate) remote: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -39,9 +41,18 @@ pub(crate) enum ParsedCli {
     Version,
     Run(CliArgs),
     Control(ControlCli),
-    Server { name: String, fresh: bool },
+    Server {
+        name: String,
+        fresh: bool,
+    },
+    /// Hidden remote-side stdio proxy (`--remote-serve <NAME>`).
+    RemoteServe {
+        name: String,
+    },
     ListSessions,
-    KillSession { name: String },
+    KillSession {
+        name: String,
+    },
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
@@ -86,6 +97,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 cli.session_command = SessionCommand::New;
             }
             "--server" => {
+                if cli.remote.is_some() {
+                    return Err("--remote cannot be combined with --server".to_string());
+                }
                 if let Some(name) = cli.attach_session.take() {
                     if !session_flag_target || cli.session_command != SessionCommand::Dwim {
                         return Err("--server must follow --session <NAME>".to_string());
@@ -106,8 +120,27 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if !session_flag_target || cli.session_command != SessionCommand::Dwim {
                     return Err("--fresh-server must follow --session <NAME>".to_string());
                 }
+                if cli.remote.is_some() {
+                    return Err("--remote cannot be combined with --fresh-server".to_string());
+                }
                 reject_trailing_control_args(&mut iter, "--fresh-server")?;
                 return Ok(ParsedCli::Server { name, fresh: true });
+            }
+            "--remote-serve" => {
+                let name = iter
+                    .next()
+                    .ok_or_else(|| "--remote-serve requires a session name".to_string())?;
+                reject_trailing_control_args(&mut iter, "--remote-serve")?;
+                return Ok(ParsedCli::RemoteServe { name });
+            }
+            "--remote" => {
+                let target = iter
+                    .next()
+                    .ok_or_else(|| "--remote requires a host alias or ssh:// URL".to_string())?;
+                session::remote::parse_remote_target(&target)?;
+                if cli.remote.replace(target).is_some() {
+                    return Err("--remote specified more than once".to_string());
+                }
             }
             "--session" => {
                 let name = iter
@@ -462,6 +495,11 @@ pub(crate) fn run_server_cli(name: &str, fresh: bool) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
+    session::remote::run_remote_serve(name)?;
+    Ok(())
+}
+
 pub(crate) fn run_list_sessions_cli() -> Result<()> {
     for session in session::discovery::discover_sessions()? {
         match session.status {
@@ -555,6 +593,7 @@ USAGE:
     hyprmux [--socket PATH] switch-workspace <1-9>
     hyprmux [--socket PATH] move-to-workspace <1-9>
     hyprmux --session <NAME> [--read-only]
+    hyprmux --remote <HOST|ssh://URL> [TARGET] [--read-only]
     hyprmux --pick
     hyprmux list-sessions
     hyprmux kill-session <NAME>
@@ -566,6 +605,7 @@ OPTIONS:
     -V, --version         Print version
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
+        --remote <HOST>   Attach via SSH to a session on HOST (alias or ssh:// URL)
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
         --profile <NAME>  Seed an explicit new session from this profile
@@ -936,6 +976,36 @@ mod tests {
             expect_run(parse_cli_args(vec!["--pick".into(), "dev".into()]).expect("parses"));
         assert!(with_profile.pick);
         assert_eq!(with_profile.attach_session.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn cli_parses_remote_and_rejects_server_combo() {
+        let args = expect_run(
+            parse_cli_args(vec!["--remote".into(), "workbox".into(), "dev".into()])
+                .expect("parses"),
+        );
+        assert_eq!(args.remote.as_deref(), Some("workbox"));
+        assert_eq!(args.attach_session.as_deref(), Some("dev"));
+
+        assert!(matches!(
+            parse_cli_args(vec![
+                "--remote-serve".into(),
+                "dev".into(),
+            ])
+            .expect("parses"),
+            ParsedCli::RemoteServe { name } if name == "dev"
+        ));
+
+        assert!(
+            parse_cli_args(vec![
+                "--remote".into(),
+                "workbox".into(),
+                "--server".into(),
+                "dev".into(),
+            ])
+            .is_err()
+        );
+        assert!(parse_cli_args(vec!["--remote".into(), "ssh://".into()]).is_err());
     }
 
     fn expect_run(parsed: ParsedCli) -> CliArgs {

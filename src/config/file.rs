@@ -52,6 +52,7 @@ struct FileConfig {
     theme: ThemeFileConfig,
     profile: ProfileFileConfig,
     session: SessionFileConfig,
+    remote: RemoteFileConfig,
     layout: LayoutFileConfig,
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
@@ -238,6 +239,30 @@ struct SessionFileConfig {
     path: Option<String>,
     startup: Option<String>,
     resurrect: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct RemoteFileConfig {
+    default_host: Option<String>,
+    connection_timeout_secs: Option<u64>,
+    server_alive_interval_secs: Option<u64>,
+    server_alive_count_max: Option<u64>,
+    install: Option<String>,
+    #[serde(default)]
+    hosts: HashMap<String, RemoteHostFileConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct RemoteHostFileConfig {
+    host: Option<String>,
+    user: Option<String>,
+    port: Option<u16>,
+    identity_file: Option<String>,
+    #[serde(default)]
+    ssh_args: Vec<String>,
+    binary_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -461,6 +486,39 @@ pub fn load_config() -> LoadedConfig {
                 "Ignored unknown session.startup \"{startup}\" (expected `ephemeral`, `picker`, or `last`)"
             )),
         }
+    }
+    if let Some(default_host) = non_empty(parsed.remote.default_host) {
+        config.remote.default_host = Some(default_host);
+    }
+    if let Some(secs) = parsed.remote.connection_timeout_secs {
+        config.remote.connection_timeout_secs = secs;
+    }
+    if let Some(secs) = parsed.remote.server_alive_interval_secs {
+        config.remote.server_alive_interval_secs = secs.max(1);
+    }
+    if let Some(count) = parsed.remote.server_alive_count_max {
+        config.remote.server_alive_count_max = count.max(1);
+    }
+    if let Some(install) = non_empty(parsed.remote.install) {
+        match RemoteInstallPolicy::parse(&install) {
+            Some(value) => config.remote.install = value,
+            None => warnings.push(format!(
+                "Ignored unknown remote.install \"{install}\" (expected `prompt`, `never`, or `always`)"
+            )),
+        }
+    }
+    for (alias, host) in parsed.remote.hosts {
+        config.remote.hosts.insert(
+            alias,
+            RemoteHostConfig {
+                host: non_empty(host.host),
+                user: non_empty(host.user),
+                port: host.port.filter(|port| *port != 0),
+                identity_file: non_empty(host.identity_file),
+                ssh_args: host.ssh_args,
+                binary_path: non_empty(host.binary_path),
+            },
+        );
     }
     if let Some(multiplier) = parsed.layout.split_width_multiplier {
         if multiplier.is_finite() && multiplier > 0.0 {

@@ -2,6 +2,7 @@ pub(crate) mod bootstrap;
 pub mod client;
 pub mod discovery;
 pub mod protocol;
+pub(crate) mod remote;
 pub mod server;
 
 fn last_session_path() -> Option<std::path::PathBuf> {

@@ -31,7 +31,9 @@ hyprmux kill-session dev --remote workbox
 | any | **Windows** | **Not supported** — see below. |
 
 hyprmux itself runs on Windows, and the session server and `--remote-serve` proxy are
-platform-neutral, but a Windows host cannot currently be the *remote* end of `--remote`:
+platform-neutral, but a Windows host cannot currently be the *remote* end of `--remote`.
+
+Bootstrap blockers, all bypassable by pinning `binary_path`:
 
 - The probe runs `ssh <host> -- sh -s`. Windows OpenSSH sshd defaults to `cmd.exe`, which has no
   `sh`, so the probe fails before anything else is attempted.
@@ -40,10 +42,24 @@ platform-neutral, but a Windows host cannot currently be the *remote* end of `--
 - The install path writes `$HOME/.local/bin/hyprmux` with `chmod 755` — a POSIX path, POSIX
   permissions, and no `.exe` suffix.
 
-Pinning `binary_path` to an existing `hyprmux.exe` skips the probe and install, but that route is
-untested and Windows OpenSSH is known to translate line endings on non-pty stdio depending on the
-configured shell, which would corrupt the framed session protocol. Treat it as unsupported until
-that is verified.
+The blocker that is *not* bypassable is server lifetime. Windows OpenSSH runs each session inside a
+Job Object and terminates it on disconnect. `spawn_detached_server` uses `DETACHED_PROCESS`, which
+does not escape a job, so the session server the proxy autostarts dies as soon as the ssh session
+ends — defeating the detach/reattach premise. Fixing this needs `CREATE_BREAKAWAY_FROM_JOB` (only
+effective when the job sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`) or a different launch mechanism
+entirely.
+
+Measured against a real Windows 11 host over OpenSSH, for whoever picks this up:
+
+- **Line endings are not a problem.** Non-pty stdio under the stock `cmd.exe` shell is byte-clean in
+  both directions — `0x0A` stays `0x0A`, and the framed preamble arrives intact. No `DefaultShell`
+  change is required. (An earlier revision of this page warned otherwise; that warning was wrong.)
+- The Windows session server runs correctly, binds its named pipe, and is discoverable by
+  `list-sessions` on that host.
+- `--remote-serve` emits a valid preamble reporting `platform: windows`.
+- The proxy's stdout pump must set the named pipe non-blocking on its **reader clone only**; a
+  blocking `ReadFile` on a duplicated pipe handle stalls `WriteFile` on its sibling, and setting
+  `PIPE_NOWAIT` on the writer breaks `write_all`. See `session::remote::proxy`.
 
 Cross-platform install between *supported* platforms downloads the matching release archive and
 needs `tar` on the client (`tar.exe` ships with Windows 10 and later). Checksum verification is done

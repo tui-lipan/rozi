@@ -25,8 +25,6 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
     }
 
     let (mut socket, server_started) = connect_or_autostart(name)?;
-    // Prefer blocking reads so we do not busy-poll on WouldBlock.
-    let _ = socket.set_nonblocking(false);
     {
         let mut stdout = io::stdout().lock();
         write_preamble(&mut stdout, &RemotePreamble::current(server_started))?;
@@ -34,6 +32,14 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
     }
 
     let mut socket_reader = socket.try_clone()?;
+    // Windows only, and only on the reader clone: a pending synchronous `ReadFile` on a duplicated
+    // named-pipe handle holds up `WriteFile` on its sibling, so a blocking pump here would stall
+    // the stdin->socket direction and the server would never see the client's `Attach`. Polling
+    // keeps the duplex live, exactly as `session::client` does. It must not be set on `socket`
+    // itself — `PIPE_NOWAIT` applies per handle and would break the blocking `write_all` below.
+    // Unix sockets have no such coupling and stay blocking, so they never spin.
+    #[cfg(windows)]
+    let _ = socket_reader.set_nonblocking(true);
     let to_stdout = thread::spawn(move || -> io::Result<()> {
         let mut stdout = io::stdout();
         let mut buf = [0u8; 64 * 1024];
@@ -49,6 +55,10 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
                     stdout.flush()?;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                // Only reachable on the non-blocking (Windows) path; see `set_nonblocking` above.
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(2));
+                }
                 Err(err) => {
                     eprintln!("hyprmux --remote-serve: socket read failed: {err}");
                     std::process::exit(1);

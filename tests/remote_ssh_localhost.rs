@@ -275,3 +275,76 @@ fn refuses_to_install_on_the_host_when_the_policy_forbids_it() {
         }
     }
 }
+
+/// Attach to an arbitrary real host, configured out-of-band.
+///
+/// Point `HYPRMUX_CONFIG` at a `hyprmux.toml` holding a `[remote.hosts.<alias>]` entry and set
+/// `HYPRMUX_TEST_REMOTE_ALIAS` to that alias. Skipped when unset, so it costs nothing in CI while
+/// giving the manual "run it against a real box" pass a repeatable form — including hosts no gated
+/// localhost test can stand in for, such as a Windows session server.
+///
+/// Pin `binary_path` in that config: this test asserts nothing is installed on the host.
+#[test]
+fn attaches_to_a_configured_real_remote() {
+    let Ok(alias) = std::env::var("HYPRMUX_TEST_REMOTE_ALIAS") else {
+        eprintln!("skipping: set HYPRMUX_CONFIG and HYPRMUX_TEST_REMOTE_ALIAS");
+        return;
+    };
+
+    let config = hyprmux::config::load_config().config.remote;
+    assert!(
+        config.hosts.contains_key(&alias),
+        "alias `{alias}` is not in the config named by HYPRMUX_CONFIG"
+    );
+    assert!(
+        config.hosts[&alias].binary_path.is_some(),
+        "pin binary_path for `{alias}`: this test must never install onto a real host"
+    );
+
+    let target = parse_remote_target(&alias).expect("parse alias");
+    let session = unique_session_name();
+
+    let (stream, preamble) =
+        connect_remote(&target, &session, &config).expect("connect to configured remote");
+    eprintln!(
+        "remote: platform={} version={} protocol={}-{} server_started={}",
+        preamble.platform,
+        preamble.hyprmux_version,
+        preamble.protocol_min,
+        preamble.protocol_max,
+        preamble.server_started
+    );
+    assert!(
+        preamble.server_started,
+        "a fresh session name must autostart a server on the remote"
+    );
+
+    let (tx, _rx) = mpsc::channel();
+    let (client, attached) =
+        SessionClient::from_stream_attached(stream, session.clone(), tx, false)
+            .expect("attach over ssh to the configured remote");
+    match &attached {
+        ServerMessage::Attached {
+            session: name,
+            effective_protocol,
+            ..
+        } => {
+            eprintln!("attached to `{name}` at protocol {effective_protocol}");
+            assert_eq!(name, &session);
+            assert!(*effective_protocol >= 12);
+        }
+        other => panic!("expected Attached, got {other:?}"),
+    }
+
+    // Reconnecting to the same name must find the server already up.
+    let (second, second_preamble) =
+        connect_remote(&target, &session, &config).expect("second connect");
+    assert!(!second_preamble.server_started);
+    drop(second);
+
+    client.detach();
+    drop(client);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let _ = hyprmux::session::remote::kill_remote_session(&target, &session, &config);
+}

@@ -15,8 +15,8 @@ pub(crate) use bootstrap::ssh_base_command;
 #[allow(unused_imports)] // re-exported for callers/tests
 pub use connect::RemoteConnectError;
 pub use connect::{connect_remote, kill_remote_session};
-#[allow(unused_imports)] // public API surface for remote attach callers
-pub use preamble::RemotePreamble;
+#[allow(unused_imports)] // public API surface for remote attach callers and proxy tests
+pub use preamble::{RemotePreamble, read_preamble};
 pub use proxy::run_remote_serve;
 pub use target::{RemoteTarget, parse_remote_target};
 

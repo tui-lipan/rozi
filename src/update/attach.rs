@@ -178,7 +178,11 @@ pub(crate) fn spawn_state_panes_on_session(
         let env = integration_env
             .iter()
             .cloned()
-            .chain(pane_env(ctx.state.control_socket_path.as_deref(), pane))
+            .chain(pane_env(
+                ctx.state.control_socket_path.as_deref(),
+                pane,
+                ctx.state.remote_host.is_some(),
+            ))
             .collect::<Vec<_>>();
         // A replay command is not sent as the spawn command: the pane starts as a plain
         // interactive shell and the command is injected as type-ahead input once the spawn

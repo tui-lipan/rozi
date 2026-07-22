@@ -533,6 +533,126 @@ pub(super) fn tree_activate(
 
 /// The git repository containing `cwd`, found by walking ancestors for a `.git` entry. `.git` is a
 /// file rather than a directory inside worktrees and submodules, so this tests existence, not kind.
+/// The file tree needs a directory it has no listing for. Ask the session server to read it.
+///
+/// Deduplicated against in-flight and already-delivered paths: the widget re-emits a request on
+/// every rebuild while a directory is still absent from the provided source, so without this an
+/// expanded-but-slow directory would issue one `ListDirectory` per frame.
+pub(super) fn tree_entry_request(ctx: &mut Context<HyprmuxApp>, path: String) -> Update {
+    if ctx.state.remote_host.is_none() {
+        return Update::none();
+    }
+    if ctx.state.sidebar.tree_pending.contains(&path)
+        || ctx
+            .state
+            .sidebar
+            .tree_listings
+            .iter()
+            .any(|listing| &*listing.path == path.as_str())
+    {
+        return Update::none();
+    }
+    let Some(client) = ctx.state.session_client.as_ref() else {
+        return Update::none();
+    };
+    if !client.supports_file_tree() {
+        return Update::none();
+    }
+    // Always fetch dotfiles: `show_hidden` is per-tab, and the widget filters provided entries by
+    // it anyway, so one listing serves every tab and toggling the option needs no refetch.
+    client.list_directory(path.clone(), true);
+    ctx.state.sidebar.tree_pending.insert(path);
+    Update::none()
+}
+
+/// A server-served directory listing arrived. Replaces any previous listing for that path so a
+/// refresh overwrites rather than duplicating.
+pub(super) fn tree_directory_listed(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    path: String,
+    entries: Vec<crate::session::protocol::WireDirEntry>,
+    error: Option<String>,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
+    }
+    ctx.state.sidebar.tree_pending.remove(&path);
+    ctx.state
+        .sidebar
+        .tree_listings
+        .retain(|listing| &*listing.path != path.as_str());
+    let listing = match error {
+        Some(error) => FileTreeDirectoryListing::error(path, error),
+        None => FileTreeDirectoryListing::new(path, entries.into_iter().map(wire_entry_to_widget)),
+    };
+    ctx.state.sidebar.tree_listings.push(listing);
+    Update::full()
+}
+
+/// A server-served change scan arrived, backing the `Changes` tab under `--remote`.
+pub(super) fn tree_changes_listed(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    root: String,
+    changes: Vec<crate::session::protocol::WireChange>,
+    error: Option<String>,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
+    }
+    // An error here means "no repository" or "no git on the server" — an empty change set is the
+    // honest projection, and the tab already renders that as "No changes".
+    ctx.state.sidebar.tree_changes = if error.is_some() {
+        Vec::new()
+    } else {
+        changes.into_iter().map(wire_change_to_widget).collect()
+    };
+    ctx.state.sidebar.tree_changes_root = Some(root);
+    Update::full()
+}
+
+fn wire_entry_to_widget(entry: crate::session::protocol::WireDirEntry) -> FileTreeEntry {
+    let mut out = FileTreeEntry::new(entry.name, entry.is_dir)
+        .symlink(entry.is_symlink)
+        .ignored(entry.ignored);
+    if entry.git_staged.is_some() || entry.git_unstaged.is_some() {
+        out = out.git_status(GitFileStatus::new(
+            entry.git_staged.map(wire_state_to_change),
+            entry.git_unstaged.map(wire_state_to_change),
+        ));
+    }
+    out
+}
+
+fn wire_change_to_widget(change: crate::session::protocol::WireChange) -> FileTreeChange {
+    FileTreeChange::new(change.path, wire_state_to_status(change.state)).staged(change.staged)
+}
+
+fn wire_state_to_change(state: crate::session::protocol::WireChangeState) -> GitChangeState {
+    use crate::session::protocol::WireChangeState as Wire;
+    match state {
+        Wire::Added => GitChangeState::Added,
+        Wire::Modified => GitChangeState::Modified,
+        Wire::Deleted => GitChangeState::Deleted,
+        Wire::Renamed => GitChangeState::Renamed,
+        Wire::Untracked => GitChangeState::Untracked,
+        Wire::Conflicted => GitChangeState::Conflicted,
+    }
+}
+
+fn wire_state_to_status(state: crate::session::protocol::WireChangeState) -> FileTreeChangeStatus {
+    use crate::session::protocol::WireChangeState as Wire;
+    match state {
+        Wire::Added => FileTreeChangeStatus::Added,
+        Wire::Modified => FileTreeChangeStatus::Modified,
+        Wire::Deleted => FileTreeChangeStatus::Deleted,
+        Wire::Renamed => FileTreeChangeStatus::Renamed,
+        Wire::Untracked => FileTreeChangeStatus::Untracked,
+        Wire::Conflicted => FileTreeChangeStatus::Conflicted,
+    }
+}
+
 fn discover_repo_root(cwd: &str) -> Option<String> {
     std::path::Path::new(cwd)
         .ancestors()
@@ -555,12 +675,25 @@ fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
 pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
     // Compared as a borrow: this runs per message, including output from off-screen panes that the
     // session handler deliberately makes free, so the steady state must not allocate.
-    if crate::pane_lifecycle::focused_local_cwd_ref(&ctx.state)
+    // Under `--remote` the tree roots at the server's path, not a local one, so this follows
+    // `server_cwd_ref`. The repository walk stays local-only: `.git` cannot be probed across the
+    // link, and `root_for` already falls back to the cwd when there is no repo root.
+    if crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state)
         != ctx.state.sidebar.tree_cwd.as_deref()
     {
-        let cwd = crate::pane_lifecycle::focused_local_cwd(&ctx.state);
-        ctx.state.sidebar.tree_repo = cwd.as_deref().and_then(discover_repo_root);
+        let cwd = crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
+        ctx.state.sidebar.tree_repo = if ctx.state.remote_host.is_some() {
+            None
+        } else {
+            cwd.as_deref().and_then(discover_repo_root)
+        };
         ctx.state.sidebar.tree_cwd = cwd;
+        // A new root invalidates every server-served listing: paths under the old root will never
+        // be asked for again, and keeping them would leak one host's tree into another's.
+        ctx.state.sidebar.tree_listings.clear();
+        ctx.state.sidebar.tree_pending.clear();
+        ctx.state.sidebar.tree_changes.clear();
+        ctx.state.sidebar.tree_changes_root = None;
         bump_git_refresh(&mut ctx.state.sidebar);
     }
 
@@ -581,6 +714,46 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
             ))
         ) {
             bump_git_refresh(&mut ctx.state.sidebar);
+        }
+    }
+
+    refresh_remote_tree(ctx);
+}
+
+/// Re-ask the session server for tree data whose git state may have gone stale.
+///
+/// Keyed on `git_refresh_token`, the same signal the local tree refreshes on, so this fires once
+/// per root change or completed command rather than per message. Already-known directories are
+/// re-requested in place rather than cleared, so the tree does not flash back to loading rows.
+fn refresh_remote_tree(ctx: &mut Context<HyprmuxApp>) {
+    if ctx.state.remote_host.is_none() {
+        return;
+    }
+    let token = ctx.state.sidebar.git_refresh_token;
+    if token == ctx.state.sidebar.tree_server_token {
+        return;
+    }
+    let Some(root) = ctx.state.sidebar.tree_cwd.clone() else {
+        return;
+    };
+    let Some(client) = ctx.state.session_client.as_ref() else {
+        return;
+    };
+    if !client.supports_file_tree() {
+        return;
+    }
+    ctx.state.sidebar.tree_server_token = token;
+    client.list_changes(root);
+    let known: Vec<String> = ctx
+        .state
+        .sidebar
+        .tree_listings
+        .iter()
+        .map(|listing| listing.path.to_string())
+        .collect();
+    for path in known {
+        if ctx.state.sidebar.tree_pending.insert(path.clone()) {
+            client.list_directory(path, true);
         }
     }
 }
@@ -650,16 +823,14 @@ pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update 
     }
     let current_name = ctx.state.session_name.clone();
     let current = crate::ops::session::current_session_row(&ctx.state);
+    let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let rows = crate::session::discovery::discover_selectable_sessions(current_name.as_deref())
-            .map(|mut rows| {
-                if let Some(current) = current {
-                    rows.push(current);
-                    rows.sort_by(|a, b| a.name.cmp(&b.name));
-                }
-                rows
-            })
-            .map_err(|error| error.to_string());
+        let rows = crate::ops::session::discover_sessions_for_ui(
+            current_name.as_deref(),
+            &remote_config,
+            current,
+        )
+        .map_err(|error| error.to_string());
         link.send(crate::Msg::SidebarSessionsDiscovered { epoch, rows });
     }))
 }

@@ -25,12 +25,17 @@ use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
-pub const PROTOCOL_VERSION: u32 = 12;
+///
+/// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
+/// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
+pub const PROTOCOL_VERSION: u32 = 13;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
 /// server still rejects anything other than exact equality.
 pub const MIN_SUPPORTED_PROTOCOL: u32 = 12;
+/// First version carrying the file-tree browsing messages. A client must not send them below this.
+pub const FILE_TREE_PROTOCOL: u32 = 13;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -382,8 +387,63 @@ pub enum ClientMessage {
     Rename {
         name: String,
     },
+    /// List one directory **on the server's host** for the sidebar file tree (protocol 13+).
+    ///
+    /// Answered by [`ServerMessage::DirectoryListing`]. Only sent when the negotiated version is at
+    /// least [`FILE_TREE_PROTOCOL`], so an older server never sees an unknown variant.
+    ListDirectory {
+        path: String,
+        /// Include dotfiles. Mirrors `[sidebar] tree.show_hidden` on the client.
+        show_hidden: bool,
+    },
+    /// Scan a repository **on the server's host** for changed paths (protocol 13+).
+    ///
+    /// Answered by [`ServerMessage::ChangeListing`]. Backs the file tree's `Changes` projection,
+    /// which cannot use local git discovery when the files live on another machine.
+    ListChanges {
+        root: String,
+    },
     Detach,
     Shutdown,
+}
+
+/// One child entry in a [`ServerMessage::DirectoryListing`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireDirEntry {
+    /// Name relative to the listed directory, never a path.
+    pub name: String,
+    pub is_dir: bool,
+    #[serde(default)]
+    pub is_symlink: bool,
+    /// Whether the server's ignore rules exclude this entry.
+    #[serde(default)]
+    pub ignored: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_staged: Option<WireChangeState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_unstaged: Option<WireChangeState>,
+}
+
+/// Serde-stable mirror of the framework's git change states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WireChangeState {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflicted,
+}
+
+/// One changed path in a [`ServerMessage::ChangeListing`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireChange {
+    /// Path relative to the scanned root.
+    pub path: String,
+    pub state: WireChangeState,
+    #[serde(default)]
+    pub staged: bool,
 }
 
 /// Why the layout-control lease moved. Carried by [`ServerMessage::ControllerChanged`].
@@ -505,6 +565,22 @@ pub enum ServerMessage {
     },
     Ping {
         seq: u64,
+    },
+    /// Reply to [`ClientMessage::ListDirectory`]. `error` is set instead of `entries` when the
+    /// server could not read the directory; the client renders it in the tree row.
+    DirectoryListing {
+        path: String,
+        entries: Vec<WireDirEntry>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Reply to [`ClientMessage::ListChanges`]. An empty list with no `error` means a clean tree or
+    /// a root that is not a repository.
+    ChangeListing {
+        root: String,
+        changes: Vec<WireChange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 }
 
@@ -931,6 +1007,71 @@ mod tests {
     }
 
     #[test]
+    fn file_tree_messages_round_trip() {
+        let request = ClientMessage::ListDirectory {
+            path: "/srv/project".into(),
+            show_hidden: true,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &request).unwrap();
+        assert_eq!(
+            read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(),
+            request
+        );
+
+        let listing = ServerMessage::DirectoryListing {
+            path: "/srv/project".into(),
+            entries: vec![WireDirEntry {
+                name: "src".into(),
+                is_dir: true,
+                is_symlink: false,
+                ignored: false,
+                git_staged: None,
+                git_unstaged: Some(WireChangeState::Modified),
+            }],
+            error: None,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &listing).unwrap();
+        assert_eq!(
+            read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
+            listing
+        );
+
+        let changes = ServerMessage::ChangeListing {
+            root: "/srv/project".into(),
+            changes: vec![WireChange {
+                path: "src/lib.rs".into(),
+                state: WireChangeState::Modified,
+                staged: false,
+            }],
+            error: None,
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &changes).unwrap();
+        assert_eq!(
+            read_frame::<_, ServerMessage>(&mut &buf[..]).unwrap(),
+            changes
+        );
+    }
+
+    /// The file-tree messages were added in 13 while the minimum stayed 12, so negotiating against
+    /// a 12-only server must land on 12 — which is what gates the client off sending them.
+    #[test]
+    fn file_tree_protocol_is_above_the_supported_minimum() {
+        const { assert!(FILE_TREE_PROTOCOL > MIN_SUPPORTED_PROTOCOL) };
+        const { assert!(FILE_TREE_PROTOCOL <= PROTOCOL_VERSION) };
+
+        let effective = negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 12, 12)
+            .expect("13-client against a 12-server must still negotiate");
+        assert_eq!(effective, 12);
+        assert!(
+            effective < FILE_TREE_PROTOCOL,
+            "a 12-server must not be sent file-tree messages"
+        );
+    }
+
+    #[test]
     fn pane_status_message_round_trips() {
         let msg = ClientMessage::SetPaneStatus {
             pane_id: 7,
@@ -1054,7 +1195,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":12,
+                "protocol_version":13,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1082,7 +1223,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":12,
+                "protocol_version":13,
                 "min_protocol_version":12
             })
         );
@@ -1164,7 +1305,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":12,
+                "effective_protocol":13,
                 "created_from_profile":"work"
             })
         );

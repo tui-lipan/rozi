@@ -283,6 +283,24 @@ pub enum Msg {
         generation: u64,
         state: crate::session::protocol::PaneRuntimeState,
     },
+    /// A remote directory listing arrived; feeds the sidebar file tree's provided entry source.
+    SessionDirectoryListing {
+        epoch: u64,
+        path: String,
+        entries: Vec<crate::session::protocol::WireDirEntry>,
+        error: Option<String>,
+    },
+    /// A remote repository change scan arrived; feeds the file tree's `Changes` projection.
+    SessionChangeListing {
+        epoch: u64,
+        root: String,
+        changes: Vec<crate::session::protocol::WireChange>,
+        error: Option<String>,
+    },
+    /// The file tree needs a directory it does not have yet (emitted by the widget).
+    SidebarTreeEntryRequest {
+        path: String,
+    },
     SessionError {
         epoch: u64,
         message: String,

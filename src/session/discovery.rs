@@ -179,7 +179,7 @@ fn discover_remote_sessions(
     target: &crate::session::remote::RemoteTarget,
     config: &crate::config::HyprmuxRemoteConfig,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let resolved = crate::session::remote::ResolvedRemote::resolve(target, config);
     let host_label = resolved
@@ -196,17 +196,9 @@ fn discover_remote_sessions(
         .binary_path
         .clone()
         .unwrap_or_else(|| "hyprmux".to_string());
-    let mut command = Command::new("ssh");
-    command.arg("-T").arg("-o").arg("BatchMode=yes");
-    if let Some(port) = resolved.port {
-        command.arg("-p").arg(port.to_string());
-    }
-    if let Some(identity) = &resolved.identity_file {
-        command.arg("-i").arg(crate::config::expand_path(identity));
-    }
-    for arg in &resolved.ssh_args {
-        command.arg(arg);
-    }
+    // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
+    // rather than stall the picker's recurring discovery sweep on a TCP connect.
+    let mut command = crate::session::remote::ssh_base_command(&resolved, config, true);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg(&remote_bin);

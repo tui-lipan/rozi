@@ -74,7 +74,11 @@ pub(crate) fn open(
     );
     pane.terminal.set_palette(palette);
     pane.opening = true;
-    let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+    let env = pane_env(
+        ctx.state.control_socket_path.as_deref(),
+        &pane,
+        ctx.state.remote_host.is_some(),
+    );
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
     ctx.state.popup_return_focus = ctx.state.focused_pane;

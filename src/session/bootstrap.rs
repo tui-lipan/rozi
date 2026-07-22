@@ -241,52 +241,124 @@ fn attach_remote(
     remote_config: crate::config::HyprmuxRemoteConfig,
     link: CommandLink<Msg>,
 ) {
+    // Remote autostart lives inside `--remote-serve` on the far side, so there is no local
+    // spawn/retry loop here. We still retry once after an explicit remote kill when the running
+    // server's protocol cannot be negotiated (version-skew restart).
+    match try_attach_remote(
+        epoch,
+        &name,
+        read_only,
+        create_only,
+        &target,
+        &remote_config,
+        &link,
+    ) {
+        AttachRemoteOutcome::Done => {}
+        AttachRemoteOutcome::ProtocolSkew(message) => {
+            match super::remote::kill_remote_session(&target, &name, &remote_config) {
+                Ok(()) => {
+                    match try_attach_remote(
+                        epoch,
+                        &name,
+                        read_only,
+                        create_only,
+                        &target,
+                        &remote_config,
+                        &link,
+                    ) {
+                        AttachRemoteOutcome::Done => {}
+                        AttachRemoteOutcome::ProtocolSkew(again)
+                        | AttachRemoteOutcome::Failed(again) => {
+                            link.send(Msg::SessionAttachFailed {
+                                epoch,
+                                message: format!(
+                                    "Remote attach to `{name}` failed after restarting an incompatible server: {again}"
+                                ),
+                            });
+                        }
+                    }
+                }
+                Err(kill_err) => {
+                    link.send(Msg::SessionAttachFailed {
+                        epoch,
+                        message: format!(
+                            "Remote attach to `{name}` failed: {message} (restart also failed: {kill_err})"
+                        ),
+                    });
+                }
+            }
+        }
+        AttachRemoteOutcome::Failed(message) => {
+            link.send(Msg::SessionAttachFailed {
+                epoch,
+                message: format!("Remote attach to `{name}` failed: {message}"),
+            });
+        }
+    }
+}
+
+enum AttachRemoteOutcome {
+    Done,
+    ProtocolSkew(String),
+    Failed(String),
+}
+
+fn try_attach_remote(
+    epoch: u64,
+    name: &str,
+    read_only: bool,
+    create_only: bool,
+    target: &super::remote::RemoteTarget,
+    remote_config: &crate::config::HyprmuxRemoteConfig,
+    link: &CommandLink<Msg>,
+) -> AttachRemoteOutcome {
     use std::sync::mpsc;
 
     let (tx, rx) = mpsc::channel();
-    match super::remote::connect_remote(&target, &name, &remote_config) {
+    match super::remote::connect_remote(target, name, remote_config) {
         Ok((stream, preamble)) => {
             if create_only && !preamble.server_started {
-                // Drop the pipe without attaching — session already existed remotely.
                 drop(stream);
-                link.send(Msg::SessionAttachFailed {
-                    epoch,
-                    message: format!("Session `{name}` is already running on the remote host"),
-                });
-                return;
+                return AttachRemoteOutcome::Failed(format!(
+                    "Session `{name}` is already running on the remote host"
+                ));
             }
             match super::client::SessionClient::from_stream_attached(
                 stream,
-                name.clone(),
+                name.to_string(),
                 tx,
                 read_only,
             ) {
                 Ok((client, attached)) => {
                     link.send(Msg::SessionConnected {
                         epoch,
-                        name: name.clone(),
+                        name: name.to_string(),
                         client,
                     });
                     link.send(server_message_to_msg(epoch, Frame::Control(attached)));
                     for message in rx {
                         link.send(server_message_to_msg(epoch, message));
                     }
-                    link.send(Msg::SessionDisconnected { epoch, name });
+                    link.send(Msg::SessionDisconnected {
+                        epoch,
+                        name: name.to_string(),
+                    });
+                    AttachRemoteOutcome::Done
                 }
                 Err(err) => {
-                    link.send(Msg::SessionAttachFailed {
-                        epoch,
-                        message: format!("Remote session `{name}`: {err}"),
-                    });
+                    let message = err.to_string();
+                    if message.to_ascii_lowercase().contains("incompatible")
+                        || message.to_ascii_lowercase().contains("protocol")
+                    {
+                        AttachRemoteOutcome::ProtocolSkew(message)
+                    } else {
+                        AttachRemoteOutcome::Failed(format!("Remote session `{name}`: {message}"))
+                    }
                 }
             }
         }
-        Err(err) => {
-            link.send(Msg::SessionAttachFailed {
-                epoch,
-                message: format!("Remote attach to `{name}` failed: {err}"),
-            });
-        }
+        Err(err) if err.is_protocol_skew() => AttachRemoteOutcome::ProtocolSkew(err.to_string()),
+        Err(err) => AttachRemoteOutcome::Failed(err.to_string()),
     }
 }
 
@@ -396,6 +468,26 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
             }
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
+            ServerMessage::DirectoryListing {
+                path,
+                entries,
+                error,
+            } => Msg::SessionDirectoryListing {
+                epoch,
+                path,
+                entries,
+                error,
+            },
+            ServerMessage::ChangeListing {
+                root,
+                changes,
+                error,
+            } => Msg::SessionChangeListing {
+                epoch,
+                root,
+                changes,
+                error,
+            },
             ServerMessage::Resized {
                 pane_id,
                 generation,

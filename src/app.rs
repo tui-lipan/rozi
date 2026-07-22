@@ -708,6 +708,21 @@ pub fn run() -> Result<()> {
         .global_quit(None);
 
     let remote = match cli.remote.as_deref() {
+        Some("") => {
+            let Some(default_host) = config.remote.default_host.as_deref() else {
+                eprintln!(
+                    "--remote requires a host alias or ssh:// URL (or set [remote] default_host)"
+                );
+                std::process::exit(1);
+            };
+            match crate::session::remote::parse_remote_target(default_host) {
+                Ok(target) => Some(target),
+                Err(err) => {
+                    eprintln!("[remote] default_host: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(raw) => match crate::session::remote::parse_remote_target(raw) {
             Ok(target) => Some(target),
             Err(err) => {
@@ -717,6 +732,17 @@ pub fn run() -> Result<()> {
         },
         None => None,
     };
+
+    // Probe / prompt / install on the main thread before the TUI takes stdin (install = "prompt").
+    if let Some(ref target) = remote {
+        let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if let Err(err) =
+            crate::session::remote::ensure_remote_binary(target, &config.remote, interactive)
+        {
+            eprintln!("hyprmux: {err}");
+            std::process::exit(1);
+        }
+    }
 
     app.mount(HyprmuxApp::new(
         config,

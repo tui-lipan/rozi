@@ -1,7 +1,7 @@
 //! Probe and optionally install hyprmux on a remote host before attach.
 
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::{HyprmuxRemoteConfig, RemoteInstallPolicy};
@@ -12,6 +12,7 @@ use super::{RemoteTarget, ResolvedRemote};
 
 const INSTALL_DIR: &str = ".local/bin";
 const INSTALL_NAME: &str = "hyprmux";
+const RELEASE_REPO: &str = "Razuer/hyprmux";
 
 /// Result of probing a remote host for a usable hyprmux binary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,9 +30,16 @@ pub enum ProbeResult {
 /// Decision after applying install policy to a probe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallDecision {
-    Use { path: String },
+    Use {
+        path: String,
+    },
+    /// Install without asking (`install = "always"` on a TTY).
     Install,
-    Fail { message: String },
+    /// Ask on stdin before installing (`install = "prompt"` on a TTY).
+    Ask,
+    Fail {
+        message: String,
+    },
 }
 
 /// Fixed probe script run over ssh. Emits machine-readable lines; never trusts output as argv.
@@ -46,9 +54,14 @@ try_bin() {
     if [ -x "$resolved" ]; then
       out=$("$resolved" --version 2>/dev/null || true)
       printf 'candidate=%s\n' "$resolved"
-      printf 'version_line=%s\n' "$out"
-      # Protocol range: prefer --remote-serve self-report when available in future; for now
-      # assume current builds speak the packaged protocol when --help mentions remote-serve.
+      # Flatten version output to a single line for the report, keep protocol_* keys separate.
+      printf 'version_line=%s\n' "$(printf '%s' "$out" | tr '\n' ' ')"
+      printf '%s\n' "$out" | while IFS= read -r line; do
+        case "$line" in
+          protocol_min=*) printf '%s\n' "$line" ;;
+          protocol_max=*) printf '%s\n' "$line" ;;
+        esac
+      done
       if "$resolved" --help 2>/dev/null | grep -q -- '--remote'; then
         printf 'speaks_remote=1\n'
       else
@@ -80,6 +93,8 @@ pub struct ProbeCandidate {
     pub path: String,
     pub speaks_remote: bool,
     pub version_line: String,
+    pub protocol_min: Option<u32>,
+    pub protocol_max: Option<u32>,
 }
 
 /// Parse fixed-key probe stdout into a report (pure; safe for unit tests).
@@ -88,15 +103,21 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
     let mut pending_path: Option<String> = None;
     let mut pending_version = String::new();
     let mut pending_remote = false;
+    let mut pending_min: Option<u32> = None;
+    let mut pending_max: Option<u32> = None;
     let flush = |report: &mut ProbeReport,
                  path: &mut Option<String>,
                  version: &mut String,
-                 remote: &mut bool| {
+                 remote: &mut bool,
+                 min: &mut Option<u32>,
+                 max: &mut Option<u32>| {
         if let Some(path) = path.take() {
             report.candidates.push(ProbeCandidate {
                 path,
                 speaks_remote: *remote,
                 version_line: std::mem::take(version),
+                protocol_min: min.take(),
+                protocol_max: max.take(),
             });
             *remote = false;
         }
@@ -112,10 +133,16 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
                 &mut pending_path,
                 &mut pending_version,
                 &mut pending_remote,
+                &mut pending_min,
+                &mut pending_max,
             );
             pending_path = Some(value.to_string());
         } else if let Some(value) = line.strip_prefix("version_line=") {
             pending_version = value.to_string();
+        } else if let Some(value) = line.strip_prefix("protocol_min=") {
+            pending_min = value.trim().parse().ok();
+        } else if let Some(value) = line.strip_prefix("protocol_max=") {
+            pending_max = value.trim().parse().ok();
         } else if let Some(value) = line.strip_prefix("speaks_remote=") {
             pending_remote = value.trim() == "1";
         }
@@ -125,20 +152,27 @@ pub fn parse_probe_output(stdout: &str) -> ProbeReport {
         &mut pending_path,
         &mut pending_version,
         &mut pending_remote,
+        &mut pending_min,
+        &mut pending_max,
     );
     report
 }
 
-/// Choose the best compatible candidate. Protocol overlap is required; when a candidate cannot
-/// report a range yet, `speaks_remote` is used as a stand-in for "new enough for --remote".
+/// Choose the best compatible candidate. Requires an advertised protocol range that overlaps ours.
 pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
+    let mut saw_remote = false;
+    let mut saw_without_range = false;
     for candidate in &report.candidates {
         if !candidate.speaks_remote {
             continue;
         }
-        // Until remotes advertise min/max explicitly, treat speaks_remote as overlapping our range.
-        let protocol_max = PROTOCOL_VERSION;
-        let protocol_min = MIN_SUPPORTED_PROTOCOL;
+        saw_remote = true;
+        let (Some(protocol_max), Some(protocol_min)) =
+            (candidate.protocol_max, candidate.protocol_min)
+        else {
+            saw_without_range = true;
+            continue;
+        };
         if crate::session::protocol::negotiate_protocol(
             PROTOCOL_VERSION,
             MIN_SUPPORTED_PROTOCOL,
@@ -157,6 +191,14 @@ pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
     ProbeResult::Missing {
         detail: if report.candidates.is_empty() {
             "no hyprmux binary found on the remote host".to_string()
+        } else if saw_without_range && !saw_remote {
+            "remote hyprmux binaries are too old for --remote (need a build that speaks --remote-serve)"
+                .to_string()
+        } else if saw_without_range {
+            "remote hyprmux found but does not advertise a protocol range (upgrade it, or set binary_path / install)"
+                .to_string()
+        } else if saw_remote {
+            "remote hyprmux protocol range does not overlap this client".to_string()
         } else {
             "remote hyprmux binaries are too old for --remote (need a build that speaks --remote-serve)"
                 .to_string()
@@ -179,48 +221,54 @@ pub fn decide_install(
                 ),
             },
             RemoteInstallPolicy::Always if interactive => InstallDecision::Install,
-            RemoteInstallPolicy::Prompt if interactive => InstallDecision::Install,
+            RemoteInstallPolicy::Prompt if interactive => InstallDecision::Ask,
             RemoteInstallPolicy::Always | RemoteInstallPolicy::Prompt => InstallDecision::Fail {
                 message: format!(
-                    "{detail}; non-interactive --remote will not install on the remote host (run interactively or set binary_path)"
+                    "{detail}; non-interactive --remote will not install on the remote host (run interactively or set binary_path / install = \"always\" on a TTY)"
                 ),
             },
         },
     }
 }
 
-/// Run the probe over a short-lived ssh command. `binary_path` short-circuits.
-pub fn probe_remote(
+/// Prompt on stdin for install confirmation. Returns true only for an explicit yes.
+pub fn prompt_install_confirmation(host: &str) -> io::Result<bool> {
+    let mut stderr = io::stderr().lock();
+    write!(
+        stderr,
+        "hyprmux: no compatible binary on {host}. Install to ~/.local/bin/hyprmux? [y/N] "
+    )?;
+    stderr.flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    let answer = line.trim();
+    Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
+}
+
+/// Run the probe over a short-lived ssh command. `binary_path` short-circuits with our protocol
+/// range (caller-configured path is trusted).
+pub fn probe_remote_report(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
-) -> Result<ProbeResult, String> {
+) -> Result<ProbeReport, String> {
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
-        return Ok(ProbeResult::Found {
-            path: path.clone(),
-            protocol_max: PROTOCOL_VERSION,
-            protocol_min: MIN_SUPPORTED_PROTOCOL,
+        return Ok(ProbeReport {
+            platform: local_uname_platform(),
+            machine: local_uname_machine(),
+            candidates: vec![ProbeCandidate {
+                path: path.clone(),
+                speaks_remote: true,
+                version_line: String::new(),
+                protocol_min: Some(MIN_SUPPORTED_PROTOCOL),
+                protocol_max: Some(PROTOCOL_VERSION),
+            }],
         });
     }
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote)".to_string());
     }
-    let mut command = Command::new("ssh");
-    command.arg("-T").arg("-o").arg("BatchMode=yes");
-    if config.connection_timeout_secs > 0 {
-        command
-            .arg("-o")
-            .arg(format!("ConnectTimeout={}", config.connection_timeout_secs));
-    }
-    if let Some(port) = resolved.port {
-        command.arg("-p").arg(port.to_string());
-    }
-    if let Some(identity) = &resolved.identity_file {
-        command.arg("-i").arg(crate::config::expand_path(identity));
-    }
-    for arg in &resolved.ssh_args {
-        command.arg(arg);
-    }
+    let mut command = ssh_base_command(&resolved, config, true);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg("sh").arg("-s");
@@ -248,10 +296,21 @@ pub fn probe_remote(
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(select_compatible(&parse_probe_output(&stdout)))
+    Ok(parse_probe_output(&stdout))
+}
+
+#[allow(dead_code)] // CLI / test helper alongside probe_remote_report
+pub fn probe_remote(
+    target: &RemoteTarget,
+    config: &HyprmuxRemoteConfig,
+) -> Result<ProbeResult, String> {
+    Ok(select_compatible(&probe_remote_report(target, config)?))
 }
 
 /// Install policy entry point used before connect. Returns the remote binary path to invoke.
+///
+/// Call this on the main thread before the TUI takes over the terminal when `install = "prompt"`,
+/// so the yes/no prompt can read stdin.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
@@ -264,25 +323,71 @@ pub fn ensure_remote_binary(
                 "HYPRMUX_REMOTE_BINARY={path} is not a regular file"
             ));
         }
-        return install_local_file(target, config, local);
+        return install_bytes(target, config, local, "HYPRMUX_REMOTE_BINARY override");
     }
 
-    let probe = probe_remote(target, config)?;
+    let report = probe_remote_report(target, config)?;
+    let probe = select_compatible(&report);
+    let host = ResolvedRemote::resolve(target, config).host;
     match decide_install(&probe, config.install, interactive) {
         InstallDecision::Use { path } => Ok(path),
         InstallDecision::Fail { message } => Err(message),
-        InstallDecision::Install => {
-            let local = std::env::current_exe()
-                .map_err(|err| format!("cannot locate local hyprmux for install: {err}"))?;
-            install_local_file(target, config, &local)
+        InstallDecision::Install => install_for_platforms(target, config, &report),
+        InstallDecision::Ask => {
+            let accepted = prompt_install_confirmation(&host).map_err(|err| err.to_string())?;
+            if !accepted {
+                return Err(format!(
+                    "install declined for {host}; set binary_path, install a compatible hyprmux, or pass install = \"always\""
+                ));
+            }
+            install_for_platforms(target, config, &report)
         }
     }
 }
 
-fn install_local_file(
+fn install_for_platforms(
+    target: &RemoteTarget,
+    config: &HyprmuxRemoteConfig,
+    report: &ProbeReport,
+) -> Result<String, String> {
+    let local_os = normalize_os(std::env::consts::OS);
+    let local_arch = normalize_arch(std::env::consts::ARCH);
+    let remote_os = normalize_os(&report.platform);
+    let remote_arch = normalize_arch(&report.machine);
+
+    if remote_os == "unknown" || remote_arch == "unknown" {
+        return Err(
+            "remote probe did not report platform/machine; cannot choose an install artifact"
+                .to_string(),
+        );
+    }
+
+    if local_os == remote_os && local_arch == remote_arch {
+        let local = std::env::current_exe()
+            .map_err(|err| format!("cannot locate local hyprmux for install: {err}"))?;
+        return install_bytes(target, config, &local, "same-platform current_exe");
+    }
+
+    let triple = rustc_target(&remote_os, &remote_arch).ok_or_else(|| {
+        format!(
+            "no release artifact mapping for remote platform {remote_os}/{remote_arch}; set binary_path or HYPRMUX_REMOTE_BINARY"
+        )
+    })?;
+    let version = env!("CARGO_PKG_VERSION");
+    let local_artifact = download_release_binary(triple, version)?;
+    install_bytes(
+        target,
+        config,
+        &local_artifact,
+        &format!("release asset {triple}"),
+    )
+}
+
+fn install_bytes(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
     local: &Path,
+    _source: &str,
 ) -> Result<String, String> {
     if !local.is_file() {
         return Err(format!(
@@ -294,24 +399,25 @@ fn install_local_file(
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote install)".to_string());
     }
-    // Atomic install: stream to a temp path then rename into ~/.local/bin/hyprmux.
-    let remote_tmp = format!("$HOME/{INSTALL_DIR}/.hyprmux.install.$$$$");
-    let remote_final = format!("$HOME/{INSTALL_DIR}/{INSTALL_NAME}");
+    // Atomic install with quoted paths; refuse to overwrite a non-regular destination.
     let script = format!(
-        "set -e\nmkdir -p \"$HOME/{INSTALL_DIR}\"\ncat > {remote_tmp}\nchmod 755 {remote_tmp}\nmv -f {remote_tmp} {remote_final}\nprintf 'installed=%s\\n' {remote_final}\n"
+        r#"set -e
+dir="$HOME/{INSTALL_DIR}"
+final="$dir/{INSTALL_NAME}"
+tmp="$dir/.hyprmux.install.$$"
+mkdir -p "$dir"
+if [ -e "$final" ] && [ ! -f "$final" ]; then
+  printf 'refuse_non_regular=%s\n' "$final" >&2
+  exit 1
+fi
+cat > "$tmp"
+chmod 755 "$tmp"
+mv -f "$tmp" "$final"
+printf 'installed=%s\n' "$final"
+"#
     );
 
-    let mut command = Command::new("ssh");
-    command.arg("-T").arg("-o").arg("BatchMode=yes");
-    if let Some(port) = resolved.port {
-        command.arg("-p").arg(port.to_string());
-    }
-    if let Some(identity) = &resolved.identity_file {
-        command.arg("-i").arg(crate::config::expand_path(identity));
-    }
-    for arg in &resolved.ssh_args {
-        command.arg(arg);
-    }
+    let mut command = ssh_base_command(&resolved, config, true);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg("sh").arg("-c").arg(script);
@@ -358,7 +464,214 @@ fn install_local_file(
             return Ok(path.to_string());
         }
     }
-    Ok(format!("$HOME/{INSTALL_DIR}/{INSTALL_NAME}"))
+    Err("remote install succeeded but did not report installed= path".to_string())
+}
+
+fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, String> {
+    let base = std::env::var("HYPRMUX_RELEASE_BASE_URL").unwrap_or_else(|_| {
+        format!("https://github.com/{RELEASE_REPO}/releases/download/v{version}")
+    });
+    let archive_name = if triple.contains("windows") {
+        format!("hyprmux-{version}-{triple}.zip")
+    } else {
+        format!("hyprmux-{version}-{triple}.tar.gz")
+    };
+    let archive_url = format!("{base}/{archive_name}");
+    let sha_url = format!("{archive_url}.sha256");
+
+    let tmp = std::env::temp_dir().join(format!(
+        "hyprmux-remote-install-{}-{}",
+        std::process::id(),
+        triple
+    ));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|err| format!("temp dir: {err}"))?;
+    let archive_path = tmp.join(&archive_name);
+    let sha_path = tmp.join(format!("{archive_name}.sha256"));
+
+    download_url(&archive_url, &archive_path)?;
+    download_url(&sha_url, &sha_path)?;
+    verify_sha256(&archive_path, &sha_path)?;
+
+    let bin_name = if triple.contains("windows") {
+        "hyprmux.exe"
+    } else {
+        "hyprmux"
+    };
+    let out_bin = tmp.join(bin_name);
+    if archive_name.ends_with(".zip") {
+        let status = Command::new("unzip")
+            .args(["-o", "-j"])
+            .arg(&archive_path)
+            .arg(bin_name)
+            .arg("-d")
+            .arg(&tmp)
+            .status()
+            .map_err(|err| format!("unzip not available: {err}"))?;
+        if !status.success() {
+            return Err(format!("failed to unzip {archive_name}"));
+        }
+    } else {
+        let status = Command::new("tar")
+            .args(["-xzf"])
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&tmp)
+            .arg(bin_name)
+            .status()
+            .map_err(|err| format!("tar not available: {err}"))?;
+        if !status.success() {
+            // Some archives nest the binary; extract all then locate.
+            let status = Command::new("tar")
+                .args(["-xzf"])
+                .arg(&archive_path)
+                .arg("-C")
+                .arg(&tmp)
+                .status()
+                .map_err(|err| format!("tar extract failed: {err}"))?;
+            if !status.success() {
+                return Err(format!("failed to extract {archive_name}"));
+            }
+        }
+    }
+    if !out_bin.is_file() {
+        // Search one level for the binary name.
+        for entry in std::fs::read_dir(&tmp).map_err(|err| err.to_string())? {
+            let entry = entry.map_err(|err| err.to_string())?;
+            if entry.file_name() == *bin_name && entry.path().is_file() {
+                return Ok(entry.path());
+            }
+        }
+        return Err(format!(
+            "release archive {archive_name} did not contain {bin_name}"
+        ));
+    }
+    Ok(out_bin)
+}
+
+fn download_url(url: &str, dest: &Path) -> Result<(), String> {
+    if !program_exists("curl") {
+        return Err(
+            "curl was not found on PATH (required to download a cross-platform remote binary)"
+                .to_string(),
+        );
+    }
+    let status = Command::new("curl")
+        .args(["-fsSL", "--proto", "=https", "--tlsv1.2", "-o"])
+        .arg(dest)
+        .arg(url)
+        .status()
+        .map_err(|err| format!("curl failed: {err}"))?;
+    if !status.success() {
+        return Err(format!("failed to download {url}"));
+    }
+    Ok(())
+}
+
+fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
+    let expected = std::fs::read_to_string(sha_file)
+        .map_err(|err| format!("read checksum: {err}"))?
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("invalid sha256 file {}", sha_file.display()));
+    }
+    let output = if program_exists("sha256sum") {
+        Command::new("sha256sum")
+            .arg(archive)
+            .output()
+            .map_err(|err| format!("sha256sum: {err}"))?
+    } else if program_exists("shasum") {
+        Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(archive)
+            .output()
+            .map_err(|err| format!("shasum: {err}"))?
+    } else {
+        return Err("neither sha256sum nor shasum found for checksum verification".to_string());
+    };
+    if !output.status.success() {
+        return Err("checksum command failed".to_string());
+    }
+    let actual = String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if actual != expected {
+        return Err(format!(
+            "checksum mismatch for {}: expected {expected}, got {actual}",
+            archive.display()
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn ssh_base_command(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+    batch_mode: bool,
+) -> Command {
+    let mut command = Command::new("ssh");
+    command.arg("-T");
+    if batch_mode {
+        command.arg("-o").arg("BatchMode=yes");
+    }
+    if config.connection_timeout_secs > 0 {
+        command
+            .arg("-o")
+            .arg(format!("ConnectTimeout={}", config.connection_timeout_secs));
+    }
+    if let Some(port) = resolved.port {
+        command.arg("-p").arg(port.to_string());
+    }
+    if let Some(identity) = &resolved.identity_file {
+        command.arg("-i").arg(crate::config::expand_path(identity));
+    }
+    for arg in &resolved.ssh_args {
+        command.arg(arg);
+    }
+    command
+}
+
+fn normalize_os(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "linux" => "linux".into(),
+        "darwin" | "macos" => "macos".into(),
+        "windows" | "windows_nt" | "mingw" | "msys" => "windows".into(),
+        other => other.to_string(),
+    }
+}
+
+fn normalize_arch(raw: &str) -> String {
+    match raw.to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => "x86_64".into(),
+        "aarch64" | "arm64" => "aarch64".into(),
+        other => other.to_string(),
+    }
+}
+
+fn rustc_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+fn local_uname_platform() -> String {
+    normalize_os(std::env::consts::OS)
+}
+
+fn local_uname_machine() -> String {
+    normalize_arch(std::env::consts::ARCH)
 }
 
 #[cfg(test)]
@@ -366,13 +679,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_probe_collects_candidates() {
+    fn parse_probe_collects_candidates_and_protocol_range() {
         let report = parse_probe_output(
             "\
 platform=Linux
 machine=x86_64
 candidate=/home/u/.local/bin/hyprmux
-version_line=hyprmux 0.1.0
+version_line=hyprmux 0.1.0 protocol_min=12 protocol_max=12
+protocol_min=12
+protocol_max=12
 speaks_remote=1
 candidate=/usr/bin/hyprmux
 version_line=hyprmux 0.0.1
@@ -383,17 +698,21 @@ probe_done=1
         assert_eq!(report.platform, "Linux");
         assert_eq!(report.candidates.len(), 2);
         assert!(report.candidates[0].speaks_remote);
+        assert_eq!(report.candidates[0].protocol_min, Some(12));
+        assert_eq!(report.candidates[0].protocol_max, Some(12));
         assert!(!report.candidates[1].speaks_remote);
     }
 
     #[test]
-    fn select_prefers_speaking_remote_candidate() {
+    fn select_requires_overlapping_protocol_range() {
         let report = parse_probe_output(
             "\
 candidate=/old
-speaks_remote=0
+speaks_remote=1
 candidate=/new
 speaks_remote=1
+protocol_min=12
+protocol_max=12
 ",
         );
         match select_compatible(&report) {
@@ -403,7 +722,37 @@ speaks_remote=1
     }
 
     #[test]
-    fn non_interactive_never_installs() {
+    fn select_rejects_speaks_remote_without_protocol_range() {
+        let report = parse_probe_output(
+            "\
+candidate=/new
+speaks_remote=1
+",
+        );
+        assert!(matches!(
+            select_compatible(&report),
+            ProbeResult::Missing { .. }
+        ));
+    }
+
+    #[test]
+    fn select_rejects_disjoint_protocol_range() {
+        let report = parse_probe_output(
+            "\
+candidate=/skew
+speaks_remote=1
+protocol_min=1
+protocol_max=1
+",
+        );
+        assert!(matches!(
+            select_compatible(&report),
+            ProbeResult::Missing { .. }
+        ));
+    }
+
+    #[test]
+    fn prompt_policy_asks_when_interactive_never_auto_installs() {
         let missing = ProbeResult::Missing {
             detail: "no hyprmux".into(),
         };
@@ -421,7 +770,28 @@ speaks_remote=1
         ));
         assert!(matches!(
             decide_install(&missing, RemoteInstallPolicy::Prompt, true),
+            InstallDecision::Ask
+        ));
+        assert!(matches!(
+            decide_install(&missing, RemoteInstallPolicy::Always, true),
             InstallDecision::Install
         ));
+    }
+
+    #[test]
+    fn rustc_target_mapping_covers_release_matrix() {
+        assert_eq!(
+            rustc_target("linux", "x86_64"),
+            Some("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            rustc_target("macos", "aarch64"),
+            Some("aarch64-apple-darwin")
+        );
+        assert_eq!(
+            rustc_target("windows", "x86_64"),
+            Some("x86_64-pc-windows-msvc")
+        );
+        assert!(rustc_target("plan9", "x86_64").is_none());
     }
 }

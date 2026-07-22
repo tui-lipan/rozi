@@ -106,7 +106,11 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         // is no FinishOpen(scratch) message to clear an `opening` flag.
         pane.opening = false;
         pane.terminal_active = true;
-        let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+        let env = pane_env(
+            ctx.state.control_socket_path.as_deref(),
+            &pane,
+            ctx.state.remote_host.is_some(),
+        );
         let identity = pane.identity.clone();
         let cols = pane.terminal.cols;
         let rows = pane.terminal.rows;

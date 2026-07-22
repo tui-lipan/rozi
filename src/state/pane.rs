@@ -115,6 +115,18 @@ impl Pane {
             .filter(|_| self.terminal.cwd_host.is_none())
             .or(self.identity.cwd.as_deref())
     }
+
+    /// The working directory as the *session server* sees it, without the `cwd_host` filter.
+    ///
+    /// Under `--remote` every reported path is server-relative, so the filter that keeps
+    /// [`local_cwd_ref`](Self::local_cwd_ref) honest would discard exactly the path the remote file
+    /// tree needs. Callers must already know the server is remote.
+    pub fn server_cwd_ref(&self) -> Option<&str> {
+        self.terminal
+            .cwd
+            .as_deref()
+            .or(self.identity.cwd.as_deref())
+    }
 }
 
 fn title_contains_cwd(title: &str, cwd: &str) -> bool {

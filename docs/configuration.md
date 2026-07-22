@@ -469,7 +469,7 @@ config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default_host` | _none_ | Reserved; prefer an explicit `--remote` argument. |
+| `default_host` | _none_ | Host used when `--remote` is passed without an argument; also a fallback `[remote.hosts.*]` profile for identity/`ssh_args`/`binary_path`. |
 | `connection_timeout_secs` | `15` | Passed to ssh as `ConnectTimeout`. |
 | `server_alive_interval_secs` | `15` | ssh `ServerAliveInterval` for the proxy connection. |
 | `server_alive_count_max` | `3` | ssh `ServerAliveCountMax`. |

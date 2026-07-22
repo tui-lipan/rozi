@@ -36,6 +36,22 @@ pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
         .and_then(|pane| pane.local_cwd_ref())
 }
 
+/// The focused pane's directory as the session server sees it, without allocating.
+///
+/// Local attach: the same thing [`focused_local_cwd_ref`] returns. Remote attach: the
+/// server-relative path, which is what the sidebar file tree roots itself at and asks the server to
+/// list. See [`Pane::server_cwd_ref`].
+pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
+    if state.remote_host.is_none() {
+        return focused_local_cwd_ref(state);
+    }
+    let workspace = &state.workspaces[state.active_workspace];
+    workspace
+        .focused_pane
+        .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
+        .and_then(|pane| pane.server_cwd_ref())
+}
+
 /// Cwd to send with a server spawn request. Under `--remote`, inherits the server-relative path.
 pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
     if state.remote_host.is_some() {
@@ -162,7 +178,11 @@ pub(crate) fn spawn_pane_in_workspace(
     pane.terminal.set_palette(palette);
     pane.opening = true;
 
-    let env = pane_env(ctx.state.control_socket_path.as_deref(), &pane);
+    let env = pane_env(
+        ctx.state.control_socket_path.as_deref(),
+        &pane,
+        ctx.state.remote_host.is_some(),
+    );
     let identity = pane.identity.clone();
     let command = pane.identity.command.clone();
     let cwd = pane.identity.cwd.clone();
@@ -247,6 +267,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let generation = ctx.state.next_pty_generation;
     ctx.state.next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
+    let remote_attached = ctx.state.remote_host.is_some();
     let palette = terminal_palette(
         &ctx.state.theme,
         pane_frame_background(
@@ -265,7 +286,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         // stop to other clients, this clears the local badge immediately.
         pane.logging = false;
         (
-            pane_env(control_socket.as_deref(), pane),
+            pane_env(control_socket.as_deref(), pane, remote_attached),
             pane.identity.clone(),
             pane.terminal.cols,
             pane.terminal.rows,
@@ -650,12 +671,15 @@ fn run_workbar_command(command: &str, command_shell: &[String]) -> String {
 pub(crate) fn pane_env(
     control_socket_path: Option<&std::path::Path>,
     pane: &Pane,
+    remote_attached: bool,
 ) -> Vec<(String, String)> {
     let mut env = vec![
         ("HYPRMUX".to_string(), "1".to_string()),
         ("HYPRMUX_PANE".to_string(), pane.id.to_string()),
     ];
-    if let Some(path) = control_socket_path {
+    // Under `--remote`, the control socket lives on the client machine and must not be advertised
+    // into remote PTYs (it may collide with an unrelated path on the remote host).
+    if !remote_attached && let Some(path) = control_socket_path {
         env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
     }
     // Per-spawn additions last so a caller-supplied value wins over the standard set.
@@ -946,5 +970,25 @@ mod tests {
         let target = interactive_spawn_target(&state, 0, Some(1), None);
 
         assert_eq!(target, (0, Some(1), SpawnPlacement::default()));
+    }
+
+    #[test]
+    fn pane_env_skips_control_socket_when_remote_attached() {
+        let pane = Pane::new(1, 100, FloatRect::default());
+        let path = std::path::Path::new("/tmp/hyprmux-control.sock");
+        let local = pane_env(Some(path), &pane, false);
+        assert!(
+            local
+                .iter()
+                .any(|(k, v)| k == "HYPRMUX_SOCKET" && v.contains("hyprmux-control")),
+            "local attach should inject HYPRMUX_SOCKET: {local:?}"
+        );
+        let remote = pane_env(Some(path), &pane, true);
+        assert!(
+            remote.iter().all(|(k, _)| k != "HYPRMUX_SOCKET"),
+            "remote attach must not inject client HYPRMUX_SOCKET: {remote:?}"
+        );
+        assert!(remote.iter().any(|(k, _)| k == "HYPRMUX"));
+        assert!(remote.iter().any(|(k, _)| k == "HYPRMUX_PANE"));
     }
 }

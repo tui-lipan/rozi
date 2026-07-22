@@ -71,7 +71,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let mut socket: Option<PathBuf> = None;
     let mut socket_flag_seen = false;
     let mut session_flag_target = false;
-    let mut iter = args.into_iter();
+    let mut iter = args.into_iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--help" | "-h" => return Ok(ParsedCli::Help),
@@ -194,10 +194,21 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 return Ok(ParsedCli::RemoteServe { name });
             }
             "--remote" => {
-                let target = iter
-                    .next()
-                    .ok_or_else(|| "--remote requires a host alias or ssh:// URL".to_string())?;
-                session::remote::parse_remote_target(&target)?;
+                // Host is optional when `[remote] default_host` is set (resolved in app::run).
+                let target = match iter.peek().map(|s| s.as_str()) {
+                    Some(next)
+                        if !next.starts_with('-')
+                            && !matches!(
+                                next,
+                                "attach" | "new" | "list-sessions" | "kill-session"
+                            ) =>
+                    {
+                        let target = iter.next().expect("peeked");
+                        session::remote::parse_remote_target(&target)?;
+                        target
+                    }
+                    _ => String::new(),
+                };
                 if cli.remote.replace(target).is_some() {
                     return Err("--remote specified more than once".to_string());
                 }
@@ -464,7 +475,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
 }
 
 fn reject_trailing_control_args(
-    iter: &mut std::vec::IntoIter<String>,
+    iter: &mut impl Iterator<Item = String>,
     command: &str,
 ) -> std::result::Result<(), String> {
     if let Some(extra) = iter.next() {
@@ -662,7 +673,7 @@ pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<(
 }
 
 fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     let target = session::remote::parse_remote_target(remote)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -672,17 +683,7 @@ fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
         .binary_path
         .clone()
         .unwrap_or_else(|| "hyprmux".to_string());
-    let mut command = Command::new("ssh");
-    command.arg("-T").arg("-o").arg("BatchMode=yes");
-    if let Some(port) = resolved.port {
-        command.arg("-p").arg(port.to_string());
-    }
-    if let Some(identity) = &resolved.identity_file {
-        command.arg("-i").arg(crate::config::expand_path(identity));
-    }
-    for arg in &resolved.ssh_args {
-        command.arg(arg);
-    }
+    let mut command = session::remote::ssh_base_command(&resolved, &config, true);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg(&remote_bin);
@@ -731,7 +732,7 @@ OPTIONS:
     -V, --version         Print version
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
-        --remote <HOST>   Attach via SSH to a session on HOST (alias or ssh:// URL)
+        --remote [HOST]   Attach via SSH (HOST alias or ssh:// URL; omit HOST to use [remote] default_host)
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
         --profile <NAME>  Seed an explicit new session from this profile
@@ -765,7 +766,10 @@ fn endpoint_help() -> String {
 }
 
 pub(crate) fn print_version() {
+    use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
     println!("hyprmux {}", env!("CARGO_PKG_VERSION"));
+    println!("protocol_min={MIN_SUPPORTED_PROTOCOL}");
+    println!("protocol_max={PROTOCOL_VERSION}");
 }
 
 #[cfg(test)]
@@ -1130,6 +1134,16 @@ mod tests {
         );
         assert_eq!(args.remote.as_deref(), Some("workbox"));
         assert_eq!(args.attach_session.as_deref(), Some("dev"));
+
+        let bare_remote = expect_run(parse_cli_args(vec!["--remote".into()]).expect("parses"));
+        assert_eq!(bare_remote.remote.as_deref(), Some(""));
+
+        let remote_then_session = expect_run(
+            parse_cli_args(vec!["--remote".into(), "--session".into(), "dev".into()])
+                .expect("parses"),
+        );
+        assert_eq!(remote_then_session.remote.as_deref(), Some(""));
+        assert_eq!(remote_then_session.attach_session.as_deref(), Some("dev"));
 
         assert!(matches!(
             parse_cli_args(vec![

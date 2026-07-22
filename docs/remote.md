@@ -22,7 +22,9 @@ hyprmux kill-session dev --remote workbox
 `--remote` composes with the same session surface as a local launch (`attach`, `new`, `--session`,
 `--profile`, `--read-only`). It cannot be combined with `--server` or `--fresh-server`.
 
-Requires `ssh` on `PATH` and key-based (or agent) auth that works non-interactively (`BatchMode`).
+Requires `ssh` on `PATH` and auth that works with ssh `BatchMode=yes` (typically a loaded agent or
+identity file). Password prompts are not supported on the attach path; configure `identity_file` /
+`ssh_args` under `[remote.hosts.*]` when needed.
 
 ## How it works
 
@@ -35,7 +37,9 @@ ssh <host> -- <remote-hyprmux> --remote-serve <NAME>
 That hidden `--remote-serve` process connects to the **normal** session endpoint on the remote host
 (Unix socket or named pipe) and pumps framed bytes between that connection and its own stdin/stdout.
 The local client treats those pipes as an `IpcConnection::Piped` transport and speaks the usual
-session protocol over them.
+session protocol over them. Remote attach does not reuse the local connect retry/backoff loop —
+autostart lives inside `--remote-serve` on the far side — but it does kill+retry once when a running
+remote server's protocol cannot be negotiated.
 
 Consequences:
 
@@ -65,20 +69,30 @@ Per-host `binary_path`, `identity_file`, and `ssh_args` override the defaults fo
 Before connect, hyprmux probes the remote for a compatible `hyprmux` binary (one that speaks
 `--remote-serve` and overlaps the client's protocol range).
 
-| `[remote] install` | Interactive TTY | Non-interactive / CI |
+| `[remote] install` | Interactive TTY (before the TUI starts) | Non-interactive / CI |
 | --- | --- | --- |
-| `prompt` (default) | May copy the local binary to `~/.local/bin/hyprmux` on the remote | Never mutates; fails with a clear message |
-| `always` | Same install path when missing | Never mutates |
+| `prompt` (default) | Asks `[y/N]` on stdin; installs only after an explicit yes | Never mutates; fails with a clear message |
+| `always` | Installs without asking when missing/incompatible | Never mutates |
 | `never` | Fail if missing | Fail if missing |
+
+When the local and remote platforms match, install copies `current_exe()`. When they differ, hyprmux
+downloads the matching GitHub release asset for this version, verifies its `.sha256`, then uploads
+that binary. Override the download base with `HYPRMUX_RELEASE_BASE_URL` for mirrors/tests.
 
 Overrides:
 
 - `[remote.hosts.<alias>] binary_path` — use that path; skip probe/install.
 - `HYPRMUX_REMOTE_BINARY=/path/to/hyprmux` — stream that local file onto the remote (same install
-  location) instead of `current_exe()`.
+  location), regardless of platform match — you are responsible for architecture fit.
+- `[remote] default_host` — used when `--remote` is passed without a host argument; also supplies
+  shared `identity_file` / `ssh_args` / `binary_path` defaults for other aliases.
 
-Install writes atomically under `$HOME/.local/bin/hyprmux` on the remote. Non-interactive runs never
-issue a mutating install command.
+Install writes atomically under `$HOME/.local/bin/hyprmux` on the remote and refuses to overwrite a
+non-regular file. Non-interactive runs never issue a mutating install command.
+
+If attach finds a running remote server whose protocol range does not overlap this client, hyprmux
+kills that session once over ssh and retries attach (so a fresh `--remote-serve` can autostart a
+compatible server).
 
 ## Protocol negotiation
 
@@ -87,9 +101,11 @@ Client and server advertise a max and min protocol version on attach/query. They
 minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
 bump `MIN_SUPPORTED_PROTOCOL`.
 
-This build speaks protocol **12** (also the current minimum). Servers at v11 and earlier still do
-strict equality, so attaching to an old remote server surfaces the usual “kill it and start a new
-one” message — after which a fresh remote server speaks the negotiated range.
+This build speaks protocol **13**, with **12** as the minimum. Protocol 13 adds the file-tree
+browsing messages, so a 13-client attached to a 12-server negotiates 12 and simply does not send
+them — everything else works. Servers at v11 and earlier still do strict equality, so attaching to
+one surfaces the usual “kill it and start a new one” message, after which a fresh remote server
+speaks the negotiated range.
 
 ## Local vs remote feature split
 
@@ -99,6 +115,7 @@ one” message — after which a fresh remote server speaks the negotiated range
 | Clipboard / OSC52 (paste into the local terminal) | Working directories and spawn `cwd` paths |
 | Hooks (`[[hooks]]` run on the client) | Session discovery endpoints on that host |
 | Control socket for *this* UI process | Resurrect / autosave paths on that host |
+| File tree rendering, icons, search | File tree listings and git status |
 
 Notes:
 
@@ -106,9 +123,12 @@ Notes:
   server can spawn correctly; local filesystem helpers (for example opening a path on this machine)
   skip those paths while `--remote` is attached.
 - Hooks receive `HYPRMUX_REMOTE_HOST` when attached remotely. See [Hooks](hooks.md).
-- The sidebar **Files** / **Git** tabs currently show that the tree follows the remote host; directory
-  listing over the session is not wired yet, so they do not browse remote paths as if they were
-  local.
+- The sidebar **Files** / **Git** tabs browse the **remote** filesystem. The client asks the session
+  server to read each directory (`ListDirectory`) and to scan the repository for changes
+  (`ListChanges`), then renders the replies locally, so expansion, icons, search, and theming stay
+  client-side while the data comes from the server's host. `git` must be on the remote server's
+  `PATH` for change markers; without it the tree still browses, just without decorations. A remote
+  server older than protocol 13 cannot answer, and the tab says so rather than spinning.
 - The UI control socket remains on the client machine. Automating a remote-attached UI still uses
   that local control endpoint; `list-sessions --remote` / `kill-session --remote` are separate SSH
   CLI helpers, not control-socket commands.

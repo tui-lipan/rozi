@@ -18,6 +18,17 @@ pub(super) fn tree_tab(
     let Some(root) = root_for(ctx, config.root) else {
         return super::placeholder(ctx, empty_reason(ctx, config.root));
     };
+    // A remote server older than the file-tree messages will never answer a listing request, so say
+    // so rather than leaving the widget on loading rows forever.
+    if ctx.state.remote_host.is_some()
+        && ctx
+            .state
+            .session_client
+            .as_ref()
+            .is_some_and(|client| !client.supports_file_tree())
+    {
+        return super::placeholder(ctx, "Remote hyprmux is too old to browse files");
+    }
 
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
@@ -93,6 +104,26 @@ pub(super) fn tree_tab(
                 }),
         );
 
+    // Under `--remote` the files are on the server's host, so the widget cannot enumerate them
+    // itself. Serve listings from state instead and let it ask for what it is missing; local
+    // attaches keep the default filesystem source and never pay for any of this.
+    if ctx.state.remote_host.is_some() {
+        tree = tree
+            .entry_source(FileTreeEntrySource::provided(
+                ctx.state.sidebar.tree_listings.clone(),
+            ))
+            .on_entry_request(ctx.link().callback(|request: FileTreeEntryRequest| {
+                Msg::SidebarTreeEntryRequest {
+                    path: request.path.to_string(),
+                }
+            }))
+            // Local git discovery would walk this client's filesystem using the *server's* paths,
+            // so the Changes projection has to come from the server's own scan too.
+            .change_source(FileTreeChangeSource::Provided(
+                ctx.state.sidebar.tree_changes.clone(),
+            ));
+    }
+
     if config.explorer {
         tree = tree
             .explorer(true)
@@ -138,9 +169,9 @@ fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static st
             .and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id))
             .is_some_and(|pane| pane.terminal.cwd_host.is_some());
     match (remote, root) {
-        (true, _) if ctx.state.remote_host.is_some() => {
-            "File tree follows the remote host (listing over the session is not wired yet)"
-        }
+        // Under `--remote` the tree is served by the session server, so the only way to have no
+        // root is the pane not having reported a directory yet.
+        (true, _) if ctx.state.remote_host.is_some() => "Waiting for the remote pane's directory",
         (true, _) => "Pane is on a remote host",
         (false, SidebarTreeRoot::Repo) => "No repository here",
         (false, SidebarTreeRoot::Cwd) => "No working directory",

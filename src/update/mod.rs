@@ -59,6 +59,19 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             path,
             is_dir,
         } => sidebar::tree_activate(ctx, config_epoch, tab_id, path, is_dir),
+        Msg::SidebarTreeEntryRequest { path } => sidebar::tree_entry_request(ctx, path),
+        Msg::SessionDirectoryListing {
+            epoch,
+            path,
+            entries,
+            error,
+        } => sidebar::tree_directory_listed(ctx, epoch, path, entries, error),
+        Msg::SessionChangeListing {
+            epoch,
+            root,
+            changes,
+            error,
+        } => sidebar::tree_changes_listed(ctx, epoch, root, changes, error),
         Msg::SidebarCommandPoll { epoch, tab_id } => sidebar::poll_command(ctx, epoch, tab_id),
         Msg::SidebarCommandOutput {
             epoch,

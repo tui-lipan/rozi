@@ -150,7 +150,8 @@ fn session_picker_palette(
 ) -> SearchPalette<usize> {
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
-    let current = ctx.state.session_name.as_deref();
+    let current_name = ctx.state.session_name.as_deref();
+    let current_host = ctx.state.remote_host.as_deref();
     let ephemeral_entries = picker
         .entries
         .iter()
@@ -170,13 +171,16 @@ fn session_picker_palette(
             } else {
                 entry.name.clone()
             };
-            if current == Some(entry.name.as_str()) {
+            if let Some(host) = entry.host.as_deref() {
+                label.push('@');
+                label.push_str(host);
+            }
+            let is_current = current_name == Some(entry.name.as_str())
+                && current_host == entry.host.as_deref();
+            if is_current {
                 label.push_str("  • current");
             }
-            SearchEntry::item(label, index).description(session_description(
-                entry,
-                current == Some(entry.name.as_str()),
-            ))
+            SearchEntry::item(label, index).description(session_description(entry, is_current))
         })
         .collect::<Vec<_>>();
     let empty_text = if picker.entries.is_empty() {

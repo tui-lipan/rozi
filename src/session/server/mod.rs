@@ -16,6 +16,7 @@ use crate::session::protocol::{
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
+mod browse;
 mod connection;
 mod lease;
 mod panes;

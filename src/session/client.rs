@@ -19,6 +19,9 @@ use crate::state::PaneId;
 pub struct SessionClient {
     tx: mpsc::Sender<ClientOutbound>,
     server_pid: Option<u32>,
+    /// Wire version agreed with this server. Gates messages added after the minimum supported
+    /// version so an older server never receives a variant it cannot deserialize.
+    effective_protocol: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,6 +49,7 @@ impl SessionClient {
             Self {
                 tx,
                 server_pid: None,
+                effective_protocol: PROTOCOL_VERSION,
             },
             rx,
         )
@@ -102,7 +106,7 @@ impl SessionClient {
         // A pending synchronous ReadFile on a duplicated named-pipe handle can hold up WriteFile on
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
-        validate_attached(&attached)?;
+        let effective_protocol = validate_attached(&attached)?;
         let (tx, rx) = mpsc::channel::<ClientOutbound>();
         thread::spawn(move || {
             for message in rx {
@@ -123,11 +127,44 @@ impl SessionClient {
         });
         let heartbeat_tx = tx.clone();
         thread::spawn(move || forward_inbound(&mut reader, &inbound, Some(&heartbeat_tx)));
-        Ok((Self { tx, server_pid }, attached))
+        Ok((
+            Self {
+                tx,
+                server_pid,
+                effective_protocol,
+            },
+            attached,
+        ))
     }
 
     pub fn server_pid(&self) -> Option<u32> {
         self.server_pid
+    }
+
+    /// Negotiated wire version for this connection.
+    pub fn effective_protocol(&self) -> u32 {
+        self.effective_protocol
+    }
+
+    /// Whether this server can serve the sidebar file tree's filesystem queries.
+    pub fn supports_file_tree(&self) -> bool {
+        self.effective_protocol >= crate::session::protocol::FILE_TREE_PROTOCOL
+    }
+
+    /// Ask the server to list one directory on its own host. No-op against an older server.
+    pub fn list_directory(&self, path: String, show_hidden: bool) {
+        if !self.supports_file_tree() {
+            return;
+        }
+        self.send_control(ClientMessage::ListDirectory { path, show_hidden });
+    }
+
+    /// Ask the server to scan a repository on its own host for changed paths.
+    pub fn list_changes(&self, root: String) {
+        if !self.supports_file_tree() {
+            return;
+        }
+        self.send_control(ClientMessage::ListChanges { root });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -258,7 +295,8 @@ impl SessionClient {
     }
 }
 
-fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
+/// Validate the attach reply and return the negotiated wire version.
+fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
     if let ServerMessage::Error { code, message } = attached {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
@@ -295,7 +333,7 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<()> {
             ),
         ));
     }
-    Ok(())
+    Ok(effective)
 }
 
 fn forward_inbound<R: std::io::Read>(

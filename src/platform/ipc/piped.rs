@@ -11,6 +11,13 @@
 //! [`peer_pid`](PipedConnection::peer_pid) is always `None`. Callers that fall back to
 //! `terminate_server` (notably `ops::session::shutdown_session`) must skip that path for remote
 //! connections — a local pid would be the ssh client, not the remote session server.
+//!
+//! ## Child lifetime
+//!
+//! The reader pump holds only the shared buffer/`writer` state — never the `Child`. The child is
+//! owned by an [`OwnedChild`] arc shared across connection clones. Dropping the last connection
+//! kills and waits on the child so its stdout closes, the pump unblocks, and no ssh process is
+//! left behind.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -24,34 +31,56 @@ const PUMP_CHUNK: usize = 16 * 1024;
 
 struct PipedBuf {
     bytes: VecDeque<u8>,
-    /// Sticky terminal error / EOF once the pump exits. `Ok(0)` means clean EOF.
+    /// Sticky terminal error / EOF once the pump exits. `Ok(())` means clean EOF.
     done: Option<io::Result<()>>,
 }
 
 struct PipedShared {
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// `None` once the last connection handle closes the write half (EOF to the remote).
+    writer: Mutex<Option<Box<dyn Write + Send>>>,
     buf: Mutex<PipedBuf>,
     data: Condvar,
-    /// Kept alive so dropping stdin/stdout does not reap the child early. Waited on last drop.
-    child: Mutex<Option<Child>>,
     pump_started: AtomicBool,
+}
+
+/// Owns the ssh (or other) child so dropping the last connection reaps it.
+struct OwnedChild {
+    child: Mutex<Option<Child>>,
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.child.lock()
+            && let Some(mut child) = guard.take()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// Shared pipe duplex used as an [`super::IpcConnection`] variant.
 pub struct PipedConnection {
     shared: Arc<PipedShared>,
+    child: Option<Arc<OwnedChild>>,
     read_timeout: std::cell::Cell<Option<Duration>>,
     nonblocking: std::cell::Cell<bool>,
 }
 
 impl PipedConnection {
-    /// Wrap already-taken child stdio. `child` is retained until the last clone drops.
+    /// Wrap already-taken child stdio. `child` is reaped when the last connection clone drops.
     pub fn from_child_stdio(
         stdin: impl Write + Send + 'static,
         stdout: impl Read + Send + 'static,
         child: Child,
     ) -> Self {
-        Self::new(Box::new(stdin), Box::new(stdout), Some(child))
+        Self::new(
+            Box::new(stdin),
+            Box::new(stdout),
+            Some(Arc::new(OwnedChild {
+                child: Mutex::new(Some(child)),
+            })),
+        )
     }
 
     /// Test / local helper: any reader/writer pair (for example [`std::io::pipe`]).
@@ -65,16 +94,15 @@ impl PipedConnection {
     fn new(
         writer: Box<dyn Write + Send>,
         mut reader: Box<dyn Read + Send>,
-        child: Option<Child>,
+        child: Option<Arc<OwnedChild>>,
     ) -> Self {
         let shared = Arc::new(PipedShared {
-            writer: Mutex::new(writer),
+            writer: Mutex::new(Some(writer)),
             buf: Mutex::new(PipedBuf {
                 bytes: VecDeque::new(),
                 done: None,
             }),
             data: Condvar::new(),
-            child: Mutex::new(child),
             pump_started: AtomicBool::new(false),
         });
         let pump = Arc::clone(&shared);
@@ -107,6 +135,7 @@ impl PipedConnection {
         }
         Self {
             shared,
+            child,
             read_timeout: std::cell::Cell::new(None),
             nonblocking: std::cell::Cell::new(false),
         }
@@ -115,6 +144,7 @@ impl PipedConnection {
     pub fn try_clone(&self) -> io::Result<Self> {
         Ok(Self {
             shared: Arc::clone(&self.shared),
+            child: self.child.clone(),
             read_timeout: std::cell::Cell::new(self.read_timeout.get()),
             nonblocking: std::cell::Cell::new(self.nonblocking.get()),
         })
@@ -138,6 +168,12 @@ impl PipedConnection {
     /// Always `None` — there is no meaningful local peer pid for a remote/proxy pipe.
     pub fn peer_pid(&self) -> Option<u32> {
         None
+    }
+
+    fn close_writer(&self) {
+        if let Ok(mut writer) = self.shared.writer.lock() {
+            *writer = None;
+        }
     }
 
     fn read_inner(&self, out: &mut [u8]) -> io::Result<usize> {
@@ -199,6 +235,17 @@ impl PipedConnection {
     }
 }
 
+impl Drop for PipedConnection {
+    fn drop(&mut self) {
+        // Connections + pump share `shared`. When this is the last connection (count == 2: us +
+        // pump), close the write half so the remote sees EOF on stdin.
+        if Arc::strong_count(&self.shared) <= 2 {
+            self.close_writer();
+        }
+        // `self.child` drops next; when the last connection clone drops, OwnedChild kills ssh.
+    }
+}
+
 impl Read for PipedConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.read_inner(buf)
@@ -207,24 +254,21 @@ impl Read for PipedConnection {
 
 impl Write for PipedConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut writer = self.shared.writer.lock().expect("piped writer");
-        writer.write(buf)
+        let mut guard = self.shared.writer.lock().expect("piped writer");
+        match guard.as_mut() {
+            Some(writer) => writer.write(buf),
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "piped connection writer closed",
+            )),
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let mut writer = self.shared.writer.lock().expect("piped writer");
-        writer.flush()
-    }
-}
-
-impl Drop for PipedShared {
-    fn drop(&mut self) {
-        // Closing the writer half signals EOF to a remote proxy; then reap the child if we own one.
-        if let Ok(mut child) = self.child.lock()
-            && let Some(mut child) = child.take()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
+        let mut guard = self.shared.writer.lock().expect("piped writer");
+        match guard.as_mut() {
+            Some(writer) => writer.flush(),
+            None => Ok(()),
         }
     }
 }
@@ -234,6 +278,8 @@ mod tests {
     use super::*;
     use crate::session::protocol::{self, ClientMessage, ServerMessage};
     use std::io::pipe;
+    #[cfg(unix)]
+    use std::process::Command;
 
     #[test]
     fn peer_pid_is_always_none() {
@@ -290,6 +336,34 @@ mod tests {
         assert!(
             !terminated,
             "piped/remote connections must never reach terminate_server"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_connection_reaps_owned_child() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id();
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        let conn = PipedConnection::from_child_stdio(stdin, stdout, child);
+        drop(conn);
+        // Give the kill/wait a moment; then confirm the pid is gone.
+        thread::sleep(Duration::from_millis(50));
+        let still_alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        assert!(
+            !still_alive,
+            "owned child pid {pid} must not survive PipedConnection drop"
         );
     }
 }

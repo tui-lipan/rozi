@@ -12,6 +12,10 @@ use crate::session::server;
 use super::preamble::{RemotePreamble, write_preamble};
 
 /// Connect to (or autostart) the named local session, emit a preamble, then pump bytes.
+///
+/// When the session socket closes, this process exits so the local ssh client's stdout pipe sees
+/// EOF (a blocked `stdin.read` on this side cannot otherwise notice). When stdin closes first,
+/// the socket is dropped and the stdout pump joins normally.
 pub fn run_remote_serve(name: &str) -> io::Result<()> {
     if !discovery::valid_attach_target(name) {
         return Err(io::Error::new(
@@ -21,9 +25,12 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
     }
 
     let (mut socket, server_started) = connect_or_autostart(name)?;
+    // Prefer blocking reads so we do not busy-poll on WouldBlock.
+    let _ = socket.set_nonblocking(false);
     {
         let mut stdout = io::stdout().lock();
         write_preamble(&mut stdout, &RemotePreamble::current(server_started))?;
+        stdout.flush()?;
     }
 
     let mut socket_reader = socket.try_clone()?;
@@ -32,16 +39,20 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
         let mut buf = [0u8; 64 * 1024];
         loop {
             match socket_reader.read(&mut buf) {
-                Ok(0) => return Ok(()),
+                Ok(0) => {
+                    let _ = stdout.flush();
+                    // Session closed while stdin may still be blocked — exit so ssh tears down.
+                    std::process::exit(0);
+                }
                 Ok(n) => {
                     stdout.write_all(&buf[..n])?;
                     stdout.flush()?;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(1));
+                Err(err) => {
+                    eprintln!("hyprmux --remote-serve: socket read failed: {err}");
+                    std::process::exit(1);
                 }
-                Err(err) => return Err(err),
             }
         }
     });
@@ -62,11 +73,13 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
         }
     })();
 
+    // Stdin closed first: the client (or ssh) is gone. Do *not* join the stdout pump — it holds a
+    // `try_clone` of this same socket, so dropping our handle does not half-close the fd and the
+    // pump would block in `read` forever. Returning here exits the process, which closes every
+    // remaining fd and lets the session server see the disconnect.
     drop(socket);
-    let stdout_result = to_stdout
-        .join()
-        .unwrap_or_else(|_| Err(io::Error::other("remote-serve stdout pump thread panicked")));
-    stdin_result.and(stdout_result)
+    drop(to_stdout);
+    stdin_result
 }
 
 pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, bool)> {
@@ -82,8 +95,9 @@ pub(crate) fn connect_or_autostart(name: &str) -> io::Result<(IpcConnection, boo
     while Instant::now() < deadline {
         match endpoint.connect() {
             Ok(stream) => {
+                // Detached session server outlives this proxy; do not kill it on drop.
                 let _ = child.try_wait();
-                std::mem::forget(child);
+                drop(child);
                 return Ok((stream, true));
             }
             Err(err) => {
@@ -108,6 +122,36 @@ mod tests {
     use crate::session::server::ServerSettings;
     use std::thread;
     use std::time::Duration;
+
+    /// Pins why [`run_remote_serve`] must not join its stdout pump after stdin EOF: a `try_clone`d
+    /// sibling shares the same underlying socket, so dropping one handle does *not* deliver EOF to
+    /// the other. Joining would block forever and leak the ssh child on every detach.
+    #[cfg(unix)]
+    #[test]
+    fn dropping_one_handle_does_not_eof_a_try_cloned_sibling() {
+        use crate::platform::ipc::IpcConnection;
+        use std::io::Read;
+        use std::os::unix::net::UnixStream;
+        use std::sync::mpsc;
+
+        let (ours, _peer) = UnixStream::pair().expect("socket pair");
+        let socket = IpcConnection::from_unix(ours);
+        let mut sibling = socket.try_clone().expect("try_clone");
+
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            let _ = tx.send(sibling.read(&mut buf));
+        });
+
+        // Mirrors the stdin-EOF path: drop our handle while the pump still holds its clone.
+        drop(socket);
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "dropping one handle must NOT wake a try_cloned sibling's read — \
+             run_remote_serve therefore cannot join its stdout pump"
+        );
+    }
 
     #[test]
     fn live_endpoint_reports_server_started_false() {

@@ -551,7 +551,7 @@ pub(crate) fn open_named_target(
         return Update::full();
     }
     if !explicit_create && exists {
-        return crate::ops::session::attach_session_by_name(ctx, name, false);
+        return crate::ops::session::attach_session_by_name(ctx, name, None, false);
     }
     if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(name.as_str()) {
         ctx.toast().push(info_toast(

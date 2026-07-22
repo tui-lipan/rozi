@@ -143,6 +143,11 @@ replacement if it disappeared. Incompatible sessions are rejected. Leaving a dis
 session requires clicking the target row a second time; this confirmation is independent from the
 session picker's confirmation.
 
+When the client is attached with `--remote`, both tabs are served by the session server instead of
+the local filesystem: directory listings and git status come over the session, and the widget
+renders them the same way. Roots follow the focused pane's server-relative directory. See
+[Remote sessions](remote.md).
+
 The **Files** and **Git** tabs are two projections of one lazy-loading file tree. **Files** browses
 the focused pane's working directory. **Git** shows only paths git reports as changed, grouped under
 their directories, with `M`/`A`/`D`/`?` markers and `+N -M` diff stats; it is rooted at the

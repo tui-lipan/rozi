@@ -32,6 +32,19 @@ pub struct SidebarState {
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.
     pub tree_cwd: Option<String>,
     pub tree_repo: Option<String>,
+    /// Directory listings served by the session server, for the file tree's provided entry source
+    /// under `--remote`. A directory absent here is pending: the widget shows a loading row and
+    /// emits a request, which is why this is only ever appended to, never cleared per frame.
+    pub tree_listings: Vec<tui_lipan::prelude::FileTreeDirectoryListing>,
+    /// Paths with an in-flight `ListDirectory`, so an expand/collapse cycle does not re-ask.
+    pub tree_pending: std::collections::HashSet<String>,
+    /// Server-side change scan backing the `Changes` tab under `--remote`.
+    pub tree_changes: Vec<tui_lipan::prelude::FileTreeChange>,
+    /// Root of the current [`Self::tree_changes`] scan, so a root switch refetches.
+    pub tree_changes_root: Option<String>,
+    /// `git_refresh_token` value the server-side tree data was last fetched at. Lets a refresh
+    /// (root change, command completion) re-ask the server exactly once instead of every message.
+    pub tree_server_token: u64,
     /// Monotonic token handed to `FileTree::git_refresh_token`. The widget ignores a token that
     /// does not increase, so this only ever counts up.
     pub git_refresh_token: u64,

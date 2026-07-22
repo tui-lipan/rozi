@@ -34,14 +34,19 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
         .iter()
         .cloned()
         .map(|entry| {
-            let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
+            let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str())
+                && ctx.state.remote_host == entry.host;
             let pending =
                 ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str());
-            let label = if entry.ephemeral {
+            let mut label = if entry.ephemeral {
                 "ephemeral".to_string()
             } else {
                 entry.name.clone()
             };
+            if let Some(host) = entry.host.as_deref() {
+                label.push('@');
+                label.push_str(host);
+            }
             let detail = if pending {
                 "press again · ends temporary session".to_string()
             } else {

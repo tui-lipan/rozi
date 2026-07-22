@@ -356,6 +356,30 @@ impl SessionServer {
                 }
                 vec![(Target::Broadcast, self.rename_session(name))]
             }
+            // Read-only filesystem queries: allowed from any client, including read-only ones and
+            // followers, since browsing changes nothing and is per-client view state.
+            ClientMessage::ListDirectory { path, show_hidden } => {
+                let (entries, error) = super::browse::list_directory(&path, show_hidden);
+                vec![(
+                    Target::Client(client_id),
+                    ServerMessage::DirectoryListing {
+                        path,
+                        entries,
+                        error,
+                    },
+                )]
+            }
+            ClientMessage::ListChanges { root } => {
+                let (changes, error) = super::browse::list_changes(&root);
+                vec![(
+                    Target::Client(client_id),
+                    ServerMessage::ChangeListing {
+                        root,
+                        changes,
+                        error,
+                    },
+                )]
+            }
             ClientMessage::Detach => Vec::new(),
             ClientMessage::Shutdown => {
                 if !self.is_controller(client_id) || self.client_read_only(client_id) {

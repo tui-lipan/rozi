@@ -198,7 +198,7 @@ fn discover_remote_sessions(
         .unwrap_or_else(|| "hyprmux".to_string());
     // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
     // rather than stall the picker's recurring discovery sweep on a TCP connect.
-    let mut command = crate::session::remote::ssh_base_command(&resolved, config, true);
+    let mut command = crate::session::remote::ssh_base_command(&resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg(&remote_bin);

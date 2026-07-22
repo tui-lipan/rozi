@@ -474,6 +474,7 @@ config stay local; PTYs run on the remote. See [Remote SSH sessions](remote.md).
 | `server_alive_interval_secs` | `15` | ssh `ServerAliveInterval` for the proxy connection. |
 | `server_alive_count_max` | `3` | ssh `ServerAliveCountMax`. |
 | `install` | `"prompt"` | `"prompt"`, `"always"`, or `"never"`. Interactive TTYs may copy a compatible binary to `~/.local/bin/hyprmux` on the remote when missing; non-interactive runs never mutate the remote. |
+| `batch_mode` | `true` | Pass ssh `BatchMode=yes`, refusing every interactive prompt. Set `false` to allow password/passphrase prompts — see the caveat in [Remote SSH sessions](remote.md#authentication). |
 
 ### `[remote.hosts.<alias>]`
 
@@ -492,6 +493,7 @@ Optional per-alias overrides. The alias matches a bare `--remote <alias>` argume
 [remote]
 install = "prompt"
 connection_timeout_secs = 15
+# batch_mode = false   # allow ssh to prompt for a password or key passphrase
 
 [remote.hosts.workbox]
 user = "raz"

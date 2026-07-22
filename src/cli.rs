@@ -683,7 +683,7 @@ fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
         .binary_path
         .clone()
         .unwrap_or_else(|| "hyprmux".to_string());
-    let mut command = session::remote::ssh_base_command(&resolved, &config, true);
+    let mut command = session::remote::ssh_base_command(&resolved, &config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg(&remote_bin);

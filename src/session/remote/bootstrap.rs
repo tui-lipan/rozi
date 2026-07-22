@@ -268,7 +268,7 @@ pub fn probe_remote_report(
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote)".to_string());
     }
-    let mut command = ssh_base_command(&resolved, config, true);
+    let mut command = ssh_base_command(&resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg("sh").arg("-s");
@@ -417,7 +417,7 @@ printf 'installed=%s\n' "$final"
 "#
     );
 
-    let mut command = ssh_base_command(&resolved, config, true);
+    let mut command = ssh_base_command(&resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg("sh").arg("-c").arg(script);
@@ -611,14 +611,15 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn ssh_base_command(
-    resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
-    batch_mode: bool,
-) -> Command {
+/// Common ssh argv for every remote invocation: no tty, timeouts, and the per-host options.
+///
+/// `BatchMode` comes from `[remote] batch_mode` (default on). It is the single place that decides
+/// whether ssh may prompt, so probe, install, attach, list, and kill all agree — a mix would mean
+/// a host that lists fine but hangs on attach.
+pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemoteConfig) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
-    if batch_mode {
+    if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
     if config.connection_timeout_secs > 0 {
@@ -793,5 +794,46 @@ protocol_max=1
             Some("x86_64-pc-windows-msvc")
         );
         assert!(rustc_target("plan9", "x86_64").is_none());
+    }
+
+    /// `[remote] batch_mode` is the one switch deciding whether ssh may prompt, so it has to reach
+    /// the argv — and reach it identically for every remote invocation.
+    #[test]
+    fn batch_mode_config_drives_the_ssh_argv() {
+        let resolved = ResolvedRemote {
+            alias: Some("workbox".into()),
+            host: "workbox".into(),
+            user: None,
+            port: None,
+            identity_file: None,
+            ssh_args: Vec::new(),
+            binary_path: None,
+        };
+        let args = |config: &HyprmuxRemoteConfig| -> Vec<String> {
+            ssh_base_command(&resolved, config)
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let mut config = HyprmuxRemoteConfig::default();
+        assert!(config.batch_mode, "batch mode must default on");
+        assert!(
+            args(&config).iter().any(|arg| arg == "BatchMode=yes"),
+            "default config must refuse interactive ssh prompts"
+        );
+
+        config.batch_mode = false;
+        assert!(
+            !args(&config).iter().any(|arg| arg == "BatchMode=yes"),
+            "batch_mode = false must let ssh prompt"
+        );
+        // Everything else is unaffected by the switch.
+        assert!(args(&config).iter().any(|arg| arg == "-T"));
+        assert!(
+            args(&config)
+                .iter()
+                .any(|arg| arg.starts_with("ConnectTimeout="))
+        );
     }
 }

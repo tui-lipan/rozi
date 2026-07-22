@@ -22,9 +22,19 @@ hyprmux kill-session dev --remote workbox
 `--remote` composes with the same session surface as a local launch (`attach`, `new`, `--session`,
 `--profile`, `--read-only`). It cannot be combined with `--server` or `--fresh-server`.
 
-Requires `ssh` on `PATH` and auth that works with ssh `BatchMode=yes` (typically a loaded agent or
-identity file). Password prompts are not supported on the attach path; configure `identity_file` /
-`ssh_args` under `[remote.hosts.*]` when needed.
+## Authentication
+
+Requires `ssh` on `PATH`. By default hyprmux passes `BatchMode=yes`, so auth must succeed without a
+prompt — typically a loaded agent or an `identity_file` under `[remote.hosts.*]`.
+
+Set `[remote] batch_mode = false` to let ssh prompt. One switch governs every remote invocation
+(probe, install, attach, `list-sessions --remote`, `kill-session --remote`), deliberately: a mix
+would give you a host that lists fine and then hangs on attach.
+
+The caveat: on the **attach** path ssh's stdin carries the session protocol, so ssh falls back to
+prompting on the controlling terminal — which is the terminal hyprmux is drawing in. Expect the
+prompt to land on top of the UI. `batch_mode = false` is most useful for the CLI helpers, or with a
+passphrase-protected key you unlock once before attaching.
 
 ## How it works
 

@@ -249,6 +249,7 @@ struct RemoteFileConfig {
     server_alive_interval_secs: Option<u64>,
     server_alive_count_max: Option<u64>,
     install: Option<String>,
+    batch_mode: Option<bool>,
     #[serde(default)]
     hosts: HashMap<String, RemoteHostFileConfig>,
 }
@@ -498,6 +499,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(count) = parsed.remote.server_alive_count_max {
         config.remote.server_alive_count_max = count.max(1);
+    }
+    if let Some(batch_mode) = parsed.remote.batch_mode {
+        config.remote.batch_mode = batch_mode;
     }
     if let Some(install) = non_empty(parsed.remote.install) {
         match RemoteInstallPolicy::parse(&install) {

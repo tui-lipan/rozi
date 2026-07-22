@@ -247,6 +247,14 @@ pub struct HyprmuxRemoteConfig {
     pub server_alive_interval_secs: u64,
     pub server_alive_count_max: u64,
     pub install: RemoteInstallPolicy,
+    /// Pass `BatchMode=yes` to ssh, refusing every interactive prompt.
+    ///
+    /// On by default: the attach transport hands ssh's stdin to the session protocol, so a
+    /// password prompt there cannot be answered and would hang instead. Turning it off lets ssh
+    /// prompt on the controlling terminal, which is useful for the CLI helpers
+    /// (`list-sessions --remote`, `kill-session --remote`) and for passphrase-protected keys with
+    /// no agent — at the cost of a prompt that can land on top of a running TUI.
+    pub batch_mode: bool,
 }
 
 impl Default for HyprmuxRemoteConfig {
@@ -258,6 +266,7 @@ impl Default for HyprmuxRemoteConfig {
             server_alive_interval_secs: 15,
             server_alive_count_max: 3,
             install: RemoteInstallPolicy::default(),
+            batch_mode: true,
         }
     }
 }

@@ -70,7 +70,7 @@ pub fn connect_remote(
     let remote_bin =
         super::ensure_remote_binary(target, config, false).map_err(RemoteConnectError::Message)?;
 
-    let mut command = ssh_base_command(&resolved, config, true);
+    let mut command = ssh_base_command(&resolved, config);
     command
         .arg("-o")
         .arg(format!(
@@ -147,7 +147,7 @@ pub fn kill_remote_session(
             Some("hyprmux".to_string())
         })
         .unwrap_or_else(|| "hyprmux".to_string());
-    let mut command = ssh_base_command(&resolved, config, true);
+    let mut command = ssh_base_command(&resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg(&remote_bin);

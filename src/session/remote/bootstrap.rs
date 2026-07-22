@@ -43,6 +43,11 @@ pub enum InstallDecision {
 }
 
 /// Fixed probe script run over ssh. Emits machine-readable lines; never trusts output as argv.
+///
+/// Assumes a POSIX shell on the remote, which is why a Windows host cannot be the remote end of
+/// `--remote` (its sshd defaults to `cmd.exe`). Supporting one needs a `cmd`/PowerShell probe
+/// variant here, `uname`-equivalent platform detection, and the `.exe`-aware install path noted on
+/// [`install_bytes`]. See the platform matrix in `docs/remote.md`.
 const PROBE_SCRIPT: &str = r#"
 set -e
 printf 'platform=%s\n' "$(uname -s 2>/dev/null || echo unknown)"
@@ -383,6 +388,11 @@ fn install_for_platforms(
     )
 }
 
+/// Stream `local` onto the remote as `$HOME/.local/bin/hyprmux`.
+///
+/// POSIX-only by construction: `$HOME`, `chmod`, `mv`, and an extensionless binary name. A Windows
+/// remote would need `%USERPROFILE%`, no `chmod`, and a `.exe` suffix that the `--remote-serve`
+/// invocation in `connect.rs` would also have to use. See `docs/remote.md`.
 fn install_bytes(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
@@ -579,29 +589,11 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
     if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!("invalid sha256 file {}", sha_file.display()));
     }
-    let output = if program_exists("sha256sum") {
-        Command::new("sha256sum")
-            .arg(archive)
-            .output()
-            .map_err(|err| format!("sha256sum: {err}"))?
-    } else if program_exists("shasum") {
-        Command::new("shasum")
-            .args(["-a", "256"])
-            .arg(archive)
-            .output()
-            .map_err(|err| format!("shasum: {err}"))?
-    } else {
-        return Err("neither sha256sum nor shasum found for checksum verification".to_string());
-    };
-    if !output.status.success() {
-        return Err("checksum command failed".to_string());
-    }
-    let actual = String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
+    // Hashed in-process rather than through `sha256sum`/`shasum`: neither exists on Windows, and
+    // verification is the security-relevant step of a cross-platform install — it must never be
+    // skipped, or silently degraded, for want of a tool on the client.
+    let actual = super::sha256::hash_file(archive)
+        .map_err(|err| format!("hash {}: {err}", archive.display()))?;
     if actual != expected {
         return Err(format!(
             "checksum mismatch for {}: expected {expected}, got {actual}",

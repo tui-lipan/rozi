@@ -22,6 +22,33 @@ hyprmux kill-session dev --remote workbox
 `--remote` composes with the same session surface as a local launch (`attach`, `new`, `--session`,
 `--profile`, `--read-only`). It cannot be combined with `--server` or `--fresh-server`.
 
+## Supported platforms
+
+| Client (local) | Remote (server) | Status |
+| --- | --- | --- |
+| Linux / macOS | Linux / macOS | Supported. |
+| Windows | Linux / macOS | Supported. |
+| any | **Windows** | **Not supported** — see below. |
+
+hyprmux itself runs on Windows, and the session server and `--remote-serve` proxy are
+platform-neutral, but a Windows host cannot currently be the *remote* end of `--remote`:
+
+- The probe runs `ssh <host> -- sh -s`. Windows OpenSSH sshd defaults to `cmd.exe`, which has no
+  `sh`, so the probe fails before anything else is attempted.
+- Even with a POSIX shell set as `DefaultShell`, `uname -s` reports something like
+  `MINGW64_NT-10.0-22631`, which the platform mapping does not recognise.
+- The install path writes `$HOME/.local/bin/hyprmux` with `chmod 755` — a POSIX path, POSIX
+  permissions, and no `.exe` suffix.
+
+Pinning `binary_path` to an existing `hyprmux.exe` skips the probe and install, but that route is
+untested and Windows OpenSSH is known to translate line endings on non-pty stdio depending on the
+configured shell, which would corrupt the framed session protocol. Treat it as unsupported until
+that is verified.
+
+Cross-platform install between *supported* platforms downloads the matching release archive and
+needs `tar` on the client (`tar.exe` ships with Windows 10 and later). Checksum verification is done
+in-process, so it needs no external tool anywhere.
+
 ## Authentication
 
 Requires `ssh` on `PATH`. By default hyprmux passes `BatchMode=yes`, so auth must succeed without a
@@ -88,6 +115,9 @@ Before connect, hyprmux probes the remote for a compatible `hyprmux` binary (one
 When the local and remote platforms match, install copies `current_exe()`. When they differ, hyprmux
 downloads the matching GitHub release asset for this version, verifies its `.sha256`, then uploads
 that binary. Override the download base with `HYPRMUX_RELEASE_BASE_URL` for mirrors/tests.
+
+Checksums are computed in-process rather than via `sha256sum`/`shasum`, so verification works
+identically on every client platform and can never be skipped because a tool is missing.
 
 Overrides:
 

@@ -62,6 +62,12 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     if ctx.state.is_ephemeral_session() && ctx.state.current().session_client.is_some() {
         return crate::ops::session::open_detach_rename(ctx);
     }
+    if let Some((&id, _)) = ctx.state.background.iter().find(|(_, attachment)| {
+        crate::ops::session::may_shutdown_attachment(attachment) && attachment.any_pane_live()
+    }) {
+        let _ = crate::ops::session::switch_to_parked(ctx, id);
+        return crate::ops::session::open_detach_rename(ctx);
+    }
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
@@ -117,12 +123,16 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Whether any tiled/floating pane still has a running process. Used to decide whether quitting
 /// an ephemeral session (which shuts the server down and kills its PTYs) warrants a confirmation.
 pub(crate) fn any_pane_live(state: &State) -> bool {
-    state
-        .current()
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.panes.iter())
-        .any(|pane| !pane.closing && pane.terminal.is_running())
+    state.current().any_pane_live()
+}
+
+fn disposable_live_attachment_count(state: &State) -> usize {
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .filter(|attachment| {
+            crate::ops::session::may_shutdown_attachment(attachment) && attachment.any_pane_live()
+        })
+        .count()
 }
 
 /// Quit the client. An ephemeral session is shut down (its PTYs die with it); a named session is
@@ -135,14 +145,21 @@ pub(crate) fn any_pane_live(state: &State) -> bool {
 /// being off quits immediately as before.
 pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: bool) -> Update {
     crate::update::flush_layout_commit(ctx);
+    let disposable_live = disposable_live_attachment_count(&ctx.state);
     if confirmations_enabled
         && ctx.state.config.confirm.quit_ephemeral
-        && ctx.state.is_ephemeral_session()
-        && any_pane_live(&ctx.state)
+        && disposable_live > 0
         && !confirm_second_press(
             ctx,
             PendingDestructive::Quit,
-            confirm_toast(&ctx.state.theme, "Again to quit and close panes"),
+            confirm_toast(
+                &ctx.state.theme,
+                if disposable_live == 1 {
+                    "Again to quit and close 1 temporary session"
+                } else {
+                    "Again to quit and close temporary sessions"
+                },
+            ),
         )
     {
         return Update::full();
@@ -422,6 +439,52 @@ mod tests {
     }
 
     #[test]
+    fn detach_prompts_to_name_a_retained_ephemeral_before_exiting() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            {
+                let state = backend.state_mut();
+                state.runtime_epoch = 3;
+                state.park_current(3, crate::state::Attachment::new());
+                state.runtime_epoch = 4;
+                let (client, _outbound) = SessionClient::test_channel();
+                state.current_mut().session_name = Some("named".to_string());
+                state.current_mut().session_client = Some(client);
+                state.current_mut().session_attached = true;
+                let mut shared = SharedSessionState::new(2);
+                shared.controller = Some(2);
+                shared.clients = vec![ClientInfo {
+                    id: 2,
+                    label: "me".to_string(),
+                    read_only: false,
+                    requesting_control: false,
+                }];
+                state.current_mut().shared = Some(shared);
+            }
+
+            backend
+                .dispatch(Msg::RunAction(Action::Detach))
+                .expect("dispatch detach with retained ephemeral");
+
+            assert!(backend.state().is_ephemeral_session());
+            assert!(
+                backend
+                    .state()
+                    .rename_session
+                    .as_ref()
+                    .is_some_and(|rename| rename.detach_after)
+            );
+            assert!(
+                backend
+                    .state()
+                    .background
+                    .values()
+                    .any(|attachment| attachment.session_name.as_deref() == Some("named"))
+            );
+        });
+    }
+
+    #[test]
     fn hangup_emits_session_detached() {
         on_large_stack(|| {
             let (mut backend, _outbound, events) = named_attached_backend();
@@ -434,6 +497,22 @@ mod tests {
             assert_eq!(event["event"], "session-detached");
             assert_eq!(event["data"]["session"], "named");
             assert!(!backend.state().current().session_attached);
+        });
+    }
+
+    #[test]
+    fn quit_confirmation_counts_retained_live_ephemeral_attachments() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            {
+                let state = backend.state_mut();
+                state.runtime_epoch = 3;
+                state.park_current(3, crate::state::Attachment::new());
+                state.runtime_epoch = 4;
+                state.current_mut().session_name = Some("named".to_string());
+            }
+
+            assert_eq!(disposable_live_attachment_count(backend.state()), 1);
         });
     }
 

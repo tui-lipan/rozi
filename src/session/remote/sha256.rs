@@ -153,11 +153,7 @@ impl Sha256 {
             a = temp1.wrapping_add(temp2);
         }
 
-        for (slot, value) in self
-            .state
-            .iter_mut()
-            .zip([a, b, c, d, e, f, g, h])
-        {
+        for (slot, value) in self.state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
             *slot = slot.wrapping_add(value);
         }
     }

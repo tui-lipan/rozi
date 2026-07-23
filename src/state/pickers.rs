@@ -33,11 +33,6 @@ pub struct SessionPickerState {
     /// Entry index awaiting a second Ctrl+K to confirm its kill. The armed state is shown inline on
     /// the row itself (struck through in the error color), so no separate confirm toast is needed.
     pub pending_kill: Option<usize>,
-    /// Entry index awaiting a second Enter to confirm attaching to it while the current session is a
-    /// disposable ephemeral one - opening the target shuts that ephemeral server down and kills its
-    /// panes, so it warrants the same two-press guard as a kill. Signalled inline on the row (a
-    /// warning-colored highlight), so it needs no confirm toast either.
-    pub pending_open: Option<usize>,
 }
 
 pub struct ClientListState {
@@ -76,7 +71,6 @@ impl SessionPickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_kill: None,
-            pending_open: None,
         }
     }
 }

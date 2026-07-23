@@ -816,13 +816,13 @@ pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update 
         return Update::none();
     }
     let current_name = ctx.state.current().session_name.clone();
-    let current = crate::ops::session::current_session_row(&ctx.state);
+    let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
         let rows = crate::ops::session::discover_sessions_for_ui(
             current_name.as_deref(),
             &remote_config,
-            current,
+            attached,
         )
         .map_err(|error| error.to_string());
         link.send(crate::Msg::SidebarSessionsDiscovered { epoch, rows });
@@ -838,15 +838,6 @@ pub(super) fn sessions_discovered(
         return Update::none();
     }
     if let Ok(rows) = rows {
-        if ctx
-            .state
-            .sidebar
-            .pending_session_open
-            .as_ref()
-            .is_some_and(|pending| !rows.iter().any(|entry| &entry.name == pending))
-        {
-            ctx.state.sidebar.pending_session_open = None;
-        }
         ctx.state.sidebar.sessions = rows;
     }
     Update::with_command(Command::after(
@@ -861,11 +852,7 @@ pub(super) fn activate_session(
     ctx: &mut Context<HyprmuxApp>,
     entry: crate::session::discovery::DiscoveredSession,
 ) -> Update {
-    crate::ops::session::activate_discovered_session(
-        ctx,
-        entry,
-        crate::ops::session::SessionActivationSource::Sidebar,
-    )
+    crate::ops::session::activate_discovered_session(ctx, entry)
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId) -> Update {
@@ -895,6 +882,7 @@ mod tests {
             name: name.to_string(),
             ephemeral: false,
             host: None,
+            remote_target: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: 1,
                 clients: 0,
@@ -1241,7 +1229,7 @@ mod tests {
     }
 
     #[test]
-    fn current_session_results_apply_and_missing_confirmation_is_cleared() {
+    fn current_session_results_apply() {
         on_test_thread(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             {
@@ -1249,7 +1237,6 @@ mod tests {
                 state.sidebar_visible = true;
                 state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
                 state.sidebar.sessions_epoch = 7;
-                state.sidebar.pending_session_open = Some("gone".to_string());
             }
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -1258,37 +1245,6 @@ mod tests {
                 })
                 .expect("current result");
             assert_eq!(backend.state().sidebar.sessions, vec![discovered("dev")]);
-            assert_eq!(backend.state().sidebar.pending_session_open, None);
-        });
-    }
-
-    #[test]
-    fn sidebar_ephemeral_confirmation_is_independent_from_picker_confirmation() {
-        on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            {
-                let state = backend.state_mut();
-                state.current_mut().session_attached = true;
-                state.current_mut().session_name = Some("eph-test".to_string());
-                let mut picker = crate::state::SessionPickerState::new(vec![discovered("picker")]);
-                picker.pending_open = Some(0);
-                state.session_picker = Some(picker);
-            }
-            backend
-                .dispatch(crate::Msg::SidebarSessionActivate(discovered("dev")))
-                .expect("arm sidebar activation");
-            assert_eq!(
-                backend.state().sidebar.pending_session_open.as_deref(),
-                Some("dev")
-            );
-            assert_eq!(
-                backend
-                    .state()
-                    .session_picker
-                    .as_ref()
-                    .and_then(|picker| picker.pending_open),
-                Some(0)
-            );
         });
     }
 

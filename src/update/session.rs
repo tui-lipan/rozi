@@ -31,6 +31,16 @@ pub(super) fn connected(
 
 pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        let disconnected = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .filter(|attachment| attachment.session_name.as_deref() == Some(name.as_str()))
+            .filter(|attachment| attachment.pending_session_attach.is_none());
+        if let Some(attachment) = disconnected {
+            attachment.mark_disconnected();
+            crate::update::sidebar::invalidate_sessions(ctx);
+        }
         return Update::none();
     }
     // Only the current session's unexpected disconnect matters; an intentional detach or
@@ -41,77 +51,9 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     if ctx.state.current().pending_session_attach.is_some() {
         return Update::full();
     }
-    ctx.state.current_mut().session_attached = false;
     crate::update::sidebar::invalidate_sessions(ctx);
-    ctx.state.current_mut().session_client = None;
-    let read_only = ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .is_some_and(|shared| shared.read_only);
-    // Drop shared-lease bookkeeping: while disconnected we behave as a solo controller, and a
-    // successful reconnect rebuilds this from the fresh `Attached` frame.
-    ctx.state.current_mut().shared = None;
-    // Replay inputs whose spawn already went to the dead server will never see a `SpawnResult`;
-    // only spawns still queued in `pending_spawns` (flushed on reattach) keep their entry.
-    ctx.state.prune_replay_inputs_to_pending_spawns();
-    for pane in ctx
-        .state
-        .current_mut()
-        .workspaces
-        .iter_mut()
-        .flat_map(|workspace| workspace.panes.iter_mut())
-    {
-        pane.terminal.status = ManagedTerminalStatus::Error("session disconnected".into());
-    }
-    // Try to reconnect: an ephemeral server may still be alive (transient hiccup), so reattach and
-    // re-seed. Only ephemeral sessions autostart a replacement server.
-    let autostart = crate::state::is_ephemeral_session_name(&name);
-    let new_epoch = ctx.state.runtime_epoch.saturating_add(1);
-    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-        epoch: new_epoch,
-        name: name.clone(),
-        client: None,
-        autostart,
-        read_only,
-        remote_host: ctx.state.current().remote_host.clone(),
-        intent: crate::state::AttachIntent::Plain,
-        left: None,
-    });
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
-        format!("Reconnecting to {name}…"),
-    ));
-    // A remote link must reconnect to the *same* remote host: the local attach path would either
-    // fail or, worse, attach to an unrelated local session with the same name. Route on the
-    // resolved target carried on `State` alongside `remote_host`, mirroring the two startup/picker
-    // call sites.
-    if let Some(target) = ctx.state.current().remote_target.clone() {
-        let remote_config = ctx.state.config.remote.clone();
-        return Update::with_command(Command::spawn(move |link| {
-            std::thread::spawn(move || {
-                crate::session::bootstrap::attach_remote_session_client(
-                    new_epoch,
-                    name,
-                    read_only,
-                    false,
-                    target,
-                    remote_config,
-                    // Reconnect: retry with backoff to ride out a transient link drop.
-                    true,
-                    link,
-                )
-            });
-        }));
-    }
-    Update::with_command(Command::spawn(move |link| {
-        std::thread::spawn(move || {
-            crate::session::bootstrap::attach_session_client(
-                new_epoch, name, autostart, read_only, link,
-            )
-        });
-    }))
+    ctx.state.current_mut().mark_disconnected();
+    crate::ops::session::reconnect_current_session(ctx)
 }
 
 pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
@@ -124,13 +66,20 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     // Only a failed *remote* attach falls back below. A local ephemeral attach is itself the
     // fallback, so retrying it here on failure would spin forever (fail → fall back → fail → …).
     let was_remote = pending.remote_host.is_some();
+    let was_reconnect = pending.reconnect;
     ctx.state.current_mut().pending_session_attach = None;
+    ctx.state.current_mut().connection = if was_remote {
+        crate::state::ConnectionState::Unreachable
+    } else {
+        crate::state::ConnectionState::Disconnected
+    };
     ctx.toast()
         .push(error_toast(&ctx.state.theme, "Attach failed", message));
     // An unreachable `--remote` host would otherwise strand the UI with no session at all — not even
     // a working local terminal. Fall back to a fresh local ephemeral so the launch is never blank;
     // the error toast above already explains what went wrong.
     if was_remote
+        && !was_reconnect
         && !ctx.state.current().session_attached
         && ctx.state.current().session_client.is_none()
     {
@@ -166,6 +115,7 @@ pub(super) fn attached(
         .pending_session_attach
         .take()
         .expect("pending attach checked above");
+    let reconnect = pending.reconnect;
     let Some(client) = pending.client else {
         return Update::none();
     };
@@ -176,6 +126,8 @@ pub(super) fn attached(
         ctx.state.current_mut().remote_host = Some(host);
     }
     ctx.state.current_mut().created_from_profile = created_from_profile;
+    ctx.state.current_mut().connection = crate::state::ConnectionState::Connected;
+    ctx.state.current_mut().reconnect_read_only = read_only;
     ctx.state.current_mut().session_attached = true;
     crate::update::sidebar::invalidate_sessions(ctx);
     ctx.state.current_mut().deferred_profile_seed = None;
@@ -225,7 +177,9 @@ pub(super) fn attached(
         // Shared attach: seed the whole window-manager structure from the authoritative layout via
         // the one reconciler code path, then bind server backends and sizes from the pane metadata
         // before the replay seed frames arrive.
-        reset_state_for_shared_seed(&mut ctx.state);
+        if !reconnect {
+            reset_state_for_shared_seed(&mut ctx.state);
+        }
         crate::shared_layout::apply_shared_layout(ctx, &layout, layout_rev);
         // Attaching reveals an already-running session, so snap to its authoritative geometry
         // instead of interpolating from the previous session's pane rectangles.
@@ -318,6 +272,9 @@ pub(super) fn origin_set(
     created_from_profile: String,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            attachment.created_from_profile = Some(created_from_profile);
+        }
         return Update::none();
     }
     confirm_profile_origin(ctx, created_from_profile);
@@ -351,6 +308,16 @@ pub(super) fn layout_committed(
     layout: SharedLayout,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch)
+            && let Some(shared) = attachment.shared.as_mut()
+        {
+            shared.layout_rev = rev;
+            if shared.client_id != author {
+                shared.assumed_rev = rev;
+                shared.last_committed_layout = Some(layout.clone());
+                attachment.pending_background_layout = Some((rev, layout));
+            }
+        }
         return Update::none();
     }
     let my_id = ctx
@@ -377,6 +344,15 @@ pub(super) fn layout_rejected(
     layout: Option<SharedLayout>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch)
+            && let Some(shared) = attachment.shared.as_mut()
+        {
+            shared.assumed_rev = current_rev;
+            shared.last_committed_layout = None;
+            if let Some(layout) = layout {
+                attachment.pending_background_layout = Some((current_rev, layout));
+            }
+        }
         return Update::none();
     }
     let update = if let Some(layout) = layout {
@@ -399,6 +375,18 @@ pub(super) fn controller_changed(
     reason: ControllerChangeReason,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(shared) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.shared.as_mut())
+        {
+            shared.controller = controller;
+            if shared.is_controller() {
+                shared.assumed_rev = shared.layout_rev;
+                shared.last_committed_layout = None;
+            }
+        }
         return Update::none();
     }
     let was_controller = ctx.state.is_controller();
@@ -442,6 +430,7 @@ pub(super) fn controller_changed(
             ),
         );
     } else if !was_controller && now_controller {
+        crate::ops::session::apply_pending_background_closes(ctx);
         crate::pty_events::replace_toast(
             ctx,
             crate::state::ToastChannel::LayoutControl,
@@ -459,6 +448,15 @@ pub(super) fn clients_changed(
     input_locked: bool,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(shared) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.shared.as_mut())
+        {
+            shared.clients = clients;
+            shared.input_locked = input_locked;
+        }
         return Update::none();
     }
     let roster_events = ctx
@@ -540,10 +538,11 @@ pub(super) fn control_declined(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
 }
 
 pub(super) fn ping(ctx: &mut Context<HyprmuxApp>, epoch: u64, seq: u64) -> Update {
-    if epoch != ctx.state.runtime_epoch {
-        return Update::none();
-    }
-    if let Some(client) = ctx.state.current().session_client.as_ref() {
+    if let Some(client) = ctx
+        .state
+        .attachment_for_epoch(epoch)
+        .and_then(|attachment| attachment.session_client.as_ref())
+    {
         client.pong(seq);
     }
     Update::none()
@@ -551,6 +550,15 @@ pub(super) fn ping(ctx: &mut Context<HyprmuxApp>, epoch: u64, seq: u64) -> Updat
 
 pub(super) fn flush_pane_resizes(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(shared) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.shared.as_mut())
+        {
+            shared.resize_flush_scheduled = false;
+            shared.pending_resizes.clear();
+        }
         return Update::none();
     }
     crate::pty_events::flush_pending_resizes(ctx);
@@ -559,6 +567,14 @@ pub(super) fn flush_pane_resizes(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> U
 
 pub(super) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(shared) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.shared.as_mut())
+        {
+            shared.layout_commit_scheduled = false;
+        }
         return Update::none();
     }
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
@@ -676,6 +692,18 @@ pub(super) fn exited(
             && pane.pty_generation == generation
         {
             pane.terminal.status = ManagedTerminalStatus::Exited(code);
+            if !should_hold_on_exit(ctx.state.config.pane.hold_on_exit, pane_id, pane.closing)
+                && ctx
+                    .state
+                    .background
+                    .get(&epoch)
+                    .is_some_and(crate::state::Attachment::is_controller)
+                && let Some(attachment) = ctx.state.background.get_mut(&epoch)
+            {
+                attachment
+                    .pending_background_closes
+                    .push((pane_id, generation));
+            }
         }
         return Update::none();
     }
@@ -808,6 +836,36 @@ pub(super) fn pane_runtime_changed(
     state: PaneRuntimeState,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        let at_prompt = matches!(
+            state.command_phase,
+            crate::session::protocol::PaneCommandPhase::Prompt
+                | crate::session::protocol::PaneCommandPhase::Input
+        );
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            if let Some(pane) = attachment.find_pane_mut(pane_id)
+                && pane.pty_generation == generation
+                && state.sequence > pane.terminal.runtime_sequence
+            {
+                let previous_agent_status = pane.terminal.agent_status();
+                let previous_age = pane.terminal.status_age();
+                pane.terminal.runtime_sequence = state.sequence;
+                pane.terminal.cwd = state.cwd;
+                pane.terminal.cwd_host = state.cwd_host;
+                pane.terminal.foreground_program = state.foreground_program;
+                pane.terminal.command_phase = state.command_phase;
+                pane.terminal.last_exit_status = state.last_exit_status;
+                pane.terminal.reported_status = state.status;
+                pane.terminal.detected_agent = state.detected_agent;
+                update_agent_status_edge(
+                    &mut pane.terminal,
+                    previous_agent_status.as_deref(),
+                    previous_age,
+                );
+            }
+            if at_prompt {
+                flush_attachment_replay_input(attachment, pane_id, generation);
+            }
+        }
         return Update::none();
     }
     let at_prompt = matches!(
@@ -930,6 +988,9 @@ pub(super) fn replay_input_deadline(
     generation: u64,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            flush_attachment_replay_input(attachment, pane_id, generation);
+        }
         return Update::none();
     }
     flush_replay_input(ctx, pane_id, generation);
@@ -962,6 +1023,30 @@ fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation
     }
 }
 
+fn flush_attachment_replay_input(
+    attachment: &mut crate::state::Attachment,
+    pane_id: PaneId,
+    generation: u64,
+) {
+    let Some(input) = attachment
+        .pending_replay_inputs
+        .remove(&(pane_id, generation))
+    else {
+        return;
+    };
+    if !attachment
+        .find_pane_mut(pane_id)
+        .is_some_and(|pane| pane.pty_generation == generation && !pane.closing)
+    {
+        return;
+    }
+    if let Some(client) = attachment.session_client.as_ref() {
+        let mut bytes = input.into_bytes();
+        bytes.push(b'\r');
+        client.send_input(pane_id, generation, bytes);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_result(
     ctx: &mut Context<HyprmuxApp>,
@@ -973,6 +1058,45 @@ pub(super) fn spawn_result(
     error: Option<String>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        let Some(attachment) = ctx.state.background.get_mut(&epoch) else {
+            return Update::none();
+        };
+        let is_controller = attachment.is_controller();
+        let mut spawned_live = false;
+        if let Some(pane) = attachment.find_pane_mut(pane_id) {
+            if pane.pty_generation != generation {
+                return Update::none();
+            }
+            spawned_live = ok && !pane.closing;
+            if !pane.terminal.is_ready() {
+                pane.terminal.bind_server_backend(pane_id, generation);
+            }
+            pane.terminal.child_pid = pid;
+            if ok {
+                pane.terminal.status = ManagedTerminalStatus::Ready;
+            } else {
+                let message = error.unwrap_or_else(|| "session spawn failed".to_string());
+                pane.terminal.status = ManagedTerminalStatus::Error(message.into());
+                if !pane.closing && is_controller {
+                    attachment
+                        .pending_background_closes
+                        .push((pane_id, generation));
+                }
+            }
+        }
+        if attachment
+            .pending_replay_inputs
+            .contains_key(&(pane_id, generation))
+        {
+            if spawned_live {
+                return Update::with_command(replay_input_deadline_command(
+                    epoch, pane_id, generation,
+                ));
+            }
+            attachment
+                .pending_replay_inputs
+                .remove(&(pane_id, generation));
+        }
         return Update::none();
     }
     let is_controller = ctx.state.is_controller();
@@ -1055,6 +1179,10 @@ pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) 
 
 pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            attachment.session_name = Some(session);
+            crate::update::sidebar::invalidate_sessions(ctx);
+        }
         return Update::none();
     }
     let previous = ctx
@@ -1146,6 +1274,99 @@ mod tests {
             set_at: 1,
         });
         pane
+    }
+
+    #[test]
+    fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let (client, _outbound) = SessionClient::test_channel();
+                let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 4;
+                    state.current_mut().epoch = 4;
+                    state.current_mut().session_name = Some("dev".to_string());
+                    state.current_mut().session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().pending_session_attach = None;
+                    state.current_mut().connection = crate::state::ConnectionState::Connected;
+                    state.current_mut().remote_host = Some("workbox".to_string());
+                    state.current_mut().remote_target = Some(target.clone());
+                    state.park_current(4, crate::state::Attachment::new());
+                    state.runtime_epoch = 5;
+                }
+
+                assert_eq!(backend.state().runtime_epoch, 5);
+                let before = backend
+                    .state()
+                    .background
+                    .get(&4)
+                    .expect("parked before drop");
+                assert_eq!(before.session_name.as_deref(), Some("dev"));
+                assert!(before.pending_session_attach.is_none());
+
+                backend
+                    .dispatch(Msg::SessionDisconnected {
+                        epoch: 4,
+                        name: "dev".to_string(),
+                    })
+                    .expect("dispatch parked disconnect");
+
+                let parked = backend
+                    .state()
+                    .background
+                    .get(&4)
+                    .expect("retained session");
+                assert_eq!(
+                    parked.connection,
+                    crate::state::ConnectionState::Disconnected
+                );
+                assert!(!parked.session_attached);
+                assert!(parked.session_client.is_none());
+                assert_eq!(parked.remote_target.as_ref(), Some(&target));
+                assert_eq!(parked.session_name.as_deref(), Some("dev"));
+            })
+            .expect("spawn parked-disconnect test")
+            .join()
+            .expect("parked-disconnect test completes");
+    }
+
+    #[test]
+    fn parked_rename_updates_retained_identity() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 8;
+                    state.current_mut().session_name = Some("before".to_string());
+                    state.park_current(8, crate::state::Attachment::new());
+                    state.runtime_epoch = 9;
+                }
+
+                backend
+                    .dispatch(Msg::SessionRenamed {
+                        epoch: 8,
+                        session: "after".to_string(),
+                    })
+                    .expect("dispatch parked rename");
+
+                assert_eq!(
+                    backend
+                        .state()
+                        .background
+                        .get(&8)
+                        .and_then(|attachment| attachment.session_name.as_deref()),
+                    Some("after")
+                );
+            })
+            .expect("spawn parked-rename test")
+            .join()
+            .expect("parked-rename test completes");
     }
 
     #[test]
@@ -1367,6 +1588,45 @@ mod tests {
             .expect("runtime status test thread completes");
     }
 
+    #[test]
+    fn parked_runtime_updates_keep_background_metadata_current() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 4;
+                    let pane = &mut state.current_mut().workspaces[0].panes[0];
+                    pane.pty_generation = 7;
+                    pane.terminal.bind_session(pane.id, 7);
+                    state.park_current(4, crate::state::Attachment::new());
+                    state.runtime_epoch = 5;
+                }
+
+                backend
+                    .dispatch(Msg::SessionPaneRuntimeChanged {
+                        epoch: 4,
+                        pane_id: 1,
+                        generation: 7,
+                        state: PaneRuntimeState {
+                            cwd: Some("/remote/project".to_string()),
+                            foreground_program: Some("cargo".to_string()),
+                            sequence: 1,
+                            ..PaneRuntimeState::default()
+                        },
+                    })
+                    .expect("dispatch parked runtime update");
+
+                let pane = &backend.state().background[&4].workspaces[0].panes[0];
+                assert_eq!(pane.terminal.cwd.as_deref(), Some("/remote/project"));
+                assert_eq!(pane.terminal.foreground_program.as_deref(), Some("cargo"));
+            })
+            .expect("spawn parked runtime test")
+            .join()
+            .expect("parked runtime test completes");
+    }
+
     /// A failed *local* attach must not install another pending attach: a local ephemeral is
     /// itself the fallback, so retrying it on failure would spin forever (fail → fall back → fail →
     /// …). Only a remote failure falls back, which is verified live. Side-effect-free: the local
@@ -1384,6 +1644,7 @@ mod tests {
                         client: None,
                         autostart: true,
                         read_only: false,
+                        reconnect: false,
                         remote_host: None,
                         intent: crate::state::AttachIntent::Plain,
                         left: None,
@@ -1405,6 +1666,58 @@ mod tests {
     }
 
     #[test]
+    fn retained_remote_reconnect_failure_stays_offline_and_remote() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().session_name = Some("dev".to_string());
+                    state.current_mut().remote_host = Some("workbox".to_string());
+                    state.current_mut().remote_target = Some(target.clone());
+                    state.current_mut().pending_session_attach =
+                        Some(crate::state::PendingSessionAttach {
+                            epoch: 42,
+                            name: "dev".to_string(),
+                            client: None,
+                            autostart: false,
+                            read_only: false,
+                            reconnect: true,
+                            remote_host: Some("workbox".to_string()),
+                            intent: crate::state::AttachIntent::Plain,
+                            left: None,
+                        });
+                }
+
+                backend
+                    .dispatch(Msg::SessionAttachFailed {
+                        epoch: 42,
+                        message: "offline".to_string(),
+                    })
+                    .expect("dispatch reconnect failure");
+
+                assert!(backend.state().current().pending_session_attach.is_none());
+                assert_eq!(
+                    backend.state().current().connection,
+                    crate::state::ConnectionState::Unreachable
+                );
+                assert_eq!(
+                    backend.state().current().remote_target.as_ref(),
+                    Some(&target)
+                );
+                assert_eq!(
+                    backend.state().current().session_name.as_deref(),
+                    Some("dev")
+                );
+            })
+            .expect("spawn retained reconnect test")
+            .join()
+            .expect("retained reconnect test completes");
+    }
+
+    #[test]
     fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1419,6 +1732,7 @@ mod tests {
                         client: Some(client),
                         autostart: true,
                         read_only: false,
+                        reconnect: false,
                         remote_host: None,
                         intent: crate::state::AttachIntent::ProfileSeed {
                             profile: "legacy-profile".into(),

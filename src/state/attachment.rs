@@ -11,16 +11,25 @@ use super::{
 /// the current attachment keeps [`super::State::runtime_epoch`].
 pub type AttachmentId = u64;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConnectionState {
+    #[default]
+    Disconnected,
+    Connecting,
+    Connected,
+    Reconnecting,
+    AuthRequired,
+    Unreachable,
+    Incompatible,
+}
+
 /// The client's connection to one session together with that session's window-manager state: the
 /// session client handle and identity (name, remote host), the shared-layout lease, the
 /// spawn/replay buffers, and the workspaces/focus/pane-id space scoped to that session.
 ///
-/// Today `State` holds exactly one `Attachment` (see [`super::State::current`]); a session switch
-/// still replaces the whole `State`. This type exists so that per-session state lives in one place
-/// ahead of the multi-attachment work, where `State` will hold a collection of `Attachment`s with
-/// one marked current and background attachments keep their own client, screens, and buffers. Each
-/// attachment carries its own `next_pane_id`/`next_pty_generation` so two live sessions can never
-/// mint colliding `(pane_id, generation)` routing keys.
+/// `State` keeps one current attachment plus a keyed set of background attachments. Each attachment
+/// carries its own `next_pane_id`/`next_pty_generation` so two live sessions can never mint
+/// colliding `(pane_id, generation)` routing keys.
 pub struct Attachment {
     /// This attachment's identity, matching its server frames' epoch. `0` until committed (the
     /// current attachment's live epoch is [`super::State::runtime_epoch`]); stamped when the
@@ -44,6 +53,10 @@ pub struct Attachment {
     pub created_from_profile: Option<String>,
     pub deferred_profile_seed: Option<(String, PathBuf)>,
     pub pending_profile_loaded: Option<(String, PathBuf, String)>,
+    pub connection: ConnectionState,
+    /// Attach mode to restore after a dropped link. This remains available after shared-session
+    /// bookkeeping is cleared during disconnect.
+    pub reconnect_read_only: bool,
     pub session_attached: bool,
     pub pending_session_attach: Option<PendingSessionAttach>,
     /// Pane spawns requested while no session client was connected yet (e.g. a scratchpad toggle
@@ -57,6 +70,12 @@ pub struct Attachment {
     /// prompt reads and runs it. Only the client that requested the spawn holds the entry, so a
     /// multi-client session injects it exactly once.
     pub pending_replay_inputs: HashMap<(PaneId, u64), String>,
+    /// Latest authoritative layout received while this attachment was in the background. Applied
+    /// when it becomes current so background protocol traffic never mutates the visible session.
+    pub pending_background_layout: Option<(u64, crate::shared_layout::SharedLayout)>,
+    /// Structural closes deferred while this attachment is not current. Applied on switch-back,
+    /// when layout mutation and focus repair can safely target this attachment.
+    pub pending_background_closes: Vec<(PaneId, u64)>,
     /// Shared-session bookkeeping for the attached named/ephemeral session: the layout lease,
     /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
     /// handshake completes (and while purely local, pre-attach).
@@ -81,10 +100,14 @@ impl Attachment {
             created_from_profile: None,
             deferred_profile_seed: None,
             pending_profile_loaded: None,
+            connection: ConnectionState::Disconnected,
+            reconnect_read_only: false,
             session_attached: false,
             pending_session_attach: None,
             pending_spawns: Vec::new(),
             pending_replay_inputs: HashMap::new(),
+            pending_background_layout: None,
+            pending_background_closes: Vec::new(),
             shared: None,
         }
     }
@@ -137,6 +160,24 @@ impl Attachment {
         }
     }
 
+    /// Preserve the last rendered screens while dropping transport-specific state after a link
+    /// ends. A background attachment can then be restored immediately and reconnect in place.
+    pub fn mark_disconnected(&mut self) {
+        self.connection = ConnectionState::Disconnected;
+        self.session_attached = false;
+        self.session_client = None;
+        self.shared = None;
+        self.prune_replay_inputs_to_pending_spawns();
+        for pane in self
+            .workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.panes.iter_mut())
+        {
+            pane.terminal.status =
+                tui_lipan::prelude::ManagedTerminalStatus::Error("session disconnected".into());
+        }
+    }
+
     /// The active workspace. A single-borrow accessor so callers avoid the
     /// `workspaces[active_workspace]` double index, which would borrow the attachment twice.
     pub fn active_workspace_ref(&self) -> &Workspace {
@@ -153,6 +194,13 @@ impl Attachment {
         self.session_name
             .as_deref()
             .is_some_and(is_ephemeral_session_name)
+    }
+
+    pub fn any_pane_live(&self) -> bool {
+        self.workspaces
+            .iter()
+            .flat_map(|workspace| workspace.panes.iter())
+            .any(|pane| !pane.closing && pane.terminal.is_running())
     }
 
     /// Whether this client may mutate the shared layout: always true when purely local (no shared

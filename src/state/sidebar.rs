@@ -26,7 +26,6 @@ pub struct SidebarState {
     pub config_epoch: u64,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
-    pub pending_session_open: Option<String>,
     /// Resolved roots for the file-tree tabs: the focused pane's local working directory, and the
     /// git repository containing it. Both are recomputed only when the pane's reported directory
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.
@@ -115,7 +114,6 @@ impl SidebarState {
 
     pub fn invalidate_sessions(&mut self) {
         self.sessions.clear();
-        self.pending_session_open = None;
         self.sessions_epoch = self.sessions_epoch.wrapping_add(1);
     }
 

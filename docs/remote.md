@@ -4,6 +4,11 @@
 SSH. The remote host owns every PTY and its filesystem; your local config (theme, keybindings,
 clipboard, hooks) stays on this machine.
 
+The workbar identifies the active location with a `󰒍 <host>` badge before the named-session badge.
+Switching to a local or another remote session retains this attachment and its SSH transport in the
+background; switching back restores its live screens immediately. If a retained link drops, it is
+marked offline and reconnects in place when selected again.
+
 This is the inverse of “ssh in and run hyprmux there”: the UI and config stay local, while the
 session server stays remote.
 

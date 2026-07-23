@@ -205,13 +205,11 @@ pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize)
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.selected = index.min(picker.entries.len().saturating_sub(1));
     }
-    // Moving the highlight off an armed row cancels its confirmation (and dismisses the toast);
-    // staying on it keeps the arming alive for a confirming second press. Applies to both the kill
-    // and the open-discards-ephemeral guards.
+    // Moving the highlight off an armed kill row cancels its confirmation.
     let moved_off_armed = ctx.state.session_picker.as_ref().is_some_and(|picker| {
-        let selected = picker.selected;
-        picker.pending_kill.is_some_and(|index| index != selected)
-            || picker.pending_open.is_some_and(|index| index != selected)
+        picker
+            .pending_kill
+            .is_some_and(|index| index != picker.selected)
     });
     if moved_off_armed {
         crate::ops::session::clear_pending_session_arms(ctx);

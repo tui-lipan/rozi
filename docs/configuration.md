@@ -144,7 +144,7 @@ height = 0.4                 # fraction of the viewport height, 0.1–0.9 (defau
 
 [workbar]
 left = ["title", "workspaces"]              # default
-right = ["session"]                         # default
+right = ["location", "session"]             # default
 # A segment can be a table to override its badge color by theme role:
 # right = [{ segment = "clock", color = "info" }, "session"]
 clock_format = "%H:%M"                       # strftime, only used by a clock segment
@@ -640,8 +640,8 @@ constructed from command output.
 
 ## `[workbar]`
 
-Customize the workbar. The default reproduces the original workbar (the `hyprmux` badge and the
-workspace tabs on the left, the `session` badge on the right). Every configured segment renders as
+Customize the workbar. By default the `hyprmux` badge and workspace tabs are on the left, while the
+remote `location` and named `session` badges are on the right. Every configured segment renders as
 a colored badge; each kind has a curated default color that you can override by theme role (see
 below). The `PREFIX`/`RESIZE`/`COPY`/`HINT` mode chips render only while `show_workbar` is enabled, and sit
 to the left of the right-region segments so a `session` badge stays pinned to the trailing edge.
@@ -653,11 +653,12 @@ workspace and sidebar tab caps are controlled separately with `workbar_tab_style
 | Key | Default | Notes |
 | --- | --- | --- |
 | `left` | `["title", "workspaces"]` | Ordered left-region segments. |
-| `right` | `["session"]` | Ordered right-region segments. |
+| `right` | `["location", "session"]` | Ordered right-region segments. |
 | `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
 
-Segment kinds: `title` (the badge), `workspaces` (the tabs), `session` (the active profile/
-session name), `clock`, `layout` (active workspace layout name), `activity` (count of panes with
+Segment kinds: `title` (the badge), `workspaces` (the tabs), `location` (the active remote host, or
+the number of retained remote connections while local), `session` (the active profile/session
+name), `clock`, `layout` (active workspace layout name), `activity` (count of panes with
 unseen output), `text:<literal>` with `{host}`, `{workspace}`, `{layout}`, `{session}`
 placeholders, and `command:<shell command>` / `command:<interval_secs>:<shell command>` to run a
 shell command on a timer and show the first line of its stdout. Unknown segment names emit a warning
@@ -669,8 +670,13 @@ badge color by theme role: `{ segment = "clock", color = "info" }`. Colors are n
 not literal values, so a badge tracks the active theme. Valid roles: `accent`, `info`, `success`,
 `warning`, `error`, `neutral`, `panel` (`panel` blends into the bar, i.e. no visible pill). An
 unknown role name warns and falls back to the segment's curated default. Curated defaults:
-`title`/`session` = `accent`, `clock` = `info`, `activity` = `warning`, and `layout`/`text`/
+`title`/`session` = `accent`, `location`/`clock` = `info`, `activity` = `warning`, and `layout`/`text`/
 `command` = `neutral`.
+
+The `location` badge uses the same shape and powerline path as `session`: `󰒍 workbox` for an active
+remote attachment and `󰒍 2` for two retained remote attachments while the current session is local.
+Connecting/reconnecting uses the warning role; an offline active remote uses the error role. The
+`location` and `session` badges are clickable and open the Sessions picker.
 
 A `command` segment runs through `$SHELL -c` on a background thread (never the UI thread) and
 refreshes every `interval_secs` (default `60`, minimum `1`); a failing command or one with no

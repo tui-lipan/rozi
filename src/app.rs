@@ -206,10 +206,8 @@ impl Component for HyprmuxApp {
                     client: None,
                     autostart,
                     read_only: self.read_only,
-                    remote_host: self.remote.as_ref().map(|target| match target {
-                        crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
-                        crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
-                    }),
+                    reconnect: false,
+                    remote_host: self.remote.as_ref().map(|target| target.display_label()),
                     intent: self.startup_profile.as_ref().map_or(
                         crate::state::AttachIntent::Plain,
                         |profile| {
@@ -225,10 +223,9 @@ impl Component for HyprmuxApp {
                     ),
                     left: None,
                 });
-            ctx.state.current_mut().remote_host = self.remote.as_ref().map(|target| match target {
-                crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
-                crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
-            });
+            ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
+            ctx.state.current_mut().remote_host =
+                self.remote.as_ref().map(|target| target.display_label());
             ctx.state.current_mut().remote_target = self.remote.clone();
             SessionStart::Attach {
                 epoch,
@@ -1277,6 +1274,7 @@ mod tests {
                             name: session_name,
                             ephemeral: true,
                             host: None,
+                            remote_target: None,
                             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                                 panes: 1,
                                 clients: 1,
@@ -1288,9 +1286,24 @@ mod tests {
                             name: "shared-dev".to_string(),
                             ephemeral: false,
                             host: None,
+                            remote_target: None,
                             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                                 panes: 2,
                                 clients: 1,
+                                has_layout: true,
+                                created_from_profile: None,
+                            },
+                        },
+                        crate::session::discovery::DiscoveredSession {
+                            name: "remote-dev".to_string(),
+                            ephemeral: false,
+                            host: Some("workbox".to_string()),
+                            remote_target: Some(crate::session::remote::RemoteTarget::Alias(
+                                "workbox".to_string(),
+                            )),
+                            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                                panes: 3,
+                                clients: 0,
                                 has_layout: true,
                                 created_from_profile: None,
                             },
@@ -1320,6 +1333,16 @@ mod tests {
                 assert!(
                     shared_row.contains("2 panes · 1 other client"),
                     "occupied session should identify its attached client\n{shared_row}"
+                );
+                assert!(
+                    lines.iter().any(|line| line.contains("LOCAL")),
+                    "local group header missing\n{}",
+                    lines.join("\n")
+                );
+                assert!(
+                    lines.iter().any(|line| line.contains("REMOTE · workbox")),
+                    "remote group header missing\n{}",
+                    lines.join("\n")
                 );
 
                 let ephemeral_y = lines

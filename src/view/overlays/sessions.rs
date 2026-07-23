@@ -158,31 +158,69 @@ fn session_picker_palette(
         .enumerate()
         .filter_map(|(index, entry)| entry.ephemeral.then_some(index))
         .collect::<Vec<_>>();
-    let entries = picker
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
-        .map(|(index, entry)| {
-            // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
-            // stay reattachable - activation is by row index, not this label).
-            let mut label = if entry.ephemeral {
-                "ephemeral".to_string()
-            } else {
-                entry.name.clone()
-            };
-            if let Some(host) = entry.host.as_deref() {
-                label.push('@');
-                label.push_str(host);
+    let mut entries = Vec::new();
+    let mut last_group: Option<Option<&str>> = None;
+    for (index, entry) in picker.entries.iter().enumerate().filter(|(_, entry)| {
+        query.is_empty()
+            || entry.name.to_ascii_lowercase().contains(&query)
+            || entry
+                .host
+                .as_deref()
+                .is_some_and(|host| host.to_ascii_lowercase().contains(&query))
+    }) {
+        let group = entry.host.as_deref();
+        if last_group != Some(group) {
+            if last_group.is_some() {
+                entries.push(SearchEntry::spacer());
             }
-            let is_current = current_name == Some(entry.name.as_str())
-                && current_host == entry.host.as_deref();
-            if is_current {
-                label.push_str("  • current");
-            }
-            SearchEntry::item(label, index).description(session_description(entry, is_current))
-        })
-        .collect::<Vec<_>>();
+            entries.push(SearchEntry::header(match group {
+                Some(host) => format!("REMOTE · {host}"),
+                None => "LOCAL".to_string(),
+            }));
+            last_group = Some(group);
+        }
+        // Ephemeral sessions carry an ugly generated `eph-<pid>` name shown as "ephemeral" (they
+        // stay reattachable - activation is by row index, not this label).
+        let mut label = if entry.ephemeral {
+            "ephemeral".to_string()
+        } else {
+            entry.name.clone()
+        };
+        if let Some(host) = entry.host.as_deref() {
+            label.push('@');
+            label.push_str(host);
+        }
+        let is_current = current_name == Some(entry.name.as_str())
+            && current_host == entry.host.as_deref()
+            && ctx.state.current().remote_target == entry.remote_target;
+        let attachment = ctx
+            .state
+            .attachment_by_identity(&entry.name, entry.remote_target.as_ref());
+        let connection = attachment.map(|attachment| attachment.connection);
+        let is_attached = connection == Some(crate::state::ConnectionState::Connected);
+        if is_current {
+            label.push_str("  • current");
+        } else if is_attached {
+            label.push_str("  • attached");
+        } else if matches!(
+            connection,
+            Some(
+                crate::state::ConnectionState::Connecting
+                    | crate::state::ConnectionState::Reconnecting
+            )
+        ) {
+            label.push_str("  • reconnecting");
+        } else if connection.is_some() {
+            label.push_str("  • offline");
+        }
+        entries.push(
+            SearchEntry::item(label, index).description(session_description(
+                entry,
+                is_current,
+                is_attached,
+            )),
+        );
+    }
     let empty_text = if picker.entries.is_empty() {
         "No sessions - press Ctrl+N to create".to_string()
     } else if query.is_empty() {
@@ -192,16 +230,10 @@ fn session_picker_palette(
     };
 
     let pending_kill = picker.pending_kill;
-    let pending_open = picker.pending_open;
     let error_bg = theme.status.error;
-    let warn_bg = theme.status.warning;
     let ephemeral_style = fg_only(&theme.primary).italic();
     let description_style = fg_only(&theme.muted);
-    // A kill and an open are never armed at once; the kill's error red takes precedence over the
-    // open's warning tint if both were ever present.
-    let pending_accent = pending_kill
-        .map(|_| error_bg)
-        .or_else(|| pending_open.map(|_| warn_bg));
+    let pending_accent = pending_kill.map(|_| error_bg);
     let selection_style = picker_selection_style(theme, pending_accent);
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
@@ -228,12 +260,10 @@ fn session_picker_palette(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
         );
-    if pending_kill.is_some() || pending_open.is_some() || !ephemeral_entries.is_empty() {
+    if pending_kill.is_some() || !ephemeral_entries.is_empty() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             if pending_kill == Some(item.value) {
                 Some(render_pending_delete_item(item, error_bg))
-            } else if pending_open == Some(item.value) {
-                Some(render_pending_open_item(item, warn_bg))
             } else if ephemeral_entries.contains(&item.value) {
                 Some(render_ephemeral_session_item(
                     item,
@@ -251,6 +281,7 @@ fn session_picker_palette(
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
     is_current: bool,
+    is_attached: bool,
 ) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
@@ -274,6 +305,9 @@ fn session_description(
                 1 => format!("{panes_label} · 1 other client"),
                 count => format!("{panes_label} · {count} other clients"),
             };
+            if is_attached && !is_current {
+                label.push_str(" · retained");
+            }
             if let Some(profile) = created_from_profile {
                 label.push_str(&format!(" · from {profile}"));
             }

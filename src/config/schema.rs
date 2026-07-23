@@ -948,13 +948,15 @@ impl Default for HyprmuxConfig {
 pub const DEFAULT_WORKBAR_COMMAND_INTERVAL_SECS: u64 = 60;
 
 /// One segment of the configurable workbar. `Workspaces` is the workspace tab strip;
-/// `Session` is the live attach-connection badge (invisible until attached to a named session);
+/// `Location` identifies the active remote host or retained remote count; `Session` is the live
+/// attach-connection badge (invisible until attached to a named session);
 /// `Text` is a literal with `{host}`/`{workspace}`/`{layout}`/`{session}` placeholders;
 /// `Command` runs a shell command on a timer and shows the first line of its stdout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkbarSegment {
     Title,
     Workspaces,
+    Location,
     Session,
     Clock,
     Layout,
@@ -975,6 +977,7 @@ impl WorkbarSegment {
         match value.to_ascii_lowercase().as_str() {
             "title" => Some(Self::Title),
             "workspaces" => Some(Self::Workspaces),
+            "location" => Some(Self::Location),
             "session" => Some(Self::Session),
             "clock" => Some(Self::Clock),
             "layout" => Some(Self::Layout),
@@ -1070,7 +1073,10 @@ impl Default for WorkbarConfig {
                 WorkbarItem::new(WorkbarSegment::Title),
                 WorkbarItem::new(WorkbarSegment::Workspaces),
             ],
-            right: vec![WorkbarItem::new(WorkbarSegment::Session)],
+            right: vec![
+                WorkbarItem::new(WorkbarSegment::Location),
+                WorkbarItem::new(WorkbarSegment::Session),
+            ],
             clock_format: "%H:%M".to_string(),
         }
     }
@@ -1158,10 +1164,16 @@ mod tests {
         let workbar = WorkbarConfig::default();
         assert_eq!(
             workbar.right,
-            vec![WorkbarItem {
-                segment: WorkbarSegment::Session,
-                color: None,
-            }]
+            vec![
+                WorkbarItem {
+                    segment: WorkbarSegment::Location,
+                    color: None,
+                },
+                WorkbarItem {
+                    segment: WorkbarSegment::Session,
+                    color: None,
+                },
+            ]
         );
         assert!(HyprmuxPaneConfig::default().workbar_powerline);
     }
@@ -1181,6 +1193,10 @@ mod tests {
     #[test]
     fn workbar_segment_parses_builtins_and_text_literals() {
         assert_eq!(WorkbarSegment::parse("clock"), Some(WorkbarSegment::Clock));
+        assert_eq!(
+            WorkbarSegment::parse("location"),
+            Some(WorkbarSegment::Location)
+        );
         assert_eq!(
             WorkbarSegment::parse("Workspaces"),
             Some(WorkbarSegment::Workspaces)
@@ -1231,7 +1247,10 @@ mod tests {
         );
         assert_eq!(
             workbar.right,
-            vec![WorkbarItem::new(WorkbarSegment::Session)]
+            vec![
+                WorkbarItem::new(WorkbarSegment::Location),
+                WorkbarItem::new(WorkbarSegment::Session),
+            ]
         );
         assert!(!workbar.has_clock());
         assert_eq!(workbar.clock_format, "%H:%M");

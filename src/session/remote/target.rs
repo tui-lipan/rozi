@@ -11,6 +11,21 @@ pub enum RemoteTarget {
     },
 }
 
+impl RemoteTarget {
+    pub fn display_label(&self) -> String {
+        match self {
+            Self::Alias(alias) => alias.clone(),
+            Self::Url { user, host, port } => {
+                let user = user
+                    .as_deref()
+                    .map_or(String::new(), |user| format!("{user}@"));
+                let port = port.map_or(String::new(), |port| format!(":{port}"));
+                format!("{user}{host}{port}")
+            }
+        }
+    }
+}
+
 /// Parse a `--remote` value. Rejects empty strings and malformed `ssh://` URLs.
 pub fn parse_remote_target(raw: &str) -> Result<RemoteTarget, String> {
     let raw = raw.trim();
@@ -141,5 +156,19 @@ mod tests {
         assert!(parse_remote_target("http://host").is_err());
         assert!(parse_remote_target("ssh://").is_err());
         assert!(parse_remote_target("ssh://host:0").is_err());
+    }
+
+    #[test]
+    fn display_label_keeps_user_and_port_identity() {
+        assert_eq!(
+            parse_remote_target("ssh://alice@example.com:2222")
+                .unwrap()
+                .display_label(),
+            "alice@example.com:2222"
+        );
+        assert_eq!(
+            parse_remote_target("workbox").unwrap().display_label(),
+            "workbox"
+        );
     }
 }

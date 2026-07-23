@@ -353,9 +353,12 @@ fn detect_remote_family(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = command
-        .output()
-        .map_err(|err| format!("failed to probe remote shell family for {}: {err}", resolved.host))?;
+    let output = command.output().map_err(|err| {
+        format!(
+            "failed to probe remote shell family for {}: {err}",
+            resolved.host
+        )
+    })?;
     // A cmd.exe host still exits 0 here; a POSIX host does too. A hard ssh/auth failure is caught by
     // a non-zero status, which we surface rather than silently defaulting to POSIX.
     if !output.status.success() {
@@ -768,8 +771,7 @@ fn encode_powershell_command(script: &str) -> String {
 /// Minimal standard-alphabet base64 (with `=` padding). Kept in-crate rather than pulling a direct
 /// dependency, mirroring the hand-rolled `sha256` module used for the same install path.
 fn base64_standard(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
@@ -1004,7 +1006,9 @@ fn binary_target_from_header(head: &[u8], path: &Path) -> Option<(String, String
         return Some(("linux".to_string(), arch.to_string()));
     }
     // Mach-O (macOS): 64-bit magic FEEDFACF (either endianness), cputype in the next 4 bytes.
-    if head.len() >= 8 && (head[..4] == [0xcf, 0xfa, 0xed, 0xfe] || head[..4] == [0xfe, 0xed, 0xfa, 0xcf]) {
+    if head.len() >= 8
+        && (head[..4] == [0xcf, 0xfa, 0xed, 0xfe] || head[..4] == [0xfe, 0xed, 0xfa, 0xcf])
+    {
         let cputype = if head[..4] == [0xcf, 0xfa, 0xed, 0xfe] {
             u32::from_le_bytes([head[4], head[5], head[6], head[7]])
         } else {
@@ -1227,7 +1231,10 @@ protocol_max=1
         );
 
         // Unrecognized formats are `None` (best-effort: never block on what we cannot read).
-        assert_eq!(binary_target_from_header(b"not an exe", Path::new("/x")), None);
+        assert_eq!(
+            binary_target_from_header(b"not an exe", Path::new("/x")),
+            None
+        );
     }
 
     #[test]

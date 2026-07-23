@@ -27,6 +27,9 @@ pub struct DiscoveredSession {
     pub ephemeral: bool,
     /// Remote host alias/URL when discovered over `--remote`; `None` for local.
     pub host: Option<String>,
+    /// Exact remote endpoint used for discovery. Kept separately from the short display label so
+    /// user/port distinctions survive activation and retained-attachment lookup.
+    pub remote_target: Option<crate::session::remote::RemoteTarget>,
 }
 
 /// Where to discover sessions from.
@@ -161,6 +164,7 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
         ephemeral: crate::state::is_ephemeral_session_name(name),
         status,
         host: None,
+        remote_target: None,
     })
 }
 
@@ -182,10 +186,7 @@ fn discover_remote_sessions(
     use std::process::Stdio;
 
     let resolved = crate::session::remote::ResolvedRemote::resolve(target, config);
-    let host_label = resolved
-        .alias
-        .clone()
-        .unwrap_or_else(|| resolved.host.clone());
+    let host_label = target.display_label();
     if !crate::platform::command::program_exists("ssh") {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -213,7 +214,11 @@ fn discover_remote_sessions(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    parse_remote_list_json(&output.stdout, Some(host_label))
+    let mut rows = parse_remote_list_json(&output.stdout, Some(host_label))?;
+    for row in &mut rows {
+        row.remote_target = Some(target.clone());
+    }
+    Ok(rows)
 }
 
 /// Parse `list-sessions --format json` output (also used by remote discovery).
@@ -255,6 +260,7 @@ pub fn parse_remote_list_json(
                 status,
                 ephemeral: row.ephemeral,
                 host: host.clone(),
+                remote_target: None,
             }
         })
         .collect())
@@ -326,6 +332,7 @@ mod tests {
             name: "dev".into(),
             ephemeral: false,
             host: Some("workbox".into()),
+            remote_target: None,
             status: DiscoveredSessionStatus::Running {
                 panes: 2,
                 clients: 1,

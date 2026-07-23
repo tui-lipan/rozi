@@ -55,6 +55,9 @@ pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 pub struct State {
     pub config: HyprmuxConfig,
     pub runtime_epoch: u64,
+    /// Next candidate attachment id. Allocation also checks current/background ids so restored
+    /// sessions can never cause an id to be reused.
+    pub(crate) next_attachment_id: AttachmentId,
     pub command_link: Option<tui_lipan::CommandLink<crate::Msg>>,
     pub mode: Mode,
     pub moving_pane: Option<MoveSession>,
@@ -168,6 +171,7 @@ impl State {
         Self {
             config,
             runtime_epoch: 0,
+            next_attachment_id: 1,
             command_link: None,
             mode: Mode::Normal,
             moving_pane: None,
@@ -231,8 +235,7 @@ impl State {
         crate::profiles::restore_state_from_profile(config, theme, profile)
     }
 
-    /// The current session attachment. Today there is exactly one; the multi-attachment work will
-    /// turn this into a lookup over a keyed collection with one marked current.
+    /// The current session attachment.
     pub fn current(&self) -> &Attachment {
         &self.attachment
     }
@@ -253,18 +256,53 @@ impl State {
         }
     }
 
-    /// The id of a background attachment matching `name` on `remote_host`, if one is retained.
-    /// Used to switch back to an already-attached session instantly instead of reconnecting.
+    pub fn attachment_for_epoch(&self, epoch: AttachmentId) -> Option<&Attachment> {
+        if epoch == self.runtime_epoch {
+            Some(&self.attachment)
+        } else {
+            self.background.get(&epoch)
+        }
+    }
+
+    /// Mint an id newer than every current or retained attachment id.
+    pub fn mint_attachment_id(&mut self) -> AttachmentId {
+        let highest_live = self
+            .background
+            .keys()
+            .copied()
+            .chain(std::iter::once(self.runtime_epoch))
+            .max()
+            .unwrap_or(0);
+        let id = self.next_attachment_id.max(highest_live.saturating_add(1));
+        self.next_attachment_id = id.saturating_add(1);
+        id
+    }
+
+    /// The id of a background attachment matching `name` and its resolved remote target, if one is
+    /// retained. Used to switch back instantly instead of reconnecting.
     pub fn parked_attachment_id(
         &self,
         name: &str,
-        remote_host: Option<&str>,
+        remote_target: Option<&crate::session::remote::RemoteTarget>,
     ) -> Option<AttachmentId> {
         self.background.iter().find_map(|(id, attachment)| {
             (attachment.session_name.as_deref() == Some(name)
-                && attachment.remote_host.as_deref() == remote_host)
+                && attachment.remote_target.as_ref() == remote_target)
                 .then_some(*id)
         })
+    }
+
+    pub fn attachment_by_identity(
+        &self,
+        name: &str,
+        remote_target: Option<&crate::session::remote::RemoteTarget>,
+    ) -> Option<&Attachment> {
+        std::iter::once(&self.attachment)
+            .chain(self.background.values())
+            .find(|attachment| {
+                attachment.session_name.as_deref() == Some(name)
+                    && attachment.remote_target.as_ref() == remote_target
+            })
     }
 
     /// Park the current attachment into the background under `current_epoch`, installing
@@ -555,15 +593,51 @@ mod retention_tests {
     }
 
     #[test]
-    fn parked_lookup_distinguishes_remote_host() {
+    fn parked_lookup_distinguishes_remote_target() {
         let mut state = state();
         state.current_mut().session_name = Some("dev".to_string());
         state.current_mut().remote_host = Some("winvm".to_string());
+        let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+        state.current_mut().remote_target = Some(target.clone());
         state.park_current(state.runtime_epoch, Attachment::new());
 
-        assert_eq!(state.parked_attachment_id("dev", Some("winvm")), Some(0));
+        assert_eq!(state.parked_attachment_id("dev", Some(&target)), Some(0));
         // A local `dev` is a different session from `dev` on `winvm`.
         assert_eq!(state.parked_attachment_id("dev", None), None);
+    }
+
+    #[test]
+    fn parked_lookup_does_not_confuse_same_host_with_different_credentials() {
+        let mut state = state();
+        state.current_mut().session_name = Some("dev".to_string());
+        let alice = crate::session::remote::RemoteTarget::Url {
+            user: Some("alice".to_string()),
+            host: "example.com".to_string(),
+            port: Some(22),
+        };
+        let bob = crate::session::remote::RemoteTarget::Url {
+            user: Some("bob".to_string()),
+            host: "example.com".to_string(),
+            port: Some(2222),
+        };
+        state.current_mut().remote_host = Some("example.com".to_string());
+        state.current_mut().remote_target = Some(alice.clone());
+        state.park_current(state.runtime_epoch, Attachment::new());
+
+        assert_eq!(state.parked_attachment_id("dev", Some(&alice)), Some(0));
+        assert_eq!(state.parked_attachment_id("dev", Some(&bob)), None);
+    }
+
+    #[test]
+    fn attachment_ids_remain_monotonic_after_restoring_an_old_attachment() {
+        let mut state = state();
+        state.runtime_epoch = 5;
+        state.park_current(5, Attachment::new());
+        state.runtime_epoch = 6;
+        state.unpark(5, 6).expect("restore old attachment");
+        state.runtime_epoch = 5;
+
+        assert_eq!(state.mint_attachment_id(), 7);
     }
 
     #[test]

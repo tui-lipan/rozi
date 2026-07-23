@@ -152,6 +152,7 @@ fn profile_session_rows(
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
             host: None,
+            remote_target: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state
@@ -199,6 +200,7 @@ pub(crate) fn apply_profile_sessions(
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
             host: None,
+            remote_target: None,
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state
@@ -557,7 +559,7 @@ pub(crate) fn open_named_target(
         return Update::full();
     }
     if !explicit_create && exists {
-        return crate::ops::session::attach_session_by_name(ctx, name, None, false);
+        return crate::ops::session::attach_session_by_name(ctx, name, None, None, false);
     }
     if ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(name.as_str())
@@ -624,7 +626,7 @@ pub(crate) fn open_named_target(
                 was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
             });
     crate::ops::session::release_current_session(ctx);
-    let epoch = ctx.state.runtime_epoch.saturating_add(1);
+    let epoch = ctx.state.mint_attachment_id();
     crate::ops::session::swap_state_for_attach(ctx, replacement);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
@@ -632,10 +634,12 @@ pub(crate) fn open_named_target(
         client: None,
         autostart: true,
         read_only: false,
+        reconnect: false,
         remote_host: None,
         intent: attach_intent.clone(),
         left,
     });
+    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             if explicit_create {
@@ -685,8 +689,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     // a fresh ephemeral.
     crate::ops::session::release_current_session(ctx);
 
-    let old_epoch = ctx.state.runtime_epoch;
-    let epoch = old_epoch.saturating_add(1);
+    let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
     let config = ctx.state.config.clone();
     let theme = ctx.state.theme.clone();
@@ -699,6 +702,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
         client: None,
         autostart: true,
         read_only: false,
+        reconnect: false,
         remote_host: None,
         intent: crate::state::AttachIntent::ProfileSeed {
             profile: entry.name.clone(),
@@ -706,6 +710,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
         },
         left: None,
     });
+    ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     // The theme-tick, workbar-tick, and workbar-command loops started at app launch are

@@ -163,6 +163,19 @@ pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
+/// Scratchpads are current-view overlays rather than attachment state. Tear the server pane down
+/// before switching so pane id 0 can never be reused against a different session client.
+pub(crate) fn close_for_session_switch(ctx: &mut Context<HyprmuxApp>) {
+    if let Some(scratch) = ctx.state.scratch.take()
+        && let Some(client) = ctx.state.current().session_client.as_ref()
+    {
+        client.kill(scratch.id, scratch.pty_generation);
+    }
+    ctx.state.scratch_visible = false;
+    ctx.state.scratch_return_focus = None;
+    ctx.state.scratch_resize_start = None;
+}
+
 pub(crate) fn is_scratch(id: crate::state::PaneId) -> bool {
     id == SCRATCH_PANE_ID
 }

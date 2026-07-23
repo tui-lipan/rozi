@@ -13,6 +13,8 @@ pub struct PendingSessionAttach {
     /// autostart; a dead named session surfaces as an error instead of a silent resurrection.
     pub autostart: bool,
     pub read_only: bool,
+    /// This attach repairs an existing retained attachment rather than seeding a replacement.
+    pub reconnect: bool,
     /// Remote host label when attaching via `--remote`.
     pub remote_host: Option<String>,
     pub intent: AttachIntent,

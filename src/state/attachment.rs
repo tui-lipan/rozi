@@ -2,9 +2,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::{
-    PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT, Workspace,
-    is_ephemeral_session_name,
+    Pane, PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT,
+    Workspace, is_ephemeral_session_name,
 };
+
+/// Identity of an attachment. Equal to the `runtime_epoch` the attachment was committed with, which
+/// is also the epoch its server frames carry, so a background attachment's output routes to it while
+/// the current attachment keeps [`super::State::runtime_epoch`].
+pub type AttachmentId = u64;
 
 /// The client's connection to one session together with that session's window-manager state: the
 /// session client handle and identity (name, remote host), the shared-layout lease, the
@@ -17,6 +22,10 @@ use super::{
 /// attachment carries its own `next_pane_id`/`next_pty_generation` so two live sessions can never
 /// mint colliding `(pane_id, generation)` routing keys.
 pub struct Attachment {
+    /// This attachment's identity, matching its server frames' epoch. `0` until committed (the
+    /// current attachment's live epoch is [`super::State::runtime_epoch`]); stamped when the
+    /// attachment is parked into [`super::State::background`].
+    pub epoch: AttachmentId,
     pub workspaces: Vec<Workspace>,
     pub active_workspace: usize,
     pub focused_pane: Option<PaneId>,
@@ -59,6 +68,7 @@ impl Attachment {
     /// empty set of workspaces. Callers that need an initial pane populate `workspaces` after.
     pub fn new() -> Self {
         Self {
+            epoch: 0,
             workspaces: (0..WORKSPACE_COUNT).map(Workspace::new).collect(),
             active_workspace: 0,
             focused_pane: None,
@@ -96,6 +106,35 @@ impl Attachment {
             .collect();
         self.pending_replay_inputs
             .retain(|key, _| queued.contains(key));
+    }
+
+    /// Find a workspace pane by id within this attachment. Unlike [`crate::pane_lifecycle::find_pane_mut`]
+    /// it does not consult the scratchpad/popup, which are client-local overlays on `State` that only
+    /// ever belong to the current attachment - so this is the finder used to apply a *background*
+    /// attachment's server output to its own screens.
+    pub fn find_pane_mut(&mut self, id: PaneId) -> Option<&mut Pane> {
+        self.workspaces
+            .iter_mut()
+            .flat_map(|workspace| workspace.panes.iter_mut())
+            .find(|pane| pane.id == id)
+    }
+
+    /// Apply server output to a *background* attachment: update the pane's screen (or buffer it as
+    /// orphan output when the pane's layout commit has not arrived yet) and mark unseen activity.
+    /// None of the current-attachment view side effects (bell notifications, focus, rendering) run,
+    /// since a background attachment is never drawn - only its screen is kept live for an instant
+    /// switch-back.
+    pub fn apply_background_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        if let Some(pane) = self.find_pane_mut(pane_id) {
+            if pane.pty_generation == generation {
+                pane.terminal.process_server_output(bytes);
+                pane.terminal.take_bell();
+                pane.activity.last_activity = Some(std::time::Instant::now());
+                pane.activity.has_unseen_output = true;
+            }
+        } else if let Some(shared) = self.shared.as_mut() {
+            shared.buffer_orphan_output(pane_id, generation, bytes);
+        }
     }
 
     /// The active workspace. A single-borrow accessor so callers avoid the

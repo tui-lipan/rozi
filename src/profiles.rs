@@ -208,6 +208,7 @@ pub fn restore_state_from_profile(
     State {
         config,
         attachment,
+        background: std::collections::HashMap::new(),
         runtime_epoch: 0,
         command_link: None,
         mode: Mode::Normal,

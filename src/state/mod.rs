@@ -115,9 +115,13 @@ pub struct State {
     pub control_socket_path: Option<PathBuf>,
     pub event_hub: crate::events::EventHub,
     /// The client's connection to the current session (client handle, identity, shared-layout
-    /// lease, spawn/replay buffers). Reached through [`Self::current`] / [`Self::current_mut`];
-    /// today there is exactly one, ahead of the multi-attachment work.
+    /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]
+    /// / [`Self::current_mut`].
     pub attachment: Attachment,
+    /// Attachments retained in the background after switching away from them: their session client
+    /// stays attached and their screens stay live (server output routes to them by epoch), so
+    /// switching back is instant. Keyed by [`Attachment::epoch`]. Empty until a switch parks one.
+    pub background: HashMap<AttachmentId, Attachment>,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -211,6 +215,7 @@ impl State {
             control_socket_path: None,
             event_hub: crate::events::EventHub::default(),
             attachment,
+            background: HashMap::new(),
             pending_destructive: None,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),
@@ -235,6 +240,56 @@ impl State {
     /// Mutable access to the [current attachment](Self::current).
     pub fn current_mut(&mut self) -> &mut Attachment {
         &mut self.attachment
+    }
+
+    /// The live attachment a server frame at `epoch` belongs to: the current attachment when the
+    /// epoch matches [`Self::runtime_epoch`], otherwise a background attachment retained under that
+    /// epoch. `None` for a stale epoch (a torn-down attachment).
+    pub fn attachment_for_epoch_mut(&mut self, epoch: AttachmentId) -> Option<&mut Attachment> {
+        if epoch == self.runtime_epoch {
+            Some(&mut self.attachment)
+        } else {
+            self.background.get_mut(&epoch)
+        }
+    }
+
+    /// The id of a background attachment matching `name` on `remote_host`, if one is retained.
+    /// Used to switch back to an already-attached session instantly instead of reconnecting.
+    pub fn parked_attachment_id(
+        &self,
+        name: &str,
+        remote_host: Option<&str>,
+    ) -> Option<AttachmentId> {
+        self.background.iter().find_map(|(id, attachment)| {
+            (attachment.session_name.as_deref() == Some(name)
+                && attachment.remote_host.as_deref() == remote_host)
+                .then_some(*id)
+        })
+    }
+
+    /// Park the current attachment into the background under `current_epoch`, installing
+    /// `replacement` as the new current attachment. The parked attachment keeps its live session
+    /// client and screens; it is only torn down on quit (or when explicitly closed).
+    pub fn park_current(&mut self, current_epoch: AttachmentId, replacement: Attachment) {
+        let mut parked = std::mem::replace(&mut self.attachment, replacement);
+        parked.epoch = current_epoch;
+        self.background.insert(current_epoch, parked);
+    }
+
+    /// Bring the background attachment `id` to the foreground, parking the current one under
+    /// `current_epoch`. The restored attachment's screens are already live, so the caller only needs
+    /// to re-seed the view. Returns the restored attachment's epoch (the new `runtime_epoch`).
+    pub fn unpark(
+        &mut self,
+        id: AttachmentId,
+        current_epoch: AttachmentId,
+    ) -> Option<AttachmentId> {
+        let restored = self.background.remove(&id)?;
+        let restored_epoch = restored.epoch;
+        let mut parked = std::mem::replace(&mut self.attachment, restored);
+        parked.epoch = current_epoch;
+        self.background.insert(current_epoch, parked);
+        Some(restored_epoch)
     }
 
     /// Drop queued replay inputs whose spawn can no longer complete (see
@@ -463,5 +518,104 @@ mod render_visibility_tests {
     fn an_unknown_pane_is_not_rendered() {
         let state = state_with_two_workspaces();
         assert!(!state.pane_is_rendered(999));
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    use crate::config::HyprmuxConfig;
+    use tui_lipan::prelude::Theme;
+
+    fn state() -> State {
+        State::new(HyprmuxConfig::default(), Theme::default())
+    }
+
+    #[test]
+    fn park_and_unpark_round_trips_the_current_attachment() {
+        let mut state = state();
+        state.current_mut().session_name = Some("dev".to_string());
+        state.current_mut().session_attached = true;
+        state.runtime_epoch = 5;
+
+        // Park the current session; a fresh empty attachment takes its place.
+        state.park_current(state.runtime_epoch, Attachment::new());
+        assert!(state.background.contains_key(&5));
+        assert_eq!(state.current().session_name, None);
+        assert_eq!(state.parked_attachment_id("dev", None), Some(5));
+
+        // Switching to a new session advances the epoch.
+        state.runtime_epoch = 6;
+
+        // Switch back: the parked "dev" returns as current, the fresh one parks under epoch 6.
+        assert_eq!(state.unpark(5, state.runtime_epoch), Some(5));
+        assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+        assert!(state.background.contains_key(&6));
+        assert!(!state.background.contains_key(&5));
+    }
+
+    #[test]
+    fn parked_lookup_distinguishes_remote_host() {
+        let mut state = state();
+        state.current_mut().session_name = Some("dev".to_string());
+        state.current_mut().remote_host = Some("winvm".to_string());
+        state.park_current(state.runtime_epoch, Attachment::new());
+
+        assert_eq!(state.parked_attachment_id("dev", Some("winvm")), Some(0));
+        // A local `dev` is a different session from `dev` on `winvm`.
+        assert_eq!(state.parked_attachment_id("dev", None), None);
+    }
+
+    #[test]
+    fn attachment_for_epoch_routes_current_and_background() {
+        let mut state = state();
+        state.runtime_epoch = 9;
+        state.park_current(state.runtime_epoch, Attachment::new());
+        state.runtime_epoch = 10;
+
+        assert!(state.attachment_for_epoch_mut(10).is_some(), "current");
+        assert!(state.attachment_for_epoch_mut(9).is_some(), "background");
+        assert!(state.attachment_for_epoch_mut(99).is_none(), "stale");
+    }
+
+    #[test]
+    fn background_output_updates_only_the_parked_screen() {
+        let mut state = state();
+        // The initial pane (id 1) lives in the current attachment.
+        let generation = state.current().active_workspace_ref().panes[0].pty_generation;
+        state.runtime_epoch = 4;
+        state.park_current(state.runtime_epoch, Attachment::new());
+        state.runtime_epoch = 5;
+
+        let parked = state.attachment_for_epoch_mut(4).expect("parked");
+        parked.apply_background_output(1, generation, b"hi");
+
+        assert!(
+            state.background.get(&4).unwrap().workspaces[0].panes[0]
+                .activity
+                .has_unseen_output,
+            "the parked pane records background activity"
+        );
+        // The fresh current attachment never had pane 1.
+        assert!(state.current_mut().find_pane_mut(1).is_none());
+    }
+
+    #[test]
+    fn background_output_ignores_a_stale_generation() {
+        let mut state = state();
+        let generation = state.current().active_workspace_ref().panes[0].pty_generation;
+        state.runtime_epoch = 7;
+        state.park_current(state.runtime_epoch, Attachment::new());
+        state.runtime_epoch = 8;
+
+        let parked = state.attachment_for_epoch_mut(7).expect("parked");
+        parked.apply_background_output(1, generation.wrapping_add(1), b"hi");
+
+        assert!(
+            !state.background.get(&7).unwrap().workspaces[0].panes[0]
+                .activity
+                .has_unseen_output,
+            "output for a stale generation is dropped"
+        );
     }
 }

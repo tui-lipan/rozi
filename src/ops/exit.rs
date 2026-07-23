@@ -67,6 +67,7 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
         client.detach();
         profiles::persist_session_on_detach(&ctx.state);
     }
+    crate::ops::session::release_background(ctx);
     ctx.quit();
     Update::none()
 }
@@ -107,6 +108,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
     }
+    crate::ops::session::release_background(ctx);
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()
@@ -153,6 +155,9 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
     if shutdown_ephemeral && let Some(client) = ctx.state.current().session_client.clone() {
         client.shutdown();
     }
+    // Retained background sessions leave with the client too: their ephemeral servers shut down,
+    // named ones detach and stay running for reattach.
+    crate::ops::session::release_background(ctx);
     profiles::persist_session_if_enabled(&ctx.state);
     ctx.quit();
     Update::none()

@@ -530,15 +530,82 @@ pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
+/// Retain the current attached session in the background instead of tearing it down, so switching
+/// back to it is instant and its screens stay live. The current attachment (client + screens) is
+/// moved into `State::background` under its epoch, and a fresh empty attachment takes its place for
+/// the session being switched to. Named and ephemeral sessions are both retained; parked sessions
+/// are only torn down on quit (see [`crate::ops::exit`]).
+pub(crate) fn park_current_session(ctx: &mut Context<HyprmuxApp>) {
+    crate::update::sidebar::invalidate_sessions(ctx);
+    // The popup is a client-local overlay bound to the current server; it must not linger across a
+    // switch. The scratchpad, likewise client-local, closes with the current view.
+    crate::popup::kill_if_open(ctx);
+    crate::update::flush_layout_commit(ctx);
+    let old_epoch = ctx.state.runtime_epoch;
+    ctx.state
+        .park_current(old_epoch, crate::state::Attachment::new());
+}
+
+/// Switch to a session already retained in the background: park the current one and bring the parked
+/// attachment (id `parked`) to the foreground. Its client and screens are already live, so no
+/// reconnect is needed - only the view is re-seeded.
+fn switch_to_parked(ctx: &mut Context<HyprmuxApp>, parked: crate::state::AttachmentId) -> Update {
+    crate::update::sidebar::invalidate_sessions(ctx);
+    crate::popup::kill_if_open(ctx);
+    crate::update::flush_layout_commit(ctx);
+    let old_epoch = ctx.state.runtime_epoch;
+    let Some(restored_epoch) = ctx.state.unpark(parked, old_epoch) else {
+        return Update::none();
+    };
+    ctx.state.runtime_epoch = restored_epoch;
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.commands_dirty = true;
+    // Snap to the restored session's geometry rather than interpolating from the previous view.
+    ctx.state.animation = crate::anim::GeometryAnimation::None;
+    if let Some(name) = ctx.state.current().session_name.clone() {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Switched to `{name}`"),
+        ));
+    }
+    let focused = ctx.state.current().focused_pane;
+    if let Some(id) = focused {
+        crate::ops::focus::request_pane_focus(ctx, id);
+    }
+    Update::full()
+}
+
 pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
-    state.is_ephemeral_session()
-        && state.is_controller()
-        && state.attached_client_count() == 1
-        && state
-            .current()
+    may_shutdown_attachment(state.current())
+}
+
+/// Whether an attachment's server should be shut down (rather than detached) when it is released: a
+/// solely-attached ephemeral controller owns a disposable server nobody else can reattach to.
+fn may_shutdown_attachment(attachment: &crate::state::Attachment) -> bool {
+    attachment.is_ephemeral_session()
+        && attachment.is_controller()
+        && attachment.attached_client_count() == 1
+        && attachment
             .shared
             .as_ref()
             .is_none_or(|shared| !shared.read_only)
+}
+
+/// Tear down every retained background attachment when leaving the client. Ephemeral servers this
+/// client solely owns are shut down; every other parked session is detached and left running for
+/// reattach. Called on quit so parked sessions do not leak.
+pub(crate) fn release_background(ctx: &mut Context<HyprmuxApp>) {
+    for (_epoch, attachment) in std::mem::take(&mut ctx.state.background) {
+        let Some(client) = attachment.session_client.as_ref() else {
+            continue;
+        };
+        if may_shutdown_attachment(&attachment) {
+            client.shutdown();
+        } else {
+            client.detach();
+        }
+    }
 }
 
 pub(crate) fn swap_state_for_attach(
@@ -554,6 +621,9 @@ pub(crate) fn swap_state_for_attach(
     replacement.command_link = ctx.state.command_link.clone();
     replacement.event_hub = ctx.state.event_hub.clone();
     replacement.runtime_epoch = ctx.state.runtime_epoch;
+    // Retained background attachments survive a fresh-ephemeral/kill swap: only the *current*
+    // session is being replaced. Dropping them here would leak their live clients and servers.
+    replacement.background = std::mem::take(&mut ctx.state.background);
     ctx.state = replacement;
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
@@ -640,6 +710,14 @@ pub(crate) fn attach_session_by_name(
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
     }
+    // Fast path: the target session is already retained in the background - switch to it instantly
+    // (its client and screens are live) instead of reconnecting.
+    if let Some(parked) = ctx
+        .state
+        .parked_attachment_id(&name, remote_host.as_deref())
+    {
+        return switch_to_parked(ctx, parked);
+    }
     // Resolve the remote target before tearing down the current session, so a malformed host does
     // not strand a working attachment — and so the resolved target can be carried on `State` for a
     // reconnect to route on (rather than re-parsing).
@@ -657,22 +735,29 @@ pub(crate) fn attach_session_by_name(
         },
         None => None,
     };
-    // Attach-elsewhere: release the current session (a named one is parked for reattach; an
-    // ephemeral one is torn down so it does not leak an orphan server), then attach to the target.
+    // Attach-elsewhere. Retain the current attached session in the background so switching back is
+    // instant and its screens stay live; only tear it down when it is not actually attached (e.g.
+    // still mid-connect). The epoch advances below, so the retained session's remaining frames route
+    // to it as a background attachment rather than the new current one.
+    let epoch = ctx.state.runtime_epoch.saturating_add(1);
     let left =
-        ctx.state
-            .current()
-            .session_name
-            .clone()
-            .map(|left_name| crate::state::LeftSession {
-                name: left_name,
-                was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
+        if ctx.state.current().session_attached {
+            park_current_session(ctx);
+            None
+        } else {
+            let left = ctx.state.current().session_name.clone().map(|left_name| {
+                crate::state::LeftSession {
+                    name: left_name,
+                    was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
+                }
             });
-    release_current_session(ctx);
+            release_current_session(ctx);
+            left
+        };
+    ctx.state.runtime_epoch = epoch;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
-    let epoch = ctx.state.runtime_epoch.saturating_add(1);
     ctx.state.current_mut().remote_host = remote_host.clone();
     ctx.state.current_mut().remote_target = remote_target.clone();
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {

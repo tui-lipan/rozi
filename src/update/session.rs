@@ -576,6 +576,11 @@ pub(super) fn output(
     bytes: Vec<u8>,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        // A retained background attachment: keep its screens live so switching back is instant, but
+        // never draw them (nothing background is on screen).
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            attachment.apply_background_output(pane_id, generation, &bytes);
+        }
         return Update::none();
     }
     let focused = ctx.state.current().focused_pane;
@@ -630,6 +635,17 @@ pub(super) fn resized(
     rows: u16,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        // Keep a retained background attachment's screen at the server's size for an instant, correct
+        // switch-back.
+        if let Some(pane) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.find_pane_mut(pane_id))
+            && pane.pty_generation == generation
+        {
+            pane.terminal.apply_server_resize(cols, rows);
+        }
         return Update::none();
     }
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
@@ -650,6 +666,17 @@ pub(super) fn exited(
     code: i32,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
+        // Mark the pane exited on a retained background attachment so switching back shows the exit.
+        // The structural close (a layout commit) is deferred until the attachment is current again.
+        if let Some(pane) = ctx
+            .state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.find_pane_mut(pane_id))
+            && pane.pty_generation == generation
+        {
+            pane.terminal.status = ManagedTerminalStatus::Exited(code);
+        }
         return Update::none();
     }
     crate::events::emit(

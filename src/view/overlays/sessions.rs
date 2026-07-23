@@ -131,6 +131,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         row = row.child(hint_pill(theme, "open", "enter"));
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
+    row = row.child(hint_pill(theme, "connect host", "ctrl+r"));
     if ctx.state.current().session_attached && !ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "detach", "ctrl+d"));
     }
@@ -367,6 +368,8 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             Some(Msg::SessionPickerCloseAttachment)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X')) {
             Some(Msg::SessionPickerDisconnectHost)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+            Some(Msg::SessionPickerConnectHost)
         } else {
             None
         }

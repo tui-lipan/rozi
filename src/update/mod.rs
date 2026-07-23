@@ -127,6 +127,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SessionPickerKillSelected => prompts::session_picker_kill_selected(ctx),
         Msg::SessionPickerCloseAttachment => prompts::session_picker_close_attachment(ctx),
         Msg::SessionPickerDisconnectHost => prompts::session_picker_disconnect_host(ctx),
+        Msg::SessionPickerConnectHost => prompts::session_picker_connect_host(ctx),
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),
         Msg::CloseClientList => prompts::close_client_list(ctx),
         Msg::ClientListSelect(index) => prompts::client_list_select(ctx, index),

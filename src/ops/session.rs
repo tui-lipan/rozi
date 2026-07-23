@@ -1166,7 +1166,37 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             request_current_pane_focus(ctx);
             Update::full()
         }
+        NamingMode::ConnectRemoteHost => {
+            let host = name;
+            if host.is_empty() {
+                ctx.state.rename_session = None;
+                request_current_pane_focus(ctx);
+                return Update::full();
+            }
+            // Validate the SSH target before tearing anything down; a bad host must not strand the
+            // current session.
+            if let Err(err) = crate::session::remote::parse_remote_target(&host) {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Invalid remote host",
+                    format!("`{host}`: {err}"),
+                ));
+                request_rename_session_focus(ctx);
+                return Update::full();
+            }
+            ctx.state.rename_session = None;
+            crate::session::record_recent_remote(&host);
+            // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
+            // session named). The current session is retained in the background per the usual switch.
+            let session = crate::state::remote_ephemeral_session_name();
+            attach_session_by_name(ctx, session, Some(host), None, true)
+        }
     }
+}
+
+pub(crate) fn open_connect_remote_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_session_arms(ctx);
+    enter_session_rename(ctx, SessionRenameState::new_connect_host())
 }
 
 pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {

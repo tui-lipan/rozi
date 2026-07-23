@@ -173,6 +173,10 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             format!("Rename workspace {}", index + 1),
             "Workspace name, empty clears it".to_string(),
         ),
+        crate::state::NamingMode::ConnectRemoteHost => (
+            "Connect remote host".to_string(),
+            "host, user@host:port, or ssh:// URL".to_string(),
+        ),
     };
     // A create-session prompt that would discard the current disposable ephemeral session shows an
     // in-modal warning once armed (see `SessionRenameState::pending_confirm`).

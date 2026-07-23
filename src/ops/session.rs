@@ -1227,6 +1227,57 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 }
 
+/// Close the client-side attachment for the selected session, leaving its server running. Targets a
+/// session retained in the background: its client connection is dropped and the attachment is
+/// discarded, but the server (and any other clients) keep going. The current session is left alone -
+/// closing it is Detach (`Ctrl+D`) or Kill (`Ctrl+K`) - and a merely-running session we do not hold
+/// an attachment to has nothing to close.
+pub(crate) fn close_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_session_arms(ctx);
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let display = if entry.ephemeral {
+        "ephemeral".to_string()
+    } else {
+        entry.name.clone()
+    };
+    let is_current = ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && ctx.state.current().remote_target == entry.remote_target;
+    if is_current {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            "Detach (Ctrl+D) or kill (Ctrl+K) the current session",
+        ));
+        return Update::full();
+    }
+    let Some(id) = ctx
+        .state
+        .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+    else {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Not attached to `{display}`"),
+        ));
+        return Update::full();
+    };
+    if let Some(attachment) = ctx.state.background.remove(&id)
+        && let Some(client) = attachment.session_client.as_ref()
+    {
+        client.detach();
+    }
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Closed attachment to `{display}` — server still running"),
+    ));
+    refresh_session_picker(ctx)
+}
+
 fn shutdown_discovered_session(
     entry: &DiscoveredSession,
     remote_config: &crate::config::HyprmuxRemoteConfig,

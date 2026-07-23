@@ -233,6 +233,10 @@ pub(super) fn session_picker_kill_selected(ctx: &mut Context<HyprmuxApp>) -> Upd
     crate::ops::session::kill_selected_session(ctx)
 }
 
+pub(super) fn session_picker_close_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::session::close_selected_attachment(ctx)
+}
+
 pub(super) fn session_picker_name_current(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::session::open_rename_session(ctx)
 }

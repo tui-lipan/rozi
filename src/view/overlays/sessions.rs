@@ -141,6 +141,17 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         let label = if entry.ephemeral { "reset" } else { "kill" };
         row = row.child(hint_pill(theme, label, "ctrl+k"));
     }
+    // A session retained in the background can have its client attachment closed (the server keeps
+    // running); offer it only for such a parked row, never the current session.
+    if let Some(entry) = selected
+        && current != Some(entry.name.as_str())
+        && ctx
+            .state
+            .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+            .is_some()
+    {
+        row = row.child(hint_pill(theme, "close", "ctrl+w"));
+    }
     row.into()
 }
 
@@ -340,6 +351,8 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             }
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W')) {
+            Some(Msg::SessionPickerCloseAttachment)
         } else {
             None
         }

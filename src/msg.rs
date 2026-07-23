@@ -125,6 +125,7 @@ pub enum Msg {
     SessionPickerCreateFromQuery,
     SessionPickerDetachCurrent,
     SessionPickerKillSelected,
+    SessionPickerCloseAttachment,
     SessionPickerNameCurrent,
     CloseClientList,
     ClientListSelect(usize),

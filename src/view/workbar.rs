@@ -548,15 +548,35 @@ fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
                 .label()
         )),
         WorkbarSegment::Activity => {
-            let count = ctx
-                .state
-                .current()
-                .workspaces
-                .iter()
-                .flat_map(|ws| ws.panes.iter())
-                .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
-                .count();
-            (count > 0).then(|| format!(" ●{count} "))
+            let unseen = |panes: &mut dyn Iterator<Item = &crate::state::Pane>| {
+                panes
+                    .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
+                    .count()
+            };
+            let current = unseen(
+                &mut ctx
+                    .state
+                    .current()
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| ws.panes.iter()),
+            );
+            // Retained background sessions keep processing output; surface their unread separately so
+            // it never looks like activity in the visible view.
+            let background = unseen(
+                &mut ctx
+                    .state
+                    .background
+                    .values()
+                    .flat_map(|attachment| attachment.workspaces.iter())
+                    .flat_map(|ws| ws.panes.iter()),
+            );
+            match (current, background) {
+                (0, 0) => None,
+                (c, 0) => Some(format!(" ●{c} ")),
+                (0, b) => Some(format!(" +{b} ")),
+                (c, b) => Some(format!(" ●{c} +{b} ")),
+            }
         }
         WorkbarSegment::Text(literal) => Some(format!(
             " {} ",

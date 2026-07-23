@@ -658,8 +658,9 @@ workspace and sidebar tab caps are controlled separately with `workbar_tab_style
 
 Segment kinds: `title` (the badge), `workspaces` (the tabs), `location` (the active remote host, or
 the number of retained remote connections while local), `session` (the active profile/session
-name), `clock`, `layout` (active workspace layout name), `activity` (count of panes with
-unseen output), `text:<literal>` with `{host}`, `{workspace}`, `{layout}`, `{session}`
+name), `clock`, `layout` (active workspace layout name), `activity` (panes with unseen output, shown as
+`●N` for the current session and `+M` for retained background sessions when they have unread),
+`text:<literal>` with `{host}`, `{workspace}`, `{layout}`, `{session}`
 placeholders, and `command:<shell command>` / `command:<interval_secs>:<shell command>` to run a
 shell command on a timer and show the first line of its stdout. Unknown segment names emit a warning
 and are skipped. A `clock` segment enables a once-a-second repaint; without one the workbar never

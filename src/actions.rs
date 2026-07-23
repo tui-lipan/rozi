@@ -22,7 +22,7 @@ use crate::state::{Direction, Mode, PaneIdentity, ToastChannel};
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
 fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     let text = match ctx.clipboard().read() {
@@ -53,7 +53,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 fn toggle_pane_logging(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
     let Some(pane) = crate::pane_lifecycle::find_pane(&ctx.state, id) else {
@@ -108,14 +108,14 @@ pub(crate) fn execute_user_command_action_with_env(
             };
             crate::pane_lifecycle::spawn_interactive_pane(
                 ctx,
-                ctx.state.active_workspace,
+                ctx.state.current().active_workspace,
                 None,
                 identity,
             )
             .1
         }
         UserCommandAction::Send(text) => {
-            let Some(id) = ctx.state.focused_pane else {
+            let Some(id) = ctx.state.current().focused_pane else {
                 return Update::full();
             };
             if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
@@ -155,7 +155,7 @@ pub(crate) fn execute_user_command_action_with_env(
 /// back at its split edge via the control socket (`hyprmux run-action focus-<dir>`), which yields
 /// the seamless "one keymap crosses both" behavior.
 fn smart_focus(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> Update {
-    if let Some(id) = ctx.state.focused_pane
+    if let Some(id) = ctx.state.current().focused_pane
         && focused_pane_forwards_navigation(&ctx.state, id)
     {
         return crate::pty_events::forward_key_to_pane(ctx, id, navigation_key(direction));
@@ -555,7 +555,7 @@ fn execute_action_inner(
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
         Action::TogglePaneSynchronization => {
             let synchronized = {
-                let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+                let workspace = ctx.state.active_workspace_mut();
                 workspace.synchronized = !workspace.synchronized;
                 workspace.synchronized
             };
@@ -650,15 +650,18 @@ mod tests {
             .spawn(|| {
                 let mut backend = TestBackend::new(HyprmuxApp::default());
                 backend.state_mut().scratch_visible = true;
-                let before_panes = backend.state().workspaces[0].panes.len();
-                let before_focus = backend.state().focused_pane;
+                let before_panes = backend.state().current().workspaces[0].panes.len();
+                let before_focus = backend.state().current().focused_pane;
 
                 backend
                     .dispatch(Msg::RunAction(Action::Spawn))
                     .expect("dispatch blocked spawn");
 
-                assert_eq!(backend.state().workspaces[0].panes.len(), before_panes);
-                assert_eq!(backend.state().focused_pane, before_focus);
+                assert_eq!(
+                    backend.state().current().workspaces[0].panes.len(),
+                    before_panes
+                );
+                assert_eq!(backend.state().current().focused_pane, before_focus);
             })
             .expect("spawn scratchpad action test thread")
             .join()
@@ -690,13 +693,15 @@ mod tests {
                     reason: None,
                     set_at: 1,
                 });
-                backend.state_mut().workspaces[1].panes.push(blocked);
+                backend.state_mut().current_mut().workspaces[1]
+                    .panes
+                    .push(blocked);
 
                 backend
                     .dispatch(Msg::RunAction(Action::FocusNextBlockedPane))
                     .expect("focus blocked pane");
-                assert_eq!(backend.state().active_workspace, 1);
-                assert_eq!(backend.state().focused_pane, Some(2));
+                assert_eq!(backend.state().current().active_workspace, 1);
+                assert_eq!(backend.state().current().focused_pane, Some(2));
             })
             .expect("spawn blocked focus action test")
             .join()
@@ -816,14 +821,14 @@ mod tests {
                     state.current_mut().shared = Some(shared);
                 }
                 backend.render();
-                let before = backend.state_mut().workspaces[0].panes.len();
+                let before = backend.state_mut().current_mut().workspaces[0].panes.len();
 
                 backend
                     .dispatch(Msg::RunAction(Action::Spawn))
                     .expect("dispatch spawn");
 
                 assert_eq!(
-                    backend.state_mut().workspaces[0].panes.len(),
+                    backend.state_mut().current_mut().workspaces[0].panes.len(),
                     before,
                     "a follower's spawn is a no-op"
                 );
@@ -840,7 +845,7 @@ mod tests {
 
                 // Focus is local and still works for a follower.
                 backend.dispatch(Msg::FocusPane(1)).expect("dispatch focus");
-                assert_eq!(backend.state_mut().focused_pane, Some(1));
+                assert_eq!(backend.state_mut().current_mut().focused_pane, Some(1));
             })
             .expect("spawn gate test thread")
             .join()

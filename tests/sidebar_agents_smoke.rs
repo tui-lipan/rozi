@@ -71,7 +71,7 @@ fn agents_tab_renders_project_groups() {
                     Some("/home/x/oss/tools"),
                 );
                 done.terminal.finished_unseen = true;
-                state.workspaces[0].panes = vec![
+                state.current_mut().workspaces[0].panes = vec![
                     agent_pane(
                         1,
                         AgentKind::Claude,
@@ -153,12 +153,12 @@ fn focusing_a_finished_agent_clears_its_pulse() {
                     Some("/home/x/repo"),
                 );
                 finished.terminal.finished_unseen = true;
-                state.workspaces[0].panes = vec![finished];
+                state.current_mut().workspaces[0].panes = vec![finished];
             }
             // Looking at the pane through any focus path acknowledges the finish.
             backend.dispatch(Msg::SidebarFocusPane(7)).ok();
-            let pane = &backend.state().workspaces[0].panes[0];
-            assert_eq!(backend.state().focused_pane, Some(7));
+            let pane = &backend.state().current().workspaces[0].panes[0];
+            assert_eq!(backend.state().current().focused_pane, Some(7));
             assert!(!pane.terminal.finished_unseen);
         })
         .expect("spawn focus-clears-pulse thread")

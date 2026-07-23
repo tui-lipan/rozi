@@ -91,6 +91,7 @@ pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayo
         canvas_cols,
         canvas_rows,
         workspaces: state
+            .current()
             .workspaces
             .iter()
             .enumerate()
@@ -209,6 +210,7 @@ pub(crate) fn apply_shared_layout(
     // Removals: live local panes absent from the incoming set close out (no `client.kill`).
     let removed_ids: Vec<PaneId> = ctx
         .state
+        .current()
         .workspaces
         .iter()
         .flat_map(|ws| ws.panes.iter())
@@ -226,7 +228,7 @@ pub(crate) fn apply_shared_layout(
     // so their exit animation is undisturbed.
     let mut pool: std::collections::HashMap<PaneId, Pane> = std::collections::HashMap::new();
     let mut closing_by_ws: Vec<Vec<Pane>> = Vec::with_capacity(WORKSPACE_COUNT);
-    for ws in &mut ctx.state.workspaces {
+    for ws in &mut ctx.state.current_mut().workspaces {
         let mut closing = Vec::new();
         for pane in ws.panes.drain(..) {
             if pane.closing {
@@ -238,8 +240,8 @@ pub(crate) fn apply_shared_layout(
         closing_by_ws.push(closing);
     }
 
-    let mut max_pane_id = ctx.state.next_pane_id;
-    let mut max_generation = ctx.state.next_pty_generation;
+    let mut max_pane_id = ctx.state.current().next_pane_id;
+    let mut max_generation = ctx.state.current().next_pty_generation;
     let scrollback = ctx.state.config.scrollback;
 
     // Rebuild each workspace from the incoming order, reusing pooled panes (survivors + moves) and
@@ -294,7 +296,7 @@ pub(crate) fn apply_shared_layout(
             rebuilt.push(pane);
         }
 
-        let ws = &mut ctx.state.workspaces[shared_ws.index];
+        let ws = &mut ctx.state.current_mut().workspaces[shared_ws.index];
         ws.name = shared_ws
             .name
             .as_deref()
@@ -335,13 +337,15 @@ pub(crate) fn apply_shared_layout(
             continue;
         }
         if !closing.is_empty() {
-            ctx.state.workspaces[index].panes.extend(closing);
+            ctx.state.current_mut().workspaces[index]
+                .panes
+                .extend(closing);
         }
     }
 
     // Fix up focus per workspace: keep the current focus when it survived, else fall back to the
     // first live pane.
-    for ws in &mut ctx.state.workspaces {
+    for ws in &mut ctx.state.current_mut().workspaces {
         let focus_valid = ws
             .focused_pane
             .is_some_and(|id| ws.panes.iter().any(|pane| pane.id == id && !pane.closing));
@@ -353,12 +357,20 @@ pub(crate) fn apply_shared_layout(
                 .map(|pane| pane.id);
         }
     }
-    let active = ctx.state.active_workspace.min(WORKSPACE_COUNT - 1);
-    ctx.state.active_workspace = active;
-    ctx.state.focused_pane = ctx.state.workspaces[active].focused_pane;
+    let active = ctx
+        .state
+        .current()
+        .active_workspace
+        .min(WORKSPACE_COUNT - 1);
+    ctx.state.current_mut().active_workspace = active;
+    ctx.state.current_mut().focused_pane = ctx.state.current_mut().workspaces[active].focused_pane;
 
-    ctx.state.next_pane_id = ctx.state.next_pane_id.max(max_pane_id);
-    ctx.state.next_pty_generation = ctx.state.next_pty_generation.max(max_generation);
+    ctx.state.current_mut().next_pane_id = ctx.state.current_mut().next_pane_id.max(max_pane_id);
+    ctx.state.current_mut().next_pty_generation = ctx
+        .state
+        .current_mut()
+        .next_pty_generation
+        .max(max_generation);
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.layout_rev = rev;
         shared.canonical_canvas = Some((canvas_cols, canvas_rows));
@@ -452,27 +464,28 @@ mod tests {
             w: 80.0,
             h: 24.0,
         };
-        let previous = state.workspaces[0].focused_pane;
+        let previous = state.current().workspaces[0].focused_pane;
         let mut pane = Pane::new(2, state.config.scrollback, rect);
         pane.pty_generation = 7;
-        state.workspaces[0].panes.push(pane);
+        state.current_mut().workspaces[0].panes.push(pane);
         let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
             x: 0,
             y: 0,
             w: 80,
             h: 25,
         });
+        let split_width_multiplier = state.config.layout.split_width_multiplier;
         crate::layout::place_spawned_pane(
-            &mut state.workspaces[0],
+            &mut state.current_mut().workspaces[0],
             2,
             previous,
             bounds,
             0.0,
             crate::state::TileGap::DEFAULT,
-            state.config.layout.split_width_multiplier,
+            split_width_multiplier,
         );
-        state.next_pane_id = 3;
-        state.next_pty_generation = 8;
+        state.current_mut().next_pane_id = 3;
+        state.current_mut().next_pty_generation = 8;
         state
     }
 
@@ -490,8 +503,8 @@ mod tests {
     #[test]
     fn floating_rect_round_trips_through_fractions() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes[0].floating = true;
-        state.workspaces[0].panes[0].floating_rect = FloatRect {
+        state.current_mut().workspaces[0].panes[0].floating = true;
+        state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
             x: 20.0,
             y: 6.0,
             w: 40.0,

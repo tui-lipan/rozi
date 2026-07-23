@@ -831,8 +831,9 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
 pub(crate) fn command_available(action: Action, state: &State) -> bool {
     let shared = state.current().shared.as_ref();
     match action {
-        Action::RespawnPane => state.focused_pane.is_some_and(|focused| {
+        Action::RespawnPane => state.current().focused_pane.is_some_and(|focused| {
             state
+                .current()
                 .workspaces
                 .iter()
                 .flat_map(|workspace| &workspace.panes)
@@ -944,7 +945,9 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         return text;
     }
     if action == Action::ToggleLayout {
-        let layout = state.workspaces[state.active_workspace].layout_kind.label();
+        let layout = state.current().workspaces[state.current().active_workspace]
+            .layout_kind
+            .label();
         return format!("Switch layout (current: {layout})");
     }
     if action == Action::RenameSession {
@@ -972,7 +975,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("fullscreen", enabled)
         }
         Action::TogglePaneSynchronization => {
-            let enabled = state.workspaces[state.active_workspace].synchronized;
+            let enabled = state.current().workspaces[state.current().active_workspace].synchronized;
             enable_disable_label("pane synchronization", enabled)
         }
         Action::ToggleTitles => enable_disable_label("titlebar", state.config.pane.show_titles),
@@ -1058,11 +1061,11 @@ fn enable_disable_label(feature: &str, enabled: bool) -> String {
 }
 
 fn focused_pane(state: &State) -> Option<&Pane> {
-    let id = state.focused_pane?;
+    let id = state.current().focused_pane?;
     if id == SCRATCH_PANE_ID {
         return state.scratch.as_ref();
     }
-    state.workspaces[state.active_workspace]
+    state.current().workspaces[state.current().active_workspace]
         .panes
         .iter()
         .find(|pane| pane.id == id && !pane.closing)
@@ -1406,8 +1409,8 @@ mod tests {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
         assert!(!command_available(Action::RespawnPane, &state));
 
-        let focused = state.focused_pane.unwrap();
-        state.workspaces[0]
+        let focused = state.current().focused_pane.unwrap();
+        state.current_mut().workspaces[0]
             .panes
             .iter_mut()
             .find(|pane| pane.id == focused)
@@ -1416,7 +1419,7 @@ mod tests {
             .status = ManagedTerminalStatus::Exited(1);
         assert!(command_available(Action::RespawnPane, &state));
 
-        state.focused_pane = None;
+        state.current_mut().focused_pane = None;
         assert!(!command_available(Action::RespawnPane, &state));
     }
 

@@ -16,7 +16,7 @@ pub(crate) fn rename_pane_in_workspaces(workspaces: &mut [Workspace], id: PaneId
 }
 
 pub(crate) fn open_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(target) = ctx.state.focused_pane else {
+    let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     let initial = find_pane_mut(&mut ctx.state, target)
@@ -42,7 +42,7 @@ pub(crate) fn apply_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::none();
     };
 
-    rename_pane_in_workspaces(&mut ctx.state.workspaces, target, &title);
+    rename_pane_in_workspaces(&mut ctx.state.current_mut().workspaces, target, &title);
     ctx.state.rename = None;
     ctx.state.commands_dirty = true;
     Update::full()
@@ -55,8 +55,8 @@ pub(crate) fn close_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn open_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let target = ctx.state.active_workspace;
-    let initial = ctx.state.workspaces[target]
+    let target = ctx.state.current().active_workspace;
+    let initial = ctx.state.current().workspaces[target]
         .name
         .clone()
         .unwrap_or_default();

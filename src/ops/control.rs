@@ -108,7 +108,7 @@ pub(crate) fn handle_control_request(
         ControlCommand::PaneLogging { target, enabled } => {
             let id = target
                 .or(envelope.request.source_pane)
-                .or(ctx.state.focused_pane);
+                .or(ctx.state.current().focused_pane);
             match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
                 Some(pane) => {
                     if let Some(client) = &ctx.state.current().session_client {
@@ -131,7 +131,7 @@ pub(crate) fn handle_control_request(
             ctx,
             target
                 .or(envelope.request.source_pane)
-                .or(ctx.state.focused_pane),
+                .or(ctx.state.current().focused_pane),
             status,
             reason,
         ),
@@ -142,7 +142,7 @@ pub(crate) fn handle_control_request(
 
 fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
     let mut panes = Vec::new();
-    for (workspace_index, workspace) in ctx.state.workspaces.iter().enumerate() {
+    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
             panes.push(PaneInfo {
                 id: pane.id,
@@ -235,7 +235,7 @@ fn send_text(
     if let Some(reason) = ctx.state.pane_input_block_reason() {
         return ControlResponse::error(reason);
     }
-    let id = target.or(ctx.state.focused_pane);
+    let id = target.or(ctx.state.current().focused_pane);
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
     };
@@ -262,7 +262,7 @@ fn send_keys(
     if let Some(reason) = ctx.state.pane_input_block_reason() {
         return ControlResponse::error(reason);
     }
-    let id = target.or(ctx.state.focused_pane);
+    let id = target.or(ctx.state.current().focused_pane);
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
     };
@@ -338,7 +338,7 @@ fn capture_pane(
     target: Option<PaneId>,
     scrollback: Option<CaptureScrollback>,
 ) -> ControlResponse {
-    let Some(id) = target.or(ctx.state.focused_pane) else {
+    let Some(id) = target.or(ctx.state.current().focused_pane) else {
         return ControlResponse::error("no target pane and no focused pane");
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
@@ -441,11 +441,12 @@ fn workspace_for_source(
 ) -> std::result::Result<usize, String> {
     match source {
         Some(id) => state
+            .current()
             .workspaces
             .iter()
             .position(|ws| ws.panes.iter().any(|p| p.id == id && !p.closing))
             .ok_or_else(|| format!("source pane {id} not found")),
-        None => Ok(state.active_workspace),
+        None => Ok(state.current().active_workspace),
     }
 }
 
@@ -480,8 +481,10 @@ mod tests {
     #[test]
     fn workspace_for_source_falls_back_only_without_source() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.active_workspace = 2;
-        state.workspaces[1].panes.push(Pane::new(7, 100, rect()));
+        state.current_mut().active_workspace = 2;
+        state.current_mut().workspaces[1]
+            .panes
+            .push(Pane::new(7, 100, rect()));
         assert_eq!(workspace_for_source(&state, None), Ok(2));
         assert_eq!(workspace_for_source(&state, Some(7)), Ok(1));
     }
@@ -505,7 +508,7 @@ mod tests {
                     let state = backend.state_mut();
                     state.current_mut().session_attached = true;
                     state.current_mut().session_client = Some(client);
-                    state.workspaces[0].panes[0].pty_generation = 9;
+                    state.current_mut().workspaces[0].panes[0].pty_generation = 9;
                     let mut shared = crate::state::SharedSessionState::new(1);
                     shared.controller = Some(2);
                     state.current_mut().shared = Some(shared);
@@ -572,15 +575,16 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(crate::HyprmuxApp::default());
-                backend.state_mut().workspaces[0].panes[0]
+                backend.state_mut().current_mut().workspaces[0].panes[0]
                     .terminal
                     .reported_status = Some(crate::session::protocol::PaneStatus {
                     value: "working".into(),
                     reason: Some("building".into()),
                     set_at: 1,
                 });
-                backend.state_mut().workspaces[0].panes[0].terminal.status =
-                    ManagedTerminalStatus::Ready;
+                backend.state_mut().current_mut().workspaces[0].panes[0]
+                    .terminal
+                    .status = ManagedTerminalStatus::Ready;
                 let (reply, response) = mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(ControlEnvelope {

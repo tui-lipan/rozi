@@ -123,7 +123,7 @@ fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool
 }
 
 fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
-    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
     workspace
         .panes
         .iter()
@@ -133,8 +133,8 @@ fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
 }
 
 pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
-    if let Some(id) = ctx.state.focused_pane
-        && ctx.state.workspaces[ctx.state.active_workspace]
+    if let Some(id) = ctx.state.current().focused_pane
+        && ctx.state.current().workspaces[ctx.state.current().active_workspace]
             .panes
             .iter()
             .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)

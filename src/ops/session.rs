@@ -283,7 +283,12 @@ pub(crate) fn current_session_row(state: &crate::state::State) -> Option<Discove
         ephemeral: state.is_ephemeral_session(),
         host: state.current().remote_host.clone(),
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
-            panes: state.workspaces.iter().map(|w| w.panes.len()).sum(),
+            panes: state
+                .current()
+                .workspaces
+                .iter()
+                .map(|w| w.panes.len())
+                .sum(),
             has_layout: true,
             clients: state.attached_client_count(),
             created_from_profile: state.current().created_from_profile.clone(),
@@ -914,7 +919,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 
     match rename_state.mode {
         NamingMode::RenameWorkspace { index } => {
-            if let Some(workspace) = ctx.state.workspaces.get_mut(index) {
+            if let Some(workspace) = ctx.state.current_mut().workspaces.get_mut(index) {
                 workspace.name = (!name.is_empty()).then_some(name);
             }
             ctx.state.rename_session = None;
@@ -1324,7 +1329,8 @@ mod tests {
                     state.sidebar.command_epoch = 7;
                     state.sidebar.config_epoch = 11;
                     // Simulate a profile-seeded session: the current pane carries a command.
-                    state.workspaces[0].panes[0].identity.command = Some("nvim".to_string());
+                    state.current_mut().workspaces[0].panes[0].identity.command =
+                        Some("nvim".to_string());
                     let mut rename = SessionRenameState::new(&name, NamingMode::CreateSession);
                     rename.pending_confirm = true;
                     state.rename_session = Some(rename);
@@ -1348,8 +1354,11 @@ mod tests {
                 );
                 // The new session must not inherit the current layout: the swapped state is a
                 // fresh single-pane default with no launch command to respawn.
-                assert_eq!(state.workspaces[0].panes.len(), 1);
-                assert_eq!(state.workspaces[0].panes[0].identity.command, None);
+                assert_eq!(state.current().workspaces[0].panes.len(), 1);
+                assert_eq!(
+                    state.current().workspaces[0].panes[0].identity.command,
+                    None
+                );
                 assert_eq!(state.sidebar.command_epoch, 8);
                 assert_eq!(state.sidebar.config_epoch, 12);
             })

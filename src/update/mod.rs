@@ -315,10 +315,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
 /// keyboard, workspace switch, layout reconcile) so every path acknowledges a finished agent by the
 /// same rule — looking at it. Cheap: a single lookup in the active workspace.
 fn clear_finished_unseen_on_focus(ctx: &mut Context<HyprmuxApp>) {
-    let Some(focused) = ctx.state.focused_pane else {
+    let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
-    if let Some(pane) = ctx.state.workspaces[ctx.state.active_workspace]
+    if let Some(pane) = ctx
+        .state
+        .active_workspace_mut()
         .panes
         .iter_mut()
         .find(|pane| pane.id == focused)

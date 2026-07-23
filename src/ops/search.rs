@@ -7,7 +7,7 @@ use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{PaneId, ScrollbackMatch, ScrollbackSearchState, SearchScope, State};
 
 pub(crate) fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(target) = ctx.state.focused_pane else {
+    let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     ctx.state.search = Some(ScrollbackSearchState::new(target));
@@ -26,7 +26,7 @@ pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<HyprmuxApp>) -> Updat
         .copy_mode
         .as_ref()
         .map(|copy| copy.target)
-        .or(ctx.state.focused_pane)
+        .or(ctx.state.current().focused_pane)
     else {
         return Update::full();
     };
@@ -50,13 +50,14 @@ pub(crate) fn cycle_search_scope(ctx: &mut Context<HyprmuxApp>) -> Update {
 fn panes_in_scope(state: &State, target: PaneId, scope: SearchScope) -> Vec<PaneId> {
     match scope {
         SearchScope::FocusedPane => vec![target],
-        SearchScope::Workspace => state.workspaces[state.active_workspace]
+        SearchScope::Workspace => state.current().workspaces[state.current().active_workspace]
             .panes
             .iter()
             .filter(|pane| !pane.closing)
             .map(|pane| pane.id)
             .collect(),
         SearchScope::All => state
+            .current()
             .workspaces
             .iter()
             .flat_map(|workspace| workspace.panes.iter())
@@ -159,6 +160,7 @@ pub(crate) fn search_next(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Upda
 
 fn pane_workspace(state: &State, id: PaneId) -> Option<usize> {
     state
+        .current()
         .workspaces
         .iter()
         .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id))
@@ -181,9 +183,9 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
 
     // Bring the matching pane's workspace forward and focus it before scrolling.
     if let Some(workspace_index) = pane_workspace(&ctx.state, matched.pane)
-        && workspace_index != ctx.state.active_workspace
+        && workspace_index != ctx.state.current().active_workspace
     {
-        ctx.state.active_workspace = workspace_index;
+        ctx.state.current_mut().active_workspace = workspace_index;
         ctx.state.animation = GeometryAnimation::None;
     }
     focus_pane(&mut ctx.state, matched.pane);

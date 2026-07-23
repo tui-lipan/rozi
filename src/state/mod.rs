@@ -54,11 +54,6 @@ pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 pub struct State {
     pub config: HyprmuxConfig,
-    pub workspaces: Vec<Workspace>,
-    pub active_workspace: usize,
-    pub focused_pane: Option<PaneId>,
-    pub next_pane_id: PaneId,
-    pub next_pty_generation: u64,
     pub runtime_epoch: u64,
     pub command_link: Option<tui_lipan::CommandLink<crate::Msg>>,
     pub mode: Mode,
@@ -161,13 +156,13 @@ impl State {
         append_tiled_window(&mut workspaces[0], initial_id);
         workspaces[0].focused_pane = Some(initial_id);
 
+        let mut attachment = Attachment::new();
+        attachment.workspaces = workspaces;
+        attachment.focused_pane = Some(initial_id);
+        attachment.next_pane_id = initial_id + 1;
+
         Self {
             config,
-            workspaces,
-            active_workspace: 0,
-            focused_pane: Some(initial_id),
-            next_pane_id: initial_id + 1,
-            next_pty_generation: 1,
             runtime_epoch: 0,
             command_link: None,
             mode: Mode::Normal,
@@ -215,7 +210,7 @@ impl State {
             popup_return_focus: None,
             control_socket_path: None,
             event_hub: crate::events::EventHub::default(),
-            attachment: Attachment::new(),
+            attachment,
             pending_destructive: None,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),
@@ -270,10 +265,22 @@ impl State {
         {
             return true;
         }
-        self.workspaces[self.active_workspace]
+        self.current()
+            .active_workspace_ref()
             .panes
             .iter()
             .any(|pane| pane.id == id)
+    }
+
+    /// The active workspace of the current attachment. Single-borrow accessors so callers avoid the
+    /// `workspaces[active_workspace]` double index.
+    pub fn active_workspace_ref(&self) -> &Workspace {
+        self.current().active_workspace_ref()
+    }
+
+    /// Mutable [active workspace](Self::active_workspace_ref).
+    pub fn active_workspace_mut(&mut self) -> &mut Workspace {
+        self.current_mut().active_workspace_mut()
     }
 
     /// Whether this client may mutate the shared layout: always true when purely local (no shared
@@ -407,11 +414,15 @@ mod render_visibility_tests {
             w: 80.0,
             h: 24.0,
         };
-        state.workspaces[0].panes.clear();
-        state.workspaces[0].panes.push(Pane::new(1, 100, rect));
-        state.workspaces[1].panes.clear();
-        state.workspaces[1].panes.push(Pane::new(2, 100, rect));
-        state.active_workspace = 0;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(1, 100, rect));
+        state.current_mut().workspaces[1].panes.clear();
+        state.current_mut().workspaces[1]
+            .panes
+            .push(Pane::new(2, 100, rect));
+        state.current_mut().active_workspace = 0;
         state
     }
 
@@ -426,7 +437,7 @@ mod render_visibility_tests {
     #[test]
     fn switching_workspace_moves_which_panes_are_rendered() {
         let mut state = state_with_two_workspaces();
-        state.active_workspace = 1;
+        state.current_mut().active_workspace = 1;
         assert!(!state.pane_is_rendered(1));
         assert!(state.pane_is_rendered(2));
     }

@@ -11,7 +11,7 @@ use crate::state::PaneIdentity;
 /// Dump the focused pane's full scrollback to a private file and open it in `$EDITOR` as a tiled
 /// pane (same pattern as [`crate::ops::config::open_config_file`]).
 pub(crate) fn edit_scrollback(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
@@ -44,5 +44,11 @@ pub(crate) fn edit_scrollback(ctx: &mut Context<HyprmuxApp>) -> Update {
         command: Some(command),
         ..PaneIdentity::default()
     };
-    crate::pane_lifecycle::spawn_interactive_pane(ctx, ctx.state.active_workspace, None, identity).1
+    crate::pane_lifecycle::spawn_interactive_pane(
+        ctx,
+        ctx.state.current().active_workspace,
+        None,
+        identity,
+    )
+    .1
 }

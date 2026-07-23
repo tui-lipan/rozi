@@ -171,7 +171,7 @@ pub(crate) fn send_pane_bytes(
 }
 
 pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: PaneId) -> Vec<PaneId> {
-    let workspace = &state.workspaces[state.active_workspace];
+    let workspace = &state.current().workspaces[state.current().active_workspace];
     if !workspace.synchronized {
         return vec![source];
     }
@@ -277,9 +277,9 @@ pub(crate) fn handle_pane_mouse(
     // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
     // scrolls (but deliberately not for plain motion), so reconciling from it restores
     // click-to-focus without reintroducing hover-to-focus against the user's config.
-    let before = ctx.state.focused_pane;
+    let before = ctx.state.current().focused_pane;
     crate::key_routing::sync_focus_from_framework(ctx);
-    let focus_moved = ctx.state.focused_pane != before;
+    let focus_moved = ctx.state.current().focused_pane != before;
     // Forwarded activity also means the pointer is over this pane, so re-apply the hover policy.
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
     let focus_update = if focus_moved { Update::full() } else { hover };
@@ -511,7 +511,7 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     state.current_mut().session_client = Some(client);
-                    let pane = &mut state.workspaces[0].panes[0];
+                    let pane = &mut state.current_mut().workspaces[0].panes[0];
                     pane.terminal
                         .process_server_output("history\n".repeat(80).as_bytes());
                     assert!(pane.terminal.set_scrollback(10));
@@ -522,14 +522,14 @@ mod tests {
                     .dispatch(Msg::PaneKey(1, key(KeyCode::Char('x'), KeyMods::NONE)))
                     .expect("dispatch terminal key");
                 assert_eq!(
-                    backend.state().workspaces[0].panes[0]
+                    backend.state().current().workspaces[0].panes[0]
                         .terminal
                         .scrollback_offset(),
                     0
                 );
 
                 assert!(
-                    backend.state_mut().workspaces[0].panes[0]
+                    backend.state_mut().current_mut().workspaces[0].panes[0]
                         .terminal
                         .set_scrollback(10)
                 );
@@ -544,7 +544,7 @@ mod tests {
                     ))
                     .expect("dispatch terminal paste");
                 assert_eq!(
-                    backend.state().workspaces[0].panes[0]
+                    backend.state().current().workspaces[0].panes[0]
                         .terminal
                         .scrollback_offset(),
                     0
@@ -558,7 +558,9 @@ mod tests {
     #[test]
     fn synchronized_targets_default_to_source_only() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(2, 100, rect()));
 
         assert_eq!(synchronized_key_targets(&state, 1), vec![1]);
     }
@@ -669,14 +671,16 @@ mod tests {
     #[test]
     fn synchronized_targets_exclude_floating_closing_and_scratch() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].synchronized = true;
-        state.workspaces[0].panes.push(Pane::new(2, 100, rect()));
+        state.current_mut().workspaces[0].synchronized = true;
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(2, 100, rect()));
         let mut floating = Pane::new(3, 100, rect());
         floating.floating = true;
-        state.workspaces[0].panes.push(floating);
+        state.current_mut().workspaces[0].panes.push(floating);
         let mut closing = Pane::new(4, 100, rect());
         closing.closing = true;
-        state.workspaces[0].panes.push(closing);
+        state.current_mut().workspaces[0].panes.push(closing);
         state.scratch = Some(Pane::new(crate::state::SCRATCH_PANE_ID, 100, rect()));
 
         assert_eq!(synchronized_key_targets(&state, 1), vec![1, 2]);

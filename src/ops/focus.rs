@@ -16,7 +16,7 @@ pub(crate) fn split_axis_for_direction(direction: Direction) -> crate::state::Sp
 }
 
 pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
-    state.workspaces[state.active_workspace]
+    state.current().workspaces[state.current().active_workspace]
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
@@ -24,7 +24,7 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
 
 /// Focus a live workspace pane regardless of which workspace currently owns the view.
 pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> bool {
-    let Some(workspace_index) = ctx.state.workspaces.iter().position(|workspace| {
+    let Some(workspace_index) = ctx.state.current().workspaces.iter().position(|workspace| {
         workspace
             .panes
             .iter()
@@ -32,7 +32,7 @@ pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId)
     }) else {
         return false;
     };
-    ctx.state.active_workspace = workspace_index;
+    ctx.state.current_mut().active_workspace = workspace_index;
     focus_pane(&mut ctx.state, target);
     if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, target) {
         pane.activity.has_unseen_output = false;
@@ -46,6 +46,7 @@ pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId)
 /// is selected.
 pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
     let panes = state
+        .current()
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
@@ -59,13 +60,14 @@ pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
         return None;
     }
     let start = state
+        .current()
         .focused_pane
         .and_then(|focused| panes.iter().position(|pane| pane.id == focused))
         .map_or(0, |index| index + 1);
     (0..panes.len())
         .map(|offset| &panes[(start + offset) % panes.len()])
         .find(|pane| {
-            Some(pane.id) != state.focused_pane
+            Some(pane.id) != state.current().focused_pane
                 && pane
                     .terminal
                     .reported_status
@@ -98,7 +100,7 @@ fn focus_in_direction_with_wrap(
     wrap: bool,
 ) -> Option<PaneId> {
     let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
-    let workspace = &state.workspaces[state.active_workspace];
+    let workspace = &state.current().workspaces[state.current().active_workspace];
     let placements = workspace_target_rects(
         workspace,
         bounds,
@@ -116,11 +118,11 @@ fn focus_in_direction_with_wrap(
         .collect();
 
     if candidates.is_empty() {
-        state.focused_pane = None;
+        state.current_mut().focused_pane = None;
         return None;
     }
 
-    let focused = state.focused_pane.unwrap_or(candidates[0].id);
+    let focused = state.current().focused_pane.unwrap_or(candidates[0].id);
     let Some(current) = candidates.iter().find(|candidate| candidate.id == focused) else {
         let id = candidates[0].id;
         focus_pane(state, id);
@@ -144,12 +146,11 @@ fn focus_in_direction_with_wrap(
 
     if let Some(next_id) = next {
         focus_pane(state, next_id);
-        state.workspaces[state.active_workspace].last_directional_focus =
-            Some(DirectionalFocusHint {
-                pane: next_id,
-                entry_direction: direction,
-                target: focused,
-            });
+        state.active_workspace_mut().last_directional_focus = Some(DirectionalFocusHint {
+            pane: next_id,
+            entry_direction: direction,
+            target: focused,
+        });
         Some(next_id)
     } else {
         None
@@ -291,11 +292,12 @@ fn interval_gap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
 /// the current focus is floating (not part of the tiled order) it falls back to the first
 /// tiled pane. Returns the newly focused id, or `None` when there are no tiled panes.
 pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Option<PaneId> {
-    let ids = state.workspaces[state.active_workspace].tiled_ids();
+    let ids = state.current().workspaces[state.current().active_workspace].tiled_ids();
     if ids.is_empty() {
         return None;
     }
     let next = match state
+        .current()
         .focused_pane
         .and_then(|id| ids.iter().position(|c| *c == id))
     {
@@ -317,13 +319,13 @@ pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Op
 /// with whatever pane is there. No-op for a floating/fullscreen focus, when the focused pane
 /// is not tiled, or when it is already the master. Returns `true` when a swap happened.
 pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
-    let Some(focused) = state.focused_pane else {
+    let Some(focused) = state.current().focused_pane else {
         return false;
     };
     if active_pane_is_fullscreen(state, focused) {
         return false;
     }
-    let workspace = &mut state.workspaces[state.active_workspace];
+    let workspace = state.active_workspace_mut();
     let ids = workspace.tiled_ids();
     let Some(&master) = ids.first() else {
         return false;
@@ -338,10 +340,10 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
         return false;
     };
     if crate::tiling::swap_tree_leaves(tree, focused, master) {
-        state.focused_pane = Some(focused);
-        state.workspaces[state.active_workspace].focused_pane = Some(focused);
-        state.workspaces[state.active_workspace].last_move_swap = None;
-        state.workspaces[state.active_workspace].last_directional_focus = None;
+        state.current_mut().focused_pane = Some(focused);
+        state.active_workspace_mut().focused_pane = Some(focused);
+        state.active_workspace_mut().last_move_swap = None;
+        state.active_workspace_mut().last_directional_focus = None;
         true
     } else {
         false
@@ -349,11 +351,11 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
 }
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
-    if index >= state.workspaces.len() {
+    if index >= state.current().workspaces.len() {
         return;
     }
-    let previous = state.active_workspace;
-    state.active_workspace = index;
+    let previous = state.current().active_workspace;
+    state.current_mut().active_workspace = index;
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
     clear_focused_activity(state);
@@ -375,18 +377,18 @@ fn emit_workspace_switched(state: &State, index: usize) {
 }
 
 pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) {
-    if target_index >= state.workspaces.len() {
+    if target_index >= state.current().workspaces.len() {
         return;
     }
-    let source_index = state.active_workspace;
-    let Some(focused) = state.focused_pane else {
+    let source_index = state.current().active_workspace;
+    let Some(focused) = state.current().focused_pane else {
         return;
     };
     if source_index == target_index {
         return;
     }
 
-    let Some(position) = state.workspaces[source_index]
+    let Some(position) = state.current().workspaces[source_index]
         .panes
         .iter()
         .position(|pane| pane.id == focused)
@@ -395,10 +397,12 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
         return;
     };
 
-    let mut pane = state.workspaces[source_index].panes.remove(position);
+    let mut pane = state.current_mut().workspaces[source_index]
+        .panes
+        .remove(position);
     let tiled = !pane.floating;
     if tiled {
-        remove_tiled_window(&mut state.workspaces[source_index], pane.id);
+        remove_tiled_window(&mut state.current_mut().workspaces[source_index], pane.id);
     }
     pane.opening = false;
     pane.closing = false;
@@ -406,13 +410,15 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
     choose_fallback_focus(state);
 
     if tiled {
-        append_tiled_window(&mut state.workspaces[target_index], pane.id);
+        append_tiled_window(&mut state.current_mut().workspaces[target_index], pane.id);
     }
-    state.workspaces[target_index].panes.push(pane);
+    state.current_mut().workspaces[target_index]
+        .panes
+        .push(pane);
 
-    state.active_workspace = target_index;
-    state.focused_pane = Some(focused);
-    state.workspaces[target_index].focused_pane = Some(focused);
+    state.current_mut().active_workspace = target_index;
+    state.current_mut().focused_pane = Some(focused);
+    state.current_mut().workspaces[target_index].focused_pane = Some(focused);
     clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, target_index);
@@ -424,32 +430,32 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
 /// source content wholesale; a occupied target swaps content with the source so both layouts
 /// stay intact.
 pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) {
-    if target_index >= state.workspaces.len() {
+    if target_index >= state.current().workspaces.len() {
         return;
     }
-    let source_index = state.active_workspace;
+    let source_index = state.current().active_workspace;
     if source_index == target_index {
         return;
     }
 
-    let previous_focus = state.focused_pane;
-    let source_empty = workspace_is_empty(&state.workspaces[source_index]);
+    let previous_focus = state.current().focused_pane;
+    let source_empty = workspace_is_empty(&state.current().workspaces[source_index]);
     if source_empty {
-        state.active_workspace = target_index;
+        state.current_mut().active_workspace = target_index;
         choose_fallback_focus(state);
         state.animation = GeometryAnimation::None;
         emit_workspace_switched(state, target_index);
         return;
     }
 
-    let target_empty = workspace_is_empty(&state.workspaces[target_index]);
+    let target_empty = workspace_is_empty(&state.current().workspaces[target_index]);
     if target_empty {
         transfer_workspace_content(state, source_index, target_index);
     } else {
         swap_workspace_content(state, source_index, target_index);
     }
 
-    let target = &mut state.workspaces[target_index];
+    let target = &mut state.current_mut().workspaces[target_index];
     if let Some(id) = previous_focus
         && target
             .panes
@@ -460,9 +466,10 @@ pub(crate) fn relocate_active_workspace(state: &mut State, target_index: usize) 
     } else if target.focused_pane.is_none() {
         target.focused_pane = first_visible_pane(target);
     }
+    let target_focus = target.focused_pane;
 
-    state.active_workspace = target_index;
-    state.focused_pane = target.focused_pane;
+    state.current_mut().active_workspace = target_index;
+    state.current_mut().focused_pane = target_focus;
     clear_focused_activity(state);
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, target_index);
@@ -474,21 +481,21 @@ fn workspace_is_empty(workspace: &Workspace) -> bool {
 
 fn swap_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
     if source_index < target_index {
-        let (left, right) = state.workspaces.split_at_mut(target_index);
+        let (left, right) = state.current_mut().workspaces.split_at_mut(target_index);
         swap_workspace_fields(&mut left[source_index], &mut right[0]);
     } else {
-        let (left, right) = state.workspaces.split_at_mut(source_index);
+        let (left, right) = state.current_mut().workspaces.split_at_mut(source_index);
         swap_workspace_fields(&mut right[0], &mut left[target_index]);
     }
 }
 
 fn transfer_workspace_content(state: &mut State, source_index: usize, target_index: usize) {
     if source_index < target_index {
-        let (left, right) = state.workspaces.split_at_mut(target_index);
+        let (left, right) = state.current_mut().workspaces.split_at_mut(target_index);
         transfer_workspace_fields(&mut left[source_index], &mut right[0]);
         left[source_index] = Workspace::new(source_index);
     } else {
-        let (left, right) = state.workspaces.split_at_mut(source_index);
+        let (left, right) = state.current_mut().workspaces.split_at_mut(source_index);
         transfer_workspace_fields(&mut right[0], &mut left[target_index]);
         right[0] = Workspace::new(source_index);
     }
@@ -540,10 +547,10 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
     if ctx.state.sidebar.focused || ctx.state.mode != crate::state::Mode::Normal {
         return Update::none();
     }
-    if ctx.state.focused_pane == Some(id) {
+    if ctx.state.current().focused_pane == Some(id) {
         return Update::none();
     }
-    let focusable = ctx.state.workspaces[ctx.state.active_workspace]
+    let focusable = ctx.state.current().workspaces[ctx.state.current().active_workspace]
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.closing);
@@ -560,19 +567,20 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
 }
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
-    let previous = state.focused_pane;
-    state.workspaces[state.active_workspace].last_directional_focus = None;
-    if let Some(pane) = state.workspaces[state.active_workspace]
+    let previous = state.current().focused_pane;
+    state.active_workspace_mut().last_directional_focus = None;
+    if let Some(pane) = state
+        .active_workspace_mut()
         .panes
         .iter_mut()
         .find(|pane| pane.id == id && !pane.closing)
     {
         pane.activity.has_unseen_output = false;
         pane.activity.bell = false;
-        state.focused_pane = Some(id);
-        state.workspaces[state.active_workspace].focused_pane = Some(id);
+        state.current_mut().focused_pane = Some(id);
+        state.active_workspace_mut().focused_pane = Some(id);
     }
-    if previous != state.focused_pane && state.focused_pane == Some(id) {
+    if previous != state.current().focused_pane && state.current().focused_pane == Some(id) {
         crate::events::emit(
             state,
             crate::events::Event::new(
@@ -584,10 +592,11 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
 }
 
 fn clear_focused_activity(state: &mut State) {
-    let Some(id) = state.focused_pane else {
+    let Some(id) = state.current().focused_pane else {
         return;
     };
-    if let Some(pane) = state.workspaces[state.active_workspace]
+    if let Some(pane) = state
+        .active_workspace_mut()
         .panes
         .iter_mut()
         .find(|pane| pane.id == id && !pane.closing)
@@ -598,7 +607,7 @@ fn clear_focused_activity(state: &mut State) {
 }
 
 pub(crate) fn choose_fallback_focus(state: &mut State) {
-    choose_fallback_focus_near(state, state.focused_pane, None);
+    choose_fallback_focus_near(state, state.current().focused_pane, None);
 }
 
 pub(crate) fn choose_fallback_focus_near(
@@ -606,16 +615,16 @@ pub(crate) fn choose_fallback_focus_near(
     reference_id: Option<PaneId>,
     reference_rect: Option<FloatRect>,
 ) {
-    let workspace_index = state.active_workspace;
-    let workspace = &state.workspaces[workspace_index];
+    let workspace_index = state.current().active_workspace;
+    let workspace = &state.current().workspaces[workspace_index];
 
-    if let Some(focused) = state.focused_pane
+    if let Some(focused) = state.current().focused_pane
         && workspace
             .panes
             .iter()
             .any(|pane| pane.id == focused && !pane.closing)
     {
-        state.workspaces[workspace_index].focused_pane = Some(focused);
+        state.current_mut().workspaces[workspace_index].focused_pane = Some(focused);
         return;
     }
 
@@ -625,8 +634,8 @@ pub(crate) fn choose_fallback_focus_near(
         })
         .or_else(|| first_visible_pane(workspace));
 
-    state.workspaces[workspace_index].focused_pane = focus;
-    state.focused_pane = focus;
+    state.current_mut().workspaces[workspace_index].focused_pane = focus;
+    state.current_mut().focused_pane = focus;
 }
 
 pub(crate) fn first_visible_pane(workspace: &Workspace) -> Option<PaneId> {
@@ -708,7 +717,8 @@ pub(crate) fn reference_pane_rect(
 }
 
 pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> {
-    state.workspaces[state.active_workspace]
+    state
+        .active_workspace_mut()
         .panes
         .iter_mut()
         .find(|pane| pane.id == id)
@@ -723,7 +733,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
 }
 
 pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
-    if let Some(id) = ctx.state.focused_pane {
+    if let Some(id) = ctx.state.current().focused_pane {
         request_pane_focus(ctx, id);
     }
 }
@@ -773,6 +783,7 @@ pub(crate) fn request_session_picker_focus(ctx: &mut Context<HyprmuxApp>) {
 
 pub(crate) fn total_visible_panes(state: &State) -> usize {
     state
+        .current()
         .workspaces
         .iter()
         .map(|workspace| workspace.panes.iter().filter(|pane| !pane.closing).count())
@@ -790,8 +801,8 @@ mod tests {
     fn state_with_tiled(ids: &[PaneId]) -> State {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
         // State::new seeds pane 1; clear and rebuild a deterministic tiled set.
-        state.workspaces[0].panes.clear();
-        state.workspaces[0].tile_tree = None;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
         let rect = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -799,17 +810,19 @@ mod tests {
             h: 24.0,
         };
         for &id in ids {
-            state.workspaces[0].panes.push(Pane::new(id, 100, rect));
-            append_tiled_window(&mut state.workspaces[0], id);
+            state.current_mut().workspaces[0]
+                .panes
+                .push(Pane::new(id, 100, rect));
+            append_tiled_window(&mut state.current_mut().workspaces[0], id);
         }
-        state.next_pane_id = ids.iter().copied().max().unwrap_or(0) + 1;
+        state.current_mut().next_pane_id = ids.iter().copied().max().unwrap_or(0) + 1;
         state
     }
 
     fn state_with_floating(placements: &[(PaneId, FloatRect)]) -> State {
         let ids = placements.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let mut state = state_with_tiled(&ids);
-        for pane in &mut state.workspaces[0].panes {
+        for pane in &mut state.current_mut().workspaces[0].panes {
             pane.floating = true;
             pane.floating_rect = placements
                 .iter()
@@ -832,7 +845,7 @@ mod tests {
             h: 30,
         };
         let mut state = state_with_floating(placements);
-        state.focused_pane = Some(start);
+        state.current_mut().focused_pane = Some(start);
         for (&direction, &expected) in directions.iter().zip(expected) {
             assert_eq!(
                 focus_in_direction(&mut state, direction, viewport),
@@ -844,7 +857,7 @@ mod tests {
     #[test]
     fn cycle_focus_wraps_in_both_directions() {
         let mut state = state_with_tiled(&[1, 2, 3]);
-        state.focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
@@ -859,19 +872,19 @@ mod tests {
             h: 30,
         };
         let mut state = state_with_tiled(&[1, 2]);
-        state.focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
 
         assert_eq!(
             focus_in_direction_no_wrap(&mut state, Direction::Right, viewport),
             None
         );
-        assert_eq!(state.focused_pane, Some(2));
+        assert_eq!(state.current().focused_pane, Some(2));
 
         assert_eq!(
             focus_in_direction(&mut state, Direction::Right, viewport),
             Some(1)
         );
-        assert_eq!(state.focused_pane, Some(1));
+        assert_eq!(state.current().focused_pane, Some(1));
     }
 
     #[test]
@@ -883,27 +896,27 @@ mod tests {
             h: 30,
         };
         let mut state = state_with_tiled(&[1, 2, 3, 4]);
-        state.workspaces[0].layout_kind = LayoutKind::Grid;
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Grid;
 
-        state.focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Right, viewport),
             Some(1)
         );
 
-        state.focused_pane = Some(1);
+        state.current_mut().focused_pane = Some(1);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Left, viewport),
             Some(2)
         );
 
-        state.focused_pane = Some(3);
+        state.current_mut().focused_pane = Some(3);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Down, viewport),
             Some(1)
         );
 
-        state.focused_pane = Some(1);
+        state.current_mut().focused_pane = Some(1);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Up, viewport),
             Some(3)
@@ -950,7 +963,7 @@ mod tests {
         for source in [1, 2] {
             for return_direction in [Direction::Down, Direction::Up] {
                 let mut state = state_with_floating(&vertical);
-                state.focused_pane = Some(source);
+                state.current_mut().focused_pane = Some(source);
                 assert_eq!(
                     focus_in_direction(&mut state, Direction::Down, viewport),
                     Some(3)
@@ -962,7 +975,7 @@ mod tests {
             }
         }
         let mut state = state_with_floating(&vertical);
-        state.focused_pane = Some(3);
+        state.current_mut().focused_pane = Some(3);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Left, viewport),
             Some(1)
@@ -1007,7 +1020,7 @@ mod tests {
         for source in [1, 2] {
             for return_direction in [Direction::Right, Direction::Left] {
                 let mut state = state_with_floating(&horizontal);
-                state.focused_pane = Some(source);
+                state.current_mut().focused_pane = Some(source);
                 assert_eq!(
                     focus_in_direction(&mut state, Direction::Right, viewport),
                     Some(3)
@@ -1019,7 +1032,7 @@ mod tests {
             }
         }
         let mut state = state_with_floating(&horizontal);
-        state.focused_pane = Some(3);
+        state.current_mut().focused_pane = Some(3);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Up, viewport),
             Some(1)
@@ -1048,7 +1061,7 @@ mod tests {
     #[test]
     fn move_focused_pane_switches_to_target_workspace() {
         let mut state = state_with_tiled(&[1, 2]);
-        state.workspaces[1].panes.push(Pane::new(
+        state.current_mut().workspaces[1].panes.push(Pane::new(
             3,
             100,
             FloatRect {
@@ -1058,25 +1071,40 @@ mod tests {
                 h: 24.0,
             },
         ));
-        append_tiled_window(&mut state.workspaces[1], 3);
-        state.active_workspace = 0;
-        state.focused_pane = Some(2);
+        append_tiled_window(&mut state.current_mut().workspaces[1], 3);
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
 
         move_focused_to_workspace(&mut state, 1);
 
-        assert_eq!(state.active_workspace, 1);
-        assert_eq!(state.focused_pane, Some(2));
-        assert!(state.workspaces[0].panes.iter().any(|pane| pane.id == 1));
-        assert!(!state.workspaces[0].panes.iter().any(|pane| pane.id == 2));
-        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 2));
+        assert_eq!(state.current().active_workspace, 1);
+        assert_eq!(state.current().focused_pane, Some(2));
+        assert!(
+            state.current().workspaces[0]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 1)
+        );
+        assert!(
+            !state.current().workspaces[0]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 2)
+        );
+        assert!(
+            state.current().workspaces[1]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 2)
+        );
     }
 
     #[test]
     fn relocate_active_workspace_swaps_content_when_target_is_occupied() {
         let mut state = state_with_tiled(&[1, 2]);
-        state.workspaces[0].name = Some("code".to_string());
-        state.workspaces[0].split_ratios[0] = 0.71;
-        state.workspaces[1].panes.push(Pane::new(
+        state.current_mut().workspaces[0].name = Some("code".to_string());
+        state.current_mut().workspaces[0].split_ratios[0] = 0.71;
+        state.current_mut().workspaces[1].panes.push(Pane::new(
             3,
             100,
             FloatRect {
@@ -1086,54 +1114,75 @@ mod tests {
                 h: 24.0,
             },
         ));
-        append_tiled_window(&mut state.workspaces[1], 3);
-        state.workspaces[1].split_ratios[0] = 0.42;
-        state.active_workspace = 0;
-        state.focused_pane = Some(2);
+        append_tiled_window(&mut state.current_mut().workspaces[1], 3);
+        state.current_mut().workspaces[1].split_ratios[0] = 0.42;
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
 
         relocate_active_workspace(&mut state, 1);
 
-        assert_eq!(state.active_workspace, 1);
-        assert_eq!(state.focused_pane, Some(2));
-        assert_eq!(state.workspaces[0].panes.len(), 1);
-        assert!(state.workspaces[0].panes.iter().any(|pane| pane.id == 3));
-        assert_eq!(state.workspaces[0].split_ratios[0], 0.42);
-        assert_eq!(state.workspaces[1].name.as_deref(), Some("code"));
-        assert_eq!(state.workspaces[1].split_ratios[0], 0.71);
-        assert_eq!(state.workspaces[1].panes.len(), 2);
-        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 1));
-        assert!(state.workspaces[1].panes.iter().any(|pane| pane.id == 2));
+        assert_eq!(state.current().active_workspace, 1);
+        assert_eq!(state.current().focused_pane, Some(2));
+        assert_eq!(state.current().workspaces[0].panes.len(), 1);
+        assert!(
+            state.current().workspaces[0]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 3)
+        );
+        assert_eq!(state.current().workspaces[0].split_ratios[0], 0.42);
+        assert_eq!(state.current().workspaces[1].name.as_deref(), Some("code"));
+        assert_eq!(state.current().workspaces[1].split_ratios[0], 0.71);
+        assert_eq!(state.current().workspaces[1].panes.len(), 2);
+        assert!(
+            state.current().workspaces[1]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 1)
+        );
+        assert!(
+            state.current().workspaces[1]
+                .panes
+                .iter()
+                .any(|pane| pane.id == 2)
+        );
     }
 
     #[test]
     fn relocate_active_workspace_preserves_layout_on_empty_target() {
         let mut state = state_with_tiled(&[1, 2]);
-        state.workspaces[0].layout_kind = LayoutKind::Master;
-        state.workspaces[0].split_ratios[0] = 0.71;
-        let source_tree = state.workspaces[0].tile_tree.clone();
-        state.active_workspace = 0;
-        state.focused_pane = Some(2);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Master;
+        state.current_mut().workspaces[0].split_ratios[0] = 0.71;
+        let source_tree = state.current().workspaces[0].tile_tree.clone();
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
 
         relocate_active_workspace(&mut state, 2);
 
-        assert_eq!(state.active_workspace, 2);
-        assert_eq!(state.workspaces[2].layout_kind, LayoutKind::Master);
-        assert_eq!(state.workspaces[2].split_ratios[0], 0.71);
-        assert_eq!(state.workspaces[2].tile_tree, source_tree);
-        assert_eq!(state.workspaces[2].panes.len(), 2);
-        assert_eq!(state.workspaces[0].panes.len(), 0);
+        assert_eq!(state.current().active_workspace, 2);
+        assert_eq!(
+            state.current().workspaces[2].layout_kind,
+            LayoutKind::Master
+        );
+        assert_eq!(state.current().workspaces[2].split_ratios[0], 0.71);
+        assert_eq!(state.current().workspaces[2].tile_tree, source_tree);
+        assert_eq!(state.current().workspaces[2].panes.len(), 2);
+        assert_eq!(state.current().workspaces[0].panes.len(), 0);
     }
 
     #[test]
     fn promote_swaps_focused_into_master_slot() {
         let mut state = state_with_tiled(&[1, 2, 3]);
-        state.focused_pane = Some(3);
+        state.current_mut().focused_pane = Some(3);
         assert!(promote_focused_to_master(&mut state));
 
         let mut leaves = Vec::new();
-        collect_tree_leaves(state.workspaces[0].tile_tree.as_ref().unwrap(), &mut leaves);
+        collect_tree_leaves(
+            state.current().workspaces[0].tile_tree.as_ref().unwrap(),
+            &mut leaves,
+        );
         assert_eq!(leaves.first(), Some(&3));
-        assert_eq!(state.focused_pane, Some(3));
+        assert_eq!(state.current().focused_pane, Some(3));
 
         // Already the master → no-op.
         assert!(!promote_focused_to_master(&mut state));
@@ -1150,10 +1199,10 @@ mod tests {
     #[test]
     fn next_blocked_pane_wraps_across_workspaces_and_skips_closing() {
         let mut state = state_with_tiled(&[1, 2]);
-        set_reported_status(&mut state.workspaces[0].panes[0], "blocked");
-        set_reported_status(&mut state.workspaces[0].panes[1], "BLOCKED");
-        state.workspaces[0].panes[1].closing = true;
-        state.workspaces[1].panes.push(Pane::new(
+        set_reported_status(&mut state.current_mut().workspaces[0].panes[0], "blocked");
+        set_reported_status(&mut state.current_mut().workspaces[0].panes[1], "BLOCKED");
+        state.current_mut().workspaces[0].panes[1].closing = true;
+        state.current_mut().workspaces[1].panes.push(Pane::new(
             3,
             100,
             FloatRect {
@@ -1163,24 +1212,26 @@ mod tests {
                 h: 24.0,
             },
         ));
-        set_reported_status(&mut state.workspaces[1].panes[0], " blocked ");
+        set_reported_status(&mut state.current_mut().workspaces[1].panes[0], " blocked ");
 
-        state.focused_pane = Some(1);
+        state.current_mut().focused_pane = Some(1);
         assert_eq!(next_blocked_pane(&state), Some(3));
-        state.focused_pane = Some(3);
+        state.current_mut().focused_pane = Some(3);
         assert_eq!(next_blocked_pane(&state), Some(1));
     }
 
     #[test]
     fn next_blocked_pane_handles_no_focus_and_no_other_match() {
         let mut state = state_with_tiled(&[1, 2]);
-        set_reported_status(&mut state.workspaces[0].panes[1], "blocked");
-        state.focused_pane = None;
+        set_reported_status(&mut state.current_mut().workspaces[0].panes[1], "blocked");
+        state.current_mut().focused_pane = None;
         assert_eq!(next_blocked_pane(&state), Some(2));
 
-        state.focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
         assert_eq!(next_blocked_pane(&state), None);
-        state.workspaces[0].panes[1].terminal.reported_status = None;
+        state.current_mut().workspaces[0].panes[1]
+            .terminal
+            .reported_status = None;
         assert_eq!(next_blocked_pane(&state), None);
     }
 }

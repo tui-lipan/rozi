@@ -31,8 +31,8 @@ fn bench_style_setup_renders_populated_tiled_panes() {
             backend.set_viewport(viewport);
             {
                 let state = backend.state_mut();
-                state.workspaces[0].panes.clear();
-                state.workspaces[0].tile_tree = None;
+                state.current_mut().workspaces[0].panes.clear();
+                state.current_mut().workspaces[0].tile_tree = None;
                 let rect = FloatRect {
                     x: 0.0,
                     y: 0.0,
@@ -51,15 +51,16 @@ fn bench_style_setup_renders_populated_tiled_panes() {
                         pane.terminal
                             .process_server_output(format!("row{line:03}-BENCH\r\n").as_bytes());
                     }
-                    state.workspaces[0].panes.push(pane);
+                    state.current_mut().workspaces[0].panes.push(pane);
                     ids.push(id);
                 }
-                let start_axis = state.workspaces[0].start_axis;
-                let ratios = state.workspaces[0].split_ratios.clone();
-                state.workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
-                state.next_pane_id = 20;
-                state.focused_pane = Some(10);
-                state.workspaces[0].focused_pane = Some(10);
+                let start_axis = state.current().workspaces[0].start_axis;
+                let ratios = state.current().workspaces[0].split_ratios.clone();
+                state.current_mut().workspaces[0].tile_tree =
+                    build_dwindle_tree(&ids, start_axis, &ratios);
+                state.current_mut().next_pane_id = 20;
+                state.current_mut().focused_pane = Some(10);
+                state.current_mut().workspaces[0].focused_pane = Some(10);
             }
             backend.render();
             let lines = backend.capture_frame().to_fixed_grid_lines();

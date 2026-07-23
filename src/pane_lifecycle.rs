@@ -29,7 +29,7 @@ pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
     if state.current().remote_host.is_some() {
         return None;
     }
-    let workspace = &state.workspaces[state.active_workspace];
+    let workspace = &state.current().workspaces[state.current().active_workspace];
     workspace
         .focused_pane
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -45,7 +45,7 @@ pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
     if state.current().remote_host.is_none() {
         return focused_local_cwd_ref(state);
     }
-    let workspace = &state.workspaces[state.active_workspace];
+    let workspace = &state.current().workspaces[state.current().active_workspace];
     workspace
         .focused_pane
         .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -55,7 +55,7 @@ pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
 /// Cwd to send with a server spawn request. Under `--remote`, inherits the server-relative path.
 pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
     if state.current().remote_host.is_some() {
-        let workspace = &state.workspaces[state.active_workspace];
+        let workspace = &state.current().workspaces[state.current().active_workspace];
         return workspace
             .focused_pane
             .and_then(|id| workspace.panes.iter().find(|pane| pane.id == id))
@@ -69,13 +69,20 @@ pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
 }
 
 pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let previous_focused = ctx.state.workspaces[ctx.state.active_workspace].focused_pane;
+    let previous_focused =
+        ctx.state.current().workspaces[ctx.state.current().active_workspace].focused_pane;
     let identity = PaneIdentity {
         cwd: focused_spawn_cwd(&ctx.state),
         ..PaneIdentity::default()
     };
 
-    spawn_interactive_pane(ctx, ctx.state.active_workspace, previous_focused, identity).1
+    spawn_interactive_pane(
+        ctx,
+        ctx.state.current().active_workspace,
+        previous_focused,
+        identity,
+    )
+    .1
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,7 +133,7 @@ fn interactive_spawn_target(
         .map(|command| crate::rules::placement_for_command(&state.config.rules, command))
         .unwrap_or_default();
     let workspace_index = rule_workspace.unwrap_or(source_workspace);
-    let previous_focused = source.or(state.workspaces[workspace_index].focused_pane);
+    let previous_focused = source.or(state.current().workspaces[workspace_index].focused_pane);
     (workspace_index, previous_focused, placement)
 }
 
@@ -143,10 +150,14 @@ pub(crate) fn spawn_pane_in_workspace(
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let split_width_multiplier = ctx.state.config.layout.split_width_multiplier;
-    let id = ctx.state.next_pane_id;
-    ctx.state.next_pane_id = ctx.state.next_pane_id.saturating_add(1);
-    let generation = ctx.state.next_pty_generation;
-    ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
+    let id = ctx.state.current().next_pane_id;
+    ctx.state.current_mut().next_pane_id = ctx.state.current_mut().next_pane_id.saturating_add(1);
+    let generation = ctx.state.current().next_pty_generation;
+    ctx.state.current_mut().next_pty_generation = ctx
+        .state
+        .current_mut()
+        .next_pty_generation
+        .saturating_add(1);
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.pty_generation = generation;
@@ -189,7 +200,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
 
-    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     workspace.panes.push(pane);
     place_spawned_pane(
         workspace,
@@ -248,15 +259,15 @@ fn apply_spawn_focus(
     id: PaneId,
     placement: SpawnPlacement,
 ) {
-    state.workspaces[workspace_index].focused_pane = Some(id);
+    state.current_mut().workspaces[workspace_index].focused_pane = Some(id);
     if placement.focus {
-        state.active_workspace = workspace_index;
-        state.focused_pane = Some(id);
+        state.current_mut().active_workspace = workspace_index;
+        state.current_mut().focused_pane = Some(id);
     }
 }
 
 pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
     if !find_pane(&ctx.state, id)
@@ -264,8 +275,8 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     {
         return Update::none();
     }
-    let generation = ctx.state.next_pty_generation;
-    ctx.state.next_pty_generation = generation.saturating_add(1);
+    let generation = ctx.state.current().next_pty_generation;
+    ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
     let remote_attached = ctx.state.current().remote_host.is_some();
     let palette = terminal_palette(
@@ -457,7 +468,7 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
-        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
     let mut generation = None;
@@ -495,7 +506,7 @@ pub(crate) fn close_pane_remote(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Op
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
-        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
     let mut generation = None;
@@ -525,6 +536,7 @@ pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
         return Some(pane);
     }
     state
+        .current()
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
@@ -540,6 +552,7 @@ pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> 
         return state.scratch.as_mut();
     }
     state
+        .current_mut()
         .workspaces
         .iter_mut()
         .flat_map(|workspace| workspace.panes.iter_mut())
@@ -558,9 +571,14 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
         state.resizing_pane = None;
     }
 
-    let removed_rect =
-        reference_pane_rect(state, &state.workspaces[state.active_workspace], id, None);
+    let removed_rect = reference_pane_rect(
+        state,
+        &state.current().workspaces[state.current().active_workspace],
+        id,
+        None,
+    );
     let focus_updates: Vec<(usize, Option<PaneId>)> = state
+        .current()
         .workspaces
         .iter()
         .enumerate()
@@ -576,15 +594,15 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
         })
         .collect();
 
-    for workspace in &mut state.workspaces {
+    for workspace in &mut state.current_mut().workspaces {
         remove_tiled_window(workspace, id);
         workspace.panes.retain(|pane| pane.id != id);
     }
 
     for (workspace_index, focus) in focus_updates {
-        state.workspaces[workspace_index].focused_pane = focus;
-        if workspace_index == state.active_workspace {
-            state.focused_pane = focus;
+        state.current_mut().workspaces[workspace_index].focused_pane = focus;
+        if workspace_index == state.current().active_workspace {
+            state.current_mut().focused_pane = focus;
         }
     }
 }
@@ -628,6 +646,7 @@ fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
         return true;
     }
     state
+        .current()
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
@@ -922,12 +941,12 @@ mod tests {
     fn stale_prune_token_does_not_match_reused_pane_id() {
         use crate::config::HyprmuxConfig;
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes[0].pty_generation = 42;
-        state.workspaces[0].panes[0].closing = true;
+        state.current_mut().workspaces[0].panes[0].pty_generation = 42;
+        state.current_mut().workspaces[0].panes[0].closing = true;
         assert!(should_prune_closed(&state, 1, 42));
         assert!(!should_prune_closed(&state, 1, 41));
 
-        state.workspaces[0].panes[0].closing = false;
+        state.current_mut().workspaces[0].panes[0].closing = false;
         assert!(!should_prune_closed(&state, 1, 42));
     }
 
@@ -955,8 +974,8 @@ mod tests {
     #[test]
     fn spawn_focus_can_update_target_workspace_without_stealing_active_focus() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.active_workspace = 0;
-        state.focused_pane = Some(1);
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(1);
         apply_spawn_focus(
             &mut state,
             2,
@@ -966,12 +985,12 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(state.workspaces[2].focused_pane, Some(7));
-        assert_eq!(state.active_workspace, 0);
-        assert_eq!(state.focused_pane, Some(1));
+        assert_eq!(state.current().workspaces[2].focused_pane, Some(7));
+        assert_eq!(state.current().active_workspace, 0);
+        assert_eq!(state.current().focused_pane, Some(1));
         apply_spawn_focus(&mut state, 2, 8, SpawnPlacement::default());
-        assert_eq!(state.active_workspace, 2);
-        assert_eq!(state.focused_pane, Some(8));
+        assert_eq!(state.current().active_workspace, 2);
+        assert_eq!(state.current().focused_pane, Some(8));
     }
 
     #[test]
@@ -986,7 +1005,7 @@ mod tests {
         configured.focus = false;
         config.rules.push(configured);
         let mut state = State::new(config, Theme::default());
-        state.workspaces[2].focused_pane = Some(7);
+        state.current_mut().workspaces[2].focused_pane = Some(7);
 
         let (workspace, previous_focused, placement) =
             interactive_spawn_target(&state, 0, None, Some("exec btop"));

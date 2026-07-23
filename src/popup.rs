@@ -49,8 +49,8 @@ pub(crate) fn open(
         width.unwrap_or(0.6),
         height.unwrap_or(0.6),
     );
-    let generation = ctx.state.next_pty_generation;
-    ctx.state.next_pty_generation = generation.saturating_add(1);
+    let generation = ctx.state.current().next_pty_generation;
+    ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
     let mut pane = Pane::new(POPUP_PANE_ID, ctx.state.config.scrollback, rect);
     pane.pty_generation = generation;
     pane.identity = PaneIdentity {
@@ -81,7 +81,7 @@ pub(crate) fn open(
     );
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
-    ctx.state.popup_return_focus = ctx.state.focused_pane;
+    ctx.state.popup_return_focus = ctx.state.current().focused_pane;
     ctx.state.popup = Some(pane);
     ctx.state.animation = GeometryAnimation::Spawn;
     let open_delay = crate::anim::open_delay(ctx.state.config.animations);

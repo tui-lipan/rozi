@@ -694,7 +694,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
     // A command finishing is the moment the working tree most likely changed, and it is a far
     // better refresh trigger than a timer: no polling while the user reads, immediate feedback
     // after a build, commit, or checkout.
-    let phase = ctx.state.focused_pane.and_then(|id| {
+    let phase = ctx.state.current().focused_pane.and_then(|id| {
         crate::pane_lifecycle::find_pane(&ctx.state, id)
             .map(|pane| (id, pane.terminal.command_phase))
     });
@@ -973,12 +973,12 @@ mod tests {
 
         on_test_thread(move || {
             let mut backend = TestBackend::new(HyprmuxApp::default());
-            let pane = backend.state().workspaces[0].panes[0].id;
+            let pane = backend.state().current().workspaces[0].panes[0].id;
             {
                 let state = backend.state_mut();
-                state.focused_pane = Some(pane);
-                state.workspaces[0].focused_pane = Some(pane);
-                state.workspaces[0].panes[0].terminal.cwd = Some(nested.clone());
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(nested.clone());
             }
             backend
                 .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
@@ -995,7 +995,9 @@ mod tests {
             assert_eq!(backend.state().sidebar.git_refresh_token, settled);
 
             // Leaving the repository clears the repo root but keeps the working directory.
-            backend.state_mut().workspaces[0].panes[0].terminal.cwd = Some(outside.clone());
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .cwd = Some(outside.clone());
             backend
                 .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
                 .expect("cwd change sync");
@@ -1011,20 +1013,21 @@ mod tests {
     fn finishing_a_command_refreshes_git_status_once() {
         on_test_thread(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
-            let pane = backend.state().workspaces[0].panes[0].id;
+            let pane = backend.state().current().workspaces[0].panes[0].id;
             {
                 let state = backend.state_mut();
-                state.focused_pane = Some(pane);
-                state.workspaces[0].focused_pane = Some(pane);
-                state.workspaces[0].panes[0].terminal.command_phase =
-                    crate::session::protocol::PaneCommandPhase::Executing;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0]
+                    .terminal
+                    .command_phase = crate::session::protocol::PaneCommandPhase::Executing;
             }
             backend
                 .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
                 .expect("observe executing");
             let running = backend.state().sidebar.git_refresh_token;
 
-            backend.state_mut().workspaces[0].panes[0]
+            backend.state_mut().current_mut().workspaces[0].panes[0]
                 .terminal
                 .command_phase = crate::session::protocol::PaneCommandPhase::Completed {
                 exit_status: Some(0),
@@ -1171,14 +1174,16 @@ mod tests {
                     },
                 );
                 pane.activity.has_unseen_output = true;
-                backend.state_mut().workspaces[1].panes.push(pane);
+                backend.state_mut().current_mut().workspaces[1]
+                    .panes
+                    .push(pane);
                 backend
                     .dispatch(crate::Msg::SidebarFocusPane(2))
                     .expect("focus sidebar pane");
-                assert_eq!(backend.state().active_workspace, 1);
-                assert_eq!(backend.state().focused_pane, Some(2));
+                assert_eq!(backend.state().current().active_workspace, 1);
+                assert_eq!(backend.state().current().focused_pane, Some(2));
                 assert!(
-                    !backend.state().workspaces[1].panes[0]
+                    !backend.state().current().workspaces[1].panes[0]
                         .activity
                         .has_unseen_output
                 );
@@ -1367,10 +1372,12 @@ mod tests {
         }];
         backend.state_mut().sidebar.config_epoch = 1;
         if let Some(cwd) = cwd {
-            let focused = backend.state().workspaces[0].panes[0].id;
-            backend.state_mut().workspaces[0].focused_pane = Some(focused);
-            backend.state_mut().focused_pane = Some(focused);
-            backend.state_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd.to_string());
+            let focused = backend.state().current().workspaces[0].panes[0].id;
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(focused);
+            backend.state_mut().current_mut().focused_pane = Some(focused);
+            backend.state_mut().current_mut().workspaces[0].panes[0]
+                .terminal
+                .cwd = Some(cwd.to_string());
         }
         backend.state_mut().current_mut().pending_spawns.clear();
         backend
@@ -1443,7 +1450,7 @@ mod tests {
                 }],
             }];
             backend.state_mut().sidebar.config_epoch = 4;
-            let initial = backend.state().workspaces[0].panes.len();
+            let initial = backend.state().current().workspaces[0].panes.len();
             backend
                 .dispatch(crate::Msg::SidebarLauncherActivate {
                     config_epoch: 3,
@@ -1458,7 +1465,7 @@ mod tests {
                     entry_index: 0,
                 })
                 .expect("wrong tab click");
-            assert_eq!(backend.state().workspaces[0].panes.len(), initial);
+            assert_eq!(backend.state().current().workspaces[0].panes.len(), initial);
             backend
                 .dispatch(crate::Msg::SidebarLauncherActivate {
                     config_epoch: 4,
@@ -1466,7 +1473,10 @@ mod tests {
                     entry_index: 0,
                 })
                 .expect("current launcher click");
-            assert_eq!(backend.state().workspaces[0].panes.len(), initial + 1);
+            assert_eq!(
+                backend.state().current().workspaces[0].panes.len(),
+                initial + 1
+            );
         });
     }
 
@@ -1490,7 +1500,7 @@ mod tests {
                     rows: vec![row("safe")],
                 },
             );
-            let initial = backend.state().workspaces[0].panes.len();
+            let initial = backend.state().current().workspaces[0].panes.len();
             for (output_epoch, line) in [(8, "safe"), (9, "changed")] {
                 backend
                     .dispatch(crate::Msg::SidebarCommandRowActivate {
@@ -1501,7 +1511,7 @@ mod tests {
                     })
                     .expect("stale row click");
             }
-            assert_eq!(backend.state().workspaces[0].panes.len(), initial);
+            assert_eq!(backend.state().current().workspaces[0].panes.len(), initial);
             backend
                 .dispatch(crate::Msg::SidebarCommandRowActivate {
                     config_epoch: 2,
@@ -1510,7 +1520,10 @@ mod tests {
                     line: "safe".to_string(),
                 })
                 .expect("current row click");
-            assert_eq!(backend.state().workspaces[0].panes.len(), initial + 1);
+            assert_eq!(
+                backend.state().current().workspaces[0].panes.len(),
+                initial + 1
+            );
         });
     }
 

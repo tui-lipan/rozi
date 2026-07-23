@@ -126,7 +126,7 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     };
     let display_number = ctx
         .state
-        .workspaces
+        .current().workspaces
         .iter()
         .find_map(|workspace| workspace.pane_display_number(rename.target))
         .unwrap_or(rename.target as usize);

@@ -58,6 +58,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     ctx.state.prune_replay_inputs_to_pending_spawns();
     for pane in ctx
         .state
+        .current_mut()
         .workspaces
         .iter_mut()
         .flat_map(|workspace| workspace.panes.iter_mut())
@@ -577,7 +578,7 @@ pub(super) fn output(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    let focused = ctx.state.focused_pane;
+    let focused = ctx.state.current().focused_pane;
     let bell_notifications = ctx.state.config.notifications.bell;
     // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
@@ -858,7 +859,7 @@ pub(super) fn pane_runtime_changed(
         maybe_notify_pane_status(
             &ctx.state.config,
             ctx.state.is_controller(),
-            ctx.state.focused_pane == Some(pane_id),
+            ctx.state.current().focused_pane == Some(pane_id),
             pane_id,
             &title,
             current.as_ref(),
@@ -1253,7 +1254,7 @@ mod tests {
             .spawn(|| {
                 let mut backend = TestBackend::new(crate::HyprmuxApp::default());
                 let epoch = backend.state().runtime_epoch;
-                let pane = &mut backend.state_mut().workspaces[0].panes[0];
+                let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
                 pane.pty_generation = 7;
                 pane.terminal.bind_session(pane.id, 7);
                 let events = backend.state().event_hub.subscribe(Some(HashSet::from([
@@ -1290,7 +1291,7 @@ mod tests {
                 assert_eq!(event["data"]["reason"], "needs approval");
                 assert_eq!(event["data"]["previous_status"], "");
                 assert_eq!(
-                    backend.state().workspaces[0].panes[0]
+                    backend.state().current().workspaces[0].panes[0]
                         .terminal
                         .detected_agent
                         .as_ref()
@@ -1321,13 +1322,13 @@ mod tests {
                     })
                     .expect("dispatch stale status");
                 assert_eq!(
-                    backend.state().workspaces[0].panes[0]
+                    backend.state().current().workspaces[0].panes[0]
                         .terminal
                         .reported_status,
                     Some(status)
                 );
                 assert!(
-                    backend.state().workspaces[0].panes[0]
+                    backend.state().current().workspaces[0].panes[0]
                         .terminal
                         .detected_agent
                         .is_some()

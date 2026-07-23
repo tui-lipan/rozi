@@ -116,7 +116,7 @@ pub fn hint_labels(n: usize) -> Vec<String> {
 }
 
 pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(target) = ctx.state.focused_pane else {
+    let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     let Some(pane) = find_pane(&ctx.state, target) else {

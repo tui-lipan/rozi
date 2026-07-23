@@ -128,6 +128,7 @@ fn is_cwd_echo(title: &str, cwd: Option<&str>) -> bool {
 
 pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
     let mut rows = state
+        .current()
         .workspaces
         .iter()
         .enumerate()
@@ -482,7 +483,7 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
     };
     let duration = row_duration(&row).map(|(text, _)| text);
     let mut content = Row::new(row.title.clone())
-        .active(ctx.state.focused_pane == Some(row.pane_id))
+        .active(ctx.state.current().focused_pane == Some(row.pane_id))
         .glyph(status_icon)
         .title_style(super::super::fg_only(&ctx.state.theme.primary))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
@@ -552,12 +553,12 @@ mod tests {
     #[test]
     fn rows_sort_by_status_then_workspace_and_pane_order() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes = vec![
+        state.current_mut().workspaces[0].panes = vec![
             pane(1, Some("idle"), false),
             pane(2, Some("Custom"), false),
             pane(3, Some("BLOCKED"), false),
         ];
-        state.workspaces[1].panes = vec![
+        state.current_mut().workspaces[1].panes = vec![
             pane(4, Some(" working "), false),
             pane(5, Some("done"), false),
             pane(6, None, false),
@@ -580,7 +581,7 @@ mod tests {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         let mut finished = pane(2, Some("idle"), false);
         finished.terminal.finished_unseen = true;
-        state.workspaces[0].panes = vec![pane(1, Some("idle"), false), finished];
+        state.current_mut().workspaces[0].panes = vec![pane(1, Some("idle"), false), finished];
 
         assert_eq!(
             agent_rows(&state)
@@ -625,7 +626,9 @@ mod tests {
     fn rows_use_server_detection_and_exclude_non_agents() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         assert!(agent_rows(&state).is_empty());
-        state.workspaces[0].panes[0].terminal.detected_agent = Some(DetectedAgent {
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .detected_agent = Some(DetectedAgent {
             kind: AgentKind::OpenCode,
             state: DetectedAgentState::Working,
         });
@@ -637,7 +640,7 @@ mod tests {
     #[test]
     fn groups_sort_alphabetically_with_unknown_last_and_keep_row_status_order() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes = vec![
+        state.current_mut().workspaces[0].panes = vec![
             pane_in(1, Some("idle"), false, Some("/home/x/zebra")),
             pane_in(2, Some("blocked"), false, Some("/home/x/api")),
             pane_in(3, Some("working"), false, None),
@@ -669,7 +672,7 @@ mod tests {
     #[test]
     fn duplicate_project_basenames_gain_a_parent_segment() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].panes = vec![
+        state.current_mut().workspaces[0].panes = vec![
             pane_in(1, Some("idle"), false, Some("/home/x/work/api")),
             pane_in(2, Some("idle"), false, Some("/home/x/oss/api")),
             pane_in(3, Some("idle"), false, Some("/home/x/solo")),
@@ -853,7 +856,7 @@ mod tests {
     #[test]
     fn reported_status_overrides_detected_state() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        let pane = &mut state.workspaces[0].panes[0];
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.detected_agent = Some(DetectedAgent {
             kind: AgentKind::Claude,
             state: DetectedAgentState::Working,

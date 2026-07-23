@@ -55,7 +55,7 @@ fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
 /// `super::tiling::reorder_focused_in_direction` can fall through to the tiled reorder when it was
 /// not.
 pub(super) fn move_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return false;
     };
     let bounds = ctx
@@ -90,7 +90,7 @@ pub(super) fn move_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direc
 /// its top-left corner - dragging the top-left instead would walk the pane across the workspace as
 /// it resized. Returns whether the focus was floating at all.
 pub(super) fn resize_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return false;
     };
     let bounds = ctx
@@ -266,8 +266,8 @@ pub(crate) fn begin_resize(
     ctx.state.animation = GeometryAnimation::None;
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
-    let workspace = ctx.state.active_workspace;
-    ensure_tile_tree(&mut ctx.state.workspaces[workspace]);
+    let workspace = ctx.state.current().active_workspace;
+    ensure_tile_tree(&mut ctx.state.current_mut().workspaces[workspace]);
     let start_floating_rect = active_pane_mut(&mut ctx.state, id)
         .filter(|pane| pane.floating)
         .map(|pane| pane.floating_rect);
@@ -277,8 +277,10 @@ pub(crate) fn begin_resize(
         workspace,
         start_x: x,
         start_y: y,
-        start_tile_tree: ctx.state.workspaces[workspace].tile_tree.clone(),
-        start_split_ratios: ctx.state.workspaces[workspace].split_ratios.clone(),
+        start_tile_tree: ctx.state.current().workspaces[workspace].tile_tree.clone(),
+        start_split_ratios: ctx.state.current().workspaces[workspace]
+            .split_ratios
+            .clone(),
         start_floating_rect,
     });
     Update::full()
@@ -308,10 +310,14 @@ pub(crate) fn resize_pane(
     };
     ctx.state.animation = GeometryAnimation::None;
     let corner = session.corner;
-    let workspace = &mut ctx.state.workspaces[session.workspace];
-    workspace.tile_tree = session.start_tile_tree.clone();
-    workspace.split_ratios = session.start_split_ratios.clone();
-    if let Some(rect) = session.start_floating_rect
+    let ws_index = session.workspace;
+    let start_tile_tree = session.start_tile_tree.clone();
+    let start_split_ratios = session.start_split_ratios.clone();
+    let start_floating_rect = session.start_floating_rect;
+    let workspace = &mut ctx.state.current_mut().workspaces[ws_index];
+    workspace.tile_tree = start_tile_tree;
+    workspace.split_ratios = start_split_ratios;
+    if let Some(rect) = start_floating_rect
         && let Some(pane) = active_pane_mut(&mut ctx.state, id)
     {
         pane.floating_rect = rect;
@@ -361,13 +367,13 @@ fn resize_pane_state(
         ResizeCorner::LowerLeft | ResizeCorner::LowerRight => dy,
     };
 
-    let layout_kind = state.workspaces[state.active_workspace].layout_kind;
+    let layout_kind = state.current().workspaces[state.current().active_workspace].layout_kind;
     if layout_kind == LayoutKind::Master {
         let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
         let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
         let focused_rect = {
             let placements = workspace_target_rects(
-                &state.workspaces[state.active_workspace],
+                &state.current().workspaces[state.current().active_workspace],
                 bounds,
                 state.workspace_top_gap(),
                 state.tile_gap(),
@@ -380,7 +386,7 @@ fn resize_pane_state(
             return;
         }
         resize_master_split_by_pixels(
-            &mut state.workspaces[state.active_workspace],
+            state.active_workspace_mut(),
             id,
             f32::from(effective_dx),
             master_available_width(tile_bounds),
@@ -393,9 +399,11 @@ fn resize_pane_state(
     }
 
     let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
-    ensure_tile_tree(&mut state.workspaces[state.active_workspace]);
-    let Some(tree) = layout::effective_tile_tree(&state.workspaces[state.active_workspace], None)
-    else {
+    ensure_tile_tree(state.active_workspace_mut());
+    let Some(tree) = layout::effective_tile_tree(
+        &state.current().workspaces[state.current().active_workspace],
+        None,
+    ) else {
         return;
     };
 
@@ -423,7 +431,7 @@ fn resize_pane_state(
             split_available_for_edge(&tree, tile_bounds, TileGap::DEFAULT, id, axis, edge)
         {
             resize_tiled_split_for_edge(
-                &mut state.workspaces[state.active_workspace],
+                state.active_workspace_mut(),
                 id,
                 axis,
                 edge,
@@ -462,7 +470,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
         state.content_top_offset(),
     );
     let target = {
-        let workspace = &state.workspaces[state.active_workspace];
+        let workspace = &state.current().workspaces[state.current().active_workspace];
         let placements =
             workspace_target_rects_excluding(workspace, bounds, Some(id), top_gap, tile_gap);
         let tiled_ids: Vec<PaneId> = workspace
@@ -480,7 +488,7 @@ fn drop_tiled_pane_at(state: &mut State, id: PaneId, x: u16, y: u16, viewport: R
     };
 
     let (axis, moving_first) = layout::drop_split_for_target(target_rect, drop_point);
-    let workspace = &mut state.workspaces[state.active_workspace];
+    let workspace = state.active_workspace_mut();
     move_tiled_window_around_target(workspace, id, target_id, axis, moving_first);
 }
 
@@ -505,14 +513,14 @@ mod tests {
         });
         {
             let state = backend.state_mut();
-            let workspace = &mut state.workspaces[state.active_workspace];
+            let workspace = state.active_workspace_mut();
             workspace.panes.clear();
             let mut pane = Pane::new(1, 100, rect);
             pane.floating = true;
             pane.opening = false;
             workspace.panes.push(pane);
             workspace.focused_pane = Some(1);
-            state.focused_pane = Some(1);
+            state.current_mut().focused_pane = Some(1);
         }
         backend.render();
         backend
@@ -520,7 +528,7 @@ mod tests {
 
     fn floating_rect(backend: &mut TestBackend<HyprmuxApp>) -> FloatRect {
         let state = backend.state_mut();
-        state.workspaces[state.active_workspace].panes[0].floating_rect
+        state.current().workspaces[state.current().active_workspace].panes[0].floating_rect
     }
 
     #[test]
@@ -662,12 +670,12 @@ mod tests {
                     w: 100.0,
                     h: 30.0,
                 };
-                let workspace = &mut state.workspaces[state.active_workspace];
+                let workspace = state.active_workspace_mut();
                 workspace.panes.clear();
                 workspace.panes.push(Pane::new(1, 100, bounds));
                 workspace.panes.push(Pane::new(2, 100, bounds));
                 workspace.tile_tree = Some(split.clone());
-                state.focused_pane = Some(1);
+                state.current_mut().focused_pane = Some(1);
             }
             backend.render();
 
@@ -690,7 +698,7 @@ mod tests {
 
             let state = backend.state_mut();
             assert_eq!(
-                state.workspaces[state.active_workspace].tile_tree,
+                state.current().workspaces[state.current().active_workspace].tile_tree,
                 Some(split),
                 "a follower's mouse resize must not mutate the layout"
             );

@@ -2,18 +2,26 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::{
-    PendingPaneSpawn, PendingSessionAttach, SharedSessionState, is_ephemeral_session_name,
+    PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT, Workspace,
+    is_ephemeral_session_name,
 };
-use crate::state::PaneId;
 
-/// The client's connection to one session: the session client handle, its identity (name, remote
-/// host), the shared-layout lease, and the spawn/replay buffers scoped to that session.
+/// The client's connection to one session together with that session's window-manager state: the
+/// session client handle and identity (name, remote host), the shared-layout lease, the
+/// spawn/replay buffers, and the workspaces/focus/pane-id space scoped to that session.
 ///
 /// Today `State` holds exactly one `Attachment` (see [`super::State::current`]); a session switch
 /// still replaces the whole `State`. This type exists so that per-session state lives in one place
 /// ahead of the multi-attachment work, where `State` will hold a collection of `Attachment`s with
-/// one marked current and background attachments keep their own client, screens, and buffers.
+/// one marked current and background attachments keep their own client, screens, and buffers. Each
+/// attachment carries its own `next_pane_id`/`next_pty_generation` so two live sessions can never
+/// mint colliding `(pane_id, generation)` routing keys.
 pub struct Attachment {
+    pub workspaces: Vec<Workspace>,
+    pub active_workspace: usize,
+    pub focused_pane: Option<PaneId>,
+    pub next_pane_id: PaneId,
+    pub next_pty_generation: u64,
     pub session_client: Option<crate::session::client::SessionClient>,
     pub session_name: Option<String>,
     /// When attached via `--remote`, the remote host alias/URL; `None` for local sessions.
@@ -47,9 +55,15 @@ pub struct Attachment {
 }
 
 impl Attachment {
-    /// A fresh, unattached attachment (no session client, purely local, nothing pending).
+    /// A fresh, unattached attachment (no session client, purely local, nothing pending) with an
+    /// empty set of workspaces. Callers that need an initial pane populate `workspaces` after.
     pub fn new() -> Self {
         Self {
+            workspaces: (0..WORKSPACE_COUNT).map(Workspace::new).collect(),
+            active_workspace: 0,
+            focused_pane: None,
+            next_pane_id: 1,
+            next_pty_generation: 1,
             session_client: None,
             session_name: None,
             remote_host: None,
@@ -82,6 +96,17 @@ impl Attachment {
             .collect();
         self.pending_replay_inputs
             .retain(|key, _| queued.contains(key));
+    }
+
+    /// The active workspace. A single-borrow accessor so callers avoid the
+    /// `workspaces[active_workspace]` double index, which would borrow the attachment twice.
+    pub fn active_workspace_ref(&self) -> &Workspace {
+        &self.workspaces[self.active_workspace]
+    }
+
+    /// Mutable [active workspace](Self::active_workspace_ref).
+    pub fn active_workspace_mut(&mut self) -> &mut Workspace {
+        &mut self.workspaces[self.active_workspace]
     }
 
     /// Whether the currently attached session is an auto-managed ephemeral session.

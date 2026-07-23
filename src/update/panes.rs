@@ -202,7 +202,7 @@ pub(super) fn activate_pane(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    let focused = ctx.state.focused_pane == Some(id)
+    let focused = ctx.state.current().focused_pane == Some(id)
         || (id == crate::state::POPUP_PANE_ID && ctx.state.popup.is_some());
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if pane.pty_generation != generation {
@@ -280,8 +280,8 @@ pub(super) fn control_request(
 }
 
 fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
-    let id = state.focused_pane?;
-    state.workspaces[state.active_workspace]
+    let id = state.current().focused_pane?;
+    state.current().workspaces[state.current().active_workspace]
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)

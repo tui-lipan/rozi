@@ -485,13 +485,14 @@ fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
         }
         WorkbarSegment::Layout => Some(format!(
             " {} ",
-            ctx.state.workspaces[ctx.state.active_workspace]
+            ctx.state.current().workspaces[ctx.state.current().active_workspace]
                 .layout_kind
                 .label()
         )),
         WorkbarSegment::Activity => {
             let count = ctx
                 .state
+                .current()
                 .workspaces
                 .iter()
                 .flat_map(|ws| ws.panes.iter())
@@ -538,12 +539,12 @@ fn left_segment_element(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option
 
 fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
     let state = &ctx.state;
-    let active = &state.workspaces[state.active_workspace];
+    let active = &state.current().workspaces[state.current().active_workspace];
     literal
         .replace("{host}", &workbar_hostname())
         .replace(
             "{workspace}",
-            &workspace_placeholder_label(active.name.as_deref(), state.active_workspace),
+            &workspace_placeholder_label(active.name.as_deref(), state.current().active_workspace),
         )
         .replace("{layout}", active.layout_kind.label())
         .replace("{session}", &attached_session_name(ctx).unwrap_or_default())
@@ -579,13 +580,17 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
 
     let tabs: Vec<Tab> = (0..shown)
         .map(|idx| {
-            let count = state.workspaces[idx].visible_count();
-            let urgent = state.workspaces[idx]
+            let count = state.current().workspaces[idx].visible_count();
+            let urgent = state.current().workspaces[idx]
                 .panes
                 .iter()
                 .any(|pane| !pane.closing && pane.activity.bell);
-            let label =
-                workspace_tab_label(state.workspaces[idx].name.as_deref(), idx, count, urgent);
+            let label = workspace_tab_label(
+                state.current().workspaces[idx].name.as_deref(),
+                idx,
+                count,
+                urgent,
+            );
             Tab::new(label)
         })
         .collect();
@@ -602,7 +607,12 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
 
     Tabs::new()
         .tabs(tabs)
-        .active(state.active_workspace.min(shown.saturating_sub(1)))
+        .active(
+            state
+                .current()
+                .active_workspace
+                .min(shown.saturating_sub(1)),
+        )
         .focusable(false)
         .width(Length::Flex(1))
         .height(Length::Px(1))
@@ -651,6 +661,7 @@ fn workspace_tab_label(
 /// workspace and the highest one that currently holds panes.
 fn workspace_tab_count(state: &crate::state::State) -> usize {
     let occupied = state
+        .current()
         .workspaces
         .iter()
         .enumerate()
@@ -659,9 +670,9 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
         .max()
         .unwrap_or(0);
     occupied
-        .max(state.active_workspace + 1)
+        .max(state.current().active_workspace + 1)
         .max(5)
-        .min(state.workspaces.len())
+        .min(state.current().workspaces.len())
 }
 
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {

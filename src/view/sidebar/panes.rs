@@ -5,7 +5,7 @@ use crate::HyprmuxApp;
 
 pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
-    for (workspace_index, workspace) in ctx.state.workspaces.iter().enumerate() {
+    for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
         let panes: Vec<_> = workspace
             .panes
             .iter()
@@ -27,7 +27,7 @@ pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                 .as_deref()
                 .unwrap_or("shell");
             let row = Row::new(pane_identity(pane))
-                .active(ctx.state.focused_pane == Some(id))
+                .active(ctx.state.current().focused_pane == Some(id))
                 .title_style(super::super::fg_only(&ctx.state.theme.primary));
             let row = match pane_location(pane) {
                 Some(location) => row

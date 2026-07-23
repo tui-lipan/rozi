@@ -9,18 +9,18 @@ use crate::tiling::append_tiled_window;
 /// as pure additions. Used only on attach to a session that already carries an authoritative
 /// layout (the client's throwaway local panes are discarded in favor of the server's).
 pub(super) fn reset_state_for_shared_seed(state: &mut State) {
-    for workspace in &mut state.workspaces {
+    for workspace in &mut state.current_mut().workspaces {
         workspace.panes.clear();
         workspace.tile_tree = None;
         workspace.focused_pane = None;
     }
-    state.focused_pane = None;
-    state.active_workspace = 0;
-    state.next_pane_id = 1;
+    state.current_mut().focused_pane = None;
+    state.current_mut().active_workspace = 0;
+    state.current_mut().next_pane_id = 1;
     // The generation counter restarts, so replay inputs queued for the previous attachment's
     // panes must not survive into keys a new pane could mint.
     state.prune_replay_inputs_to_pending_spawns();
-    state.next_pty_generation = 1;
+    state.current_mut().next_pty_generation = 1;
 }
 
 /// After the reconciler has created panes from the shared layout, bind each one's server backend at
@@ -55,12 +55,19 @@ pub(super) fn bind_attached_pane_backends(
         // The popup slot's reserved id (u32::MAX) must never feed the allocator: bumping past it
         // would pin next_pane_id at MAX and collide every later spawn with the popup slot.
         if meta.pane_id != crate::state::POPUP_PANE_ID {
-            ctx.state.next_pane_id = ctx.state.next_pane_id.max(meta.pane_id.saturating_add(1));
+            let next = ctx
+                .state
+                .current()
+                .next_pane_id
+                .max(meta.pane_id.saturating_add(1));
+            ctx.state.current_mut().next_pane_id = next;
         }
-        ctx.state.next_pty_generation = ctx
+        let next = ctx
             .state
+            .current()
             .next_pty_generation
             .max(meta.generation.saturating_add(1));
+        ctx.state.current_mut().next_pty_generation = next;
     }
 }
 
@@ -71,12 +78,12 @@ pub(super) fn apply_attached_panes(
     ctx: &mut Context<HyprmuxApp>,
     panes: Vec<crate::session::protocol::PaneMeta>,
 ) {
-    for workspace in &mut ctx.state.workspaces {
+    for workspace in &mut ctx.state.current_mut().workspaces {
         workspace.panes.clear();
         workspace.tile_tree = None;
         workspace.focused_pane = None;
     }
-    ctx.state.focused_pane = None;
+    ctx.state.current_mut().focused_pane = None;
 
     for attached in panes {
         if find_pane_mut(&mut ctx.state, attached.pane_id).is_none() {
@@ -87,8 +94,8 @@ pub(super) fn apply_attached_panes(
                 h: 24.0,
             };
             let pane = crate::state::Pane::new(attached.pane_id, ctx.state.config.scrollback, rect);
-            ctx.state.workspaces[0].panes.push(pane);
-            append_tiled_window(&mut ctx.state.workspaces[0], attached.pane_id);
+            ctx.state.current_mut().workspaces[0].panes.push(pane);
+            append_tiled_window(&mut ctx.state.current_mut().workspaces[0], attached.pane_id);
         }
         if let Some(pane) = find_pane_mut(&mut ctx.state, attached.pane_id) {
             pane.opening = false;
@@ -112,20 +119,27 @@ pub(super) fn apply_attached_panes(
             pane.terminal.status = ManagedTerminalStatus::Ready;
         }
         if attached.pane_id != crate::state::POPUP_PANE_ID {
-            ctx.state.next_pane_id = ctx
+            let next = ctx
                 .state
+                .current()
                 .next_pane_id
                 .max(attached.pane_id.saturating_add(1));
+            ctx.state.current_mut().next_pane_id = next;
         }
-        ctx.state.next_pty_generation = ctx
+        let next = ctx
             .state
+            .current()
             .next_pty_generation
             .max(attached.generation.saturating_add(1));
+        ctx.state.current_mut().next_pty_generation = next;
     }
 
-    if ctx.state.focused_pane.is_none() {
-        ctx.state.focused_pane = ctx.state.workspaces[0].panes.first().map(|pane| pane.id);
-        ctx.state.workspaces[0].focused_pane = ctx.state.focused_pane;
+    if ctx.state.current().focused_pane.is_none() {
+        ctx.state.current_mut().focused_pane = ctx.state.current_mut().workspaces[0]
+            .panes
+            .first()
+            .map(|pane| pane.id);
+        ctx.state.current_mut().workspaces[0].focused_pane = ctx.state.current_mut().focused_pane;
     }
 }
 
@@ -173,18 +187,22 @@ pub(crate) fn spawn_state_panes_on_session(
         (shell.as_argv(), integration_env, command_shell.as_argv())
     };
     let mut targets = Vec::new();
-    // Replay inputs are inserted after the loop: `current_mut()` borrows the whole `State`, which
-    // would conflict with the `workspaces.iter_mut()` borrow held for `pane`.
+    // The `workspaces.iter_mut()` borrow below is a whole-`State` borrow (through `current_mut()`),
+    // so the loop body cannot touch `ctx.state`: hoist the generation counter and control socket
+    // out, and defer replay inserts until after the loop.
+    let control_socket = ctx.state.control_socket_path.clone();
+    let mut next_generation = ctx.state.current().next_pty_generation;
     let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
     for pane in ctx
         .state
+        .current_mut()
         .workspaces
         .iter_mut()
         .flat_map(|workspace| workspace.panes.iter_mut())
         .filter(|pane| !pane.closing)
     {
-        let generation = ctx.state.next_pty_generation;
-        ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
+        let generation = next_generation;
+        next_generation = next_generation.saturating_add(1);
         pane.pty_generation = generation;
         pane.terminal.bind_server_backend(pane.id, generation);
         // The initial pane's launch cwd is the *local* directory hyprmux was started in
@@ -197,11 +215,7 @@ pub(crate) fn spawn_state_panes_on_session(
         let env = integration_env
             .iter()
             .cloned()
-            .chain(pane_env(
-                ctx.state.control_socket_path.as_deref(),
-                pane,
-                is_remote,
-            ))
+            .chain(pane_env(control_socket.as_deref(), pane, is_remote))
             .collect::<Vec<_>>();
         // A replay command is not sent as the spawn command: the pane starts as a plain
         // interactive shell and the command is injected as type-ahead input once the spawn
@@ -230,6 +244,7 @@ pub(crate) fn spawn_state_panes_on_session(
         );
         targets.push((pane.id, generation));
     }
+    ctx.state.current_mut().next_pty_generation = next_generation;
     for (key, command) in replay_inserts {
         ctx.state
             .current_mut()

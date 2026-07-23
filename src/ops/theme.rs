@@ -231,13 +231,18 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
 }
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
-    let theme = &state.theme;
+    // Bound to a local clone rather than `&state.theme`: the loop below mutably borrows the whole
+    // `State` through `current_mut()`, so a live `&state.theme` borrow would conflict.
+    let theme_owned = state.theme.clone();
+    let theme = &theme_owned;
     let client = state.current().session_client.clone();
     let highlight_focused_background = state.config.pane.highlight_focused_background;
     let mut changed = false;
-    for (index, workspace) in state.workspaces.iter_mut().enumerate() {
-        let focused_pane = if index == state.active_workspace {
-            state.focused_pane
+    let active_index = state.current().active_workspace;
+    let active_focus = state.current().focused_pane;
+    for (index, workspace) in state.current_mut().workspaces.iter_mut().enumerate() {
+        let focused_pane = if index == active_index {
+            active_focus
         } else {
             workspace.focused_pane
         };
@@ -400,7 +405,7 @@ mod tests {
     use crate::state::{Pane, PaneId};
 
     fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
-        state.workspaces[0]
+        state.current().workspaces[0]
             .panes
             .iter()
             .find(|pane| pane.id == id)
@@ -425,9 +430,10 @@ mod tests {
     fn terminal_palette_background_respects_focused_background_config() {
         let theme = ThemePreset::OneDark.theme();
         let mut state = State::new(HyprmuxConfig::default(), theme.clone());
-        state.workspaces[0].panes.push(Pane::new(
+        let scrollback = state.config.scrollback;
+        state.current_mut().workspaces[0].panes.push(Pane::new(
             2,
-            state.config.scrollback,
+            scrollback,
             FloatRect {
                 x: 0.0,
                 y: 0.0,
@@ -436,8 +442,8 @@ mod tests {
             },
         ));
 
-        state.focused_pane = Some(1);
-        state.workspaces[0].focused_pane = Some(1);
+        state.current_mut().focused_pane = Some(1);
+        state.current_mut().workspaces[0].focused_pane = Some(1);
         assert!(apply_terminal_palette_to_state(&mut state));
         assert_eq!(
             pane_palette_background(&state, 1),
@@ -459,8 +465,8 @@ mod tests {
             Some(theme.surface.backdrop)
         );
 
-        state.focused_pane = Some(2);
-        state.workspaces[0].focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
+        state.current_mut().workspaces[0].focused_pane = Some(2);
         assert!(apply_terminal_palette_to_state(&mut state));
         assert_eq!(
             pane_palette_background(&state, 1),
@@ -535,8 +541,8 @@ mod tests {
         let theme = concretize_backdrop(theme, Some(host_bg));
 
         let mut state = State::new(HyprmuxConfig::default(), theme.clone());
-        state.focused_pane = Some(1);
-        state.workspaces[0].focused_pane = Some(1);
+        state.current_mut().focused_pane = Some(1);
+        state.current_mut().workspaces[0].focused_pane = Some(1);
 
         assert!(apply_terminal_palette_to_state(&mut state));
         assert_eq!(pane_palette_background(&state, 1), Some(host_bg));

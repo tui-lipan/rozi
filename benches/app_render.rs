@@ -47,8 +47,8 @@ fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<HyprmuxApp> {
     backend.set_viewport(VIEWPORT);
     {
         let state = backend.state_mut();
-        state.workspaces[0].panes.clear();
-        state.workspaces[0].tile_tree = None;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
         let rect = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -62,15 +62,15 @@ fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<HyprmuxApp> {
             pane.opening = false;
             pane.terminal_active = true;
             pane.terminal.process_server_output(corpus);
-            state.workspaces[0].panes.push(pane);
+            state.current_mut().workspaces[0].panes.push(pane);
             ids.push(id);
         }
-        let start_axis = state.workspaces[0].start_axis;
-        let ratios = state.workspaces[0].split_ratios.clone();
-        state.workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
-        state.next_pane_id = panes as PaneId + 10;
-        state.focused_pane = Some(10);
-        state.workspaces[0].focused_pane = Some(10);
+        let start_axis = state.current().workspaces[0].start_axis;
+        let ratios = state.current().workspaces[0].split_ratios.clone();
+        state.current_mut().workspaces[0].tile_tree = build_dwindle_tree(&ids, start_axis, &ratios);
+        state.current_mut().next_pane_id = panes as PaneId + 10;
+        state.current_mut().focused_pane = Some(10);
+        state.current_mut().workspaces[0].focused_pane = Some(10);
     }
     backend.render();
     backend
@@ -151,12 +151,12 @@ fn sidebar_render(c: &mut Criterion) {
                 state.config.sidebar.tabs = vec![tab];
                 // The file tree roots at the focused pane's directory; point it at this repo so the
                 // benchmark reads a real listing rather than an empty one.
-                state.workspaces[0].panes[0].terminal.cwd =
+                state.current_mut().workspaces[0].panes[0].terminal.cwd =
                     Some(env!("CARGO_MANIFEST_DIR").to_string());
                 state.sidebar.tree_cwd = Some(env!("CARGO_MANIFEST_DIR").to_string());
                 state.sidebar.tree_repo = Some(env!("CARGO_MANIFEST_DIR").to_string());
                 // Agent rows only exist for panes the server detected an agent in.
-                for pane in &mut state.workspaces[0].panes {
+                for pane in &mut state.current_mut().workspaces[0].panes {
                     pane.terminal.detected_agent =
                         Some(hyprmux::session::protocol::DetectedAgent {
                             kind: hyprmux::session::protocol::AgentKind::Claude,
@@ -196,10 +196,10 @@ fn message_overhead(c: &mut Criterion) {
                 let state = backend.state_mut();
                 if cwd == "deep" {
                     // A realistic reported directory: the sync compares this on every message.
-                    state.workspaces[0].panes[0].terminal.cwd =
+                    state.current_mut().workspaces[0].panes[0].terminal.cwd =
                         Some("/home/user/work/projects/hyprmux/src/view/sidebar".to_string());
                 }
-                let pane = &state.workspaces[0].panes[0];
+                let pane = &state.current().workspaces[0].panes[0];
                 (pane.id, pane.pty_generation)
             };
             let epoch = backend.state().runtime_epoch;

@@ -43,7 +43,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .last_content_viewport
         .replace(Some(content_viewport))
         .is_some_and(|previous| previous != content_viewport);
-    let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
     // A follower renders the controller's canonical pane canvas centered in its own viewport
     // (letterboxed); everyone else uses the full local canvas. Every downstream placement, float,
     // and empty-state rect derives from `bounds`, so centering here centers the whole workspace.
@@ -59,7 +59,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .map(|session| session.id);
     let placements =
         workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap, tile_gap);
-    let focused_pane = workspace.focused_pane.or(ctx.state.focused_pane);
+    let focused_pane = workspace.focused_pane.or(ctx.state.current().focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
     let scratch_progress = crate::scratchpad::scratch_progress(app, ctx);

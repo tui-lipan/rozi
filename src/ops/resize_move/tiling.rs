@@ -20,7 +20,7 @@ use super::float::{
 
 pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     finish_pointer_layout_interaction(ctx);
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return;
     };
     let bounds = ctx
@@ -29,7 +29,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let current_rect = {
-        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
         placement_for(
             &workspace_target_rects(workspace, bounds, top_gap, tile_gap),
             id,
@@ -58,7 +58,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     }
 
     if insert_tiled_at.is_some() || remove_from_tiling {
-        let workspace = &mut ctx.state.workspaces[ctx.state.active_workspace];
+        let workspace = ctx.state.active_workspace_mut();
         if let Some(point) = insert_tiled_at {
             if insert_tiled_pane_at_point(workspace, id, point, bounds, top_gap, tile_gap).is_none()
             {
@@ -73,7 +73,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
 
 pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
     finish_pointer_layout_interaction(ctx);
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     let bounds = ctx
@@ -82,7 +82,7 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
     let placements = {
-        let workspace = &ctx.state.workspaces[ctx.state.active_workspace];
+        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
 
@@ -103,10 +103,10 @@ pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn toggle_focused_split_axis(state: &mut State) {
-    let Some(focused) = state.focused_pane else {
+    let Some(focused) = state.current().focused_pane else {
         return;
     };
-    let workspace = &mut state.workspaces[state.active_workspace];
+    let workspace = state.active_workspace_mut();
     // Only dwindle renders the stored split axes: master/grid/monocle place panes by
     // formula, so flipping would change nothing on screen while still scrambling the tree
     // dwindle falls back to.
@@ -131,10 +131,10 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
 }
 
 pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
-    let Some(focused) = state.focused_pane else {
+    let Some(focused) = state.current().focused_pane else {
         return;
     };
-    let workspace = &mut state.workspaces[state.active_workspace];
+    let workspace = state.active_workspace_mut();
     if workspace.layout_kind == LayoutKind::Master {
         if adjust_master_split_for_focused(workspace, focused, delta) {
             state.animation = GeometryAnimation::None;
@@ -155,9 +155,9 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
 
 pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
     finish_pointer_layout_interaction(ctx);
-    let workspace_index = ctx.state.active_workspace;
+    let workspace_index = ctx.state.current().active_workspace;
     let layout_label = {
-        let workspace = &mut ctx.state.workspaces[workspace_index];
+        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
         workspace.layout_kind = workspace.layout_kind.toggled();
         workspace.last_move_swap = None;
         workspace.last_directional_focus = None;
@@ -224,15 +224,15 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
-    let workspace_index = ctx.state.active_workspace;
-    let Some(focused) = ctx.state.focused_pane else {
+    let workspace_index = ctx.state.current().active_workspace;
+    let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
         return;
     }
 
-    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     let tiled_ids = workspace.active_tiled_ids_by_pane_order();
     if !tiled_ids.contains(&focused) {
         return;
@@ -254,7 +254,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
     let moving_first = matches!(direction, Direction::Left | Direction::Up);
     if move_tiled_window_around_target(workspace, focused, target, axis, moving_first) {
         workspace.focused_pane = Some(focused);
-        ctx.state.focused_pane = Some(focused);
+        ctx.state.current_mut().focused_pane = Some(focused);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -270,18 +270,18 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
-    let workspace_index = ctx.state.active_workspace;
-    let Some(focused) = ctx.state.focused_pane else {
+    let workspace_index = ctx.state.current().active_workspace;
+    let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
     if active_pane_is_fullscreen(&ctx.state, focused) {
         return;
     }
 
-    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     if swap_tiled_neighbor_in_direction(workspace, bounds, top_gap, tile_gap, focused, direction) {
         workspace.focused_pane = Some(focused);
-        ctx.state.focused_pane = Some(focused);
+        ctx.state.current_mut().focused_pane = Some(focused);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -451,16 +451,18 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     let (_, workspace) = three_pane_stack_workspace();
-                    state.workspaces[state.active_workspace] = workspace;
-                    state.focused_pane = Some(1);
-                    state.workspaces[state.active_workspace].focused_pane = Some(1);
+                    *state.active_workspace_mut() = workspace;
+                    state.current_mut().focused_pane = Some(1);
+                    state.active_workspace_mut().focused_pane = Some(1);
                 }
                 backend.render();
                 backend
                     .dispatch(Msg::RunAction(action(Direction::Right)))
                     .expect("dispatch directional pane action");
                 let state = backend.state_mut();
-                state.workspaces[state.active_workspace].tile_tree.clone()
+                state.current().workspaces[state.current().active_workspace]
+                    .tile_tree
+                    .clone()
             };
 
             // Swap: 1 and 2 exchange leaves; every split and ratio is where it was.
@@ -590,15 +592,15 @@ mod tests {
             let (start_rect, start_pointer, target_pointer, original_tree) = {
                 let state = backend.state_mut();
                 let (_, workspace) = three_pane_stack_workspace();
-                state.workspaces[state.active_workspace] = workspace;
-                state.focused_pane = Some(1);
-                state.workspaces[state.active_workspace].focused_pane = Some(1);
+                *state.active_workspace_mut() = workspace;
+                state.current_mut().focused_pane = Some(1);
+                state.active_workspace_mut().focused_pane = Some(1);
 
                 let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
                 let top_gap = state.workspace_top_gap();
                 let tile_gap = state.tile_gap();
                 let top_offset = state.content_top_offset();
-                let workspace = &state.workspaces[state.active_workspace];
+                let workspace = &state.current().workspaces[state.current().active_workspace];
                 let placements = workspace_target_rects(workspace, bounds, top_gap, tile_gap);
                 let start = placement_for(&placements, 1).expect("pane 1 placement");
                 let drop_placements =
@@ -641,8 +643,8 @@ mod tests {
                 .expect("move drag");
             // Focus-on-hover may briefly select the pane under the pointer. The mode action still
             // belongs to the pane whose drag is active.
-            backend.state_mut().focused_pane = Some(3);
-            backend.state_mut().workspaces[0].focused_pane = Some(3);
+            backend.state_mut().current_mut().focused_pane = Some(3);
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(3);
             backend
                 .dispatch(Msg::RunAction(Action::ToggleFullscreen))
                 .expect("toggle fullscreen");
@@ -650,23 +652,26 @@ mod tests {
             let state = backend.state_mut();
             assert!(state.moving_pane.is_none());
             assert!(
-                state.workspaces[state.active_workspace]
+                state.current().workspaces[state.current().active_workspace]
                     .panes
                     .iter()
                     .find(|pane| pane.id == 1)
                     .is_some_and(|pane| pane.fullscreen)
             );
             assert_ne!(
-                state.workspaces[state.active_workspace].tile_tree, original_tree,
+                state.current().workspaces[state.current().active_workspace].tile_tree,
+                original_tree,
                 "the tiled pane must be dropped before fullscreen is applied"
             );
-            let dropped_tree = state.workspaces[state.active_workspace].tile_tree.clone();
+            let dropped_tree = state.current().workspaces[state.current().active_workspace]
+                .tile_tree
+                .clone();
 
             backend
                 .dispatch(Msg::MovePane(1, 5, 5, true))
                 .expect("stale drag event");
             assert_eq!(
-                backend.state_mut().workspaces[0].tile_tree,
+                backend.state_mut().current_mut().workspaces[0].tile_tree,
                 dropped_tree,
                 "stale mouse events must not resume a completed drag"
             );
@@ -686,7 +691,7 @@ mod tests {
             };
             {
                 let state = backend.state_mut();
-                let workspace = &mut state.workspaces[state.active_workspace];
+                let workspace = state.active_workspace_mut();
                 workspace.panes.clear();
                 let mut floating = Pane::new(1, 100, start_rect);
                 floating.floating = true;
@@ -696,7 +701,7 @@ mod tests {
                     .push(Pane::new(2, 100, FloatRect::default()));
                 workspace.tile_tree = Some(DwindleTree::Leaf(2));
                 workspace.focused_pane = Some(1);
-                state.focused_pane = Some(1);
+                state.current_mut().focused_pane = Some(1);
             }
             backend.render();
 
@@ -716,7 +721,7 @@ mod tests {
                 .expect("toggle tiling");
 
             let state = backend.state_mut();
-            let pane = state.workspaces[state.active_workspace]
+            let pane = state.current().workspaces[state.current().active_workspace]
                 .panes
                 .iter()
                 .find(|pane| pane.id == 1)
@@ -725,7 +730,7 @@ mod tests {
             assert!(!pane.floating);
             assert_eq!(pane.floating_rect, dragged_rect);
             assert!(
-                state.workspaces[state.active_workspace]
+                state.current().workspaces[state.current().active_workspace]
                     .tiled_ids()
                     .contains(&1)
             );

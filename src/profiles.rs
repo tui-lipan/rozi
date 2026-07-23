@@ -82,8 +82,9 @@ pub fn profile_from_state(state: &State) -> HyprmuxProfile {
     let shells = shell_basenames(&state.config);
     HyprmuxProfile {
         version: 1,
-        active_workspace: state.active_workspace,
+        active_workspace: state.current().active_workspace,
         workspaces: state
+            .current()
             .workspaces
             .iter()
             .enumerate()
@@ -199,13 +200,14 @@ pub fn restore_state_from_profile(
 
     let sidebar_visible = config.sidebar.visible;
     let sidebar = crate::state::SidebarState::new(&config.sidebar);
+    let mut attachment = crate::state::Attachment::new();
+    attachment.workspaces = workspaces;
+    attachment.active_workspace = active_workspace;
+    attachment.focused_pane = focused_pane;
+    attachment.next_pane_id = next_pane_id;
     State {
         config,
-        workspaces,
-        active_workspace,
-        focused_pane,
-        next_pane_id,
-        next_pty_generation: 1,
+        attachment,
         runtime_epoch: 0,
         command_link: None,
         mode: Mode::Normal,
@@ -253,7 +255,6 @@ pub fn restore_state_from_profile(
         popup_return_focus: None,
         control_socket_path: None,
         event_hub: crate::events::EventHub::default(),
-        attachment: crate::state::Attachment::new(),
         pending_destructive: None,
         workbar_command_output: std::collections::HashMap::new(),
         workbar_commands_running: std::collections::HashSet::new(),
@@ -291,11 +292,15 @@ pub fn replace_layout_from_profile(
             }
         }
     }
-    let restored = restore_state_from_profile(state.config.clone(), state.theme.clone(), profile);
-    state.workspaces = restored.workspaces;
-    state.active_workspace = restored.active_workspace;
-    state.focused_pane = restored.focused_pane;
-    state.next_pane_id = restored.next_pane_id.max(first_pane_id);
+    let mut restored =
+        restore_state_from_profile(state.config.clone(), state.theme.clone(), profile);
+    let restored = restored.current_mut();
+    let next_pane_id = restored.next_pane_id.max(first_pane_id);
+    let current = state.current_mut();
+    current.workspaces = std::mem::take(&mut restored.workspaces);
+    current.active_workspace = restored.active_workspace;
+    current.focused_pane = restored.focused_pane;
+    current.next_pane_id = next_pane_id;
 }
 
 fn restore_dwindle_tree(
@@ -608,13 +613,16 @@ mod tests {
     #[test]
     fn snapshot_preserves_custom_name_and_floating_rect() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        let first = state.workspaces[0].panes.first_mut().expect("initial pane");
+        let first = state.current_mut().workspaces[0]
+            .panes
+            .first_mut()
+            .expect("initial pane");
         first.set_custom_title("editor");
         first.identity.profile_name = Some("profile-editor".to_string());
         first.identity.cwd = Some("/tmp/hyprmux-profile-test".to_string());
         first.identity.command = Some("nvim src/main.rs".to_string());
         first.fullscreen = true;
-        state.workspaces[0].split_ratios[0] = 0.63;
+        state.current_mut().workspaces[0].split_ratios[0] = 0.63;
 
         let floating_rect = FloatRect {
             x: 11.0,
@@ -625,9 +633,9 @@ mod tests {
         let mut floating = Pane::new(2, state.config.scrollback, floating_rect);
         floating.floating = true;
         floating.identity.profile_name = Some("scratch".to_string());
-        state.workspaces[0].panes.push(floating);
-        state.workspaces[0].focused_pane = Some(2);
-        state.focused_pane = Some(2);
+        state.current_mut().workspaces[0].panes.push(floating);
+        state.current_mut().workspaces[0].focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
 
         let profile = profile_from_state(&state);
 
@@ -694,7 +702,7 @@ mod tests {
         };
 
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-        let workspace = &state.workspaces[0];
+        let workspace = &state.current().workspaces[0];
 
         assert_eq!(
             workspace
@@ -705,7 +713,7 @@ mod tests {
             vec![2, 3]
         );
         assert_eq!(workspace.focused_pane, Some(3));
-        assert_eq!(state.next_pane_id, 4);
+        assert_eq!(state.current().next_pane_id, 4);
         assert_eq!(
             workspace.tile_tree,
             Some(DwindleTree::Split {
@@ -732,14 +740,28 @@ mod tests {
             ..HyprmuxProfile::default()
         };
         let mut state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-        let pane_id = state.workspaces[0].panes[0].id;
+        let pane_id = state.current().workspaces[0].panes[0].id;
 
-        crate::ops::identity::rename_pane_in_workspaces(&mut state.workspaces, pane_id, "");
+        crate::ops::identity::rename_pane_in_workspaces(
+            &mut state.current_mut().workspaces,
+            pane_id,
+            "",
+        );
         let snapshot = profile_from_state(&state);
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), snapshot);
 
-        assert_eq!(restored.workspaces[0].panes[0].identity.custom_title, None);
-        assert_eq!(restored.workspaces[0].panes[0].identity.profile_name, None);
+        assert_eq!(
+            restored.current().workspaces[0].panes[0]
+                .identity
+                .custom_title,
+            None
+        );
+        assert_eq!(
+            restored.current().workspaces[0].panes[0]
+                .identity
+                .profile_name,
+            None
+        );
     }
 
     #[test]
@@ -775,7 +797,10 @@ mod tests {
 
         let expected = home.join("code/my-app").to_string_lossy().to_string();
         assert_eq!(
-            state.workspaces[0].panes[0].identity.cwd.as_deref(),
+            state.current().workspaces[0].panes[0]
+                .identity
+                .cwd
+                .as_deref(),
             Some(expected.as_str())
         );
     }
@@ -795,7 +820,7 @@ mod tests {
         );
         closing.closing = true;
         closing.identity.custom_title = Some("closing".to_string());
-        state.workspaces[0].panes.push(closing);
+        state.current_mut().workspaces[0].panes.push(closing);
 
         let profile = profile_from_state(&state);
 
@@ -885,24 +910,24 @@ mod tests {
 
         assert!(!profile.workspaces[0].synchronized);
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-        assert!(!state.workspaces[0].synchronized);
+        assert!(!state.current().workspaces[0].synchronized);
     }
 
     #[test]
     fn synchronized_workspace_round_trips_from_state() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].synchronized = true;
+        state.current_mut().workspaces[0].synchronized = true;
 
         let profile = profile_from_state(&state);
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
-        assert!(restored.workspaces[0].synchronized);
+        assert!(restored.current().workspaces[0].synchronized);
     }
 
     #[test]
     fn save_captures_local_runtime_identity_without_remote_paths_or_shells() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        let pane = &mut state.workspaces[0].panes[0];
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.identity.cwd = Some("/local/fallback".to_string());
         pane.terminal.cwd = Some("/remote/project".to_string());
         pane.terminal.cwd_host = Some("server.example".to_string());
@@ -913,7 +938,7 @@ mod tests {
         assert_eq!(saved.cwd.as_deref(), Some(Path::new("/local/fallback")));
         assert_eq!(saved.command.as_deref(), Some("nvim"));
 
-        let pane = &mut state.workspaces[0].panes[0];
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.cwd = Some("/local/project".to_string());
         pane.terminal.cwd_host = None;
         pane.terminal.foreground_program = Some("ZSH.EXE".to_string());
@@ -921,7 +946,7 @@ mod tests {
         assert_eq!(saved.cwd.as_deref(), Some(Path::new("/local/project")));
         assert_eq!(saved.command, None);
 
-        let pane = &mut state.workspaces[0].panes[0];
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.identity.command = Some("cargo test".to_string());
         pane.terminal.foreground_program = Some("bash".to_string());
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
@@ -936,14 +961,16 @@ mod tests {
         // ran during `cd`) while shell integration reports the pane idle at a prompt; capturing
         // it would replay prompt machinery as a pane command on restore.
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        let pane = &mut state.workspaces[0].panes[0];
+        let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.foreground_program = Some("__zoxide_hook".to_string());
         for phase in [
             PaneCommandPhase::Prompt,
             PaneCommandPhase::Input,
             PaneCommandPhase::Completed { exit_status: None },
         ] {
-            state.workspaces[0].panes[0].terminal.command_phase = phase;
+            state.current_mut().workspaces[0].panes[0]
+                .terminal
+                .command_phase = phase;
             let saved = &profile_from_state(&state).workspaces[0].panes[0];
             assert_eq!(
                 saved.command, None,
@@ -952,7 +979,9 @@ mod tests {
         }
 
         // A command genuinely mid-flight is worth replaying.
-        state.workspaces[0].panes[0].terminal.command_phase = PaneCommandPhase::Executing;
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .command_phase = PaneCommandPhase::Executing;
         let saved = &profile_from_state(&state).workspaces[0].panes[0];
         assert_eq!(saved.command.as_deref(), Some("__zoxide_hook"));
     }
@@ -985,7 +1014,7 @@ mod tests {
         };
 
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-        let panes = &state.workspaces[0].panes;
+        let panes = &state.current().workspaces[0].panes;
         assert_eq!(panes[0].identity.command.as_deref(), Some("n"));
         assert!(panes[0].identity.replay);
         assert_eq!(panes[1].identity.command, None);
@@ -1001,8 +1030,8 @@ mod tests {
         state.current_mut().session_name = Some("work".to_string());
         state.current_mut().session_attached = true;
         state.runtime_epoch = 9;
-        state.next_pty_generation = 42;
-        state.next_pane_id = 20;
+        state.current_mut().next_pty_generation = 42;
+        state.current_mut().next_pane_id = 20;
         let profile = HyprmuxProfile {
             version: 1,
             active_workspace: 0,
@@ -1027,15 +1056,15 @@ mod tests {
         replace_layout_from_profile(&mut state, profile, 20);
 
         assert_eq!(
-            state.workspaces[0]
+            state.current().workspaces[0]
                 .panes
                 .iter()
                 .map(|pane| pane.id)
                 .collect::<Vec<_>>(),
             vec![20, 21]
         );
-        assert_eq!(state.next_pane_id, 22);
-        assert_eq!(state.next_pty_generation, 42);
+        assert_eq!(state.current().next_pane_id, 22);
+        assert_eq!(state.current().next_pty_generation, 42);
         assert_eq!(state.runtime_epoch, 9);
         assert_eq!(state.current().session_name.as_deref(), Some("work"));
         assert!(state.current().session_attached);
@@ -1044,25 +1073,28 @@ mod tests {
     #[test]
     fn named_workspace_round_trips_from_state() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].name = Some("code".to_string());
+        state.current_mut().workspaces[0].name = Some("code".to_string());
 
         let profile = profile_from_state(&state);
         assert_eq!(profile.workspaces[0].name.as_deref(), Some("code"));
 
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-        assert_eq!(restored.workspaces[0].name.as_deref(), Some("code"));
+        assert_eq!(
+            restored.current().workspaces[0].name.as_deref(),
+            Some("code")
+        );
     }
 
     #[test]
     fn blank_workspace_name_restores_as_unnamed() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.workspaces[0].name = Some("code".to_string());
+        state.current_mut().workspaces[0].name = Some("code".to_string());
         let mut profile = profile_from_state(&state);
         profile.workspaces[0].name = Some("   ".to_string());
 
         let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
-        assert_eq!(restored.workspaces[0].name, None);
+        assert_eq!(restored.current().workspaces[0].name, None);
     }
 
     #[test]
@@ -1165,52 +1197,61 @@ mod tests {
 
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
-        assert_eq!(state.active_workspace, 1);
-        assert_eq!(state.workspaces[1].layout_kind, LayoutKind::Master);
-        assert_eq!(state.focused_pane, Some(3));
-        assert_eq!(state.workspaces[1].focused_pane, Some(3));
-        assert_eq!(state.workspaces[1].split_ratios[0], 0.67);
+        assert_eq!(state.current().active_workspace, 1);
         assert_eq!(
-            state.workspaces[1].panes[0]
+            state.current().workspaces[1].layout_kind,
+            LayoutKind::Master
+        );
+        assert_eq!(state.current().focused_pane, Some(3));
+        assert_eq!(state.current().workspaces[1].focused_pane, Some(3));
+        assert_eq!(state.current().workspaces[1].split_ratios[0], 0.67);
+        assert_eq!(
+            state.current().workspaces[1].panes[0]
                 .identity
                 .custom_title
                 .as_deref(),
             Some("editor")
         );
         assert_eq!(
-            state.workspaces[1].panes[0]
+            state.current().workspaces[1].panes[0]
                 .identity
                 .profile_name
                 .as_deref(),
             Some("editor")
         );
-        assert!(state.workspaces[1].panes[0].fullscreen);
+        assert!(state.current().workspaces[1].panes[0].fullscreen);
         assert_eq!(
-            state.workspaces[1].panes[0].identity.cwd.as_deref(),
+            state.current().workspaces[1].panes[0]
+                .identity
+                .cwd
+                .as_deref(),
             Some("/tmp/hyprmux-editor")
         );
         assert_eq!(
-            state.workspaces[1].panes[0].identity.command.as_deref(),
+            state.current().workspaces[1].panes[0]
+                .identity
+                .command
+                .as_deref(),
             Some("nvim src/main.rs")
         );
         assert_eq!(
-            state.workspaces[1].panes[1]
+            state.current().workspaces[1].panes[1]
                 .identity
                 .custom_title
                 .as_deref(),
             Some("scratch")
         );
         assert_eq!(
-            state.workspaces[1].panes[1]
+            state.current().workspaces[1].panes[1]
                 .identity
                 .profile_name
                 .as_deref(),
             Some("scratch")
         );
-        assert!(state.workspaces[1].panes[1].floating);
-        assert!(!state.workspaces[1].panes[1].fullscreen);
-        assert!(state.workspaces[1].tile_tree.is_some());
-        assert_eq!(state.next_pane_id, 4);
+        assert!(state.current().workspaces[1].panes[1].floating);
+        assert!(!state.current().workspaces[1].panes[1].fullscreen);
+        assert!(state.current().workspaces[1].tile_tree.is_some());
+        assert_eq!(state.current().next_pane_id, 4);
     }
 
     #[test]
@@ -1231,8 +1272,8 @@ mod tests {
 
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
 
-        assert_eq!(state.workspaces[0].panes.len(), 1);
-        assert_eq!(state.focused_pane, Some(1));
-        assert_eq!(state.next_pane_id, 2);
+        assert_eq!(state.current().workspaces[0].panes.len(), 1);
+        assert_eq!(state.current().focused_pane, Some(1));
+        assert_eq!(state.current().next_pane_id, 2);
     }
 }

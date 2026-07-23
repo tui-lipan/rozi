@@ -142,6 +142,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
 /// A workspace's custom name, if it has a usable one.
 fn workspace_name(state: &crate::state::State, index: usize) -> Option<&str> {
     state
+        .current()
         .workspaces
         .get(index)?
         .name
@@ -388,12 +389,12 @@ mod tests {
         assert_eq!(workspace_badge(&state, 1), "2");
         assert_eq!(workspace_heading(&state, 1), "Workspace 2");
 
-        state.workspaces[1].name = Some("mine".into());
+        state.current_mut().workspaces[1].name = Some("mine".into());
         assert_eq!(workspace_badge(&state, 1), "2:mine");
         assert_eq!(workspace_heading(&state, 1), "Workspace 2: mine");
 
         // A name that is only whitespace is not a name; it must not leave dangling separators.
-        state.workspaces[1].name = Some("   ".into());
+        state.current_mut().workspaces[1].name = Some("   ".into());
         assert_eq!(workspace_badge(&state, 1), "2");
         assert_eq!(workspace_heading(&state, 1), "Workspace 2");
 

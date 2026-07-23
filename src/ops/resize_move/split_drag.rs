@@ -40,8 +40,8 @@ fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, 
     if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
-    let workspace_index = ctx.state.active_workspace;
-    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let workspace_index = ctx.state.current().active_workspace;
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     ensure_tile_tree(workspace);
     ctx.state.split_drag = Some(SplitDragSession {
         kind,
@@ -61,7 +61,7 @@ fn ensure_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, from_x:
     if !ctx.state.is_controller() {
         return;
     }
-    let workspace = ctx.state.active_workspace;
+    let workspace = ctx.state.current().active_workspace;
     let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
         session.kind == kind
             && session.workspace == workspace
@@ -74,16 +74,17 @@ fn ensure_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, from_x:
 }
 
 fn restore_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind) -> bool {
-    let Some(session) =
-        ctx.state.split_drag.as_ref().filter(|session| {
-            session.kind == kind && session.workspace == ctx.state.active_workspace
-        })
-    else {
+    let Some(session) = ctx.state.split_drag.as_ref().filter(|session| {
+        session.kind == kind && session.workspace == ctx.state.current().active_workspace
+    }) else {
         return false;
     };
-    let workspace = &mut ctx.state.workspaces[session.workspace];
-    workspace.tile_tree = session.start_tile_tree.clone();
-    workspace.split_ratios = session.start_split_ratios.clone();
+    let ws_index = session.workspace;
+    let start_tile_tree = session.start_tile_tree.clone();
+    let start_split_ratios = session.start_split_ratios.clone();
+    let workspace = &mut ctx.state.current_mut().workspaces[ws_index];
+    workspace.tile_tree = start_tile_tree;
+    workspace.split_ratios = start_split_ratios;
     true
 }
 
@@ -131,12 +132,12 @@ fn apply_resize_split_pixels(
         state::SplitAxis::Vertical
     };
 
-    let workspace_index = ctx.state.active_workspace;
+    let workspace_index = ctx.state.current().active_workspace;
     let bounds = ctx
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
-    let workspace = &mut ctx.state.workspaces[workspace_index];
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
         .contains(&pane_id)
@@ -192,12 +193,12 @@ pub(crate) fn resize_split_junction_by_drag(
     let dx = (x as i32 - from_x as i32) as f32;
     let dy = (y as i32 - from_y as i32) as f32;
     let horizontal_panes = distinct_split_representatives(
-        &ctx.state.workspaces[ctx.state.active_workspace],
+        &ctx.state.current().workspaces[ctx.state.current().active_workspace],
         horizontal_panes,
         state::SplitAxis::Horizontal,
     );
     let vertical_panes = distinct_split_representatives(
-        &ctx.state.workspaces[ctx.state.active_workspace],
+        &ctx.state.current().workspaces[ctx.state.current().active_workspace],
         vertical_panes,
         state::SplitAxis::Vertical,
     );
@@ -273,7 +274,7 @@ mod tests {
             backend.set_viewport(TEST_VIEWPORT);
             let (root_available, left_available, right_available) = {
                 let state = backend.state_mut();
-                let workspace = &mut state.workspaces[state.active_workspace];
+                let workspace = state.active_workspace_mut();
                 workspace.panes.clear();
                 for id in 1..=4 {
                     workspace
@@ -284,7 +285,7 @@ mod tests {
 
                 let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
                 let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
-                let tree = state.workspaces[state.active_workspace]
+                let tree = state.current().workspaces[state.current().active_workspace]
                     .tile_tree
                     .as_ref()
                     .unwrap();
@@ -331,7 +332,7 @@ mod tests {
                 .expect("resize junction");
 
             let ratios = balanced_grid_ratios(
-                backend.state_mut().workspaces[0]
+                backend.state_mut().current_mut().workspaces[0]
                     .tile_tree
                     .as_ref()
                     .unwrap(),
@@ -351,7 +352,7 @@ mod tests {
                 ))
                 .expect("continue junction drag");
             let ratios = balanced_grid_ratios(
-                backend.state_mut().workspaces[0]
+                backend.state_mut().current_mut().workspaces[0]
                     .tile_tree
                     .as_ref()
                     .unwrap(),

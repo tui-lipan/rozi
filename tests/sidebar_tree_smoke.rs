@@ -65,10 +65,10 @@ fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
                 };
                 state.sidebar.active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
-                let pane = state.workspaces[0].panes[0].id;
-                state.focused_pane = Some(pane);
-                state.workspaces[0].focused_pane = Some(pane);
-                state.workspaces[0].panes[0].terminal.cwd = Some(cwd);
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
             // Directory reads and `git status` both run as background commands, so the tree needs
             // a few pump/render cycles before its rows exist.
@@ -163,10 +163,10 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                 };
                 state.sidebar.active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
-                let pane = state.workspaces[0].panes[0].id;
-                state.focused_pane = Some(pane);
-                state.workspaces[0].focused_pane = Some(pane);
-                state.workspaces[0].panes[0].terminal.cwd = Some(cwd);
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
             for _ in 0..40 {
                 backend.render();
@@ -231,15 +231,15 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                     state.config.sidebar.width = 34;
                     state.sidebar.active_tab = Some(tab.id());
                     state.config.sidebar.tabs = vec![tab];
-                    let pane = state.workspaces[0].panes[0].id;
-                    state.focused_pane = Some(pane);
-                    state.workspaces[0].focused_pane = Some(pane);
-                    state.workspaces[0].panes[0].terminal.cwd =
+                    let pane = state.current().workspaces[0].panes[0].id;
+                    state.current_mut().focused_pane = Some(pane);
+                    state.current_mut().workspaces[0].focused_pane = Some(pane);
+                    state.current_mut().workspaces[0].panes[0].terminal.cwd =
                         Some(env!("CARGO_MANIFEST_DIR").to_string());
                     // The Panes tab needs enough rows to overflow a 12-row viewport.
-                    let rect = state.workspaces[0].panes[0].floating_rect;
+                    let rect = state.current().workspaces[0].panes[0].floating_rect;
                     for id in 100..(100 + panes as u32) {
-                        state.workspaces[0]
+                        state.current_mut().workspaces[0]
                             .panes
                             .push(hyprmux::state::Pane::new(id, 100, rect));
                     }
@@ -307,10 +307,10 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 };
                 state.sidebar.active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
-                let pane = state.workspaces[0].panes[0].id;
-                state.focused_pane = Some(pane);
-                state.workspaces[0].focused_pane = Some(pane);
-                state.workspaces[0].panes[0].terminal.cwd = Some(cwd);
+                let pane = state.current().workspaces[0].panes[0].id;
+                state.current_mut().focused_pane = Some(pane);
+                state.current_mut().workspaces[0].focused_pane = Some(pane);
+                state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
             let settle = |backend: &mut TestBackend<HyprmuxApp>| {
                 for _ in 0..40 {

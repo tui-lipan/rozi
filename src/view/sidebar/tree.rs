@@ -166,6 +166,7 @@ fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static st
     let remote = ctx.state.current().remote_host.is_some()
         || ctx
             .state
+            .current()
             .focused_pane
             .and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id))
             .is_some_and(|pane| pane.terminal.cwd_host.is_some());

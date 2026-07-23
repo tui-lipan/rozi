@@ -75,7 +75,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::full();
     }
 
-    ctx.state.scratch_return_focus = ctx.state.focused_pane;
+    ctx.state.scratch_return_focus = ctx.state.current().focused_pane;
     ctx.state.scratch_visible = true;
     ctx.state.animation = GeometryAnimation::TileFloat;
 
@@ -85,8 +85,12 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
             .canvas_bounds_from_terminal_viewport(ctx.viewport());
         let top_gap = ctx.state.workspace_top_gap();
         let rect = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
-        let generation = ctx.state.next_pty_generation;
-        ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
+        let generation = ctx.state.current().next_pty_generation;
+        ctx.state.current_mut().next_pty_generation = ctx
+            .state
+            .current_mut()
+            .next_pty_generation
+            .saturating_add(1);
         let mut pane = Pane::new(SCRATCH_PANE_ID, ctx.state.config.scrollback, rect);
         pane.pty_generation = generation;
         pane.identity.command = ctx.state.config.scratchpad.command.clone();

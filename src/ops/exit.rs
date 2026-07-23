@@ -116,6 +116,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// an ephemeral session (which shuts the server down and kills its PTYs) warrants a confirmation.
 pub(crate) fn any_pane_live(state: &State) -> bool {
     state
+        .current()
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
@@ -161,7 +162,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
     ctx: &mut Context<HyprmuxApp>,
     confirmations_enabled: bool,
 ) -> Update {
-    let Some(id) = ctx.state.focused_pane else {
+    let Some(id) = ctx.state.current().focused_pane else {
         return Update::full();
     };
     let needs_confirm = confirmations_enabled
@@ -187,8 +188,8 @@ pub(crate) fn kill_workspace_with_confirmation(
     ctx: &mut Context<HyprmuxApp>,
     confirmations_enabled: bool,
 ) -> Update {
-    let workspace_index = ctx.state.active_workspace;
-    let pane_count = ctx.state.workspaces[workspace_index]
+    let workspace_index = ctx.state.current().active_workspace;
+    let pane_count = ctx.state.current().workspaces[workspace_index]
         .panes
         .iter()
         .filter(|pane| !pane.closing)
@@ -218,7 +219,7 @@ pub(crate) fn kill_workspace_with_confirmation(
 
     clear_pending(ctx);
     let animations = ctx.state.config.animations;
-    let pane_ids: Vec<_> = ctx.state.workspaces[workspace_index]
+    let pane_ids: Vec<_> = ctx.state.current().workspaces[workspace_index]
         .panes
         .iter()
         .filter(|pane| !pane.closing)

@@ -209,7 +209,13 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
         command: Some(command),
         ..PaneIdentity::default()
     };
-    crate::pane_lifecycle::spawn_interactive_pane(ctx, ctx.state.active_workspace, None, identity).1
+    crate::pane_lifecycle::spawn_interactive_pane(
+        ctx,
+        ctx.state.current().active_workspace,
+        None,
+        identity,
+    )
+    .1
 }
 
 /// Single-quotes a shell argument so a config path containing spaces (or other shell

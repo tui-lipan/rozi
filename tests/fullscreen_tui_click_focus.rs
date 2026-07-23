@@ -43,8 +43,8 @@ fn backend_with_tracking_pane_hover(focus_on_hover: bool) -> TestBackend<Hyprmux
     {
         let state = backend.state_mut();
         state.config.pane.focus_on_hover = focus_on_hover;
-        state.workspaces[0].panes.clear();
-        state.workspaces[0].tile_tree = None;
+        state.current_mut().workspaces[0].panes.clear();
+        state.current_mut().workspaces[0].tile_tree = None;
         let rect = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -62,14 +62,15 @@ fn backend_with_tracking_pane_hover(focus_on_hover: bool) -> TestBackend<Hyprmux
                 pane.terminal
                     .process_server_output(b"\x1b[?1003h\x1b[?1006h");
             }
-            state.workspaces[0].panes.push(pane);
+            state.current_mut().workspaces[0].panes.push(pane);
         }
-        let start_axis = state.workspaces[0].start_axis;
-        let ratios = state.workspaces[0].split_ratios.clone();
-        state.workspaces[0].tile_tree = build_dwindle_tree(&[10, 11], start_axis, &ratios);
-        state.next_pane_id = 20;
-        state.focused_pane = Some(10);
-        state.workspaces[0].focused_pane = Some(10);
+        let start_axis = state.current().workspaces[0].start_axis;
+        let ratios = state.current().workspaces[0].split_ratios.clone();
+        state.current_mut().workspaces[0].tile_tree =
+            build_dwindle_tree(&[10, 11], start_axis, &ratios);
+        state.current_mut().next_pane_id = 20;
+        state.current_mut().focused_pane = Some(10);
+        state.current_mut().workspaces[0].focused_pane = Some(10);
     }
     backend.render();
     backend
@@ -89,14 +90,14 @@ fn clicking_a_mouse_tracking_pane_focuses_it_with_hover_focus_disabled() {
     on_deep_stack(|| {
         let mut backend = backend_with_tracking_pane();
         assert_eq!(
-            backend.state().focused_pane,
+            backend.state().current().focused_pane,
             Some(10),
             "left pane starts focused"
         );
         // Guard against the setup silently not tracking, which would make this test vacuous: the
         // framework only bypasses the pane's MouseRegion for a terminal that requested tracking.
         assert_ne!(
-            backend.state().workspaces[0].panes[1]
+            backend.state().current().workspaces[0].panes[1]
                 .terminal
                 .snapshot()
                 .mouse_mode
@@ -113,7 +114,7 @@ fn clicking_a_mouse_tracking_pane_focuses_it_with_hover_focus_disabled() {
             .expect("mouse up");
 
         assert_eq!(
-            backend.state().focused_pane,
+            backend.state().current().focused_pane,
             Some(11),
             "clicking a full-screen TUI pane must focus it even with focus_on_hover disabled"
         );
@@ -130,7 +131,7 @@ fn hovering_a_mouse_tracking_pane_does_not_focus_it_with_hover_focus_disabled() 
             .send_mouse(mouse(CLICK_X, CLICK_Y, MouseKind::Moved))
             .expect("mouse move");
         assert_eq!(
-            backend.state().focused_pane,
+            backend.state().current().focused_pane,
             Some(10),
             "motion alone must not move focus while focus_on_hover is disabled"
         );
@@ -147,7 +148,7 @@ fn hovering_a_mouse_tracking_pane_focuses_it_with_hover_focus_enabled() {
             .send_mouse(mouse(CLICK_X, CLICK_Y, MouseKind::Moved))
             .expect("mouse move");
         assert_eq!(
-            backend.state().focused_pane,
+            backend.state().current().focused_pane,
             Some(11),
             "hover-focus must still reach a full-screen TUI pane"
         );

@@ -65,9 +65,9 @@ fn backend_with_panes() -> TestBackend<HyprmuxApp> {
         state.sidebar_visible = true;
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
         state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
-        state.workspaces[0].panes = vec![pane(1), pane(2)];
-        state.workspaces[1].panes = vec![pane(3)];
-        state.focused_pane = Some(1);
+        state.current_mut().workspaces[0].panes = vec![pane(1), pane(2)];
+        state.current_mut().workspaces[1].panes = vec![pane(3)];
+        state.current_mut().focused_pane = Some(1);
     }
     backend.render();
     backend
@@ -149,13 +149,13 @@ fn arrow_keys_skip_headers_and_enter_activates_the_row() {
             settle(&mut backend);
 
             assert_eq!(
-                backend.state().focused_pane,
+                backend.state().current().focused_pane,
                 Some(3),
                 "two steps down from the first row reaches the third pane, so both workspace \
                  headers were stepped over rather than selected"
             );
             assert_eq!(
-                backend.state().active_workspace,
+                backend.state().current().active_workspace,
                 1,
                 "activating a row in another workspace switches to it, exactly as a click does"
             );
@@ -263,8 +263,10 @@ fn keyboard_row_navigation_scrolls_the_cursor_into_view() {
                     pane
                 })
                 .collect();
-            backend.state_mut().workspaces[0].panes = panes;
-            backend.state_mut().workspaces[1].panes.clear();
+            backend.state_mut().current_mut().workspaces[0].panes = panes;
+            backend.state_mut().current_mut().workspaces[1]
+                .panes
+                .clear();
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -361,7 +363,8 @@ fn keyboard_navigation_suppresses_stale_row_hover_until_the_pointer_moves() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let mut backend = backend_with_panes();
-            backend.state_mut().workspaces[1].panes[0].title = "pointer target".into();
+            backend.state_mut().current_mut().workspaces[1].panes[0].title =
+                "pointer target".into();
             settle(&mut backend);
             let highlight = backend.state().theme.surface.element.elevate(0.08);
             let target_row = backend
@@ -438,7 +441,7 @@ fn vim_keys_move_the_cursor() {
             settle(&mut backend);
 
             assert_eq!(
-                backend.state().focused_pane,
+                backend.state().current().focused_pane,
                 Some(2),
                 "two `j` then one `k` lands on the second pane, so both keys move the cursor and \
                  both step over headers"
@@ -481,7 +484,7 @@ fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
             settle(&mut backend);
 
             assert_eq!(
-                backend.state().focused_pane,
+                backend.state().current().focused_pane,
                 Some(1),
                 "the hovered pane does not become focused while the sidebar owns the keyboard"
             );
@@ -496,7 +499,7 @@ fn hovering_a_pane_does_not_steal_the_keyboard_from_the_sidebar() {
             backend.dispatch(Msg::HoverPane(2)).expect("hover again");
             settle(&mut backend);
             assert_eq!(
-                backend.state().focused_pane,
+                backend.state().current().focused_pane,
                 Some(2),
                 "with the keyboard back on the panes, hover focus works as configured"
             );

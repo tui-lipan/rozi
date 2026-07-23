@@ -155,6 +155,7 @@ fn profile_session_rows(
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state
+                    .current()
                     .workspaces
                     .iter()
                     .map(|workspace| workspace.panes.len())
@@ -201,6 +202,7 @@ pub(crate) fn apply_profile_sessions(
             status: crate::session::discovery::DiscoveredSessionStatus::Running {
                 panes: ctx
                     .state
+                    .current()
                     .workspaces
                     .iter()
                     .map(|workspace| workspace.panes.len())
@@ -337,6 +339,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     ctx.state.current_mut().pending_replay_inputs.clear();
     for pane in ctx
         .state
+        .current()
         .workspaces
         .iter()
         .flat_map(|workspace| workspace.panes.iter())
@@ -344,7 +347,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     {
         client.kill(pane.id, pane.pty_generation);
     }
-    let first_pane_id = ctx.state.next_pane_id;
+    let first_pane_id = ctx.state.current().next_pane_id;
     crate::profiles::replace_layout_from_profile(&mut ctx.state, profile, first_pane_id);
     let spawned = crate::update::spawn_state_panes_on_session(ctx);
     crate::update::flush_layout_commit(ctx);

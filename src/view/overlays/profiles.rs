@@ -42,7 +42,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     }
     let mut hints = hint_row();
     if let Some(entry) = selected {
-        let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str());
+        let current = ctx.state.current().session_name.as_deref() == Some(entry.name.as_str());
         if !current {
             let running = matches!(
                 picker.running.get(&entry.name),
@@ -79,7 +79,7 @@ fn profile_picker_palette(
         .filter(|(_, entry)| query.is_empty() || entry.name.to_ascii_lowercase().contains(&query))
         .map(|(index, entry)| {
             let mut item = SearchEntry::item(entry.name.clone(), index);
-            let status = if ctx.state.session_name.as_deref() == Some(entry.name.as_str()) {
+            let status = if ctx.state.current().session_name.as_deref() == Some(entry.name.as_str()) {
                 Some("• attached")
             } else if matches!(
                 picker.running.get(&entry.name),

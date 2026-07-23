@@ -61,7 +61,7 @@ fn toggle_pane_logging(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     let generation = pane.pty_generation;
     let enabled = !pane.logging;
-    if let Some(client) = &ctx.state.session_client {
+    if let Some(client) = &ctx.state.current().session_client {
         client.set_pane_logging(id, generation, enabled);
     }
     Update::none()
@@ -413,7 +413,7 @@ fn execute_action_inner(
         Action::OpenClientList => crate::ops::session::open_client_list(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),
         Action::NewTemporarySession => {
-            if ctx.state.session_attached
+            if ctx.state.current().session_attached
                 && crate::ops::session::may_shutdown_ephemeral(&ctx.state)
                 && confirmations_enabled
                 && ctx.state.config.confirm.new_temporary_session
@@ -725,11 +725,11 @@ mod tests {
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(1);
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
 
                 backend
@@ -767,9 +767,9 @@ mod tests {
                 let (follower_client, follower_rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_client = Some(follower_client);
+                    state.current_mut().session_client = Some(follower_client);
                     state.sidebar_visible = false;
-                    state.shared.as_mut().unwrap().controller = Some(2);
+                    state.current_mut().shared.as_mut().unwrap().controller = Some(2);
                 }
                 backend
                     .dispatch(Msg::RunAction(Action::ToggleSidebar))
@@ -809,11 +809,11 @@ mod tests {
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(2); // follower
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 backend.render();
                 let before = backend.state_mut().workspaces[0].panes.len();

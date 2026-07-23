@@ -47,7 +47,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     // froze the UI every time. The remote rows stream in via `SessionsDiscovered` below.
     let rows = local_picker_rows(ctx);
     let mut picker = SessionPickerState::new(rows);
-    if let Some(current_name) = ctx.state.session_name.as_deref()
+    if let Some(current_name) = ctx.state.current().session_name.as_deref()
         && let Some(pos) = picker
             .entries
             .iter()
@@ -62,7 +62,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     request_session_picker_focus(ctx);
     Update::with_command(session_discover_now_command(
         ctx.state.session_picker_epoch,
-        ctx.state.session_name.clone(),
+        ctx.state.current().session_name.clone(),
         ctx.state.config.remote.clone(),
     ))
 }
@@ -99,7 +99,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.session_picker = Some(picker);
     Update::with_command(session_discover_now_command(
         ctx.state.session_picker_epoch,
-        ctx.state.session_name.clone(),
+        ctx.state.current().session_name.clone(),
         ctx.state.config.remote.clone(),
     ))
 }
@@ -108,7 +108,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// session, with no remote ssh. The full list (configured remote hosts included) arrives async via
 /// [`Msg::SessionsDiscovered`].
 pub(crate) fn local_picker_rows(ctx: &Context<HyprmuxApp>) -> Vec<DiscoveredSession> {
-    let current_name = ctx.state.session_name.as_deref();
+    let current_name = ctx.state.current().session_name.as_deref();
     let mut rows =
         crate::session::discovery::discover_selectable_sessions(current_name).unwrap_or_default();
     push_current_session_row(ctx, &mut rows);
@@ -157,7 +157,7 @@ pub(crate) fn apply_discovered_sessions(
     }
     Update::with_command(session_watch_command(
         epoch,
-        ctx.state.session_name.clone(),
+        ctx.state.current().session_name.clone(),
         ctx.state.config.remote.clone(),
     ))
 }
@@ -277,22 +277,22 @@ fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discovered
 }
 
 pub(crate) fn current_session_row(state: &crate::state::State) -> Option<DiscoveredSession> {
-    let name = state.session_name.clone()?;
+    let name = state.current().session_name.clone()?;
     Some(DiscoveredSession {
         name,
         ephemeral: state.is_ephemeral_session(),
-        host: state.remote_host.clone(),
+        host: state.current().remote_host.clone(),
         status: crate::session::discovery::DiscoveredSessionStatus::Running {
             panes: state.workspaces.iter().map(|w| w.panes.len()).sum(),
             has_layout: true,
             clients: state.attached_client_count(),
-            created_from_profile: state.created_from_profile.clone(),
+            created_from_profile: state.current().created_from_profile.clone(),
         },
     })
 }
 
 fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
-    if ctx.state.session_attached {
+    if ctx.state.current().session_attached {
         Some(())
     } else {
         ctx.toast()
@@ -303,7 +303,7 @@ fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
 
 fn require_writable(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
     require_attached(ctx)?;
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Not attached to a session"));
         return None;
@@ -325,6 +325,7 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
     }
     let who = ctx
         .state
+        .current()
         .shared
         .as_ref()
         .and_then(|shared| shared.controller)
@@ -364,7 +365,12 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_writable(ctx) else {
         return Update::full();
     };
-    let shared = ctx.state.shared.as_ref().expect("writable session checked");
+    let shared = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .expect("writable session checked");
     let already_requested = shared
         .clients
         .iter()
@@ -373,7 +379,7 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         .controller
         .and_then(|id| shared.clients.iter().find(|client| client.id == id))
         .map(|client| format!("{} #{}", client.label, client.id));
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = ctx.state.current().session_client.clone() {
         client.request_control();
     }
     let message = match (already_requested, controller_label) {
@@ -409,15 +415,20 @@ pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_writable(ctx) else {
         return Update::full();
     };
-    let shared = ctx.state.shared.as_ref().expect("writable session checked");
-    if let Some(client) = ctx.state.session_client.as_ref() {
+    let shared = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .expect("writable session checked");
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.set_input_lock(!shared.input_locked);
     }
     Update::full()
 }
 
 pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
     let Some(target) = shared.clients.get(index) else {
@@ -431,7 +442,7 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
             "Read-only clients cannot control the layout",
         ));
     } else if target.id != shared.client_id
-        && let Some(client) = ctx.state.session_client.as_ref()
+        && let Some(client) = ctx.state.current().session_client.as_ref()
     {
         client.grant_control(target.id);
         ctx.state.client_list = None;
@@ -443,7 +454,7 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
 /// pending requester when several are waiting). Nudges a follower, and toasts when nothing is
 /// pending, so the bound key always gives feedback.
 pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
     if !ctx.state.is_controller() {
@@ -460,7 +471,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Updat
         .map(|client| client.id);
     match target {
         Some(id) => {
-            if let Some(client) = ctx.state.session_client.as_ref() {
+            if let Some(client) = ctx.state.current().session_client.as_ref() {
                 client.grant_control(id);
             }
             ctx.state.client_list = None;
@@ -477,7 +488,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Updat
 /// A no-op (with a follower nudge) when this client is not the controller, or when the target has no
 /// pending request.
 pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
     let Some(target) = shared.clients.get(index) else {
@@ -487,7 +498,7 @@ pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Up
         nudge_if_follower(ctx);
     } else if target.requesting_control
         && target.id != shared.client_id
-        && let Some(client) = ctx.state.session_client.as_ref()
+        && let Some(client) = ctx.state.current().session_client.as_ref()
     {
         client.decline_control(target.id);
     }
@@ -502,7 +513,7 @@ pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
     crate::update::sidebar::invalidate_sessions(ctx);
     crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
     let shutdown_ephemeral = may_shutdown_ephemeral(&ctx.state);
@@ -518,7 +529,11 @@ pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
     state.is_ephemeral_session()
         && state.is_controller()
         && state.attached_client_count() == 1
-        && state.shared.as_ref().is_none_or(|shared| !shared.read_only)
+        && state
+            .current()
+            .shared
+            .as_ref()
+            .is_none_or(|shared| !shared.read_only)
 }
 
 pub(crate) fn swap_state_for_attach(
@@ -553,7 +568,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
     crate::update::flush_layout_commit(ctx);
     crate::ops::exit::mark_session_detached(ctx, None);
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = ctx.state.current().session_client.clone() {
         client.shutdown();
     }
     let update = swap_to_fresh_ephemeral(ctx);
@@ -574,7 +589,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     let name = crate::state::fresh_ephemeral_session_name(epoch);
     let fresh = crate::state::State::new(config, theme);
     swap_state_for_attach(ctx, fresh);
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -605,9 +620,9 @@ pub(crate) fn attach_session_by_name(
         ));
         return Update::full();
     }
-    if ctx.state.session_attached
-        && ctx.state.session_name.as_deref() == Some(name.as_str())
-        && ctx.state.remote_host == remote_host
+    if ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(name.as_str())
+        && ctx.state.current().remote_host == remote_host
     {
         ctx.toast().push(info_toast(
             &ctx.state.theme,
@@ -615,7 +630,7 @@ pub(crate) fn attach_session_by_name(
         ));
         return Update::full();
     }
-    if ctx.state.pending_session_attach.is_some() {
+    if ctx.state.current().pending_session_attach.is_some() {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
@@ -639,22 +654,23 @@ pub(crate) fn attach_session_by_name(
     };
     // Attach-elsewhere: release the current session (a named one is parked for reattach; an
     // ephemeral one is torn down so it does not leak an orphan server), then attach to the target.
-    let left = ctx
-        .state
-        .session_name
-        .clone()
-        .map(|left_name| crate::state::LeftSession {
-            name: left_name,
-            was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
-        });
+    let left =
+        ctx.state
+            .current()
+            .session_name
+            .clone()
+            .map(|left_name| crate::state::LeftSession {
+                name: left_name,
+                was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
+            });
     release_current_session(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
     let epoch = ctx.state.runtime_epoch.saturating_add(1);
-    ctx.state.remote_host = remote_host.clone();
-    ctx.state.remote_target = remote_target.clone();
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().remote_host = remote_host.clone();
+    ctx.state.current_mut().remote_target = remote_target.clone();
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -744,9 +760,9 @@ pub(crate) fn activate_discovered_session(
     // its panes (see `release_current_session`). That is easy to trigger by reflex from the picker,
     // so guard it with the same two-press confirmation as a kill: the first Enter arms and warns,
     // the second commits. Switching between two named sessions parks the old one and needs no guard.
-    let discards_ephemeral = ctx.state.session_attached
+    let discards_ephemeral = ctx.state.current().session_attached
         && ctx.state.is_ephemeral_session()
-        && ctx.state.session_name.as_deref() != Some(entry.name.as_str());
+        && ctx.state.current().session_name.as_deref() != Some(entry.name.as_str());
     if discards_ephemeral {
         let armed = match source {
             SessionActivationSource::Picker(index) => ctx
@@ -792,18 +808,19 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.commands_dirty = true;
     // This is a *local* fallback; clear any remote target left over from a failed `--remote` attach
     // so panes resolve their shell/cwd locally and the sidebar does not keep probing a dead host.
-    ctx.state.remote_host = None;
-    ctx.state.remote_target = None;
+    ctx.state.current_mut().remote_host = None;
+    ctx.state.current_mut().remote_target = None;
     let epoch = ctx.state.runtime_epoch;
     let name = crate::state::ephemeral_session_name();
     let intent = ctx
         .state
+        .current_mut()
         .deferred_profile_seed
         .take()
         .map_or(crate::state::AttachIntent::Plain, |(profile, path)| {
             crate::state::AttachIntent::ProfileSeed { profile, path }
         });
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -828,9 +845,9 @@ pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
-    if !ctx.state.session_attached
-        && ctx.state.session_client.is_none()
-        && ctx.state.pending_session_attach.is_none()
+    if !ctx.state.current().session_attached
+        && ctx.state.current().session_client.is_none()
+        && ctx.state.current().pending_session_attach.is_none()
     {
         return attach_startup_ephemeral(ctx);
     }
@@ -879,7 +896,7 @@ pub(crate) fn open_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let initial = if ephemeral {
         String::new()
     } else {
-        ctx.state.session_name.clone().unwrap_or_default()
+        ctx.state.current().session_name.clone().unwrap_or_default()
     };
     let mode = if ephemeral {
         NamingMode::NameEphemeralSession
@@ -921,7 +938,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             // with a two-press confirm shown *in the modal* (red border + inline note) rather than a
             // toast: the first Enter arms, a second commits. Editing the name clears the arm (see
             // `Msg::RenameSessionChanged`).
-            let needs_confirm = ctx.state.session_attached && ctx.state.is_ephemeral_session();
+            let needs_confirm =
+                ctx.state.current().session_attached && ctx.state.is_ephemeral_session();
             let armed = ctx
                 .state
                 .rename_session
@@ -977,7 +995,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             ctx.state.rename_session = None;
 
             if detach_after {
-                let Some(client) = ctx.state.session_client.clone() else {
+                let Some(client) = ctx.state.current().session_client.clone() else {
                     ctx.toast().push(crate::pty_events::error_toast(
                         &ctx.state.theme,
                         "Rename failed",
@@ -994,12 +1012,12 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 return Update::none();
             }
 
-            if ctx.state.session_name.as_deref() == Some(name.as_str()) {
+            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
                 request_current_pane_focus(ctx);
                 return Update::full();
             }
 
-            if let Some(client) = ctx.state.session_client.clone() {
+            if let Some(client) = ctx.state.current().session_client.clone() {
                 client.rename(name);
             }
             request_current_pane_focus(ctx);
@@ -1018,12 +1036,12 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 
             ctx.state.rename_session = None;
 
-            if ctx.state.session_name.as_deref() == Some(name.as_str()) {
+            if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
                 request_current_pane_focus(ctx);
                 return Update::full();
             }
 
-            if let Some(client) = ctx.state.session_client.clone() {
+            if let Some(client) = ctx.state.current().session_client.clone() {
                 client.rename(name);
             }
             request_current_pane_focus(ctx);
@@ -1069,9 +1087,9 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_session_arms(ctx);
     // Killing the session you're attached to is fine: shut its server down and hop the UI onto a
     // fresh ephemeral session rather than quitting the client.
-    if ctx.state.session_attached
-        && ctx.state.session_name.as_deref() == Some(entry.name.as_str())
-        && ctx.state.remote_host == entry.host
+    if ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+        && ctx.state.current().remote_host == entry.host
     {
         return kill_current_session(ctx, display);
     }
@@ -1194,7 +1212,11 @@ mod tests {
     fn merge_current_session_row_dedupes_by_name_and_host() {
         let mut rows = vec![session_row("dev", Some("winvm"))];
         merge_current_session_row(&mut rows, session_row("dev", Some("winvm")));
-        assert_eq!(rows.len(), 1, "the attached session must not be listed twice");
+        assert_eq!(
+            rows.len(),
+            1,
+            "the attached session must not be listed twice"
+        );
 
         // Same name, different host: a genuinely different session, kept.
         merge_current_session_row(&mut rows, session_row("dev", Some("other")));
@@ -1208,12 +1230,12 @@ mod tests {
 
     fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {
         let mut state = State::new(HyprmuxConfig::default(), ThemePreset::Lipan.theme());
-        state.session_name = Some("eph-test".to_string());
-        state.session_attached = true;
+        state.current_mut().session_name = Some("eph-test".to_string());
+        state.current_mut().session_attached = true;
         let mut shared = SharedSessionState::new(client_id);
         shared.controller = Some(controller);
         shared.clients = clients;
-        state.shared = Some(shared);
+        state.current_mut().shared = Some(shared);
         state
     }
 
@@ -1233,8 +1255,8 @@ mod tests {
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     // A follower: client 2 holds the lease.
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(2);
@@ -1252,7 +1274,7 @@ mod tests {
                             requesting_control: false,
                         },
                     ];
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 backend.render();
                 backend
@@ -1296,9 +1318,9 @@ mod tests {
                 let name = format!("create-fresh-{}", std::process::id());
                 {
                     let state = backend.state_mut();
-                    state.session_name = Some("eph-test".to_string());
-                    state.session_attached = true;
-                    state.pending_session_attach = None;
+                    state.current_mut().session_name = Some("eph-test".to_string());
+                    state.current_mut().session_attached = true;
+                    state.current_mut().pending_session_attach = None;
                     state.sidebar.command_epoch = 7;
                     state.sidebar.config_epoch = 11;
                     // Simulate a profile-seeded session: the current pane carries a command.
@@ -1314,6 +1336,7 @@ mod tests {
 
                 let state = backend.state();
                 let pending = state
+                    .current()
                     .pending_session_attach
                     .as_ref()
                     .expect("create queues an attach");
@@ -1351,8 +1374,8 @@ mod tests {
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     // We (client 1) are the controller; clients 2 and 3 both want control.
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(1);
@@ -1372,7 +1395,7 @@ mod tests {
                         requester(3),
                         requester(2),
                     ];
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 backend.render();
                 backend

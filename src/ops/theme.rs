@@ -232,7 +232,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
 
 pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
     let theme = &state.theme;
-    let client = state.session_client.clone();
+    let client = state.current().session_client.clone();
     let highlight_focused_background = state.config.pane.highlight_focused_background;
     let mut changed = false;
     for (index, workspace) in state.workspaces.iter_mut().enumerate() {

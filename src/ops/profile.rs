@@ -14,11 +14,13 @@ use crate::state::{Mode, ProfilePickerState, SaveProfileState, State};
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     let initial = ctx
         .state
+        .current()
         .created_from_profile
         .as_deref()
         .or_else(|| {
-            ctx.state.session_name.as_deref().filter(|name| {
-                ctx.state.session_attached && !crate::state::is_ephemeral_session_name(name)
+            ctx.state.current().session_name.as_deref().filter(|name| {
+                ctx.state.current().session_attached
+                    && !crate::state::is_ephemeral_session_name(name)
             })
         })
         .unwrap_or("");
@@ -134,18 +136,18 @@ fn open_profile_picker_mode(ctx: &mut Context<HyprmuxApp>, apply_mode: bool) -> 
     request_profile_picker_focus(ctx);
     Update::with_command(profile_session_watch_command(
         epoch,
-        ctx.state.session_name.clone(),
+        ctx.state.current().session_name.clone(),
     ))
 }
 
 fn profile_session_rows(
     ctx: &Context<HyprmuxApp>,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
-    let current = ctx.state.session_name.as_deref();
+    let current = ctx.state.current().session_name.as_deref();
     let mut rows =
         crate::session::discovery::discover_sessions_excluding(current).unwrap_or_default();
     rows.retain(|row| !row.ephemeral);
-    if let Some(name) = &ctx.state.session_name {
+    if let Some(name) = &ctx.state.current().session_name {
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
             ephemeral: ctx.state.is_ephemeral_session(),
@@ -159,7 +161,7 @@ fn profile_session_rows(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
-                created_from_profile: ctx.state.created_from_profile.clone(),
+                created_from_profile: ctx.state.current().created_from_profile.clone(),
             },
         });
     }
@@ -190,7 +192,7 @@ pub(crate) fn apply_profile_sessions(
     if !ctx.state.show_profile_picker || epoch != ctx.state.profile_picker_epoch {
         return Update::none();
     }
-    if let Some(name) = &ctx.state.session_name {
+    if let Some(name) = &ctx.state.current().session_name {
         rows.retain(|row| row.name != *name);
         rows.push(crate::session::discovery::DiscoveredSession {
             name: name.clone(),
@@ -205,7 +207,7 @@ pub(crate) fn apply_profile_sessions(
                     .sum(),
                 clients: ctx.state.attached_client_count(),
                 has_layout: true,
-                created_from_profile: ctx.state.created_from_profile.clone(),
+                created_from_profile: ctx.state.current().created_from_profile.clone(),
             },
         });
     }
@@ -214,7 +216,7 @@ pub(crate) fn apply_profile_sessions(
     }
     Update::with_command(profile_session_watch_command(
         epoch,
-        ctx.state.session_name.clone(),
+        ctx.state.current().session_name.clone(),
     ))
 }
 
@@ -266,7 +268,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
-    if !ctx.state.session_attached {
+    if !ctx.state.current().session_attached {
         ctx.toast().push(error_toast(
             &ctx.state.theme,
             "Replace failed",
@@ -276,6 +278,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     }
     if ctx
         .state
+        .current()
         .shared
         .as_ref()
         .is_some_and(|shared| shared.read_only)
@@ -321,17 +324,17 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     ctx.state.copy_flash = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return Update::full();
     };
     if let Some(scratch) = ctx.state.scratch.take() {
         client.kill(scratch.id, scratch.pty_generation);
     }
     ctx.state.scratch_visible = false;
-    ctx.state.pending_spawns.clear();
+    ctx.state.current_mut().pending_spawns.clear();
     // Replay inputs queued for panes of the layout being replaced must never reach their
     // (killed) panes' successors; `spawn_state_panes_on_session` re-queues the new layout's own.
-    ctx.state.pending_replay_inputs.clear();
+    ctx.state.current_mut().pending_replay_inputs.clear();
     for pane in ctx
         .state
         .workspaces
@@ -345,7 +348,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     crate::profiles::replace_layout_from_profile(&mut ctx.state, profile, first_pane_id);
     let spawned = crate::update::spawn_state_panes_on_session(ctx);
     crate::update::flush_layout_commit(ctx);
-    let session = ctx.state.session_name.clone().unwrap_or_default();
+    let session = ctx.state.current().session_name.clone().unwrap_or_default();
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(
@@ -553,14 +556,16 @@ pub(crate) fn open_named_target(
     if !explicit_create && exists {
         return crate::ops::session::attach_session_by_name(ctx, name, None, false);
     }
-    if ctx.state.session_attached && ctx.state.session_name.as_deref() == Some(name.as_str()) {
+    if ctx.state.current().session_attached
+        && ctx.state.current().session_name.as_deref() == Some(name.as_str())
+    {
         ctx.toast().push(info_toast(
             &ctx.state.theme,
             format!("Already attached to `{name}`"),
         ));
         return Update::full();
     }
-    if ctx.state.pending_session_attach.is_some() {
+    if ctx.state.current().pending_session_attach.is_some() {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
@@ -606,18 +611,19 @@ pub(crate) fn open_named_target(
             crate::state::AttachIntent::Plain,
         )
     };
-    let left = ctx
-        .state
-        .session_name
-        .clone()
-        .map(|left_name| crate::state::LeftSession {
-            name: left_name,
-            was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
-        });
+    let left =
+        ctx.state
+            .current()
+            .session_name
+            .clone()
+            .map(|left_name| crate::state::LeftSession {
+                name: left_name,
+                was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
+            });
     crate::ops::session::release_current_session(ctx);
     let epoch = ctx.state.runtime_epoch.saturating_add(1);
     crate::ops::session::swap_state_for_attach(ctx, replacement);
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -684,7 +690,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
 
     let new_state = State::from_profile(config, theme, profile);
     crate::ops::session::swap_state_for_attach(ctx, new_state);
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
         client: None,
@@ -779,8 +785,8 @@ mod tests {
     fn save_prompt_prefills_named_session_but_not_ephemeral_session() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.state_mut().session_attached = true;
-            backend.state_mut().session_name = Some("dev".to_string());
+            backend.state_mut().current_mut().session_attached = true;
+            backend.state_mut().current_mut().session_name = Some("dev".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
                 .expect("open save prompt");
@@ -796,7 +802,7 @@ mod tests {
             );
 
             backend.state_mut().save_profile_prompt = None;
-            backend.state_mut().created_from_profile = Some("rust-dev".to_string());
+            backend.state_mut().current_mut().created_from_profile = Some("rust-dev".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
                 .expect("reopen save prompt with origin");
@@ -812,8 +818,8 @@ mod tests {
             );
 
             backend.state_mut().save_profile_prompt = None;
-            backend.state_mut().created_from_profile = None;
-            backend.state_mut().session_name = Some("eph-123".to_string());
+            backend.state_mut().current_mut().created_from_profile = None;
+            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
                 .expect("reopen save prompt");
@@ -869,7 +875,7 @@ mod tests {
             backend.state_mut().profile_picker =
                 Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
             backend.state_mut().show_profile_picker = true;
-            backend.state_mut().pending_session_attach = None;
+            backend.state_mut().current_mut().pending_session_attach = None;
             let old_epoch = backend.state().runtime_epoch;
 
             backend
@@ -880,6 +886,7 @@ mod tests {
             assert!(!state.show_profile_picker);
             assert!(state.profile_picker.is_none());
             let pending = state
+                .current()
                 .pending_session_attach
                 .as_ref()
                 .expect("fresh session attach queued");
@@ -909,7 +916,7 @@ mod tests {
                 path.clone(),
             )]));
             backend.state_mut().show_profile_picker = true;
-            backend.state_mut().pending_session_attach = None;
+            backend.state_mut().current_mut().pending_session_attach = None;
 
             backend
                 .dispatch(Msg::ProfilePickerOpenAs)
@@ -920,7 +927,12 @@ mod tests {
                 .dispatch(Msg::SubmitRenameSession)
                 .expect("queue seeded attach");
 
-            let pending = backend.state().pending_session_attach.as_ref().unwrap();
+            let pending = backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .unwrap();
             assert_eq!(pending.name, "work-copy");
             assert_eq!(
                 pending.intent,
@@ -944,7 +956,7 @@ mod tests {
                 path.clone(),
             )]));
             backend.state_mut().show_profile_picker = true;
-            backend.state_mut().pending_session_attach = None;
+            backend.state_mut().current_mut().pending_session_attach = None;
 
             backend
                 .dispatch(Msg::ProfilePickerOpenAs)
@@ -953,7 +965,12 @@ mod tests {
                 .dispatch(Msg::SubmitRenameSession)
                 .expect("queue ephemeral profile attach");
 
-            let pending = backend.state().pending_session_attach.as_ref().unwrap();
+            let pending = backend
+                .state()
+                .current()
+                .pending_session_attach
+                .as_ref()
+                .unwrap();
             assert!(pending.name.starts_with("eph-"));
             assert_eq!(
                 pending.intent,
@@ -975,12 +992,12 @@ mod tests {
             let (client, _rx) = crate::session::client::SessionClient::test_channel();
             {
                 let state = backend.state_mut();
-                state.session_attached = true;
-                state.session_name = Some("work".to_string());
-                state.session_client = Some(client);
+                state.current_mut().session_attached = true;
+                state.current_mut().session_name = Some("work".to_string());
+                state.current_mut().session_client = Some(client);
                 let mut shared = crate::state::SharedSessionState::new(1);
                 shared.controller = Some(1);
-                state.shared = Some(shared);
+                state.current_mut().shared = Some(shared);
                 state.profile_picker = Some(ProfilePickerState::new(vec![entry(
                     "rust-dev",
                     path.clone(),

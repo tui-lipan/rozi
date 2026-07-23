@@ -253,19 +253,8 @@ pub fn restore_state_from_profile(
         popup_return_focus: None,
         control_socket_path: None,
         event_hub: crate::events::EventHub::default(),
-        session_client: None,
-        session_name: None,
-        remote_host: None,
-        remote_target: None,
-        created_from_profile: None,
-        deferred_profile_seed: None,
-        pending_profile_loaded: None,
-        session_attached: false,
-        pending_session_attach: None,
-        pending_spawns: Vec::new(),
-        pending_replay_inputs: std::collections::HashMap::new(),
+        attachment: crate::state::Attachment::new(),
         pending_destructive: None,
-        shared: None,
         workbar_command_output: std::collections::HashMap::new(),
         workbar_commands_running: std::collections::HashSet::new(),
         commands_dirty: false,
@@ -1009,8 +998,8 @@ mod tests {
     #[test]
     fn in_place_profile_replacement_remaps_ids_and_preserves_session_runtime() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.session_name = Some("work".to_string());
-        state.session_attached = true;
+        state.current_mut().session_name = Some("work".to_string());
+        state.current_mut().session_attached = true;
         state.runtime_epoch = 9;
         state.next_pty_generation = 42;
         state.next_pane_id = 20;
@@ -1048,8 +1037,8 @@ mod tests {
         assert_eq!(state.next_pane_id, 22);
         assert_eq!(state.next_pty_generation, 42);
         assert_eq!(state.runtime_epoch, 9);
-        assert_eq!(state.session_name.as_deref(), Some("work"));
-        assert!(state.session_attached);
+        assert_eq!(state.current().session_name.as_deref(), Some("work"));
+        assert!(state.current().session_attached);
     }
 
     #[test]

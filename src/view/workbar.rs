@@ -108,7 +108,7 @@ fn collaboration_status(
     state: &crate::state::State,
     theme: &Theme,
 ) -> Option<(&'static str, Color)> {
-    let shared = state.shared.as_ref()?;
+    let shared = state.current().shared.as_ref()?;
     if shared.read_only {
         return Some((" READ ONLY ", theme.status.warning));
     }
@@ -562,10 +562,10 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 /// Ephemeral sessions return `None`: a bare launch is a disposable per-process session, so
 /// the badge/placeholder stays empty until the session is given a real name.
 fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
-    if !ctx.state.session_attached || ctx.state.is_ephemeral_session() {
+    if !ctx.state.current().session_attached || ctx.state.is_ephemeral_session() {
         return None;
     }
-    ctx.state.session_name.clone()
+    ctx.state.current().session_name.clone()
 }
 
 fn workbar_hostname() -> String {
@@ -786,10 +786,10 @@ mod tests {
             read_only: false,
             requesting_control: false,
         }];
-        state.shared = Some(shared);
+        state.current_mut().shared = Some(shared);
         assert!(collaboration_status(&state, &theme).is_none());
 
-        let shared = state.shared.as_mut().unwrap();
+        let shared = state.current_mut().shared.as_mut().unwrap();
         shared.clients.push(crate::session::protocol::ClientInfo {
             id: 2,
             label: "two".into(),
@@ -797,12 +797,12 @@ mod tests {
             requesting_control: false,
         });
         assert_eq!(collaboration_status(&state, &theme).unwrap().0, " CTRL ");
-        state.shared.as_mut().unwrap().input_locked = true;
+        state.current_mut().shared.as_mut().unwrap().input_locked = true;
         assert_eq!(
             collaboration_status(&state, &theme).unwrap().0,
             " CTRL LOCK "
         );
-        let shared = state.shared.as_mut().unwrap();
+        let shared = state.current_mut().shared.as_mut().unwrap();
         shared.client_id = 2;
         shared.read_only = true;
         assert_eq!(

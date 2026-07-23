@@ -137,7 +137,7 @@ pub(super) fn apply_attached_panes(
 pub(crate) fn spawn_state_panes_on_session(
     ctx: &mut Context<HyprmuxApp>,
 ) -> Vec<(crate::state::PaneId, u64)> {
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return Vec::new();
     };
     // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
@@ -154,7 +154,7 @@ pub(crate) fn spawn_state_panes_on_session(
     // shell-integration env carry local paths a possibly different-OS server cannot run, so send
     // empty argv (the server resolves its own default shell) and drop the integration env. Mirrors
     // the same guard in `pane_lifecycle::request_pane_spawn` for later splits.
-    let is_remote = ctx.state.remote_host.is_some();
+    let is_remote = ctx.state.current().remote_host.is_some();
     let (shell, integration_env, command_shell) = if is_remote {
         (Vec::new(), Vec::new(), Vec::new())
     } else {
@@ -173,6 +173,9 @@ pub(crate) fn spawn_state_panes_on_session(
         (shell.as_argv(), integration_env, command_shell.as_argv())
     };
     let mut targets = Vec::new();
+    // Replay inputs are inserted after the loop: `current_mut()` borrows the whole `State`, which
+    // would conflict with the `workspaces.iter_mut()` borrow held for `pane`.
+    let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
     for pane in ctx
         .state
         .workspaces
@@ -197,17 +200,15 @@ pub(crate) fn spawn_state_panes_on_session(
             .chain(pane_env(
                 ctx.state.control_socket_path.as_deref(),
                 pane,
-                ctx.state.remote_host.is_some(),
+                is_remote,
             ))
             .collect::<Vec<_>>();
         // A replay command is not sent as the spawn command: the pane starts as a plain
         // interactive shell and the command is injected as type-ahead input once the spawn
-        // succeeds (see `State::pending_replay_inputs`).
+        // succeeds (see `Attachment::pending_replay_inputs`).
         let command = if pane.identity.replay {
             if let Some(command) = pane.identity.command.clone() {
-                ctx.state
-                    .pending_replay_inputs
-                    .insert((pane.id, generation), command);
+                replay_inserts.push(((pane.id, generation), command));
             }
             None
         } else {
@@ -229,16 +230,22 @@ pub(crate) fn spawn_state_panes_on_session(
         );
         targets.push((pane.id, generation));
     }
+    for (key, command) in replay_inserts {
+        ctx.state
+            .current_mut()
+            .pending_replay_inputs
+            .insert(key, command);
+    }
     targets
 }
 
 /// Flush pane spawns that were queued while no client was connected (see
 /// [`crate::state::State::pending_spawns`]).
 pub(super) fn flush_pending_spawns(ctx: &mut Context<HyprmuxApp>) {
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
-    for spawn in std::mem::take(&mut ctx.state.pending_spawns) {
+    for spawn in std::mem::take(&mut ctx.state.current_mut().pending_spawns) {
         client.spawn_pane(
             spawn.pane_id,
             spawn.generation,

@@ -118,7 +118,7 @@ fn forward_key_to_targets(
     key: KeyEvent,
 ) -> Update {
     let mut repaint = false;
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     for id in targets {
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
@@ -158,7 +158,7 @@ pub(crate) fn send_pane_bytes(
     if let Some(blocked) = input_blocked(ctx) {
         return Err(blocked.reason);
     }
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Ok(());
     };
@@ -252,7 +252,7 @@ pub(crate) fn handle_pane_input(
         return blocked_input_update(&blocked);
     }
 
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, input.bytes.to_vec());
@@ -293,7 +293,7 @@ pub(crate) fn handle_pane_mouse(
         };
     }
 
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, bytes);
@@ -322,7 +322,7 @@ pub(crate) fn handle_pane_resize(
     }
     // The pane rect updates immediately, but the client-side screen only reshapes on the server's
     // ordered `Resized` broadcast, so both parsers reshape at the same byte position.
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     let generation = match find_pane_mut(&mut ctx.state, id) {
         Some(pane) => {
             if client.is_none() {
@@ -336,7 +336,7 @@ pub(crate) fn handle_pane_resize(
     // Debounce through the shared bookkeeping when attached: record the latest size and arm a single
     // trailing-edge flush. Without shared state (a brief unattached window), send immediately.
     let epoch = ctx.state.runtime_epoch;
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared
             .pending_resizes
             .insert(id, (cols.max(1), rows.max(1)));
@@ -364,8 +364,8 @@ fn schedule_pane_resize_flush(epoch: u64) -> Command {
 /// Send the latest debounced size for every pane that still exists (see the controller debounce in
 /// [`handle_pane_resize`]). Clears the pending set and re-arms scheduling.
 pub(crate) fn flush_pending_resizes(ctx: &mut Context<HyprmuxApp>) {
-    let client = ctx.state.session_client.clone();
-    let pending: Vec<(PaneId, (u16, u16))> = match ctx.state.shared.as_mut() {
+    let client = ctx.state.current().session_client.clone();
+    let pending: Vec<(PaneId, (u16, u16))> = match ctx.state.current_mut().shared.as_mut() {
         Some(shared) => {
             shared.resize_flush_scheduled = false;
             shared.pending_resizes.drain().collect()
@@ -510,7 +510,7 @@ mod tests {
                 let (client, _rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_client = Some(client);
+                    state.current_mut().session_client = Some(client);
                     let pane = &mut state.workspaces[0].panes[0];
                     pane.terminal
                         .process_server_output("history\n".repeat(80).as_bytes());
@@ -614,11 +614,11 @@ mod tests {
                 let (client, follower_rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(2);
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 backend.render();
                 backend
@@ -635,11 +635,11 @@ mod tests {
                 let (client, controller_rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     let mut shared = SharedSessionState::new(1);
                     shared.controller = Some(1);
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 backend.render();
                 backend

@@ -329,11 +329,11 @@ fn clear_finished_unseen_on_focus(ctx: &mut Context<HyprmuxApp>) {
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
-    if !ctx.state.session_attached || !ctx.state.is_controller() {
+    if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }
     let epoch = ctx.state.runtime_epoch;
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         flush_layout_commit(ctx);
         return;
     };
@@ -345,6 +345,7 @@ pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
         return;
     };
     ctx.state
+        .current_mut()
         .shared
         .as_mut()
         .expect("shared session checked above")
@@ -361,10 +362,10 @@ pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
 /// new [`SharedLayout`] at the optimistic base revision. The canonical canvas is this controller's
 /// own pane canvas (viewport minus workbar), which followers letterbox to.
 pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
-    if !ctx.state.session_attached || !ctx.state.is_controller() {
+    if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
     let bounds = ctx
@@ -375,7 +376,7 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
         bounds.h.round().max(1.0) as u16,
     );
     let layout = crate::shared_layout::shared_layout_from_state(&ctx.state, canvas);
-    let Some(shared) = ctx.state.shared.as_mut() else {
+    let Some(shared) = ctx.state.current_mut().shared.as_mut() else {
         return;
     };
     if shared.last_committed_layout.as_ref() == Some(&layout) {

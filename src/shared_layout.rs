@@ -359,7 +359,7 @@ pub(crate) fn apply_shared_layout(
 
     ctx.state.next_pane_id = ctx.state.next_pane_id.max(max_pane_id);
     ctx.state.next_pty_generation = ctx.state.next_pty_generation.max(max_generation);
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.layout_rev = rev;
         shared.canonical_canvas = Some((canvas_cols, canvas_rows));
         shared.last_committed_layout = Some(layout.clone());
@@ -382,7 +382,7 @@ pub(crate) fn apply_shared_layout(
 fn ctx_shared_mut(
     ctx: &mut Context<crate::HyprmuxApp>,
 ) -> Option<&mut crate::state::SharedSessionState> {
-    ctx.state.shared.as_mut()
+    ctx.state.current_mut().shared.as_mut()
 }
 
 fn drain_orphan_output(
@@ -583,8 +583,8 @@ mod reconciler_tests {
 
     fn attach_follower(backend: &mut TestBackend<HyprmuxApp>, client: SessionClient) {
         let state = backend.state_mut();
-        state.session_attached = true;
-        state.session_client = Some(client);
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
         let mut shared = SharedSessionState::new(1);
         shared.controller = Some(2); // another client controls the layout; we follow.
         shared.clients = vec![
@@ -601,7 +601,7 @@ mod reconciler_tests {
                 requesting_control: false,
             },
         ];
-        state.shared = Some(shared);
+        state.current_mut().shared = Some(shared);
     }
 
     #[test]
@@ -668,16 +668,17 @@ mod reconciler_tests {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
-            backend.state_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
-                epoch: 1,
-                name: "live".into(),
-                client: Some(client),
-                autostart: false,
-                read_only: false,
-                remote_host: None,
-                intent: crate::state::AttachIntent::Plain,
-                left: None,
-            });
+            backend.state_mut().current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch: 1,
+                    name: "live".into(),
+                    client: Some(client),
+                    autostart: false,
+                    read_only: false,
+                    remote_host: None,
+                    intent: crate::state::AttachIntent::Plain,
+                    left: None,
+                });
             backend.render();
 
             backend
@@ -711,8 +712,8 @@ mod reconciler_tests {
             let (client, _rx) = SessionClient::test_channel();
             {
                 let state = backend.state_mut();
-                state.session_attached = true;
-                state.session_client = Some(client);
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(1); // we are the controller: our own echoes must not apply.
                 shared.clients = vec![
@@ -729,7 +730,7 @@ mod reconciler_tests {
                         requesting_control: false,
                     },
                 ];
-                state.shared = Some(shared);
+                state.current_mut().shared = Some(shared);
             }
             backend.render();
 
@@ -748,7 +749,13 @@ mod reconciler_tests {
                 "own echo must not remove local panes"
             );
             assert_eq!(
-                backend.state_mut().shared.as_ref().unwrap().layout_rev,
+                backend
+                    .state_mut()
+                    .current_mut()
+                    .shared
+                    .as_ref()
+                    .unwrap()
+                    .layout_rev,
                 7,
                 "echo confirms the committed revision"
             );

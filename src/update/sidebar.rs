@@ -533,7 +533,7 @@ pub(super) fn tree_activate(
 /// every rebuild while a directory is still absent from the provided source, so without this an
 /// expanded-but-slow directory would issue one `ListDirectory` per frame.
 pub(super) fn tree_entry_request(ctx: &mut Context<HyprmuxApp>, path: String) -> Update {
-    if ctx.state.remote_host.is_none() {
+    if ctx.state.current().remote_host.is_none() {
         return Update::none();
     }
     if ctx.state.sidebar.tree_pending.contains(&path)
@@ -546,7 +546,7 @@ pub(super) fn tree_entry_request(ctx: &mut Context<HyprmuxApp>, path: String) ->
     {
         return Update::none();
     }
-    let Some(client) = ctx.state.session_client.as_ref() else {
+    let Some(client) = ctx.state.current().session_client.as_ref() else {
         return Update::none();
     };
     if !client.supports_file_tree() {
@@ -676,7 +676,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
         != ctx.state.sidebar.tree_cwd.as_deref()
     {
         let cwd = crate::pane_lifecycle::focused_server_cwd_ref(&ctx.state).map(str::to_string);
-        ctx.state.sidebar.tree_repo = if ctx.state.remote_host.is_some() {
+        ctx.state.sidebar.tree_repo = if ctx.state.current().remote_host.is_some() {
             None
         } else {
             cwd.as_deref().and_then(discover_repo_root)
@@ -720,7 +720,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
 /// per root change or completed command rather than per message. Already-known directories are
 /// re-requested in place rather than cleared, so the tree does not flash back to loading rows.
 fn refresh_remote_tree(ctx: &mut Context<HyprmuxApp>) {
-    if ctx.state.remote_host.is_none() {
+    if ctx.state.current().remote_host.is_none() {
         return;
     }
     let token = ctx.state.sidebar.git_refresh_token;
@@ -730,7 +730,7 @@ fn refresh_remote_tree(ctx: &mut Context<HyprmuxApp>) {
     let Some(root) = ctx.state.sidebar.tree_cwd.clone() else {
         return;
     };
-    let Some(client) = ctx.state.session_client.as_ref() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };
     if !client.supports_file_tree() {
@@ -815,7 +815,7 @@ pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update 
     if !sessions_active(ctx) || epoch != ctx.state.sidebar.sessions_epoch {
         return Update::none();
     }
-    let current_name = ctx.state.session_name.clone();
+    let current_name = ctx.state.current().session_name.clone();
     let current = crate::ops::session::current_session_row(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
@@ -1092,7 +1092,7 @@ mod tests {
                 config,
             }];
             backend.state_mut().sidebar.config_epoch = 1;
-            backend.state_mut().pending_spawns.clear();
+            backend.state_mut().current_mut().pending_spawns.clear();
 
             let hostile = "/repo/; rm -rf ~/.rs";
             backend
@@ -1106,6 +1106,7 @@ mod tests {
 
             let spawn = backend
                 .state()
+                .current()
                 .pending_spawns
                 .last()
                 .cloned()
@@ -1262,8 +1263,8 @@ mod tests {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             {
                 let state = backend.state_mut();
-                state.session_attached = true;
-                state.session_name = Some("eph-test".to_string());
+                state.current_mut().session_attached = true;
+                state.current_mut().session_name = Some("eph-test".to_string());
                 let mut picker = crate::state::SessionPickerState::new(vec![discovered("picker")]);
                 picker.pending_open = Some(0);
                 state.session_picker = Some(picker);
@@ -1371,7 +1372,7 @@ mod tests {
             backend.state_mut().focused_pane = Some(focused);
             backend.state_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd.to_string());
         }
-        backend.state_mut().pending_spawns.clear();
+        backend.state_mut().current_mut().pending_spawns.clear();
         backend
             .dispatch(crate::Msg::SidebarLauncherActivate {
                 config_epoch: 1,
@@ -1381,6 +1382,7 @@ mod tests {
             .expect("launcher click");
         backend
             .state()
+            .current()
             .pending_spawns
             .last()
             .cloned()

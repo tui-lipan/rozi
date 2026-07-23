@@ -77,7 +77,7 @@ pub(crate) fn open(
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
         &pane,
-        ctx.state.remote_host.is_some(),
+        ctx.state.current().remote_host.is_some(),
     );
     let identity = pane.identity.clone();
     let (cols, rows) = (pane.terminal.cols, pane.terminal.rows);
@@ -108,11 +108,12 @@ pub(crate) fn open(
 }
 
 pub(crate) fn close(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let client = ctx.state.current().session_client.clone();
     let Some(pane) = ctx.state.popup.as_mut().filter(|pane| !pane.closing) else {
         return Update::none();
     };
     let generation = pane.pty_generation;
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = client {
         client.kill(POPUP_PANE_ID, generation);
     }
     pane.opening = false;
@@ -148,7 +149,7 @@ pub(crate) fn dismisses_completed(key: KeyEvent) -> bool {
 pub(crate) fn kill_if_open(ctx: &mut Context<HyprmuxApp>) {
     if let Some(pane) = ctx.state.popup.take() {
         ctx.state.popup_return_focus = None;
-        if let Some(client) = ctx.state.session_client.clone() {
+        if let Some(client) = ctx.state.current().session_client.clone() {
             client.kill(POPUP_PANE_ID, pane.pty_generation);
         }
     }

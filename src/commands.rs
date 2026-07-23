@@ -829,7 +829,7 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
 }
 
 pub(crate) fn command_available(action: Action, state: &State) -> bool {
-    let shared = state.shared.as_ref();
+    let shared = state.current().shared.as_ref();
     match action {
         Action::RespawnPane => state.focused_pane.is_some_and(|focused| {
             state
@@ -950,7 +950,7 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     if action == Action::RenameSession {
         // An ephemeral (or not-yet-attached) session carries no user-facing name, so this command
         // *names* it for the first time (turning it durable) rather than renaming an existing name.
-        let named = state.session_attached && !state.is_ephemeral_session();
+        let named = state.current().session_attached && !state.is_ephemeral_session();
         return if named {
             "Rename session"
         } else {
@@ -998,6 +998,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleInputLock => enable_disable_label(
             "input lock",
             state
+                .current()
                 .shared
                 .as_ref()
                 .is_some_and(|shared| shared.input_locked),
@@ -1356,7 +1357,7 @@ mod tests {
                 requesting_control: false,
             })
             .collect();
-        state.shared = Some(shared);
+        state.current_mut().shared = Some(shared);
         state
     }
 
@@ -1382,7 +1383,13 @@ mod tests {
 
         // Controller with a pending request from client 2 can grant; the follower still cannot.
         let mut controller_with_request = shared_state(1, 1, false, 2);
-        controller_with_request.shared.as_mut().unwrap().clients[1].requesting_control = true;
+        controller_with_request
+            .current_mut()
+            .shared
+            .as_mut()
+            .unwrap()
+            .clients[1]
+            .requesting_control = true;
         assert!(command_available(
             Action::GrantControl,
             &controller_with_request
@@ -1420,7 +1427,7 @@ mod tests {
             resolved_label(Action::ToggleInputLock, "Toggle input lock", &state),
             "Enable input lock"
         );
-        state.shared.as_mut().unwrap().input_locked = true;
+        state.current_mut().shared.as_mut().unwrap().input_locked = true;
         assert_eq!(
             resolved_label(Action::ToggleInputLock, "Toggle input lock", &state),
             "Disable input lock"

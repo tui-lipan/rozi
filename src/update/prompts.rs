@@ -247,12 +247,13 @@ pub(super) fn close_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn client_list_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let len = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .map_or(0, |shared| shared.clients.len());
     if let Some(list) = ctx.state.client_list.as_mut() {
-        let len = ctx
-            .state
-            .shared
-            .as_ref()
-            .map_or(0, |shared| shared.clients.len());
         list.selected = index.min(len.saturating_sub(1));
     }
     Update::full()

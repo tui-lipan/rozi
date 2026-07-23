@@ -34,8 +34,8 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
         .iter()
         .cloned()
         .map(|entry| {
-            let current = ctx.state.session_name.as_deref() == Some(entry.name.as_str())
-                && ctx.state.remote_host == entry.host;
+            let current = ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
+                && ctx.state.current().remote_host == entry.host;
             let pending =
                 ctx.state.sidebar.pending_session_open.as_deref() == Some(entry.name.as_str());
             let mut label = if entry.ephemeral {

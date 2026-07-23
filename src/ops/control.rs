@@ -111,7 +111,7 @@ pub(crate) fn handle_control_request(
                 .or(ctx.state.focused_pane);
             match id.and_then(|id| crate::pane_lifecycle::find_pane(&ctx.state, id)) {
                 Some(pane) => {
-                    if let Some(client) = &ctx.state.session_client {
+                    if let Some(client) = &ctx.state.current().session_client {
                         client.set_pane_logging(
                             pane.id,
                             pane.pty_generation,
@@ -201,18 +201,19 @@ fn set_status(
         return ControlResponse::error(format!("pane {id} not found"));
     };
     let generation = pane.pty_generation;
-    if !ctx.state.session_attached {
+    if !ctx.state.current().session_attached {
         return ControlResponse::error(format!("pane {id} session is not attached"));
     }
     if ctx
         .state
+        .current()
         .shared
         .as_ref()
         .is_some_and(|shared| shared.read_only)
     {
         return ControlResponse::error("attached read-only");
     }
-    let Some(client) = ctx.state.session_client.clone() else {
+    let Some(client) = ctx.state.current().session_client.clone() else {
         return ControlResponse::error(format!("pane {id} session is not connected"));
     };
     client.set_pane_status(id, generation, status, reason);
@@ -238,7 +239,7 @@ fn send_text(
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
     };
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
@@ -265,7 +266,7 @@ fn send_keys(
     let Some(id) = id else {
         return ControlResponse::error("no target pane and no focused pane");
     };
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
         return ControlResponse::error(format!("pane {id} not found"));
     };
@@ -502,12 +503,12 @@ mod tests {
                 let (client, outbound) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
-                    state.session_attached = true;
-                    state.session_client = Some(client);
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
                     state.workspaces[0].panes[0].pty_generation = 9;
                     let mut shared = crate::state::SharedSessionState::new(1);
                     shared.controller = Some(2);
-                    state.shared = Some(shared);
+                    state.current_mut().shared = Some(shared);
                 }
                 let (reply, response) = mpsc::channel();
                 backend
@@ -534,7 +535,13 @@ mod tests {
                     }) if status == "blocked" && reason == "waiting"
                 )));
 
-                backend.state_mut().shared.as_mut().unwrap().read_only = true;
+                backend
+                    .state_mut()
+                    .current_mut()
+                    .shared
+                    .as_mut()
+                    .unwrap()
+                    .read_only = true;
                 let (reply, response) = mpsc::channel();
                 backend
                     .dispatch(crate::Msg::ControlRequest(ControlEnvelope {

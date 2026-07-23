@@ -651,10 +651,10 @@ mod tests {
             {
                 let state = backend.state_mut();
                 // A follower: attached, but another client holds the layout lease.
-                state.session_attached = true;
+                state.current_mut().session_attached = true;
                 let mut shared = SharedSessionState::new(1);
                 shared.controller = Some(2);
-                state.shared = Some(shared);
+                state.current_mut().shared = Some(shared);
 
                 let bounds = FloatRect {
                     x: 0.0,

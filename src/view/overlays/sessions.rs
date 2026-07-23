@@ -21,7 +21,7 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(list) = ctx.state.client_list.as_ref() else {
         return Text::new("").into();
     };
-    let Some(shared) = ctx.state.shared.as_ref() else {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Text::new("").into();
     };
     let entries = shared
@@ -113,7 +113,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     };
     let query = picker.input.text().trim();
     let query_lower = query.to_ascii_lowercase();
-    let current = ctx.state.session_name.as_deref();
+    let current = ctx.state.current().session_name.as_deref();
     let visible = |entry: &crate::session::discovery::DiscoveredSession| {
         query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
     };
@@ -131,10 +131,10 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         row = row.child(hint_pill(theme, "open", "enter"));
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
-    if ctx.state.session_attached && !ctx.state.is_ephemeral_session() {
+    if ctx.state.current().session_attached && !ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "detach", "ctrl+d"));
     }
-    if ctx.state.session_attached && ctx.state.is_ephemeral_session() {
+    if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));
     }
     if let Some(entry) = selected {
@@ -150,8 +150,8 @@ fn session_picker_palette(
 ) -> SearchPalette<usize> {
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
-    let current_name = ctx.state.session_name.as_deref();
-    let current_host = ctx.state.remote_host.as_deref();
+    let current_name = ctx.state.current().session_name.as_deref();
+    let current_host = ctx.state.current().remote_host.as_deref();
     let ephemeral_entries = picker
         .entries
         .iter()
@@ -286,7 +286,7 @@ fn session_description(
 
 fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     let is_ephemeral = ctx.state.is_ephemeral_session();
-    let is_attached = ctx.state.session_attached;
+    let is_attached = ctx.state.current().session_attached;
     ctx.link().key_handler(move |key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)

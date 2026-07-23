@@ -26,7 +26,7 @@ pub(crate) fn focused_local_cwd(state: &State) -> Option<String> {
 
 /// [`focused_local_cwd`] without the allocation. See [`Pane::local_cwd_ref`].
 pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
-    if state.remote_host.is_some() {
+    if state.current().remote_host.is_some() {
         return None;
     }
     let workspace = &state.workspaces[state.active_workspace];
@@ -42,7 +42,7 @@ pub(crate) fn focused_local_cwd_ref(state: &State) -> Option<&str> {
 /// server-relative path, which is what the sidebar file tree roots itself at and asks the server to
 /// list. See [`Pane::server_cwd_ref`].
 pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
-    if state.remote_host.is_none() {
+    if state.current().remote_host.is_none() {
         return focused_local_cwd_ref(state);
     }
     let workspace = &state.workspaces[state.active_workspace];
@@ -54,7 +54,7 @@ pub(crate) fn focused_server_cwd_ref(state: &State) -> Option<&str> {
 
 /// Cwd to send with a server spawn request. Under `--remote`, inherits the server-relative path.
 pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
-    if state.remote_host.is_some() {
+    if state.current().remote_host.is_some() {
         let workspace = &state.workspaces[state.active_workspace];
         return workspace
             .focused_pane
@@ -181,7 +181,7 @@ pub(crate) fn spawn_pane_in_workspace(
     let env = pane_env(
         ctx.state.control_socket_path.as_deref(),
         &pane,
-        ctx.state.remote_host.is_some(),
+        ctx.state.current().remote_host.is_some(),
     );
     let identity = pane.identity.clone();
     let command = pane.identity.command.clone();
@@ -267,7 +267,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let generation = ctx.state.next_pty_generation;
     ctx.state.next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
-    let remote_attached = ctx.state.remote_host.is_some();
+    let remote_attached = ctx.state.current().remote_host.is_some();
     let palette = terminal_palette(
         &ctx.state.theme,
         pane_frame_background(
@@ -350,6 +350,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     let command = match command {
         Some(command) if replay => {
             state
+                .current_mut()
                 .pending_replay_inputs
                 .insert((pane_id, generation), command);
             None
@@ -361,7 +362,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // shell-integration env carry local paths the remote — possibly a different OS — cannot run.
     // Send empty argv so the server resolves its own default shell (`pty_config` falls back when
     // the argv is empty), and drop the local shell-integration env.
-    let (shell, command_shell, extra_env) = if state.remote_host.is_some() {
+    let (shell, command_shell, extra_env) = if state.current().remote_host.is_some() {
         (Vec::new(), Vec::new(), Vec::new())
     } else {
         resolved_launch_argv(&state.config)
@@ -369,7 +370,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
     // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
     let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
-    if let Some(client) = state.session_client.clone() {
+    if let Some(client) = state.current().session_client.clone() {
         client.spawn_pane(
             pane_id,
             generation,
@@ -385,20 +386,23 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
             command_shell,
         );
     } else {
-        state.pending_spawns.push(crate::state::PendingPaneSpawn {
-            pane_id,
-            generation,
-            command,
-            cwd,
-            cols,
-            rows,
-            keep_open,
-            env,
-            title,
-            palette,
-            shell,
-            command_shell,
-        });
+        state
+            .current_mut()
+            .pending_spawns
+            .push(crate::state::PendingPaneSpawn {
+                pane_id,
+                generation,
+                command,
+                cwd,
+                cols,
+                rows,
+                keep_open,
+                env,
+                title,
+                palette,
+                shell,
+                command_shell,
+            });
     }
 }
 
@@ -457,7 +461,7 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
         workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
     let mut generation = None;
-    let client = ctx.state.session_client.clone();
+    let client = ctx.state.current().session_client.clone();
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && !pane.closing
     {
@@ -828,10 +832,14 @@ mod tests {
         );
         // No client yet: the spawn is queued, with the replay command stripped from the wire
         // request and parked for post-spawn injection instead.
-        assert_eq!(state.pending_spawns.len(), 1);
-        assert_eq!(state.pending_spawns[0].command, None);
+        assert_eq!(state.current().pending_spawns.len(), 1);
+        assert_eq!(state.current().pending_spawns[0].command, None);
         assert_eq!(
-            state.pending_replay_inputs.get(&(7, 3)).map(String::as_str),
+            state
+                .current()
+                .pending_replay_inputs
+                .get(&(7, 3))
+                .map(String::as_str),
             Some("n")
         );
 
@@ -848,11 +856,11 @@ mod tests {
             ),
         );
         assert_eq!(
-            state.pending_spawns[1].command.as_deref(),
+            state.current().pending_spawns[1].command.as_deref(),
             Some("htop"),
             "deterministic command panes must keep command-shell semantics"
         );
-        assert!(!state.pending_replay_inputs.contains_key(&(8, 4)));
+        assert!(!state.current().pending_replay_inputs.contains_key(&(8, 4)));
     }
 
     /// A `--remote` pane must not carry the client's locally resolved shell argv to the server: a
@@ -864,20 +872,20 @@ mod tests {
         let mut local = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         request_pane_spawn(&mut local, spawn_request(1, 1, PaneIdentity::default()));
         assert!(
-            !local.pending_spawns[0].shell.is_empty(),
+            !local.current().pending_spawns[0].shell.is_empty(),
             "a local pane keeps its resolved interactive-shell argv"
         );
 
         // Remote session: shell and command_shell are emptied for server-side resolution.
         let mut remote = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        remote.remote_host = Some("winvm".to_string());
+        remote.current_mut().remote_host = Some("winvm".to_string());
         request_pane_spawn(&mut remote, spawn_request(1, 1, PaneIdentity::default()));
         assert!(
-            remote.pending_spawns[0].shell.is_empty(),
+            remote.current().pending_spawns[0].shell.is_empty(),
             "a --remote pane must send an empty shell argv"
         );
         assert!(
-            remote.pending_spawns[0].command_shell.is_empty(),
+            remote.current().pending_spawns[0].command_shell.is_empty(),
             "a --remote pane must send an empty command-shell argv"
         );
     }
@@ -900,13 +908,14 @@ mod tests {
         // An entry whose spawn already went out (not queued) can never complete after a
         // disconnect, and its key could be minted again once the generation counter restarts.
         state
+            .current_mut()
             .pending_replay_inputs
             .insert((9, 1), "stale".to_string());
 
         state.prune_replay_inputs_to_pending_spawns();
 
-        assert!(state.pending_replay_inputs.contains_key(&(7, 3)));
-        assert!(!state.pending_replay_inputs.contains_key(&(9, 1)));
+        assert!(state.current().pending_replay_inputs.contains_key(&(7, 3)));
+        assert!(!state.current().pending_replay_inputs.contains_key(&(9, 1)));
     }
 
     #[test]

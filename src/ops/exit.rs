@@ -59,11 +59,11 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     clear_pending(ctx);
-    if ctx.state.is_ephemeral_session() && ctx.state.session_client.is_some() {
+    if ctx.state.is_ephemeral_session() && ctx.state.current().session_client.is_some() {
         return crate::ops::session::open_detach_rename(ctx);
     }
     mark_session_detached(ctx, None);
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
         profiles::persist_session_on_detach(&ctx.state);
     }
@@ -74,12 +74,12 @@ pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Mark the current session as intentionally left and emit its hook event exactly once.
 /// Callers must flush pending layout changes before entering this transition.
 pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Option<&str>) {
-    if !ctx.state.session_attached {
+    if !ctx.state.current().session_attached {
         return;
     }
     let session = session
         .map(str::to_string)
-        .or_else(|| ctx.state.session_name.clone())
+        .or_else(|| ctx.state.current().session_name.clone())
         .unwrap_or_default();
     crate::events::emit(
         &ctx.state,
@@ -88,7 +88,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Opti
             vec![("session", session)],
         ),
     );
-    ctx.state.session_attached = false;
+    ctx.state.current_mut().session_attached = false;
     crate::update::sidebar::invalidate_sessions(ctx);
 }
 
@@ -104,7 +104,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Opti
 pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::update::flush_layout_commit(ctx);
     mark_session_detached(ctx, None);
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
     }
     profiles::persist_session_on_detach(&ctx.state);
@@ -149,7 +149,7 @@ pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: 
     crate::popup::kill_if_open(ctx);
     let shutdown_ephemeral = crate::ops::session::may_shutdown_ephemeral(&ctx.state);
     mark_session_detached(ctx, None);
-    if shutdown_ephemeral && let Some(client) = ctx.state.session_client.clone() {
+    if shutdown_ephemeral && let Some(client) = ctx.state.current().session_client.clone() {
         client.shutdown();
     }
     profiles::persist_session_if_enabled(&ctx.state);
@@ -245,7 +245,7 @@ pub(crate) fn kill_session_with_confirmation(
     ctx: &mut Context<HyprmuxApp>,
     confirmations_enabled: bool,
 ) -> Update {
-    if !ctx.state.session_attached {
+    if !ctx.state.current().session_attached {
         ctx.toast().push(info_toast(
             &ctx.state.theme,
             "Not attached to a named session",
@@ -259,6 +259,7 @@ pub(crate) fn kill_session_with_confirmation(
 
     let session_name = ctx
         .state
+        .current()
         .session_name
         .clone()
         .unwrap_or_else(|| "session".to_string());
@@ -304,9 +305,9 @@ mod tests {
         let mut backend = TestBackend::new(HyprmuxApp::default());
         let (client, _rx) = SessionClient::test_channel();
         let state = backend.state_mut();
-        state.session_name = Some("eph-confirm".to_string());
-        state.session_attached = true;
-        state.session_client = Some(client);
+        state.current_mut().session_name = Some("eph-confirm".to_string());
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
         state.config.confirm.new_temporary_session = true;
         let mut shared = SharedSessionState::new(1);
         shared.controller = Some(1);
@@ -316,7 +317,7 @@ mod tests {
             read_only: false,
             requesting_control: false,
         }];
-        state.shared = Some(shared);
+        state.current_mut().shared = Some(shared);
         backend
     }
 
@@ -344,9 +345,9 @@ mod tests {
         let (client, outbound) = SessionClient::test_channel();
         let events = {
             let state = backend.state_mut();
-            state.session_name = Some("named".to_string());
-            state.session_attached = true;
-            state.session_client = Some(client);
+            state.current_mut().session_name = Some("named".to_string());
+            state.current_mut().session_attached = true;
+            state.current_mut().session_client = Some(client);
             let mut shared = SharedSessionState::new(1);
             shared.controller = Some(1);
             shared.clients = vec![ClientInfo {
@@ -356,7 +357,7 @@ mod tests {
                 requesting_control: false,
             }];
             shared.last_committed_layout = None;
-            state.shared = Some(shared);
+            state.current_mut().shared = Some(shared);
             state.event_hub.subscribe(None)
         };
         (backend, outbound, events)
@@ -386,7 +387,7 @@ mod tests {
                 commit.is_some_and(|commit| detach.is_some_and(|detach| commit < detach)),
                 "expected layout commit before detach, got {sent:?}"
             );
-            assert!(!backend.state().session_attached);
+            assert!(!backend.state().current().session_attached);
             let event: serde_json::Value =
                 serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
             assert_eq!(
@@ -410,7 +411,7 @@ mod tests {
                 serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
             assert_eq!(event["event"], "session-detached");
             assert_eq!(event["data"]["session"], "named");
-            assert!(!backend.state().session_attached);
+            assert!(!backend.state().current().session_attached);
         });
     }
 
@@ -426,7 +427,7 @@ mod tests {
                 serde_json::from_str(&events.try_recv().expect("session-detached event")).unwrap();
             assert_eq!(event["event"], "session-detached");
             assert_eq!(event["data"]["session"], "named");
-            assert!(!backend.state().session_attached);
+            assert!(!backend.state().current().session_attached);
         });
     }
 
@@ -445,7 +446,10 @@ mod tests {
             );
             press_new_temporary(&mut backend);
             assert!(backend.state().pending_destructive.is_none());
-            assert_ne!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+            assert_ne!(
+                backend.state().current().session_name.as_deref(),
+                Some("eph-confirm")
+            );
         });
     }
 
@@ -468,7 +472,10 @@ mod tests {
                 .expect("expired press rearmed");
             assert_eq!(pending.action, PendingDestructive::NewTemporarySession);
             assert!(pending.armed_at.elapsed() < Duration::from_secs(1));
-            assert_eq!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+            assert_eq!(
+                backend.state().current().session_name.as_deref(),
+                Some("eph-confirm")
+            );
         });
     }
 
@@ -492,7 +499,10 @@ mod tests {
                     .map(|pending| pending.action),
                 Some(PendingDestructive::NewTemporarySession)
             );
-            assert_eq!(backend.state().session_name.as_deref(), Some("eph-confirm"));
+            assert_eq!(
+                backend.state().current().session_name.as_deref(),
+                Some("eph-confirm")
+            );
         });
     }
 }

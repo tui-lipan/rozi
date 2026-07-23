@@ -129,11 +129,12 @@ impl Component for HyprmuxApp {
             .as_ref()
             .map(|guard| guard.path().to_path_buf());
         state.event_hub = self.event_hub.clone();
-        state.deferred_profile_seed = self.startup_profile.as_ref().and_then(|profile| {
-            profile
-                .records_origin
-                .then(|| (profile.name.clone(), profile.path.clone()))
-        });
+        state.current_mut().deferred_profile_seed =
+            self.startup_profile.as_ref().and_then(|profile| {
+                profile
+                    .records_origin
+                    .then(|| (profile.name.clone(), profile.path.clone()))
+            });
         ops::theme::apply_terminal_palette_to_state(&mut state);
         state
     }
@@ -198,36 +199,37 @@ impl Component for HyprmuxApp {
             });
             let epoch = ctx.state.runtime_epoch;
             let autostart = self.startup_autostart && !self.read_only;
-            ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
-                epoch,
-                name: name.clone(),
-                client: None,
-                autostart,
-                read_only: self.read_only,
-                remote_host: self.remote.as_ref().map(|target| match target {
-                    crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
-                    crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
-                }),
-                intent: self.startup_profile.as_ref().map_or(
-                    crate::state::AttachIntent::Plain,
-                    |profile| {
-                        if profile.records_origin {
-                            crate::state::AttachIntent::ProfileSeed {
-                                profile: profile.name.clone(),
-                                path: profile.path.clone(),
+            ctx.state.current_mut().pending_session_attach =
+                Some(crate::state::PendingSessionAttach {
+                    epoch,
+                    name: name.clone(),
+                    client: None,
+                    autostart,
+                    read_only: self.read_only,
+                    remote_host: self.remote.as_ref().map(|target| match target {
+                        crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
+                        crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
+                    }),
+                    intent: self.startup_profile.as_ref().map_or(
+                        crate::state::AttachIntent::Plain,
+                        |profile| {
+                            if profile.records_origin {
+                                crate::state::AttachIntent::ProfileSeed {
+                                    profile: profile.name.clone(),
+                                    path: profile.path.clone(),
+                                }
+                            } else {
+                                crate::state::AttachIntent::Plain
                             }
-                        } else {
-                            crate::state::AttachIntent::Plain
-                        }
-                    },
-                ),
-                left: None,
-            });
-            ctx.state.remote_host = self.remote.as_ref().map(|target| match target {
+                        },
+                    ),
+                    left: None,
+                });
+            ctx.state.current_mut().remote_host = self.remote.as_ref().map(|target| match target {
                 crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
                 crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
             });
-            ctx.state.remote_target = self.remote.clone();
+            ctx.state.current_mut().remote_target = self.remote.clone();
             SessionStart::Attach {
                 epoch,
                 name,
@@ -1266,8 +1268,8 @@ mod tests {
                 });
 
                 let session_name = "eph-test".to_string();
-                backend.state_mut().session_name = Some(session_name.clone());
-                backend.state_mut().session_attached = true;
+                backend.state_mut().current_mut().session_name = Some(session_name.clone());
+                backend.state_mut().current_mut().session_attached = true;
                 backend.state_mut().show_session_picker = true;
                 backend.state_mut().session_picker =
                     Some(crate::state::SessionPickerState::new(vec![

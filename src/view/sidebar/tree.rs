@@ -20,9 +20,10 @@ pub(super) fn tree_tab(
     };
     // A remote server older than the file-tree messages will never answer a listing request, so say
     // so rather than leaving the widget on loading rows forever.
-    if ctx.state.remote_host.is_some()
+    if ctx.state.current().remote_host.is_some()
         && ctx
             .state
+            .current()
             .session_client
             .as_ref()
             .is_some_and(|client| !client.supports_file_tree())
@@ -107,7 +108,7 @@ pub(super) fn tree_tab(
     // Under `--remote` the files are on the server's host, so the widget cannot enumerate them
     // itself. Serve listings from state instead and let it ask for what it is missing; local
     // attaches keep the default filesystem source and never pay for any of this.
-    if ctx.state.remote_host.is_some() {
+    if ctx.state.current().remote_host.is_some() {
         tree = tree
             .entry_source(FileTreeEntrySource::provided(
                 ctx.state.sidebar.tree_listings.clone(),
@@ -162,7 +163,7 @@ fn root_for(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> Option<String> 
 /// Why there is no tree to show. A focused pane whose directory is not on this client (OSC7
 /// `cwd_host`, or a `--remote` session) is worth saying plainly rather than showing an empty tree.
 fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static str {
-    let remote = ctx.state.remote_host.is_some()
+    let remote = ctx.state.current().remote_host.is_some()
         || ctx
             .state
             .focused_pane
@@ -171,7 +172,9 @@ fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static st
     match (remote, root) {
         // Under `--remote` the tree is served by the session server, so the only way to have no
         // root is the pane not having reported a directory yet.
-        (true, _) if ctx.state.remote_host.is_some() => "Waiting for the remote pane's directory",
+        (true, _) if ctx.state.current().remote_host.is_some() => {
+            "Waiting for the remote pane's directory"
+        }
         (true, _) => "Pane is on a remote host",
         (false, SidebarTreeRoot::Repo) => "No repository here",
         (false, SidebarTreeRoot::Cwd) => "No working directory",

@@ -199,7 +199,7 @@ pub(crate) fn hook_env_for_state(
     state: &crate::state::State,
 ) -> Vec<(String, String)> {
     let mut env = hook_env(event, state.control_socket_path.as_deref());
-    if let Some(host) = &state.remote_host {
+    if let Some(host) = &state.current().remote_host {
         env.push(("HYPRMUX_REMOTE_HOST".to_string(), host.clone()));
     }
     env

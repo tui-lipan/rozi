@@ -109,7 +109,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         let env = pane_env(
             ctx.state.control_socket_path.as_deref(),
             &pane,
-            ctx.state.remote_host.is_some(),
+            ctx.state.current().remote_host.is_some(),
         );
         let identity = pane.identity.clone();
         let cols = pane.terminal.cols;

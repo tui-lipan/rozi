@@ -19,7 +19,7 @@ pub(super) fn connected(
     name: String,
     client: SessionClient,
 ) -> Update {
-    let Some(pending) = ctx.state.pending_session_attach.as_mut() else {
+    let Some(pending) = ctx.state.current_mut().pending_session_attach.as_mut() else {
         return Update::none();
     };
     if pending.epoch != epoch || pending.name != name {
@@ -35,23 +35,24 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     }
     // Only the current session's unexpected disconnect matters; an intentional detach or
     // attach-elsewhere has already bumped the epoch, so its stale disconnect is filtered out above.
-    if ctx.state.session_name.as_deref() != Some(name.as_str()) {
+    if ctx.state.current().session_name.as_deref() != Some(name.as_str()) {
         return Update::none();
     }
-    if ctx.state.pending_session_attach.is_some() {
+    if ctx.state.current().pending_session_attach.is_some() {
         return Update::full();
     }
-    ctx.state.session_attached = false;
+    ctx.state.current_mut().session_attached = false;
     crate::update::sidebar::invalidate_sessions(ctx);
-    ctx.state.session_client = None;
+    ctx.state.current_mut().session_client = None;
     let read_only = ctx
         .state
+        .current()
         .shared
         .as_ref()
         .is_some_and(|shared| shared.read_only);
     // Drop shared-lease bookkeeping: while disconnected we behave as a solo controller, and a
     // successful reconnect rebuilds this from the fresh `Attached` frame.
-    ctx.state.shared = None;
+    ctx.state.current_mut().shared = None;
     // Replay inputs whose spawn already went to the dead server will never see a `SpawnResult`;
     // only spawns still queued in `pending_spawns` (flushed on reattach) keep their entry.
     ctx.state.prune_replay_inputs_to_pending_spawns();
@@ -67,13 +68,13 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     // re-seed. Only ephemeral sessions autostart a replacement server.
     let autostart = crate::state::is_ephemeral_session_name(&name);
     let new_epoch = ctx.state.runtime_epoch.saturating_add(1);
-    ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
+    ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch: new_epoch,
         name: name.clone(),
         client: None,
         autostart,
         read_only,
-        remote_host: ctx.state.remote_host.clone(),
+        remote_host: ctx.state.current().remote_host.clone(),
         intent: crate::state::AttachIntent::Plain,
         left: None,
     });
@@ -85,7 +86,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     // fail or, worse, attach to an unrelated local session with the same name. Route on the
     // resolved target carried on `State` alongside `remote_host`, mirroring the two startup/picker
     // call sites.
-    if let Some(target) = ctx.state.remote_target.clone() {
+    if let Some(target) = ctx.state.current().remote_target.clone() {
         let remote_config = ctx.state.config.remote.clone();
         return Update::with_command(Command::spawn(move |link| {
             std::thread::spawn(move || {
@@ -113,7 +114,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
 }
 
 pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
-    let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
+    let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();
     };
     if pending.epoch != epoch {
@@ -122,13 +123,16 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     // Only a failed *remote* attach falls back below. A local ephemeral attach is itself the
     // fallback, so retrying it here on failure would spin forever (fail → fall back → fail → …).
     let was_remote = pending.remote_host.is_some();
-    ctx.state.pending_session_attach = None;
+    ctx.state.current_mut().pending_session_attach = None;
     ctx.toast()
         .push(error_toast(&ctx.state.theme, "Attach failed", message));
     // An unreachable `--remote` host would otherwise strand the UI with no session at all — not even
     // a working local terminal. Fall back to a fresh local ephemeral so the launch is never blank;
     // the error toast above already explains what went wrong.
-    if was_remote && !ctx.state.session_attached && ctx.state.session_client.is_none() {
+    if was_remote
+        && !ctx.state.current().session_attached
+        && ctx.state.current().session_client.is_none()
+    {
         return crate::ops::session::attach_startup_ephemeral(ctx);
     }
     Update::full()
@@ -149,7 +153,7 @@ pub(super) fn attached(
     read_only: bool,
     created_from_profile: Option<String>,
 ) -> Update {
-    let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
+    let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();
     };
     if pending.epoch != epoch || pending.name != session {
@@ -157,6 +161,7 @@ pub(super) fn attached(
     }
     let pending = ctx
         .state
+        .current_mut()
         .pending_session_attach
         .take()
         .expect("pending attach checked above");
@@ -164,15 +169,15 @@ pub(super) fn attached(
         return Update::none();
     };
     ctx.state.runtime_epoch = epoch;
-    ctx.state.session_client = Some(client);
-    ctx.state.session_name = Some(session.clone());
+    ctx.state.current_mut().session_client = Some(client);
+    ctx.state.current_mut().session_name = Some(session.clone());
     if let Some(host) = pending.remote_host {
-        ctx.state.remote_host = Some(host);
+        ctx.state.current_mut().remote_host = Some(host);
     }
-    ctx.state.created_from_profile = created_from_profile;
-    ctx.state.session_attached = true;
+    ctx.state.current_mut().created_from_profile = created_from_profile;
+    ctx.state.current_mut().session_attached = true;
     crate::update::sidebar::invalidate_sessions(ctx);
-    ctx.state.deferred_profile_seed = None;
+    ctx.state.current_mut().deferred_profile_seed = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     if !crate::state::is_ephemeral_session_name(&session) {
@@ -186,7 +191,7 @@ pub(super) fn attached(
     shared.clients = clients;
     shared.input_locked = input_locked;
     shared.read_only = read_only;
-    ctx.state.shared = Some(shared);
+    ctx.state.current_mut().shared = Some(shared);
 
     crate::events::emit(
         &ctx.state,
@@ -268,10 +273,11 @@ pub(super) fn attached(
         .unwrap_or_default();
     if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
     {
-        if let Some(client) = ctx.state.session_client.as_ref() {
+        if let Some(client) = ctx.state.current().session_client.as_ref() {
             client.set_session_origin(profile.clone());
         }
-        ctx.state.pending_profile_loaded = Some((profile.clone(), path.clone(), session.clone()));
+        ctx.state.current_mut().pending_profile_loaded =
+            Some((profile.clone(), path.clone(), session.clone()));
         if named {
             ctx.toast().push(crate::pty_events::info_toast(
                 &ctx.state.theme,
@@ -298,7 +304,7 @@ pub(super) fn attached(
             ));
         }
     }
-    if let Some(origin) = ctx.state.created_from_profile.clone() {
+    if let Some(origin) = ctx.state.current().created_from_profile.clone() {
         confirm_profile_origin(ctx, origin);
     }
     crate::update::sidebar::request_sessions_refresh(ctx);
@@ -318,8 +324,8 @@ pub(super) fn origin_set(
 }
 
 fn confirm_profile_origin(ctx: &mut Context<HyprmuxApp>, created_from_profile: String) {
-    ctx.state.created_from_profile = Some(created_from_profile.clone());
-    if let Some((profile, path, session)) = ctx.state.pending_profile_loaded.take()
+    ctx.state.current_mut().created_from_profile = Some(created_from_profile.clone());
+    if let Some((profile, path, session)) = ctx.state.current_mut().pending_profile_loaded.take()
         && profile == created_from_profile
     {
         crate::events::emit(
@@ -346,10 +352,15 @@ pub(super) fn layout_committed(
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    let my_id = ctx.state.shared.as_ref().map(|shared| shared.client_id);
+    let my_id = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .map(|shared| shared.client_id);
     if my_id == Some(author) {
         // Echo of our own commit: confirm the revision, never re-apply our own layout.
-        if let Some(shared) = ctx.state.shared.as_mut() {
+        if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
             shared.layout_rev = rev;
         }
         Update::none()
@@ -372,7 +383,7 @@ pub(super) fn layout_rejected(
     } else {
         Update::full()
     };
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.assumed_rev = current_rev;
         // Clear the dirty detector so the debounced chokepoint recommits from current state.
         shared.last_committed_layout = None;
@@ -390,7 +401,7 @@ pub(super) fn controller_changed(
         return Update::none();
     }
     let was_controller = ctx.state.is_controller();
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.controller = controller;
         if shared.is_controller() {
             // Gaining control: rebase optimistic commits, and clear the dirty detector so the tail
@@ -451,11 +462,12 @@ pub(super) fn clients_changed(
     }
     let roster_events = ctx
         .state
+        .current()
         .shared
         .as_ref()
         .map(|shared| roster_diff_events(&shared.clients, &clients))
         .unwrap_or_default();
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         let changed = shared.input_locked != input_locked;
         shared.clients = clients;
         shared.input_locked = input_locked;
@@ -496,6 +508,7 @@ pub(super) fn control_requested(
     }
     let who = ctx
         .state
+        .current()
         .shared
         .as_ref()
         .and_then(|shared| shared.clients.iter().find(|client| client.id == from))
@@ -529,7 +542,7 @@ pub(super) fn ping(ctx: &mut Context<HyprmuxApp>, epoch: u64, seq: u64) -> Updat
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    if let Some(client) = ctx.state.session_client.as_ref() {
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.pong(seq);
     }
     Update::none()
@@ -547,7 +560,7 @@ pub(super) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> 
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    if let Some(shared) = ctx.state.shared.as_mut() {
+    if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.layout_commit_scheduled = false;
     }
     super::flush_layout_commit(ctx);
@@ -592,7 +605,7 @@ pub(super) fn output(
         // Output arrived before the layout commit that introduces this pane (or its new generation).
         // Buffer it so the reconciler can replay it when the pane appears; dropping it would leave
         // a follower's fresh pane blank until the next redraw. Nothing draws it yet, so no frame.
-        if let Some(shared) = ctx.state.shared.as_mut() {
+        if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
         return Update::none();
@@ -903,6 +916,7 @@ pub(super) fn replay_input_deadline(
 fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation: u64) {
     let Some(input) = ctx
         .state
+        .current_mut()
         .pending_replay_inputs
         .remove(&(pane_id, generation))
     else {
@@ -913,7 +927,7 @@ fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation
     {
         return;
     }
-    if let Some(client) = ctx.state.session_client.clone() {
+    if let Some(client) = ctx.state.current().session_client.clone() {
         let mut bytes = input.into_bytes();
         bytes.push(b'\r');
         client.send_input(pane_id, generation, bytes);
@@ -972,6 +986,7 @@ pub(super) fn spawn_result(
     let mut replay_deadline = None;
     if ctx
         .state
+        .current()
         .pending_replay_inputs
         .contains_key(&(pane_id, generation))
     {
@@ -979,6 +994,7 @@ pub(super) fn spawn_result(
             replay_deadline = Some(replay_input_deadline_command(epoch, pane_id, generation));
         } else {
             ctx.state
+                .current_mut()
                 .pending_replay_inputs
                 .remove(&(pane_id, generation));
         }
@@ -1015,6 +1031,7 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
     }
     let previous = ctx
         .state
+        .current_mut()
         .session_name
         .replace(session.clone())
         .unwrap_or_default();
@@ -1332,7 +1349,7 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(crate::HyprmuxApp::default());
-                backend.state_mut().pending_session_attach =
+                backend.state_mut().current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 42,
                         name: "eph-local".into(),
@@ -1350,7 +1367,7 @@ mod tests {
                     })
                     .expect("dispatch local attach failure");
                 assert!(
-                    backend.state().pending_session_attach.is_none(),
+                    backend.state().current().pending_session_attach.is_none(),
                     "a local ephemeral failure must clear the pending attach and not re-arm one"
                 );
             })
@@ -1367,7 +1384,7 @@ mod tests {
                 let mut backend = TestBackend::new(crate::HyprmuxApp::default());
                 let (client, rx) = SessionClient::test_channel();
                 let path = PathBuf::from("legacy-profile.toml");
-                backend.state_mut().pending_session_attach =
+                backend.state_mut().current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 1,
                         name: "eph-test".into(),
@@ -1404,7 +1421,7 @@ mod tests {
                     })
                     .expect("dispatch attach");
 
-                assert_eq!(backend.state().created_from_profile, None);
+                assert_eq!(backend.state().current().created_from_profile, None);
                 assert!(!backend.state().show_profile_picker);
                 assert!(backend.state().profile_picker.is_none());
                 assert!(rx.try_iter().any(|message| matches!(
@@ -1421,7 +1438,7 @@ mod tests {
                     })
                     .expect("acknowledge session origin");
                 assert_eq!(
-                    backend.state().created_from_profile.as_deref(),
+                    backend.state().current().created_from_profile.as_deref(),
                     Some("legacy-profile")
                 );
 

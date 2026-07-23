@@ -81,6 +81,28 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
         &ctx.state.theme,
         format!("Reconnecting to {name}…"),
     ));
+    // A remote link must reconnect to the *same* remote host: the local attach path would either
+    // fail or, worse, attach to an unrelated local session with the same name. Route on the
+    // resolved target carried on `State` alongside `remote_host`, mirroring the two startup/picker
+    // call sites.
+    if let Some(target) = ctx.state.remote_target.clone() {
+        let remote_config = ctx.state.config.remote.clone();
+        return Update::with_command(Command::spawn(move |link| {
+            std::thread::spawn(move || {
+                crate::session::bootstrap::attach_remote_session_client(
+                    new_epoch,
+                    name,
+                    read_only,
+                    false,
+                    target,
+                    remote_config,
+                    // Reconnect: retry with backoff to ride out a transient link drop.
+                    true,
+                    link,
+                )
+            });
+        }));
+    }
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
             crate::session::bootstrap::attach_session_client(
@@ -91,17 +113,24 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
 }
 
 pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
-    let expected_pending = ctx
-        .state
-        .pending_session_attach
-        .as_ref()
-        .is_some_and(|pending| pending.epoch == epoch);
-    if !expected_pending {
+    let Some(pending) = ctx.state.pending_session_attach.as_ref() else {
+        return Update::none();
+    };
+    if pending.epoch != epoch {
         return Update::none();
     }
+    // Only a failed *remote* attach falls back below. A local ephemeral attach is itself the
+    // fallback, so retrying it here on failure would spin forever (fail → fall back → fail → …).
+    let was_remote = pending.remote_host.is_some();
     ctx.state.pending_session_attach = None;
     ctx.toast()
         .push(error_toast(&ctx.state.theme, "Attach failed", message));
+    // An unreachable `--remote` host would otherwise strand the UI with no session at all — not even
+    // a working local terminal. Fall back to a fresh local ephemeral so the launch is never blank;
+    // the error toast above already explains what went wrong.
+    if was_remote && !ctx.state.session_attached && ctx.state.session_client.is_none() {
+        return crate::ops::session::attach_startup_ephemeral(ctx);
+    }
     Update::full()
 }
 
@@ -1291,6 +1320,43 @@ mod tests {
             .expect("spawn runtime status test thread")
             .join()
             .expect("runtime status test thread completes");
+    }
+
+    /// A failed *local* attach must not install another pending attach: a local ephemeral is
+    /// itself the fallback, so retrying it on failure would spin forever (fail → fall back → fail →
+    /// …). Only a remote failure falls back, which is verified live. Side-effect-free: the local
+    /// path returns no command, so nothing is spawned.
+    #[test]
+    fn local_attach_failure_does_not_retry_into_an_ephemeral_loop() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                backend.state_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 42,
+                        name: "eph-local".into(),
+                        client: None,
+                        autostart: true,
+                        read_only: false,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                    });
+                backend
+                    .dispatch(Msg::SessionAttachFailed {
+                        epoch: 42,
+                        message: "no local server".into(),
+                    })
+                    .expect("dispatch local attach failure");
+                assert!(
+                    backend.state().pending_session_attach.is_none(),
+                    "a local ephemeral failure must clear the pending attach and not re-arm one"
+                );
+            })
+            .expect("spawn no-loop test thread")
+            .join()
+            .expect("no-loop test thread completes");
     }
 
     #[test]

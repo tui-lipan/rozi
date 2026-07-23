@@ -256,6 +256,7 @@ pub fn restore_state_from_profile(
         session_client: None,
         session_name: None,
         remote_host: None,
+        remote_target: None,
         created_from_profile: None,
         deferred_profile_seed: None,
         pending_profile_loaded: None,

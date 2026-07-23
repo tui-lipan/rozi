@@ -28,28 +28,46 @@ hyprmux kill-session dev --remote workbox
 | --- | --- | --- |
 | Linux / macOS | Linux / macOS | Supported. |
 | Windows | Linux / macOS | Supported. |
-| any | **Windows** | **Not supported** — see below. |
+| any | **Windows** | **Supported** — verified live against Windows 11 + OpenSSH; see below. |
 
 hyprmux itself runs on Windows, and the session server and `--remote-serve` proxy are
-platform-neutral, but a Windows host cannot currently be the *remote* end of `--remote`.
+platform-neutral. A Windows host works as the *remote* end of `--remote`, verified end to end
+against a real Windows 11 + OpenSSH host (stock `cmd.exe` default shell): probe, install, attach,
+detach/reattach, a concurrent second client, and — the previous hard blocker — a session that
+survives the SSH link dropping.
 
-Bootstrap blockers, all bypassable by pinning `binary_path`:
+What the client does for a Windows remote:
 
-- The probe runs `ssh <host> -- sh -s`. Windows OpenSSH sshd defaults to `cmd.exe`, which has no
-  `sh`, so the probe fails before anything else is attempted.
-- Even with a POSIX shell set as `DefaultShell`, `uname -s` reports something like
-  `MINGW64_NT-10.0-22631`, which the platform mapping does not recognise.
-- The install path writes `$HOME/.local/bin/hyprmux` with `chmod 755` — a POSIX path, POSIX
-  permissions, and no `.exe` suffix.
+- **Shell family detection.** The probe first runs one fixed, shell-agnostic command
+  (`echo hyprmux_family=%OS%`, which only `cmd.exe` expands to `Windows_NT`), then dispatches a
+  POSIX (`sh -s`) or PowerShell probe accordingly. Probe output is still parsed by fixed keys and
+  never treated as argv.
+- **Platform detection.** `MINGW*`/`MSYS*`/`CYGWIN*` `uname -s` output is matched by family prefix,
+  and the PowerShell probe reports `platform=windows` directly (`PROCESSOR_ARCHITECTURE` gives the
+  machine — `AMD64` normalises to `x86_64`).
+- **`.exe`-aware install.** The Windows install writes `%USERPROFILE%\.local\bin\hyprmux.exe` (no
+  `chmod`). `connect.rs` then invokes `--remote-serve` with the returned `.exe` path verbatim.
+- **Server lifetime (the former hard blocker, now solved).** Windows OpenSSH runs each session
+  inside a Job Object and terminates it on disconnect; a plain `DETACHED_PROCESS` does not escape a
+  job. `spawn_detached_server` adds `CREATE_BREAKAWAY_FROM_JOB`, falling back to a plain detached
+  spawn if the job refuses the flag (`ACCESS_DENIED`). Verified live: breakaway *is* permitted by
+  OpenSSH's job on Windows 11, so a session started over `--remote` keeps `running` after the SSH
+  link is dropped. (The fallback stays as insurance for a differently-configured host; it was not
+  needed here.)
 
-The blocker that is *not* bypassable is server lifetime. Windows OpenSSH runs each session inside a
-Job Object and terminates it on disconnect. `spawn_detached_server` uses `DETACHED_PROCESS`, which
-does not escape a job, so the session server the proxy autostarts dies as soon as the ssh session
-ends — defeating the detach/reattach premise. Fixing this needs `CREATE_BREAKAWAY_FROM_JOB` (only
-effective when the job sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`) or a different launch mechanism
-entirely.
+Two OpenSSH-for-Windows quirks that live testing surfaced, both handled in the client:
 
-Measured against a real Windows 11 host over OpenSSH, for whoever picks this up:
+- **Large command stdin deadlocks.** Piping more than the channel's stdin buffer (~64 KB) to a
+  remote command over win32-OpenSSH stalls hard — a real ~11 MB binary never finishes. So the
+  Windows install uploads the binary with `scp` (the sftp subsystem has real flow control) and then
+  runs a small no-stdin finalize step, rather than streaming it through a command's stdin the way
+  the POSIX install does.
+- **`powershell -Command -` truncates a stdin script.** A multi-line script fed to
+  `powershell -Command -` on stdin runs only its first statements. So both the PowerShell probe and
+  the install finalize are delivered as a base64 `-EncodedCommand` (also quoting-proof through
+  cmd.exe), which runs the whole script and needs no stdin.
+
+Measured against a real Windows 11 host over OpenSSH:
 
 - **Line endings are not a problem.** Non-pty stdio under the stock `cmd.exe` shell is byte-clean in
   both directions — `0x0A` stays `0x0A`, and the framed preamble arrives intact. No `DefaultShell`
@@ -171,10 +189,20 @@ speaks the negotiated range.
 | Clipboard / OSC52 (paste into the local terminal) | Working directories and spawn `cwd` paths |
 | Hooks (`[[hooks]]` run on the client) | Session discovery endpoints on that host |
 | Control socket for *this* UI process | Resurrect / autosave paths on that host |
-| File tree rendering, icons, search | File tree listings and git status |
+| File tree rendering, icons, search | The pane shell and its resolution |
 
 Notes:
 
+- **The shell of a remote pane is resolved on the server, not the client.** A pane spawned under
+  `--remote` is sent with an empty shell argv, so the remote session server picks its own platform
+  default (`$SHELL` on Unix, `cmd.exe`/PowerShell on Windows) — the local `[shell]` setting and the
+  client's shell-integration rc-file (a local path a different-OS server cannot run) do not travel.
+  A consequence is that hyprmux's shell integration (OSC 133 prompt markers, OSC 7 cwd reporting,
+  agent-status detection) is **not** injected into remote panes, so those features are limited there
+  until the server grows its own shell-integration path. A remote pane still shows the directory it
+  was **launched** in — the server reports the cwd it spawned the pane in — but that display does not
+  track live `cd`s without OSC 7 (or native process inspection, which is Linux/macOS only). A shell
+  that already emits OSC 7 reports its live cwd as normal.
 - Pane `cwd` reports are **server-relative**. New splits and popups still inherit them so the remote
   server can spawn correctly; local filesystem helpers (for example opening a path on this machine)
   skip those paths while `--remote` is attached.
@@ -185,6 +213,10 @@ Notes:
   client-side while the data comes from the server's host. `git` must be on the remote server's
   `PATH` for change markers; without it the tree still browses, just without decorations. A remote
   server older than protocol 13 cannot answer, and the tab says so rather than spinning.
+  - **File-tree search is scoped to already-fetched directories.** Search runs over the listings the
+    client currently holds, and under `--remote` those are only the directories that have been
+    expanded (each expansion triggers one `ListDirectory`). Collapsed subtrees are not fetched, so
+    matches inside them do not appear until they are expanded. This is a known limitation, not a bug.
 - The UI control socket remains on the client machine. Automating a remote-attached UI still uses
   that local control endpoint; `list-sessions --remote` / `kill-session --remote` are separate SSH
   CLI helpers, not control-socket commands.

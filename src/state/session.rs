@@ -150,3 +150,25 @@ pub fn ephemeral_session_name() -> String {
 pub fn fresh_ephemeral_session_name(salt: u64) -> String {
     format!("{EPHEMERAL_SESSION_PREFIX}{}-{salt}", std::process::id())
 }
+
+/// Ephemeral name qualified by a stable per-client identifier (`eph-<host>-<pid>`), for `--remote`.
+///
+/// A bare `eph-<pid>` names a session that lives on the *remote* host, where two clients on
+/// different machines can plausibly share a pid and would silently land on the same session. The
+/// hostname disambiguates them; it stays constant for the process lifetime, so a dropped link
+/// reconnects to the same ephemeral name.
+pub fn remote_ephemeral_session_name() -> String {
+    let host = crate::platform::user::hostname()
+        .map(|host| {
+            // Session names permit only `[A-Za-z0-9_-]`; keep the alphanumerics and cap the length
+            // so an odd or very long hostname cannot produce an invalid or unwieldy name.
+            host.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(24)
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| "host".to_string());
+    format!("{EPHEMERAL_SESSION_PREFIX}{host}-{}", std::process::id())
+}

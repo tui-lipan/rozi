@@ -156,7 +156,7 @@ impl Sha256 {
         for (slot, value) in self
             .state
             .iter_mut()
-            .zip([a, b, c, d, e, f, g, h].into_iter())
+            .zip([a, b, c, d, e, f, g, h])
         {
             *slot = slot.wrapping_add(value);
         }

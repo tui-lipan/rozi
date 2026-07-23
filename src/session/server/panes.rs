@@ -127,7 +127,8 @@ impl SessionServer {
             &request.command_shell,
         )
         .size(cols.max(1), rows.max(1));
-        if let Some(cwd) = request.cwd.as_ref().filter(|cwd| Path::new(cwd).is_dir()) {
+        let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
+        if let Some(cwd) = effective_cwd.as_ref() {
             config = config.cwd(cwd.clone());
         }
         for (key, value) in &request.env {
@@ -145,7 +146,7 @@ impl SessionServer {
                     ServerPane {
                         generation,
                         title: request.title,
-                        cwd: request.cwd,
+                        cwd: effective_cwd,
                         command: request.command,
                         keep_open: request.keep_open,
                         command_completed: false,
@@ -546,4 +547,58 @@ fn default_log_dir() -> Option<PathBuf> {
         return None;
     }
     Some(crate::platform::paths::state_dir(&env).join("logs"))
+}
+
+/// The directory a pane's child actually starts in, set explicitly so it is *known* (and can be
+/// reported) rather than inherited: the requested cwd when it exists, else the user's home, else the
+/// server's own working directory.
+///
+/// A pane the client supplies no directory for — a `--remote` pane, whose local launch cwd is
+/// meaningless on the server — otherwise has no cwd to display, since a remote pane has no shell
+/// integration or process inspection to discover a live one (notably on Windows). Home is preferred
+/// over `current_dir` because a detached Windows server can land on a working directory that
+/// `current_dir` cannot even read.
+fn effective_spawn_cwd(request_cwd: Option<&str>) -> Option<String> {
+    request_cwd
+        .filter(|cwd| Path::new(cwd).is_dir())
+        .map(str::to_string)
+        .or_else(crate::platform::paths::home_directory)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_spawn_cwd;
+
+    /// A directory-less spawn (a `--remote` pane) must still resolve *some* real directory so the
+    /// pane reports where it started instead of showing no location — the bug this fixes on Windows.
+    #[test]
+    fn a_directoryless_spawn_still_resolves_a_cwd() {
+        let resolved = effective_spawn_cwd(None).expect("home or current_dir resolves");
+        assert!(
+            std::path::Path::new(&resolved).is_dir(),
+            "the fallback cwd must be a real directory, got {resolved:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_requested_cwd_is_used_verbatim() {
+        let tmp = std::env::temp_dir();
+        let tmp = tmp.to_string_lossy();
+        assert_eq!(effective_spawn_cwd(Some(&tmp)), Some(tmp.into_owned()));
+    }
+
+    #[test]
+    fn a_nonexistent_requested_cwd_falls_back_to_a_real_directory() {
+        // A local launch path a different-OS server cannot use (e.g. a Linux path on Windows) must
+        // not be passed through; it falls back to a directory that exists on the server.
+        let resolved =
+            effective_spawn_cwd(Some("/no/such/path/hyprmux-should-not-exist")).expect("fallback");
+        assert!(std::path::Path::new(&resolved).is_dir());
+        assert_ne!(resolved, "/no/such/path/hyprmux-should-not-exist");
+    }
 }

@@ -356,7 +356,16 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
         }
         command => command,
     };
-    let (shell, command_shell, extra_env) = resolved_launch_argv(&state.config);
+    // Under `--remote` the server owns its own platform, shell, and filesystem. Our locally
+    // resolved shell argv (a Linux `/usr/bin/bash` with a local rc-file path, say) and
+    // shell-integration env carry local paths the remote — possibly a different OS — cannot run.
+    // Send empty argv so the server resolves its own default shell (`pty_config` falls back when
+    // the argv is empty), and drop the local shell-integration env.
+    let (shell, command_shell, extra_env) = if state.remote_host.is_some() {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        resolved_launch_argv(&state.config)
+    };
     // Shell-integration env (`ZDOTDIR`, `XDG_DATA_DIRS`, ...) comes first so any caller-supplied
     // override for the same key (rare, but a pane/profile could set one deliberately) wins.
     let env = extra_env.into_iter().chain(env).collect::<Vec<_>>();
@@ -844,6 +853,33 @@ mod tests {
             "deterministic command panes must keep command-shell semantics"
         );
         assert!(!state.pending_replay_inputs.contains_key(&(8, 4)));
+    }
+
+    /// A `--remote` pane must not carry the client's locally resolved shell argv to the server: a
+    /// Linux client's `/usr/bin/bash` (with a local rc-file path) cannot run on a Windows remote.
+    /// Empty argv makes the server resolve its own default shell.
+    #[test]
+    fn remote_spawn_sends_no_local_shell_argv() {
+        // Local session: the resolved interactive shell rides the request as before.
+        let mut local = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        request_pane_spawn(&mut local, spawn_request(1, 1, PaneIdentity::default()));
+        assert!(
+            !local.pending_spawns[0].shell.is_empty(),
+            "a local pane keeps its resolved interactive-shell argv"
+        );
+
+        // Remote session: shell and command_shell are emptied for server-side resolution.
+        let mut remote = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        remote.remote_host = Some("winvm".to_string());
+        request_pane_spawn(&mut remote, spawn_request(1, 1, PaneIdentity::default()));
+        assert!(
+            remote.pending_spawns[0].shell.is_empty(),
+            "a --remote pane must send an empty shell argv"
+        );
+        assert!(
+            remote.pending_spawns[0].command_shell.is_empty(),
+            "a --remote pane must send an empty command-shell argv"
+        );
     }
 
     #[test]

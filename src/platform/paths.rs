@@ -269,6 +269,15 @@ pub fn path_leaf(path: &str) -> Option<&str> {
 /// directory tiers must not silently fall back to a Windows profile path. This one only ever feeds
 /// text on screen, where a Windows user does want to see `~`.
 fn display_home() -> Option<String> {
+    home_directory()
+}
+
+/// The user's home directory (`$HOME`, or `%USERPROFILE%` on Windows), trimmed of a trailing
+/// separator. Used as a spawn-cwd fallback for a pane the client supplied no directory for — a
+/// `--remote` pane, where the local launch cwd is meaningless — so the session server starts it
+/// (and reports it) in a sensible place even when `current_dir()` is unavailable (a detached
+/// Windows server can land on an inaccessible working directory).
+pub(crate) fn home_directory() -> Option<String> {
     let key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var(key)
         .ok()

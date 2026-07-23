@@ -44,11 +44,43 @@ pub fn shutdown_requested() -> bool {
 
 /// Spawn a background session server for `name` (`hyprmux --session <name> --server`), fully
 /// detached from this process's terminal so it outlives the client that started it.
+///
+/// On Windows, OpenSSH runs each session inside a Job Object and kills the whole job when the SSH
+/// connection drops — `DETACHED_PROCESS` alone does not escape that. `CREATE_BREAKAWAY_FROM_JOB`
+/// pulls the server out of the job so it survives detach, but only works when the job carries
+/// `JOB_OBJECT_LIMIT_BREAKAWAY_OK`; OpenSSH's job may not permit it. So the Windows path tries the
+/// breakaway flag first and, if the spawn is refused for that reason, retries without it (matching
+/// the pre-existing local behavior). A local server is not in a restrictive job, so breakaway is a
+/// harmless no-op there.
 pub fn spawn_detached_server(
     exe: &Path,
     name: &str,
     fresh: bool,
 ) -> io::Result<std::process::Child> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{
+            CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW, DETACHED_PROCESS,
+        };
+        let base = DETACHED_PROCESS | CREATE_NO_WINDOW;
+        match spawn_server_with_flags(exe, name, fresh, base | CREATE_BREAKAWAY_FROM_JOB) {
+            Ok(child) => Ok(child),
+            // A job without `JOB_OBJECT_LIMIT_BREAKAWAY_OK` refuses the flag with ACCESS_DENIED;
+            // fall back to a plain detached spawn so at least the local path keeps working.
+            Err(err) if err.raw_os_error() == Some(5) => {
+                spawn_server_with_flags(exe, name, fresh, base)
+            }
+            Err(err) => Err(err),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = base_server_command(exe, name, fresh);
+        command.spawn()
+    }
+}
+
+fn base_server_command(exe: &Path, name: &str, fresh: bool) -> std::process::Command {
     let mut command = std::process::Command::new(exe);
     command
         .arg("--session")
@@ -57,12 +89,19 @@ pub fn spawn_detached_server(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, DETACHED_PROCESS};
-        command.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
-    }
+    command
+}
+
+#[cfg(windows)]
+fn spawn_server_with_flags(
+    exe: &Path,
+    name: &str,
+    fresh: bool,
+    flags: u32,
+) -> io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    let mut command = base_server_command(exe, name, fresh);
+    command.creation_flags(flags);
     command.spawn()
 }
 

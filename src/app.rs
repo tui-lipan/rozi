@@ -186,10 +186,16 @@ impl Component for HyprmuxApp {
             let epoch = ops::session::open_startup_session_picker(ctx);
             SessionStart::Picker { epoch }
         } else {
-            let name = self
-                .attach_session
-                .clone()
-                .unwrap_or_else(state::ephemeral_session_name);
+            let name = self.attach_session.clone().unwrap_or_else(|| {
+                // Under `--remote` a bare `eph-<pid>` could collide with another client that shares
+                // the pid on a different machine, since the ephemeral session lives on the remote
+                // host. Qualify it with a stable per-client identifier so it stays per-client.
+                if self.remote.is_some() {
+                    state::remote_ephemeral_session_name()
+                } else {
+                    state::ephemeral_session_name()
+                }
+            });
             let epoch = ctx.state.runtime_epoch;
             let autostart = self.startup_autostart && !self.read_only;
             ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
@@ -221,6 +227,7 @@ impl Component for HyprmuxApp {
                 crate::session::remote::RemoteTarget::Alias(alias) => alias.clone(),
                 crate::session::remote::RemoteTarget::Url { host, .. } => host.clone(),
             });
+            ctx.state.remote_target = self.remote.clone();
             SessionStart::Attach {
                 epoch,
                 name,
@@ -270,6 +277,8 @@ impl Component for HyprmuxApp {
                                 create_only,
                                 remote,
                                 remote_config,
+                                // Startup: fail fast to the ephemeral fallback if the host is down.
+                                false,
                                 session_link,
                             );
                         } else if create_only {
@@ -559,7 +568,36 @@ pub fn run() -> Result<()> {
         startup_autostart = true;
     }
     let mut startup_profile = None;
-    if let Some(name) = attach_session.as_ref() {
+    if let Some(name) = attach_session.as_ref()
+        && cli.remote.is_some()
+    {
+        // Under `--remote` the session lives on the remote host: local discovery and local profiles
+        // do not describe it, so none of the checks below apply. The remote `--remote-serve`
+        // autostarts the session server, and `New`'s create-only intent is enforced remotely via the
+        // preamble's `server_started` flag. Only map the subcommand onto the create-only flag; a
+        // `New --profile` still seeds from a locally loaded profile.
+        if !crate::session::discovery::valid_session_name(name) {
+            startup_fatal(format!("Invalid session name `{name}`."));
+        }
+        match cli.session_command {
+            cli::SessionCommand::New => {
+                startup_autostart = true;
+                startup_create_only = true;
+                if let Some(profile_name) = cli.profile.as_ref() {
+                    if !crate::session::discovery::valid_session_name(profile_name) {
+                        startup_fatal(format!("Invalid profile name `{profile_name}`."));
+                    }
+                    let path = config::profile_path_for_name(profile_name);
+                    if !path.exists() {
+                        startup_fatal(format!("Profile `{profile_name}` does not exist."));
+                    }
+                    startup_profile = Some(load_startup_profile(profile_name, path));
+                }
+            }
+            cli::SessionCommand::Attach => startup_autostart = false,
+            cli::SessionCommand::Dwim => startup_autostart = true,
+        }
+    } else if let Some(name) = attach_session.as_ref() {
         if !crate::session::discovery::valid_session_name(name) {
             startup_fatal(format!("Invalid session name `{name}`."));
         }

@@ -86,6 +86,42 @@ try_bin /usr/local/bin/hyprmux
 printf 'probe_done=1\n'
 "#;
 
+/// PowerShell counterpart of [`PROBE_SCRIPT`] for a Windows remote host (default sshd shell is
+/// `cmd.exe`, so this is fed to `powershell -Command -`). Emits the same fixed keys the POSIX probe
+/// does; [`parse_probe_output`] handles both. Never treats binary output as code.
+const WINDOWS_PROBE_SCRIPT: &str = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+Write-Output "platform=windows"
+$arch = $env:PROCESSOR_ARCHITECTURE
+if (-not $arch) { $arch = 'unknown' }
+Write-Output "machine=$arch"
+function Try-Bin($bin) {
+  $resolved = $null
+  if (Test-Path -LiteralPath $bin -PathType Leaf) {
+    $resolved = (Resolve-Path -LiteralPath $bin).Path
+  } else {
+    $cmd = Get-Command $bin -ErrorAction SilentlyContinue
+    if ($cmd) { $resolved = $cmd.Source }
+  }
+  if (-not $resolved) { return }
+  $out = & $resolved --version 2>$null
+  Write-Output "candidate=$resolved"
+  $flat = ($out -join ' ')
+  Write-Output "version_line=$flat"
+  foreach ($line in $out) {
+    if ($line -match '^protocol_min=') { Write-Output $line }
+    if ($line -match '^protocol_max=') { Write-Output $line }
+  }
+  $help = & $resolved --help 2>$null
+  if ($help -match '--remote') { Write-Output 'speaks_remote=1' } else { Write-Output 'speaks_remote=0' }
+}
+if ($env:HYPRMUX_PROBE_BIN) { Try-Bin $env:HYPRMUX_PROBE_BIN }
+Try-Bin 'hyprmux.exe'
+Try-Bin (Join-Path $env:USERPROFILE '.local\bin\hyprmux.exe')
+Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\hyprmux.exe')
+Write-Output "probe_done=1"
+"#;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProbeReport {
     pub platform: String,
@@ -196,10 +232,9 @@ pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
     ProbeResult::Missing {
         detail: if report.candidates.is_empty() {
             "no hyprmux binary found on the remote host".to_string()
-        } else if saw_without_range && !saw_remote {
-            "remote hyprmux binaries are too old for --remote (need a build that speaks --remote-serve)"
-                .to_string()
         } else if saw_without_range {
+            // `saw_without_range` is only ever set inside a `speaks_remote` candidate, so it always
+            // implies `saw_remote` — a `saw_without_range && !saw_remote` arm here would be dead.
             "remote hyprmux found but does not advertise a protocol range (upgrade it, or set binary_path / install)"
                 .to_string()
         } else if saw_remote {
@@ -273,10 +308,84 @@ pub fn probe_remote_report(
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote)".to_string());
     }
-    let mut command = ssh_base_command(&resolved, config);
+    // The remote sshd default shell is not always POSIX (Windows defaults to `cmd.exe`). Detect the
+    // family with one fixed, shell-agnostic probe, then feed the matching script to the matching
+    // interpreter. Probe output is still parsed with fixed keys and never treated as argv.
+    let stdout = match detect_remote_family(&resolved, config)? {
+        // PowerShell's `-Command -` truncates a multi-line script read from stdin (only the first
+        // statements run) over OpenSSH-for-Windows; pass the script as a base64 `-EncodedCommand`
+        // instead, which runs the whole thing and needs no stdin.
+        RemoteFamily::Windows => run_probe_command(
+            &resolved,
+            config,
+            &[
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-EncodedCommand",
+                &encode_powershell_command(WINDOWS_PROBE_SCRIPT),
+            ],
+        )?,
+        RemoteFamily::Posix => run_probe_script(&resolved, config, &["sh", "-s"], PROBE_SCRIPT)?,
+    };
+    Ok(parse_probe_output(&stdout))
+}
+
+/// Remote sshd default-shell family, chosen up front so the probe/install scripts target the right
+/// interpreter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteFamily {
+    Posix,
+    Windows,
+}
+
+/// Detect the remote shell family with a single fixed command. `cmd.exe` expands `%OS%` to
+/// `Windows_NT`; a POSIX shell echoes the literal `%OS%`. Neither treats the marker as code.
+fn detect_remote_family(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+) -> Result<RemoteFamily, String> {
+    let mut command = ssh_base_command(resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
-    command.arg("sh").arg("-s");
+    command.arg("echo").arg("hyprmux_family=%OS%");
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command
+        .output()
+        .map_err(|err| format!("failed to probe remote shell family for {}: {err}", resolved.host))?;
+    // A cmd.exe host still exits 0 here; a POSIX host does too. A hard ssh/auth failure is caught by
+    // a non-zero status, which we surface rather than silently defaulting to POSIX.
+    if !output.status.success() {
+        return Err(format!(
+            "remote shell probe of {} failed: {}",
+            resolved.host,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.contains("hyprmux_family=Windows_NT") {
+        Ok(RemoteFamily::Windows)
+    } else {
+        Ok(RemoteFamily::Posix)
+    }
+}
+
+/// Pipe `script` to a remote `interpreter` over ssh stdin and return its stdout (POSIX probe).
+fn run_probe_script(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+    interpreter: &[&str],
+    script: &str,
+) -> Result<String, String> {
+    let mut command = ssh_base_command(resolved, config);
+    command.arg(resolved.ssh_destination());
+    command.arg("--");
+    for arg in interpreter {
+        command.arg(arg);
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -286,22 +395,50 @@ pub fn probe_remote_report(
         .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin
-            .write_all(PROBE_SCRIPT.as_bytes())
+            .write_all(script.as_bytes())
             .map_err(|err| format!("failed to write probe script: {err}"))?;
     }
     let output = child
         .wait_with_output()
         .map_err(|err| format!("probe ssh failed: {err}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "probe of {} failed: {}",
             resolved.host,
-            stderr.trim()
+            String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_probe_output(&stdout))
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run a self-contained remote `argv` over ssh with no stdin and return its stdout (Windows probe,
+/// whose script is carried in the argv as an `-EncodedCommand` rather than piped on stdin).
+fn run_probe_command(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+    argv: &[&str],
+) -> Result<String, String> {
+    let mut command = ssh_base_command(resolved, config);
+    command.arg(resolved.ssh_destination());
+    command.arg("--");
+    for arg in argv {
+        command.arg(arg);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command
+        .output()
+        .map_err(|err| format!("failed to probe {}: {err}", resolved.host))?;
+    if !output.status.success() {
+        return Err(format!(
+            "probe of {} failed: {}",
+            resolved.host,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[allow(dead_code)] // CLI / test helper alongside probe_remote_report
@@ -328,7 +465,20 @@ pub fn ensure_remote_binary(
                 "HYPRMUX_REMOTE_BINARY={path} is not a regular file"
             ));
         }
-        return install_bytes(target, config, local, "HYPRMUX_REMOTE_BINARY override");
+        // The override used to upload blindly, leaving a wrong-arch binary to fail as an opaque
+        // exec-format error on the remote. Now that the probe reports platform/machine, verify the
+        // override's own binary format against it — but only hard-fail on a *confirmed* mismatch,
+        // so an unrecognized format or an unknown remote platform still installs as before.
+        let report = probe_remote_report(target, config)?;
+        verify_override_targets_remote(local, &report)?;
+        let family = family_from_os(&normalize_os(&report.platform));
+        return install_bytes(
+            target,
+            config,
+            local,
+            "HYPRMUX_REMOTE_BINARY override",
+            family,
+        );
     }
 
     let report = probe_remote_report(target, config)?;
@@ -367,10 +517,11 @@ fn install_for_platforms(
         );
     }
 
+    let family = family_from_os(&remote_os);
     if local_os == remote_os && local_arch == remote_arch {
         let local = std::env::current_exe()
             .map_err(|err| format!("cannot locate local hyprmux for install: {err}"))?;
-        return install_bytes(target, config, &local, "same-platform current_exe");
+        return install_bytes(target, config, &local, "same-platform current_exe", family);
     }
 
     let triple = rustc_target(&remote_os, &remote_arch).ok_or_else(|| {
@@ -385,19 +536,31 @@ fn install_for_platforms(
         config,
         &local_artifact,
         &format!("release asset {triple}"),
+        family,
     )
 }
 
-/// Stream `local` onto the remote as `$HOME/.local/bin/hyprmux`.
+fn family_from_os(os: &str) -> RemoteFamily {
+    if os == "windows" {
+        RemoteFamily::Windows
+    } else {
+        RemoteFamily::Posix
+    }
+}
+
+/// Stream `local` onto the remote and return the installed path.
 ///
-/// POSIX-only by construction: `$HOME`, `chmod`, `mv`, and an extensionless binary name. A Windows
-/// remote would need `%USERPROFILE%`, no `chmod`, and a `.exe` suffix that the `--remote-serve`
-/// invocation in `connect.rs` would also have to use. See `docs/remote.md`.
+/// The POSIX path installs `$HOME/.local/bin/hyprmux` (`chmod 755`, atomic `mv`) by streaming the
+/// binary over ssh stdin. The Windows path installs `%USERPROFILE%\.local\bin\hyprmux.exe` via `scp`
+/// then a finalize step, because OpenSSH-on-Windows deadlocks a large command stdin. Either way the
+/// installed path is echoed back — `connect.rs` invokes `--remote-serve` with it verbatim, so the
+/// `.exe` suffix propagates.
 fn install_bytes(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
     local: &Path,
     _source: &str,
+    family: RemoteFamily,
 ) -> Result<String, String> {
     if !local.is_file() {
         return Err(format!(
@@ -409,7 +572,20 @@ fn install_bytes(
     if !program_exists("ssh") {
         return Err("ssh was not found on PATH (required for --remote install)".to_string());
     }
-    // Atomic install with quoted paths; refuse to overwrite a non-regular destination.
+    match family {
+        RemoteFamily::Posix => install_bytes_posix(&resolved, config, local),
+        RemoteFamily::Windows => install_bytes_windows(&resolved, config, local),
+    }
+}
+
+/// Stream the binary onto a POSIX remote over ssh stdin (`cat > tmp`, `chmod 755`, atomic `mv`).
+fn install_bytes_posix(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+    local: &Path,
+) -> Result<String, String> {
+    // Atomic install with quoted paths; refuse to overwrite a non-regular destination. The binary
+    // arrives on stdin (`cat > tmp`), the script as an argument.
     let script = format!(
         r#"set -e
 dir="$HOME/{INSTALL_DIR}"
@@ -426,8 +602,7 @@ mv -f "$tmp" "$final"
 printf 'installed=%s\n' "$final"
 "#
     );
-
-    let mut command = ssh_base_command(&resolved, config);
+    let mut command = ssh_base_command(resolved, config);
     command.arg(resolved.ssh_destination());
     command.arg("--");
     command.arg("sh").arg("-c").arg(script);
@@ -468,13 +643,153 @@ printf 'installed=%s\n' "$final"
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_installed_path(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Install onto a Windows remote in two steps: `scp` the binary to a temp file (the sftp subsystem
+/// has real flow control), then a small no-stdin `powershell -EncodedCommand` that moves it into
+/// `%USERPROFILE%\.local\bin\hyprmux.exe`.
+///
+/// Streaming the binary through a command's stdin — as the POSIX path does — deadlocks on
+/// OpenSSH-for-Windows once the data exceeds the channel's stdin buffer (a real ~11 MB binary hangs
+/// hard). `scp` sidesteps that entirely.
+fn install_bytes_windows(
+    resolved: &ResolvedRemote,
+    config: &HyprmuxRemoteConfig,
+    local: &Path,
+) -> Result<String, String> {
+    if !program_exists("scp") {
+        return Err("scp was not found on PATH (required to install onto a Windows remote)".into());
+    }
+    // A relative scp destination lands in the remote user's home (%USERPROFILE%). Keep it unique per
+    // local process so concurrent installs to one host cannot clobber each other mid-upload.
+    let temp_name = format!("hyprmux.install.{}.tmp", std::process::id());
+
+    let mut scp = scp_base_command(resolved, config);
+    scp.arg(local);
+    scp.arg(format!("{}:{temp_name}", resolved.ssh_destination()));
+    scp.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let scp_out = scp
+        .output()
+        .map_err(|err| format!("failed to run scp to {}: {err}", resolved.host))?;
+    if !scp_out.status.success() {
+        return Err(format!(
+            "scp upload to {} failed: {}",
+            resolved.host,
+            String::from_utf8_lossy(&scp_out.stderr).trim()
+        ));
+    }
+
+    // Finalize with a no-stdin PowerShell step: move the uploaded temp file into place under a
+    // `.exe` name. `-EncodedCommand` is quoting-proof through cmd.exe.
+    let script = format!(
+        r#"$ErrorActionPreference = 'Stop'
+$dir = Join-Path $env:USERPROFILE '.local\bin'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+$final = Join-Path $dir 'hyprmux.exe'
+if (Test-Path -LiteralPath $final -PathType Container) {{
+  [Console]::Error.WriteLine("refuse_non_regular=$final")
+  exit 1
+}}
+$src = Join-Path $env:USERPROFILE '{temp_name}'
+Move-Item -Force -LiteralPath $src -Destination $final
+Write-Output "installed=$final""#
+    );
+    let mut command = ssh_base_command(resolved, config);
+    command.arg(resolved.ssh_destination());
+    command.arg("--");
+    command
+        .arg("powershell")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-EncodedCommand")
+        .arg(encode_powershell_command(&script));
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command
+        .output()
+        .map_err(|err| format!("remote install finalize failed: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "remote install finalize failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_installed_path(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_installed_path(stdout: &str) -> Result<String, String> {
     for line in stdout.lines() {
         if let Some(path) = line.strip_prefix("installed=") {
-            return Ok(path.to_string());
+            return Ok(path.trim().to_string());
         }
     }
     Err("remote install succeeded but did not report installed= path".to_string())
+}
+
+/// `scp` argv mirroring [`ssh_base_command`]'s connection options (scp uses `-P` for the port, not
+/// `-p`). `ssh_args` are passed through — they are `-o key=value` pairs scp also accepts.
+fn scp_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemoteConfig) -> Command {
+    let mut command = Command::new("scp");
+    if config.batch_mode {
+        command.arg("-o").arg("BatchMode=yes");
+    }
+    if config.connection_timeout_secs > 0 {
+        command
+            .arg("-o")
+            .arg(format!("ConnectTimeout={}", config.connection_timeout_secs));
+    }
+    if let Some(port) = resolved.port {
+        command.arg("-P").arg(port.to_string());
+    }
+    if let Some(identity) = &resolved.identity_file {
+        command.arg("-i").arg(crate::config::expand_path(identity));
+    }
+    for arg in &resolved.ssh_args {
+        command.arg(arg);
+    }
+    command
+}
+
+/// Encode a PowerShell script for `powershell -EncodedCommand`: UTF-16LE bytes, then standard
+/// base64. This is quoting-proof, which matters when the outer transport is cmd.exe over ssh.
+fn encode_powershell_command(script: &str) -> String {
+    let mut utf16 = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64_standard(&utf16)
+}
+
+/// Minimal standard-alphabet base64 (with `=` padding). Kept in-crate rather than pulling a direct
+/// dependency, mirroring the hand-rolled `sha256` module used for the same install path.
+fn base64_standard(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, String> {
@@ -508,14 +823,26 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
     } else {
         "hyprmux"
     };
-    let out_bin = tmp.join(bin_name);
+    extract_release_binary(&archive_path, &archive_name, &tmp, bin_name)
+}
+
+/// Extract `archive_path` into `tmp` and return the path to the contained binary.
+///
+/// The release archives (see `.github/workflows/release.yml`) wrap the binary in a versioned
+/// directory: `hyprmux-<version>-<triple>/hyprmux`. Extract everything, then locate the binary by
+/// name — extracting a bare top-level member would always miss it.
+fn extract_release_binary(
+    archive_path: &Path,
+    archive_name: &str,
+    tmp: &Path,
+    bin_name: &str,
+) -> Result<PathBuf, String> {
     if archive_name.ends_with(".zip") {
         let status = Command::new("unzip")
-            .args(["-o", "-j"])
-            .arg(&archive_path)
-            .arg(bin_name)
+            .args(["-o"])
+            .arg(archive_path)
             .arg("-d")
-            .arg(&tmp)
+            .arg(tmp)
             .status()
             .map_err(|err| format!("unzip not available: {err}"))?;
         if !status.success() {
@@ -524,39 +851,42 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
     } else {
         let status = Command::new("tar")
             .args(["-xzf"])
-            .arg(&archive_path)
+            .arg(archive_path)
             .arg("-C")
-            .arg(&tmp)
-            .arg(bin_name)
+            .arg(tmp)
             .status()
             .map_err(|err| format!("tar not available: {err}"))?;
         if !status.success() {
-            // Some archives nest the binary; extract all then locate.
-            let status = Command::new("tar")
-                .args(["-xzf"])
-                .arg(&archive_path)
-                .arg("-C")
-                .arg(&tmp)
-                .status()
-                .map_err(|err| format!("tar extract failed: {err}"))?;
-            if !status.success() {
-                return Err(format!("failed to extract {archive_name}"));
-            }
+            return Err(format!("failed to extract {archive_name}"));
         }
     }
-    if !out_bin.is_file() {
-        // Search one level for the binary name.
-        for entry in std::fs::read_dir(&tmp).map_err(|err| err.to_string())? {
-            let entry = entry.map_err(|err| err.to_string())?;
-            if entry.file_name() == *bin_name && entry.path().is_file() {
-                return Ok(entry.path());
-            }
+    find_file_named(tmp, bin_name, 4)
+        .ok_or_else(|| format!("release archive {archive_name} did not contain {bin_name}"))
+}
+
+/// Recursively search `dir` (bounded to `max_depth` levels) for a regular file named `name`.
+fn find_file_named(dir: &Path, name: &str, max_depth: usize) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_type = entry.file_type().ok()?;
+        if file_type.is_file() && entry.file_name() == *name {
+            return Some(path);
         }
-        return Err(format!(
-            "release archive {archive_name} did not contain {bin_name}"
-        ));
+        if file_type.is_dir() {
+            subdirs.push(path);
+        }
     }
-    Ok(out_bin)
+    if max_depth == 0 {
+        return None;
+    }
+    for subdir in subdirs {
+        if let Some(found) = find_file_named(&subdir, name, max_depth - 1) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn download_url(url: &str, dest: &Path) -> Result<(), String> {
@@ -631,11 +961,106 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemote
     command
 }
 
+/// Fail if the `HYPRMUX_REMOTE_BINARY` override is a binary built for a different OS/arch than the
+/// remote host. Best-effort: an unrecognized executable format or an unknown remote platform is not
+/// treated as a mismatch, so this only blocks a confirmed wrong-target upload.
+fn verify_override_targets_remote(local: &Path, report: &ProbeReport) -> Result<(), String> {
+    let remote_os = normalize_os(&report.platform);
+    let remote_arch = normalize_arch(&report.machine);
+    if remote_os == "unknown" || remote_arch == "unknown" {
+        return Ok(());
+    }
+    let Some((bin_os, bin_arch)) = detect_binary_target(local) else {
+        return Ok(());
+    };
+    if bin_os != remote_os || bin_arch != remote_arch {
+        return Err(format!(
+            "HYPRMUX_REMOTE_BINARY={} targets {bin_os}/{bin_arch}, but the remote host is {remote_os}/{remote_arch}; provide a binary built for the remote platform",
+            local.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Sniff an executable's target `(os, arch)` from its header, normalized to the same vocabulary as
+/// [`normalize_os`]/[`normalize_arch`]. Returns `None` for a format we do not recognize.
+fn detect_binary_target(path: &Path) -> Option<(String, String)> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut head = [0u8; 64];
+    let read = file.read(&mut head).ok()?;
+    let head = &head[..read];
+    binary_target_from_header(head, path)
+}
+
+fn binary_target_from_header(head: &[u8], path: &Path) -> Option<(String, String)> {
+    // ELF (Linux): 0x7f 'E' 'L' 'F', e_machine at offset 18 (little-endian when EI_DATA == 1).
+    if head.len() >= 20 && head[..4] == [0x7f, b'E', b'L', b'F'] {
+        let machine = u16::from_le_bytes([head[18], head[19]]);
+        let arch = match machine {
+            0x3e => "x86_64",
+            0xb7 => "aarch64",
+            _ => return None,
+        };
+        return Some(("linux".to_string(), arch.to_string()));
+    }
+    // Mach-O (macOS): 64-bit magic FEEDFACF (either endianness), cputype in the next 4 bytes.
+    if head.len() >= 8 && (head[..4] == [0xcf, 0xfa, 0xed, 0xfe] || head[..4] == [0xfe, 0xed, 0xfa, 0xcf]) {
+        let cputype = if head[..4] == [0xcf, 0xfa, 0xed, 0xfe] {
+            u32::from_le_bytes([head[4], head[5], head[6], head[7]])
+        } else {
+            u32::from_be_bytes([head[4], head[5], head[6], head[7]])
+        };
+        let arch = match cputype {
+            0x0100_0007 => "x86_64",
+            0x0100_000c => "aarch64",
+            _ => return None,
+        };
+        return Some(("macos".to_string(), arch.to_string()));
+    }
+    // PE (Windows): "MZ", a 4-byte PE-header offset at 0x3c, then "PE\0\0" + a 2-byte machine field.
+    if head.len() >= 2 && head[..2] == *b"MZ" {
+        return pe_target_from_file(path);
+    }
+    None
+}
+
+fn pe_target_from_file(path: &Path) -> Option<(String, String)> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut at_3c = [0u8; 4];
+    file.seek(SeekFrom::Start(0x3c)).ok()?;
+    file.read_exact(&mut at_3c).ok()?;
+    let pe_offset = u32::from_le_bytes(at_3c) as u64;
+    let mut sig_and_machine = [0u8; 6];
+    file.seek(SeekFrom::Start(pe_offset)).ok()?;
+    file.read_exact(&mut sig_and_machine).ok()?;
+    if sig_and_machine[..4] != [b'P', b'E', 0, 0] {
+        return None;
+    }
+    let machine = u16::from_le_bytes([sig_and_machine[4], sig_and_machine[5]]);
+    let arch = match machine {
+        0x8664 => "x86_64",
+        0xaa64 => "aarch64",
+        _ => return None,
+    };
+    Some(("windows".to_string(), arch.to_string()))
+}
+
 fn normalize_os(raw: &str) -> String {
-    match raw.to_ascii_lowercase().as_str() {
+    let lower = raw.to_ascii_lowercase();
+    // MSYS/MinGW/Cygwin `uname -s` carries a version suffix (`MINGW64_NT-10.0-22631`,
+    // `MSYS_NT-…`, `CYGWIN_NT-…`), and the PowerShell probe reports `windows` directly, so match on
+    // the family prefix rather than an exact string.
+    if lower.starts_with("mingw")
+        || lower.starts_with("msys")
+        || lower.starts_with("cygwin")
+        || lower.starts_with("windows")
+    {
+        return "windows".into();
+    }
+    match lower.as_str() {
         "linux" => "linux".into(),
         "darwin" | "macos" => "macos".into(),
-        "windows" | "windows_nt" | "mingw" | "msys" => "windows".into(),
         other => other.to_string(),
     }
 }
@@ -772,6 +1197,141 @@ protocol_max=1
     }
 
     #[test]
+    fn detects_executable_target_from_headers() {
+        // ELF x86_64: magic, then e_machine 0x3e at offset 18.
+        let mut elf = vec![0u8; 20];
+        elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        elf[5] = 1; // EI_DATA = little-endian
+        elf[18] = 0x3e;
+        elf[19] = 0x00;
+        assert_eq!(
+            binary_target_from_header(&elf, Path::new("/x")),
+            Some(("linux".into(), "x86_64".into()))
+        );
+
+        // ELF aarch64: e_machine 0xb7.
+        let mut arm = elf.clone();
+        arm[18] = 0xb7;
+        assert_eq!(
+            binary_target_from_header(&arm, Path::new("/x")),
+            Some(("linux".into(), "aarch64".into()))
+        );
+
+        // Mach-O 64-bit little-endian, cputype x86_64 (0x01000007).
+        let mut macho = vec![0u8; 8];
+        macho[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
+        macho[4..8].copy_from_slice(&0x0100_0007u32.to_le_bytes());
+        assert_eq!(
+            binary_target_from_header(&macho, Path::new("/x")),
+            Some(("macos".into(), "x86_64".into()))
+        );
+
+        // Unrecognized formats are `None` (best-effort: never block on what we cannot read).
+        assert_eq!(binary_target_from_header(b"not an exe", Path::new("/x")), None);
+    }
+
+    #[test]
+    fn override_check_blocks_only_a_confirmed_mismatch() {
+        let dir = std::env::temp_dir().join(format!("hyprmux-override-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A minimal ELF x86_64 header on disk.
+        let bin = dir.join("fake-hyprmux");
+        let mut elf = vec![0u8; 20];
+        elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        elf[5] = 1;
+        elf[18] = 0x3e;
+        std::fs::write(&bin, &elf).unwrap();
+
+        let linux = ProbeReport {
+            platform: "Linux".into(),
+            machine: "x86_64".into(),
+            candidates: Vec::new(),
+        };
+        verify_override_targets_remote(&bin, &linux).expect("matching target installs");
+
+        let windows = ProbeReport {
+            platform: "windows".into(),
+            machine: "x86_64".into(),
+            candidates: Vec::new(),
+        };
+        assert!(verify_override_targets_remote(&bin, &windows).is_err());
+
+        // Unknown remote platform never blocks.
+        let unknown = ProbeReport {
+            platform: "unknown".into(),
+            machine: "unknown".into(),
+            candidates: Vec::new(),
+        };
+        verify_override_targets_remote(&bin, &unknown).expect("unknown platform does not block");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        // RFC 4648 test vectors — the padding boundaries are what a hand-rolled encoder gets wrong.
+        assert_eq!(base64_standard(b""), "");
+        assert_eq!(base64_standard(b"f"), "Zg==");
+        assert_eq!(base64_standard(b"fo"), "Zm8=");
+        assert_eq!(base64_standard(b"foo"), "Zm9v");
+        assert_eq!(base64_standard(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_standard(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_standard(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn encoded_powershell_command_round_trips() {
+        // UTF-16LE + base64, decodable back to the original script (what -EncodedCommand expects).
+        let encoded = encode_powershell_command("Write-Output 'hi'");
+        // Manually decode base64 -> UTF-16LE -> String.
+        let decoded_bytes = {
+            let table = |c: u8| -> Option<u32> {
+                match c {
+                    b'A'..=b'Z' => Some((c - b'A') as u32),
+                    b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+                    b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+                    b'+' => Some(62),
+                    b'/' => Some(63),
+                    _ => None,
+                }
+            };
+            let mut out = Vec::new();
+            let clean: Vec<u8> = encoded.bytes().filter(|&c| c != b'=').collect();
+            let mut buf = 0u32;
+            let mut bits = 0u32;
+            for c in clean {
+                buf = (buf << 6) | table(c).unwrap();
+                bits += 6;
+                if bits >= 8 {
+                    bits -= 8;
+                    out.push(((buf >> bits) & 0xff) as u8);
+                }
+            }
+            out
+        };
+        let units: Vec<u16> = decoded_bytes
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), "Write-Output 'hi'");
+    }
+
+    #[test]
+    fn normalize_os_matches_the_windows_uname_families() {
+        // MSYS/MinGW/Cygwin `uname -s` all carry a version suffix; the PowerShell probe says
+        // `windows` outright. All fold to the same artifact family.
+        assert_eq!(normalize_os("MINGW64_NT-10.0-22631"), "windows");
+        assert_eq!(normalize_os("MSYS_NT-10.0"), "windows");
+        assert_eq!(normalize_os("CYGWIN_NT-10.0-19045"), "windows");
+        assert_eq!(normalize_os("windows"), "windows");
+        assert_eq!(normalize_os("Linux"), "linux");
+        assert_eq!(normalize_os("Darwin"), "macos");
+        assert_eq!(normalize_os("plan9"), "plan9");
+    }
+
+    #[test]
     fn rustc_target_mapping_covers_release_matrix() {
         assert_eq!(
             rustc_target("linux", "x86_64"),
@@ -786,6 +1346,52 @@ protocol_max=1
             Some("x86_64-pc-windows-msvc")
         );
         assert!(rustc_target("plan9", "x86_64").is_none());
+    }
+
+    /// The release archives nest the binary in a versioned directory
+    /// (`hyprmux-<version>-<triple>/hyprmux`, per `.github/workflows/release.yml`). Build a fixture
+    /// with exactly that layout and prove the extract-then-locate path finds it — the earlier
+    /// single-member extraction could never reach into the directory, so `--remote` install always
+    /// failed with "release archive did not contain hyprmux".
+    #[test]
+    fn extract_locates_binary_nested_in_versioned_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-extract-fixture-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        // Mirror release.yml: dist/<name>/{hyprmux,README...} tarred as `<name>`.
+        let name = "hyprmux-9.9.9-x86_64-unknown-linux-gnu";
+        let staging = root.join("dist");
+        let pkg = staging.join(name);
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("hyprmux"), b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(pkg.join("README.md"), b"readme").unwrap();
+
+        let archive_name = format!("{name}.tar.gz");
+        let archive_path = staging.join(&archive_name);
+        let status = Command::new("tar")
+            .arg("-czf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&staging)
+            .arg(name)
+            .status()
+            .expect("tar available");
+        assert!(status.success(), "fixture tar failed");
+
+        let out = root.join("extract");
+        std::fs::create_dir_all(&out).unwrap();
+        let located = extract_release_binary(&archive_path, &archive_name, &out, "hyprmux")
+            .expect("binary located in nested archive");
+        assert!(located.is_file());
+        assert_eq!(located.file_name().unwrap(), "hyprmux");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// `[remote] batch_mode` is the one switch deciding whether ssh may prompt, so it has to reach
@@ -827,5 +1433,33 @@ protocol_max=1
                 .iter()
                 .any(|arg| arg.starts_with("ConnectTimeout="))
         );
+    }
+
+    /// The scp used by the Windows install must carry the same connection options as ssh, but with
+    /// scp's uppercase `-P` for the port (a lowercase `-p` would be silently misread).
+    #[test]
+    fn scp_base_command_mirrors_ssh_options_with_uppercase_port() {
+        let resolved = ResolvedRemote {
+            alias: Some("winbox".into()),
+            host: "winbox".into(),
+            user: Some("me".into()),
+            port: Some(2222),
+            identity_file: Some("/keys/id".into()),
+            ssh_args: vec!["-o".into(), "UserKnownHostsFile=/tmp/kh".into()],
+            binary_path: None,
+        };
+        let config = HyprmuxRemoteConfig::default();
+        let args: Vec<String> = scp_base_command(&resolved, &config)
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(args.iter().any(|arg| arg == "BatchMode=yes"));
+        // scp's port flag is uppercase; the lowercase ssh form must not appear.
+        let port_pos = args.iter().position(|arg| arg == "-P").expect("-P present");
+        assert_eq!(args[port_pos + 1], "2222");
+        assert!(!args.iter().any(|arg| arg == "-p"));
+        assert!(args.iter().any(|arg| arg == "-i"));
+        assert!(args.iter().any(|arg| arg == "UserKnownHostsFile=/tmp/kh"));
     }
 }

@@ -123,6 +123,10 @@ pub struct State {
     /// Local-filesystem features (file tree, profile path capture) must treat server cwds as
     /// remote when this is set, even if `cwd_host` is `None` (server-relative).
     pub remote_host: Option<String>,
+    /// The resolved `--remote` target for the current session, carried alongside `remote_host` so a
+    /// dropped link reconnects to the *same* remote host instead of re-parsing (or, worse, falling
+    /// back to a same-named local session). `None` for local sessions.
+    pub remote_target: Option<crate::session::remote::RemoteTarget>,
     pub created_from_profile: Option<String>,
     pub deferred_profile_seed: Option<(String, PathBuf)>,
     pub pending_profile_loaded: Option<(String, PathBuf, String)>,
@@ -238,6 +242,7 @@ impl State {
             session_client: None,
             session_name: None,
             remote_host: None,
+            remote_target: None,
             created_from_profile: None,
             deferred_profile_seed: None,
             pending_profile_loaded: None,

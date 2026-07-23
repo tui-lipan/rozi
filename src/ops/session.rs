@@ -42,33 +42,25 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<HyprmuxApp>) {
 const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 
 pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
-    match picker_rows(ctx) {
-        Ok(rows) => {
-            let mut picker = SessionPickerState::new(rows);
-            if let Some(current_name) = ctx.state.session_name.as_deref()
-                && let Some(pos) = picker
-                    .entries
-                    .iter()
-                    .position(|entry| entry.name == current_name)
-            {
-                picker.selected = pos;
-            }
-            ctx.state.session_picker = Some(picker);
-        }
-        Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Session list failed",
-                err.to_string(),
-            ));
-            ctx.state.session_picker = Some(SessionPickerState::new(Vec::new()));
-        }
+    // Open instantly with local rows only; configured remote hosts are queried over ssh, which
+    // costs a round-trip when up and the full connect timeout when down. Blocking the open on that
+    // froze the UI every time. The remote rows stream in via `SessionsDiscovered` below.
+    let rows = local_picker_rows(ctx);
+    let mut picker = SessionPickerState::new(rows);
+    if let Some(current_name) = ctx.state.session_name.as_deref()
+        && let Some(pos) = picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == current_name)
+    {
+        picker.selected = pos;
     }
+    ctx.state.session_picker = Some(picker);
     ctx.state.show_session_picker = true;
     // A new opening invalidates any in-flight watcher tick from a prior opening.
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
     request_session_picker_focus(ctx);
-    Update::with_command(session_watch_command(
+    Update::with_command(session_discover_now_command(
         ctx.state.session_picker_epoch,
         ctx.state.session_name.clone(),
         ctx.state.config.remote.clone(),
@@ -76,10 +68,10 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 /// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
-/// the watcher epoch so `init` can kick off the first discovery tick. Discovery failures degrade to
-/// an empty picker (Esc still falls back to a fresh ephemeral session).
+/// the watcher epoch so `init` can kick off the first discovery tick. Local rows show immediately;
+/// remote rows arrive async, so a dead configured host never stalls startup.
 pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 {
-    let rows = picker_rows(ctx).unwrap_or_default();
+    let rows = local_picker_rows(ctx);
     ctx.state.session_picker = Some(SessionPickerState::new(rows));
     ctx.state.show_session_picker = true;
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
@@ -89,33 +81,53 @@ pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 
 }
 
 pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
-    match picker_rows(ctx) {
-        Ok(rows) => {
-            // Carry the typed query and the highlighted row across the rebuild. After a kill the
-            // killed row is gone, so clamping keeps the highlight on the row that slid into its
-            // place instead of snapping back to the top; it also keeps our `selected` in step with
-            // the persistent `SearchPalette` component, which does not re-resolve its internal
-            // keyboard selection when the entry list changes underneath it.
-            let (query, selected) = ctx
-                .state
-                .session_picker
-                .as_ref()
-                .map(|p| (p.input.text().to_string(), p.selected))
-                .unwrap_or_default();
-            let mut picker = SessionPickerState::new(rows);
-            picker.input.set_text(query);
-            picker.selected = selected.min(picker.entries.len().saturating_sub(1));
-            ctx.state.session_picker = Some(picker);
+    // Carry the typed query and the highlighted row across the rebuild. After a kill the killed row
+    // is gone, so clamping keeps the highlight on the row that slid into its place instead of
+    // snapping back to the top; it also keeps our `selected` in step with the persistent
+    // `SearchPalette` component, which does not re-resolve its keyboard selection when the entry
+    // list changes underneath it. Rebuild from fast local rows and let the async sweep refill.
+    let (query, selected) = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .map(|p| (p.input.text().to_string(), p.selected))
+        .unwrap_or_default();
+    let rows = local_picker_rows(ctx);
+    let mut picker = SessionPickerState::new(rows);
+    picker.input.set_text(query);
+    picker.selected = selected.min(picker.entries.len().saturating_sub(1));
+    ctx.state.session_picker = Some(picker);
+    Update::with_command(session_discover_now_command(
+        ctx.state.session_picker_epoch,
+        ctx.state.session_name.clone(),
+        ctx.state.config.remote.clone(),
+    ))
+}
+
+/// Fast, local-only picker rows for an immediate open: local named sessions plus the attached
+/// session, with no remote ssh. The full list (configured remote hosts included) arrives async via
+/// [`Msg::SessionsDiscovered`].
+pub(crate) fn local_picker_rows(ctx: &Context<HyprmuxApp>) -> Vec<DiscoveredSession> {
+    let current_name = ctx.state.session_name.as_deref();
+    let mut rows =
+        crate::session::discovery::discover_selectable_sessions(current_name).unwrap_or_default();
+    push_current_session_row(ctx, &mut rows);
+    rows
+}
+
+/// Run the full picker discovery (including configured remote hosts) once, off the UI thread, and
+/// deliver it as [`Msg::SessionsDiscovered`]. Used to populate remote rows right after an
+/// instant local-only open, without waiting a full refresh interval.
+fn session_discover_now_command(
+    epoch: u64,
+    current_name: Option<String>,
+    remote_config: crate::config::HyprmuxRemoteConfig,
+) -> Command {
+    Command::spawn(move |link: CommandLink<Msg>| {
+        if let Ok(rows) = discover_picker_sessions(current_name.as_deref(), &remote_config) {
+            link.send(Msg::SessionsDiscovered { epoch, rows });
         }
-        Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Session list failed",
-                err.to_string(),
-            ));
-        }
-    };
-    Update::full()
+    })
 }
 
 /// Apply a batch of freshly discovered sessions from the auto-refresh watcher, then re-arm the next
@@ -167,15 +179,6 @@ fn session_watch_command(
             }
         },
     )
-}
-
-/// Build the full picker row list: every discovered session plus a row for the currently attached
-/// one, sorted by name.
-pub(crate) fn picker_rows(ctx: &Context<HyprmuxApp>) -> std::io::Result<Vec<DiscoveredSession>> {
-    let current_name = ctx.state.session_name.as_deref();
-    let mut rows = discover_picker_sessions(current_name, &ctx.state.config.remote)?;
-    push_current_session_row(ctx, &mut rows);
-    Ok(rows)
 }
 
 /// Discover sessions for the picker: exclude the currently attached one (re-added separately by
@@ -243,12 +246,7 @@ pub(crate) fn discover_sessions_for_ui(
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     let mut rows = discover_picker_sessions(current_name, remote_config)?;
     if let Some(current) = current {
-        let already = rows
-            .iter()
-            .any(|row| row.name == current.name && row.host == current.host);
-        if !already {
-            rows.push(current);
-        }
+        merge_current_session_row(&mut rows, current);
         rows.sort_by(|a, b| match (a.host.as_deref(), b.host.as_deref()) {
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
@@ -258,10 +256,22 @@ pub(crate) fn discover_sessions_for_ui(
     Ok(rows)
 }
 
+/// Add the attached session to `rows` unless it is already listed. Remote discovery returns the
+/// attached session (the current-session exclusion only applies to the *local* scan), so both the
+/// sidebar and the picker would otherwise show two `name@host • current` rows under `--remote`.
+fn merge_current_session_row(rows: &mut Vec<DiscoveredSession>, current: DiscoveredSession) {
+    let already = rows
+        .iter()
+        .any(|row| row.name == current.name && row.host == current.host);
+    if !already {
+        rows.push(current);
+    }
+}
+
 /// Append a row for the attached session (discovery excludes it) and keep the list sorted.
 fn push_current_session_row(ctx: &Context<HyprmuxApp>, rows: &mut Vec<DiscoveredSession>) {
     if let Some(current) = current_session_row(&ctx.state) {
-        rows.push(current);
+        merge_current_session_row(rows, current);
         rows.sort_by(|a, b| a.name.cmp(&b.name));
     }
 }
@@ -610,6 +620,23 @@ pub(crate) fn attach_session_by_name(
             .push(info_toast(&ctx.state.theme, "Attach already in progress"));
         return Update::full();
     }
+    // Resolve the remote target before tearing down the current session, so a malformed host does
+    // not strand a working attachment — and so the resolved target can be carried on `State` for a
+    // reconnect to route on (rather than re-parsing).
+    let remote_target = match remote_host.as_deref() {
+        Some(host) => match crate::session::remote::parse_remote_target(host) {
+            Ok(target) => Some(target),
+            Err(err) => {
+                ctx.toast().push(crate::pty_events::error_toast(
+                    &ctx.state.theme,
+                    "Invalid remote host",
+                    format!("`{host}`: {err}"),
+                ));
+                return Update::full();
+            }
+        },
+        None => None,
+    };
     // Attach-elsewhere: release the current session (a named one is parked for reattach; an
     // ephemeral one is torn down so it does not leak an orphan server), then attach to the target.
     let left = ctx
@@ -626,6 +653,7 @@ pub(crate) fn attach_session_by_name(
     ctx.state.commands_dirty = true;
     let epoch = ctx.state.runtime_epoch.saturating_add(1);
     ctx.state.remote_host = remote_host.clone();
+    ctx.state.remote_target = remote_target.clone();
     ctx.state.pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -639,26 +667,18 @@ pub(crate) fn attach_session_by_name(
     let remote_config = ctx.state.config.remote.clone();
     Update::with_command(Command::spawn(move |link| {
         std::thread::spawn(move || {
-            if let Some(host) = remote_host {
-                match crate::session::remote::parse_remote_target(&host) {
-                    Ok(target) => {
-                        crate::session::bootstrap::attach_remote_session_client(
-                            epoch,
-                            name,
-                            false,
-                            false,
-                            target,
-                            remote_config,
-                            link,
-                        );
-                    }
-                    Err(err) => {
-                        link.send(Msg::SessionAttachFailed {
-                            epoch,
-                            message: format!("Invalid remote host `{host}`: {err}"),
-                        });
-                    }
-                }
+            if let Some(target) = remote_target {
+                crate::session::bootstrap::attach_remote_session_client(
+                    epoch,
+                    name,
+                    false,
+                    false,
+                    target,
+                    remote_config,
+                    // Explicit attach: fail fast rather than blocking the UI on a dead host.
+                    false,
+                    link,
+                );
             } else {
                 crate::session::bootstrap::attach_session_client(
                     epoch, name, autostart, false, link,
@@ -770,6 +790,10 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
+    // This is a *local* fallback; clear any remote target left over from a failed `--remote` attach
+    // so panes resolve their shell/cwd locally and the sidebar does not keep probing a dead host.
+    ctx.state.remote_host = None;
+    ctx.state.remote_target = None;
     let epoch = ctx.state.runtime_epoch;
     let name = crate::state::ephemeral_session_name();
     let intent = ctx
@@ -1147,6 +1171,40 @@ mod tests {
     use crate::config::HyprmuxConfig;
     use crate::session::protocol::ClientInfo;
     use crate::state::{SharedSessionState, State, ThemePreset};
+
+    fn session_row(name: &str, host: Option<&str>) -> DiscoveredSession {
+        DiscoveredSession {
+            name: name.to_string(),
+            ephemeral: false,
+            host: host.map(str::to_string),
+            status: crate::session::discovery::DiscoveredSessionStatus::Running {
+                panes: 1,
+                has_layout: true,
+                clients: 1,
+                created_from_profile: None,
+            },
+        }
+    }
+
+    /// Under `--remote` the discovery scan already returns the attached session, so merging the
+    /// current-session row must not add a second copy — otherwise the picker shows two
+    /// `name@host • current` entries. A same-name row on a *different* host is a real distinct
+    /// session and must stay.
+    #[test]
+    fn merge_current_session_row_dedupes_by_name_and_host() {
+        let mut rows = vec![session_row("dev", Some("winvm"))];
+        merge_current_session_row(&mut rows, session_row("dev", Some("winvm")));
+        assert_eq!(rows.len(), 1, "the attached session must not be listed twice");
+
+        // Same name, different host: a genuinely different session, kept.
+        merge_current_session_row(&mut rows, session_row("dev", Some("other")));
+        assert_eq!(rows.len(), 2);
+
+        // Not present yet: added.
+        let mut empty = Vec::new();
+        merge_current_session_row(&mut empty, session_row("dev", Some("winvm")));
+        assert_eq!(empty.len(), 1);
+    }
 
     fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {
         let mut state = State::new(HyprmuxConfig::default(), ThemePreset::Lipan.theme());

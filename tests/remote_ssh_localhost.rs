@@ -323,27 +323,85 @@ fn attaches_to_a_configured_real_remote() {
     let (client, attached) =
         SessionClient::from_stream_attached(stream, session.clone(), tx, false)
             .expect("attach over ssh to the configured remote");
-    match &attached {
+    let first_id = match &attached {
         ServerMessage::Attached {
             session: name,
             effective_protocol,
+            client_id,
+            controller,
+            clients,
             ..
         } => {
             eprintln!("attached to `{name}` at protocol {effective_protocol}");
             assert_eq!(name, &session);
             assert!(*effective_protocol >= 12);
+            assert_eq!(
+                *controller,
+                Some(*client_id),
+                "the first attacher must hold the layout-control lease"
+            );
+            assert_eq!(clients.len(), 1, "only one client is attached so far");
+            *client_id
         }
         other => panic!("expected Attached, got {other:?}"),
+    };
+
+    // A second concurrent client sharing the same session: it attaches as a *follower* (the first
+    // client keeps the lease) and both appear in the roster. This is the multi-client sharing path.
+    let (second_stream, second_preamble) =
+        connect_remote(&target, &session, &config).expect("second concurrent connect");
+    assert!(
+        !second_preamble.server_started,
+        "an already-running session must not report server_started to a second client"
+    );
+    let (second_client, second_attached) = {
+        let (tx2, _rx2) = mpsc::channel();
+        SessionClient::from_stream_attached(second_stream, session.clone(), tx2, false)
+            .expect("second client attach")
+    };
+    match &second_attached {
+        ServerMessage::Attached {
+            client_id,
+            controller,
+            clients,
+            ..
+        } => {
+            assert_ne!(*client_id, first_id, "the second client gets a distinct id");
+            assert_eq!(
+                *controller,
+                Some(first_id),
+                "the lease stays with the first client; the newcomer is a follower"
+            );
+            assert_eq!(clients.len(), 2, "both clients share the session roster");
+        }
+        other => panic!("expected Attached for the second client, got {other:?}"),
     }
+    second_client.detach();
+    drop(second_client);
 
-    // Reconnecting to the same name must find the server already up.
-    let (second, second_preamble) =
-        connect_remote(&target, &session, &config).expect("second connect");
-    assert!(!second_preamble.server_started);
-    drop(second);
-
+    // Detach the first client and confirm the server survives for reattach: a fresh connect to the
+    // same name must find it already running (server_started == false), then attach cleanly again.
     client.detach();
     drop(client);
+    std::thread::sleep(Duration::from_millis(300));
+
+    let (reattach_stream, reattach_preamble) =
+        connect_remote(&target, &session, &config).expect("reattach after detach");
+    assert!(
+        !reattach_preamble.server_started,
+        "detach must leave the server running, so reattach finds it up"
+    );
+    let (reattached_client, reattached) = {
+        let (tx3, _rx3) = mpsc::channel();
+        SessionClient::from_stream_attached(reattach_stream, session.clone(), tx3, false)
+            .expect("reattach over ssh")
+    };
+    match &reattached {
+        ServerMessage::Attached { session: name, .. } => assert_eq!(name, &session),
+        other => panic!("expected Attached on reattach, got {other:?}"),
+    }
+    reattached_client.detach();
+    drop(reattached_client);
     std::thread::sleep(Duration::from_millis(300));
 
     let _ = hyprmux::session::remote::kill_remote_session(&target, &session, &config);

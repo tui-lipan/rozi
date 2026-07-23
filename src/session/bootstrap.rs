@@ -34,7 +34,7 @@ pub(crate) fn attach_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, link);
+    attach_session_client_with_profile(epoch, name, autostart, read_only, false, None, false, link);
 }
 
 pub(crate) fn create_session_client(
@@ -43,9 +43,14 @@ pub(crate) fn create_session_client(
     read_only: bool,
     link: CommandLink<Msg>,
 ) {
-    attach_session_client_with_profile(epoch, name, true, read_only, true, None, link);
+    attach_session_client_with_profile(epoch, name, true, read_only, true, None, false, link);
 }
 
+/// `reconnect` is true only when re-driving an *established* link that dropped: that path retries
+/// with backoff to ride out a suspend/Wi-Fi/VPN blip. The initial startup / attach-elsewhere path
+/// passes false so an unreachable host fails after one attempt and the caller can fall back to a
+/// local ephemeral instead of leaving the UI blank for the whole retry window.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn attach_remote_session_client(
     epoch: u64,
     name: String,
@@ -53,6 +58,7 @@ pub(crate) fn attach_remote_session_client(
     create_only: bool,
     remote: super::remote::RemoteTarget,
     remote_config: crate::config::HyprmuxRemoteConfig,
+    reconnect: bool,
     link: CommandLink<Msg>,
 ) {
     attach_session_client_with_profile(
@@ -62,10 +68,12 @@ pub(crate) fn attach_remote_session_client(
         read_only,
         create_only,
         Some((remote, remote_config)),
+        reconnect,
         link,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn attach_session_client_with_profile(
     epoch: u64,
     name: String,
@@ -76,6 +84,7 @@ fn attach_session_client_with_profile(
         super::remote::RemoteTarget,
         crate::config::HyprmuxRemoteConfig,
     )>,
+    reconnect: bool,
     link: CommandLink<Msg>,
 ) {
     use std::sync::mpsc;
@@ -89,6 +98,7 @@ fn attach_session_client_with_profile(
             create_only,
             target,
             remote_config,
+            reconnect,
             link,
         );
         return;
@@ -232,6 +242,15 @@ fn attach_session_client_with_profile(
     }
 }
 
+/// How long the remote attach path keeps retrying transient connect failures before giving up. A
+/// remote link needs to ride out suspend, Wi-Fi flap, and VPN blips rather than dying on the first
+/// failed connect (the disconnect handler re-drives this whole path on an established link that
+/// later drops, so this deadline governs the connect phase only).
+const REMOTE_RECONNECT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+const REMOTE_RECONNECT_INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
+const REMOTE_RECONNECT_MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(4);
+
+#[allow(clippy::too_many_arguments)]
 fn attach_remote(
     epoch: u64,
     name: String,
@@ -239,59 +258,115 @@ fn attach_remote(
     create_only: bool,
     target: super::remote::RemoteTarget,
     remote_config: crate::config::HyprmuxRemoteConfig,
+    reconnect: bool,
     link: CommandLink<Msg>,
 ) {
+    use std::time::Instant;
+
     // Remote autostart lives inside `--remote-serve` on the far side, so there is no local
-    // spawn/retry loop here. We still retry once after an explicit remote kill when the running
-    // server's protocol cannot be negotiated (version-skew restart).
-    match try_attach_remote(
-        epoch,
-        &name,
-        read_only,
-        create_only,
-        &target,
-        &remote_config,
-        &link,
-    ) {
-        AttachRemoteOutcome::Done => {}
-        AttachRemoteOutcome::ProtocolSkew(message) => {
-            match super::remote::kill_remote_session(&target, &name, &remote_config) {
-                Ok(()) => {
-                    match try_attach_remote(
+    // spawn loop here. When re-driving a dropped link (`reconnect`), a transient connect failure is
+    // retried with exponential backoff until the deadline, to ride out a suspend/Wi-Fi/VPN blip; the
+    // initial attach does not loop, so an unreachable host fails fast and the caller falls back to a
+    // local ephemeral. A protocol-version skew is handled separately (kill + one restart) since
+    // backing off would never fix a mismatch. `try_attach_remote` sends `SessionConnected`/
+    // `SessionAttached` only once it is actually connected, so a failed attempt leaves nothing to
+    // undo before the next try.
+    let deadline = Instant::now()
+        + if reconnect {
+            REMOTE_RECONNECT_DEADLINE
+        } else {
+            std::time::Duration::ZERO
+        };
+    let mut backoff = REMOTE_RECONNECT_INITIAL_BACKOFF;
+    loop {
+        match try_attach_remote(
+            epoch,
+            &name,
+            read_only,
+            create_only,
+            &target,
+            &remote_config,
+            &link,
+        ) {
+            AttachRemoteOutcome::Done => return,
+            AttachRemoteOutcome::ProtocolSkew(message) => {
+                attach_remote_after_skew(
+                    epoch,
+                    &name,
+                    read_only,
+                    create_only,
+                    &target,
+                    &remote_config,
+                    &link,
+                    message,
+                );
+                return;
+            }
+            AttachRemoteOutcome::Fatal(message) => {
+                link.send(Msg::SessionAttachFailed {
+                    epoch,
+                    message: format!("Remote attach to `{name}` failed: {message}"),
+                });
+                return;
+            }
+            AttachRemoteOutcome::Failed(message) => {
+                if Instant::now() >= deadline {
+                    link.send(Msg::SessionAttachFailed {
                         epoch,
-                        &name,
-                        read_only,
-                        create_only,
-                        &target,
-                        &remote_config,
-                        &link,
-                    ) {
-                        AttachRemoteOutcome::Done => {}
-                        AttachRemoteOutcome::ProtocolSkew(again)
-                        | AttachRemoteOutcome::Failed(again) => {
-                            link.send(Msg::SessionAttachFailed {
-                                epoch,
-                                message: format!(
-                                    "Remote attach to `{name}` failed after restarting an incompatible server: {again}"
-                                ),
-                            });
-                        }
-                    }
+                        message: format!("Remote attach to `{name}` failed: {message}"),
+                    });
+                    return;
                 }
-                Err(kill_err) => {
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(REMOTE_RECONNECT_MAX_BACKOFF);
+            }
+        }
+    }
+}
+
+/// Version-skew recovery: kill the incompatible remote server, then try once more. Backing off and
+/// retrying the same server would never negotiate, so this path does not loop.
+#[allow(clippy::too_many_arguments)]
+fn attach_remote_after_skew(
+    epoch: u64,
+    name: &str,
+    read_only: bool,
+    create_only: bool,
+    target: &super::remote::RemoteTarget,
+    remote_config: &crate::config::HyprmuxRemoteConfig,
+    link: &CommandLink<Msg>,
+    message: String,
+) {
+    match super::remote::kill_remote_session(target, name, remote_config) {
+        Ok(()) => {
+            match try_attach_remote(
+                epoch,
+                name,
+                read_only,
+                create_only,
+                target,
+                remote_config,
+                link,
+            ) {
+                AttachRemoteOutcome::Done => {}
+                AttachRemoteOutcome::ProtocolSkew(again)
+                | AttachRemoteOutcome::Failed(again)
+                | AttachRemoteOutcome::Fatal(again) => {
                     link.send(Msg::SessionAttachFailed {
                         epoch,
                         message: format!(
-                            "Remote attach to `{name}` failed: {message} (restart also failed: {kill_err})"
+                            "Remote attach to `{name}` failed after restarting an incompatible server: {again}"
                         ),
                     });
                 }
             }
         }
-        AttachRemoteOutcome::Failed(message) => {
+        Err(kill_err) => {
             link.send(Msg::SessionAttachFailed {
                 epoch,
-                message: format!("Remote attach to `{name}` failed: {message}"),
+                message: format!(
+                    "Remote attach to `{name}` failed: {message} (restart also failed: {kill_err})"
+                ),
             });
         }
     }
@@ -300,7 +375,10 @@ fn attach_remote(
 enum AttachRemoteOutcome {
     Done,
     ProtocolSkew(String),
+    /// A transient failure worth retrying with backoff (connect refused, timeout, dropped read).
     Failed(String),
+    /// A logical rejection that retrying cannot fix (e.g. `new` against a name already running).
+    Fatal(String),
 }
 
 fn try_attach_remote(
@@ -319,7 +397,7 @@ fn try_attach_remote(
         Ok((stream, preamble)) => {
             if create_only && !preamble.server_started {
                 drop(stream);
-                return AttachRemoteOutcome::Failed(format!(
+                return AttachRemoteOutcome::Fatal(format!(
                     "Session `{name}` is already running on the remote host"
                 ));
             }

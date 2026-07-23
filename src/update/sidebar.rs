@@ -227,17 +227,11 @@ pub(crate) fn cycle_tab(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update 
 
 fn open_sessions(ctx: &mut Context<HyprmuxApp>) -> Update {
     let epoch = ctx.state.sidebar.sessions_epoch;
-    match crate::ops::session::picker_rows(ctx) {
-        Ok(rows) => sessions_discovered(ctx, epoch, Ok(rows)),
-        Err(error) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Session list failed",
-                error.to_string(),
-            ));
-            refresh_sessions(ctx, epoch)
-        }
-    }
+    // Populate the tab instantly with local rows, then run the full sweep (configured remote hosts
+    // included) off the UI thread. Querying remote hosts over ssh here used to block the tab switch
+    // on a round-trip — or the whole connect timeout when a host was down — every time it opened.
+    ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
+    refresh_sessions(ctx, epoch)
 }
 
 fn start_active_command(ctx: &mut Context<HyprmuxApp>) -> Update {

@@ -150,19 +150,28 @@ pub(crate) fn spawn_state_panes_on_session(
             ctx.state.config.pane.highlight_focused_background,
         ),
     );
-    let shell_env = crate::platform::command::ShellEnv::from_process();
-    let (shell, integration_env) = crate::platform::shell_integration::resolve_interactive_shell(
-        ctx.state.config.shell.as_deref(),
-        &shell_env,
-        ctx.state.config.shell_integration.mode,
-        &crate::platform::shell_integration::InjectionEnv::from_process(),
-    );
-    let command_shell = crate::platform::command::resolve_command_shell(
-        ctx.state.config.command_shell.as_deref(),
-        &shell_env,
-    );
-    let shell = shell.as_argv();
-    let command_shell = command_shell.as_argv();
+    // Under `--remote` the server owns its platform and shell. Our locally resolved shell argv and
+    // shell-integration env carry local paths a possibly different-OS server cannot run, so send
+    // empty argv (the server resolves its own default shell) and drop the integration env. Mirrors
+    // the same guard in `pane_lifecycle::request_pane_spawn` for later splits.
+    let is_remote = ctx.state.remote_host.is_some();
+    let (shell, integration_env, command_shell) = if is_remote {
+        (Vec::new(), Vec::new(), Vec::new())
+    } else {
+        let shell_env = crate::platform::command::ShellEnv::from_process();
+        let (shell, integration_env) =
+            crate::platform::shell_integration::resolve_interactive_shell(
+                ctx.state.config.shell.as_deref(),
+                &shell_env,
+                ctx.state.config.shell_integration.mode,
+                &crate::platform::shell_integration::InjectionEnv::from_process(),
+            );
+        let command_shell = crate::platform::command::resolve_command_shell(
+            ctx.state.config.command_shell.as_deref(),
+            &shell_env,
+        );
+        (shell.as_argv(), integration_env, command_shell.as_argv())
+    };
     let mut targets = Vec::new();
     for pane in ctx
         .state
@@ -175,6 +184,13 @@ pub(crate) fn spawn_state_panes_on_session(
         ctx.state.next_pty_generation = ctx.state.next_pty_generation.saturating_add(1);
         pane.pty_generation = generation;
         pane.terminal.bind_server_backend(pane.id, generation);
+        // The initial pane's launch cwd is the *local* directory hyprmux was started in
+        // (`config.cwd`), which is meaningless on a remote server: it would be sent as a spawn cwd
+        // the server cannot use, and — because remote panes get no OSC 7 cwd report — displayed as
+        // the pane's location indefinitely. Drop it so the pane shows/uses the server's own cwd.
+        if is_remote {
+            pane.identity.cwd = None;
+        }
         let env = integration_env
             .iter()
             .cloned()

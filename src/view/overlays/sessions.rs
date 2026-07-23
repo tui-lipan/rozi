@@ -152,6 +152,18 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     {
         row = row.child(hint_pill(theme, "close", "ctrl+w"));
     }
+    // Disconnecting a host closes every attachment to it; offer it when the selected row is a remote
+    // session we currently hold at least one attachment to.
+    if let Some(target) = selected.and_then(|entry| entry.remote_target.as_ref())
+        && (ctx.state.current().remote_target.as_ref() == Some(target)
+            || ctx
+                .state
+                .background
+                .values()
+                .any(|attachment| attachment.remote_target.as_ref() == Some(target)))
+    {
+        row = row.child(hint_pill(theme, "disconnect host", "ctrl+x"));
+    }
     row.into()
 }
 
@@ -353,6 +365,8 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             Some(Msg::SessionPickerKillSelected)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W')) {
             Some(Msg::SessionPickerCloseAttachment)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X')) {
+            Some(Msg::SessionPickerDisconnectHost)
         } else {
             None
         }

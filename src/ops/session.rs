@@ -1278,6 +1278,71 @@ pub(crate) fn close_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> Update
     refresh_session_picker(ctx)
 }
 
+/// Disconnect the client from a remote host: close every attachment (current and retained) to the
+/// selected row's host, leaving the remote servers running. A host-wide sibling of
+/// [`close_selected_attachment`]; if the current session lives on that host the UI hops to a fresh
+/// local ephemeral. Non-destructive - the remote sessions can be reattached later.
+pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_session_arms(ctx);
+    let Some(picker) = ctx.state.session_picker.as_ref() else {
+        return Update::full();
+    };
+    let index = picker.selected.min(picker.entries.len().saturating_sub(1));
+    let Some(entry) = picker.entries.get(index).cloned() else {
+        return Update::full();
+    };
+    let Some(target) = entry.remote_target.clone() else {
+        ctx.toast()
+            .push(info_toast(&ctx.state.theme, "Not a remote session"));
+        return Update::full();
+    };
+    let host_label = entry.host.clone().unwrap_or_else(|| entry.name.clone());
+    // Close every retained background attachment on this host; their servers keep running.
+    let ids: Vec<crate::state::AttachmentId> = ctx
+        .state
+        .background
+        .iter()
+        .filter(|(_, attachment)| attachment.remote_target.as_ref() == Some(&target))
+        .map(|(id, _)| *id)
+        .collect();
+    let mut closed = 0usize;
+    for id in ids {
+        if let Some(attachment) = ctx.state.background.remove(&id) {
+            if let Some(client) = attachment.session_client.as_ref() {
+                client.detach();
+            }
+            closed += 1;
+        }
+    }
+    let current_on_host = ctx.state.current().session_attached
+        && ctx.state.current().remote_target.as_ref() == Some(&target);
+    if current_on_host {
+        if let Some(client) = ctx.state.current().session_client.clone() {
+            crate::ops::exit::mark_session_detached(ctx, None);
+            client.detach();
+        }
+        closed += 1;
+        let update = swap_to_fresh_ephemeral(ctx);
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
+        ));
+        return update;
+    }
+    if closed == 0 {
+        ctx.toast().push(info_toast(
+            &ctx.state.theme,
+            format!("No attachments to `{host_label}`"),
+        ));
+        return Update::full();
+    }
+    ctx.toast().push(info_toast(
+        &ctx.state.theme,
+        format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
+    ));
+    refresh_session_picker(ctx)
+}
+
 fn shutdown_discovered_session(
     entry: &DiscoveredSession,
     remote_config: &crate::config::HyprmuxRemoteConfig,

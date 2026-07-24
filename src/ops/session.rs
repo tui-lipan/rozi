@@ -705,6 +705,7 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<HyprmuxApp>) -> Update
         remote_host: ctx.state.current().remote_host.clone(),
         intent: crate::state::AttachIntent::Plain,
         left: None,
+        parked_epoch: None,
     });
     ctx.toast().push(crate::pty_events::info_toast(
         &ctx.state.theme,
@@ -834,6 +835,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         remote_host: None,
         intent: crate::state::AttachIntent::Plain,
         left: None,
+        parked_epoch: None,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     Update::with_command(Command::spawn(move |link| {
@@ -901,8 +903,11 @@ pub(crate) fn attach_session_by_name(
     // still mid-connect). The epoch advances below, so the retained session's remaining frames route
     // to it as a background attachment rather than the new current one.
     let epoch = ctx.state.mint_attachment_id();
+    let mut parked_epoch = None;
     let left =
         if ctx.state.current().session_attached {
+            // Retain the previous session under its current epoch so a failed attach can restore it.
+            parked_epoch = Some(ctx.state.runtime_epoch);
             park_current_session(ctx);
             None
         } else {
@@ -931,6 +936,7 @@ pub(crate) fn attach_session_by_name(
         remote_host: remote_host.clone(),
         intent: crate::state::AttachIntent::Plain,
         left,
+        parked_epoch,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     let remote_config = ctx.state.config.remote.clone();
@@ -1032,6 +1038,7 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
         remote_host: None,
         intent,
         left: None,
+        parked_epoch: None,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     Update::with_command(Command::spawn(move |link| {

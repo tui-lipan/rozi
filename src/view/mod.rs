@@ -31,7 +31,7 @@ use overlays::{
     search_overlay, session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
-use workbar::{empty_workspace_panel, workbar};
+use workbar::{connecting_workspace_panel, empty_workspace_panel, workbar};
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -100,10 +100,22 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
 
     if workspace.panes.iter().all(|pane| pane.closing) {
-        canvas = canvas.child_at(
-            empty_workspace_rect(bounds).to_rect(),
-            empty_workspace_panel(&ctx.state.config.input, theme),
-        );
+        // Mid-attach with no panes yet: show a live "connecting" spinner rather than the idle
+        // "empty workspace" hint, which would read as "done, nothing here" during a connect.
+        let connecting = matches!(
+            ctx.state.current().connection,
+            crate::state::ConnectionState::Connecting | crate::state::ConnectionState::Reconnecting
+        ) && ctx.state.current().pending_session_attach.is_some();
+        let panel = if connecting {
+            connecting_workspace_panel(
+                ctx.state.current().remote_host.as_deref(),
+                ctx.state.current().connection == crate::state::ConnectionState::Reconnecting,
+                theme,
+            )
+        } else {
+            empty_workspace_panel(&ctx.state.config.input, theme)
+        };
+        canvas = canvas.child_at(empty_workspace_rect(bounds).to_rect(), panel);
     }
 
     for pane in ordered_panes(workspace, focused_pane) {

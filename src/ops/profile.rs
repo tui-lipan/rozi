@@ -638,6 +638,7 @@ pub(crate) fn open_named_target(
         remote_host: None,
         intent: attach_intent.clone(),
         left,
+        parked_epoch: None,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     Update::with_command(Command::spawn(move |link| {
@@ -709,6 +710,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
             path: entry.path.clone(),
         },
         left: None,
+        parked_epoch: None,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     ctx.state.show_profile_picker = false;

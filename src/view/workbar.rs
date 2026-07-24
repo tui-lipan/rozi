@@ -824,6 +824,54 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
         .into()
 }
 
+/// Placeholder shown in the pane area while a session attach is in flight and no panes have arrived
+/// yet. A live spinner makes the wait legible — a bare "empty workspace" reads as "done, nothing
+/// here" when we are actually mid-connect. The spinner animates itself (the runtime advances
+/// auto-frame spinners), so it keeps moving without the app scheduling ticks.
+pub(crate) fn connecting_workspace_panel(
+    host: Option<&str>,
+    reconnecting: bool,
+    theme: &Theme,
+) -> Element {
+    let verb = if reconnecting {
+        "Reconnecting"
+    } else {
+        "Connecting"
+    };
+    let headline = match host {
+        Some(host) => format!("{verb} to {host}…"),
+        None => format!("{verb}…"),
+    };
+    let subtext = if host.is_some() {
+        "Establishing the SSH connection — this can take a moment."
+    } else {
+        "Attaching to the session server…"
+    };
+    Frame::new()
+        .title(" Session ")
+        .border(true)
+        .border_style(BorderStyle::Rounded)
+        .style(
+            Style::new()
+                .fg(theme.surface.menu)
+                .bg(theme.surface.backdrop),
+        )
+        .padding(1)
+        .child(
+            VStack::new()
+                .gap(1)
+                .child(
+                    Spinner::new()
+                        .spinner_style(SpinnerStyle::Dots)
+                        .label(headline)
+                        .style(Style::new().fg(theme.status.info))
+                        .label_style(super::fg_only(&theme.primary)),
+                )
+                .child(Text::new(subtext).style(super::fg_only(&theme.muted))),
+        )
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -222,6 +222,7 @@ impl Component for HyprmuxApp {
                         },
                     ),
                     left: None,
+                    parked_epoch: None,
                 });
             ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
             ctx.state.current_mut().remote_host =

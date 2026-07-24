@@ -67,6 +67,7 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     // fallback, so retrying it here on failure would spin forever (fail → fall back → fail → …).
     let was_remote = pending.remote_host.is_some();
     let was_reconnect = pending.reconnect;
+    let parked_epoch = pending.parked_epoch;
     ctx.state.current_mut().pending_session_attach = None;
     ctx.state.current_mut().connection = if was_remote {
         crate::state::ConnectionState::Unreachable
@@ -75,15 +76,26 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     };
     ctx.toast()
         .push(error_toast(&ctx.state.theme, "Attach failed", message));
-    // An unreachable `--remote` host would otherwise strand the UI with no session at all — not even
-    // a working local terminal. Fall back to a fresh local ephemeral so the launch is never blank;
-    // the error toast above already explains what went wrong.
-    if was_remote
-        && !was_reconnect
-        && !ctx.state.current().session_attached
-        && ctx.state.current().session_client.is_none()
-    {
-        return crate::ops::session::attach_startup_ephemeral(ctx);
+    if was_remote && !was_reconnect {
+        // The connect parked a live session to switch away from it. Restore that session rather
+        // than attach a fresh ephemeral: the ephemeral fallback would re-attach to this process's
+        // own `eph-<pid>` server — still controlled by the parked client — and join as a follower.
+        if let Some(parked_id) = parked_epoch
+            && ctx.state.background.contains_key(&parked_id)
+        {
+            let failed_epoch = ctx.state.runtime_epoch;
+            let update = crate::ops::session::switch_to_parked(ctx, parked_id);
+            // Drop the dead empty attachment the failed connect left behind; it never attached, so
+            // it holds no client to detach.
+            ctx.state.background.remove(&failed_epoch);
+            return update;
+        }
+        // Nothing to restore (a bare `--remote` launch, say): an unreachable host would otherwise
+        // strand the UI with no session at all, so fall back to a fresh local ephemeral. The error
+        // toast above already explains what went wrong.
+        if !ctx.state.current().session_attached && ctx.state.current().session_client.is_none() {
+            return crate::ops::session::attach_startup_ephemeral(ctx);
+        }
     }
     Update::full()
 }
@@ -1648,6 +1660,7 @@ mod tests {
                         remote_host: None,
                         intent: crate::state::AttachIntent::Plain,
                         left: None,
+                        parked_epoch: None,
                     });
                 backend
                     .dispatch(Msg::SessionAttachFailed {
@@ -1688,6 +1701,7 @@ mod tests {
                             remote_host: Some("workbox".to_string()),
                             intent: crate::state::AttachIntent::Plain,
                             left: None,
+                            parked_epoch: None,
                         });
                 }
 
@@ -1717,6 +1731,76 @@ mod tests {
             .expect("retained reconnect test completes");
     }
 
+    /// A failed *remote* connect that had parked a live session restores that session rather than
+    /// falling back to a fresh local ephemeral. The ephemeral fallback would re-attach to this
+    /// process's own `eph-<pid>` server — still controlled by the parked client — and come back as a
+    /// follower of itself. Restoring the parked attachment keeps the user on their real session, and
+    /// the dead empty connect attachment is discarded.
+    #[test]
+    fn failed_remote_connect_restores_the_parked_session_not_a_follower_ephemeral() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let target = crate::session::remote::RemoteTarget::Alias("windev".to_string());
+                {
+                    let state = backend.state_mut();
+                    // The live local session, parked into the background under epoch 1 when the
+                    // connect started.
+                    let mut parked = crate::state::Attachment::new();
+                    parked.epoch = 1;
+                    parked.session_name = Some("eph-local".to_string());
+                    parked.session_attached = true;
+                    parked.connection = crate::state::ConnectionState::Connected;
+                    state.background.insert(1, parked);
+
+                    // The current attachment is the fresh empty one the connect installed; it never
+                    // attached.
+                    state.runtime_epoch = 2;
+                    state.current_mut().epoch = 2;
+                    state.current_mut().remote_host = Some("windev".to_string());
+                    state.current_mut().remote_target = Some(target.clone());
+                    state.current_mut().pending_session_attach =
+                        Some(crate::state::PendingSessionAttach {
+                            epoch: 2,
+                            name: "eph-windev".to_string(),
+                            client: None,
+                            autostart: true,
+                            read_only: false,
+                            reconnect: false,
+                            remote_host: Some("windev".to_string()),
+                            intent: crate::state::AttachIntent::Plain,
+                            left: None,
+                            parked_epoch: Some(1),
+                        });
+                }
+
+                backend
+                    .dispatch(Msg::SessionAttachFailed {
+                        epoch: 2,
+                        message: "could not resolve hostname windev".to_string(),
+                    })
+                    .expect("dispatch remote connect failure");
+
+                // Restored onto the parked local session, not a fresh ephemeral, and no longer
+                // pointed at the remote host.
+                assert_eq!(
+                    backend.state().current().session_name.as_deref(),
+                    Some("eph-local")
+                );
+                assert!(backend.state().current().session_attached);
+                assert_eq!(backend.state().current().remote_target, None);
+                assert!(backend.state().current().pending_session_attach.is_none());
+                // The parked entry is gone (now current) and the dead connect attachment was not
+                // retained in its place.
+                assert!(!backend.state().background.contains_key(&1));
+                assert!(!backend.state().background.contains_key(&2));
+            })
+            .expect("spawn failed-connect-restore test")
+            .join()
+            .expect("failed-connect-restore test completes");
+    }
+
     #[test]
     fn empty_ephemeral_profile_seed_emits_profile_loaded_after_attach() {
         std::thread::Builder::new()
@@ -1739,6 +1823,7 @@ mod tests {
                             path: path.clone(),
                         },
                         left: None,
+                        parked_epoch: None,
                     });
                 backend.state_mut().show_profile_picker = true;
                 backend.state_mut().profile_picker =

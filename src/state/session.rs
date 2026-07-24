@@ -19,6 +19,12 @@ pub struct PendingSessionAttach {
     pub remote_host: Option<String>,
     pub intent: AttachIntent,
     pub left: Option<LeftSession>,
+    /// The id of a session parked in the background to start this attach, restored if the attach
+    /// fails. Without this, a failed remote connect would fall back to a fresh local ephemeral that
+    /// re-attaches to this process's own `eph-<pid>` server — the one the parked client still
+    /// controls — and join as a follower of itself. `None` when nothing was parked (a reconnect, or
+    /// an attach that released rather than parked the previous session).
+    pub parked_epoch: Option<super::AttachmentId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

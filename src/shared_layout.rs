@@ -692,6 +692,7 @@ mod reconciler_tests {
                     remote_host: None,
                     intent: crate::state::AttachIntent::Plain,
                     left: None,
+                    parked_epoch: None,
                 });
             backend.render();
 

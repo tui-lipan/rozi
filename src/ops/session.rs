@@ -187,9 +187,10 @@ fn discover_picker_sessions(
     Ok(rows)
 }
 
-fn discover_configured_remote_sessions(
+/// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
+fn configured_targets(
     remote_config: &crate::config::HyprmuxRemoteConfig,
-) -> Vec<DiscoveredSession> {
+) -> Vec<crate::session::remote::RemoteTarget> {
     let mut hosts: Vec<String> = remote_config.hosts.keys().cloned().collect();
     if let Some(default_host) = &remote_config.default_host
         && !hosts.iter().any(|h| h == default_host)
@@ -198,14 +199,23 @@ fn discover_configured_remote_sessions(
     }
     hosts.sort();
     hosts.dedup();
+    hosts
+        .iter()
+        .filter_map(|alias| crate::session::remote::parse_remote_target(alias).ok())
+        .collect()
+}
 
-    let mut handles = Vec::with_capacity(hosts.len());
-    for alias in hosts {
+/// Probe `targets` for their sessions, one ssh round-trip each, in parallel. Unreachable hosts are
+/// skipped (their rows simply do not appear) so one down host never blocks the sweep.
+fn probe_remote_targets(
+    targets: &[crate::session::remote::RemoteTarget],
+    remote_config: &crate::config::HyprmuxRemoteConfig,
+) -> Vec<DiscoveredSession> {
+    let mut handles = Vec::with_capacity(targets.len());
+    for target in targets {
         let config = remote_config.clone();
+        let target = target.clone();
         handles.push(std::thread::spawn(move || {
-            let Ok(target) = crate::session::remote::parse_remote_target(&alias) else {
-                return Vec::new();
-            };
             crate::session::discovery::discover_sessions_from(
                 &crate::session::discovery::SessionSource::Remote(target),
                 &config,
@@ -222,19 +232,27 @@ fn discover_configured_remote_sessions(
     rows
 }
 
-/// Local + configured-remote discovery used by the picker and sidebar (off the UI thread).
-pub(crate) fn discover_sessions_for_ui(
+fn discover_configured_remote_sessions(
+    remote_config: &crate::config::HyprmuxRemoteConfig,
+) -> Vec<DiscoveredSession> {
+    probe_remote_targets(&configured_targets(remote_config), remote_config)
+}
+
+/// Sidebar discovery (off the UI thread): local sessions always, but only the *expanded* host
+/// groups in `probe_targets` are contacted over ssh. This is the on-demand default — a collapsed
+/// host is never probed, so opening the Sessions tab does not fan out to every configured host.
+pub(crate) fn discover_sidebar_sessions(
     current_name: Option<&str>,
     remote_config: &crate::config::HyprmuxRemoteConfig,
+    probe_targets: Vec<crate::session::remote::RemoteTarget>,
     attached: Vec<DiscoveredSession>,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
-    let mut rows = discover_picker_sessions(current_name, remote_config)?;
-    if !attached.is_empty() {
-        for row in attached {
-            merge_current_session_row(&mut rows, row);
-        }
-        sort_session_rows(&mut rows);
+    let mut rows = crate::session::discovery::discover_selectable_sessions(current_name)?;
+    rows.extend(probe_remote_targets(&probe_targets, remote_config));
+    for row in attached {
+        merge_current_session_row(&mut rows, row);
     }
+    sort_session_rows(&mut rows);
     Ok(rows)
 }
 

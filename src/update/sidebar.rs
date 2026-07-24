@@ -820,10 +820,21 @@ pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update 
     let current_name = ctx.state.current().session_name.clone();
     let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
+    // On-demand: only the expanded host groups are contacted over ssh. A collapsed host — the
+    // default for a freshly known host — is never probed, so the sweep touches nothing the user has
+    // not opened.
+    let probe_targets: Vec<crate::session::remote::RemoteTarget> = ctx
+        .state
+        .hosts
+        .iter()
+        .filter(|host| host.expanded)
+        .map(|host| host.target.clone())
+        .collect();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let rows = crate::ops::session::discover_sessions_for_ui(
+        let rows = crate::ops::session::discover_sidebar_sessions(
             current_name.as_deref(),
             &remote_config,
+            probe_targets,
             attached,
         )
         .map_err(|error| error.to_string());
@@ -864,12 +875,16 @@ pub(super) fn toggle_host_group(
     ctx: &mut Context<HyprmuxApp>,
     target: crate::session::remote::RemoteTarget,
 ) -> Update {
-    match ctx.state.hosts.get_mut(&target) {
-        Some(entry) => {
-            entry.expanded = !entry.expanded;
-            Update::full()
-        }
-        None => Update::none(),
+    let Some(entry) = ctx.state.hosts.get_mut(&target) else {
+        return Update::none();
+    };
+    entry.expanded = !entry.expanded;
+    // Expanding is the on-demand connect gesture: probe the host now so its sessions stream in
+    // without waiting for the next periodic sweep. Collapsing just redraws.
+    if entry.expanded {
+        refresh_sessions(ctx, ctx.state.sidebar.sessions_epoch)
+    } else {
+        Update::full()
     }
 }
 

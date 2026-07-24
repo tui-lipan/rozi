@@ -769,34 +769,84 @@ pub(crate) fn release_background(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
-/// Install `attachment` as the current session, replacing the outgoing one. Used by the paths that
-/// start a freshly-built session in place — create, load-profile, kill/disconnect → fresh ephemeral.
-///
-/// Only the *current attachment* changes: everything else on [`State`] is client-global (theme,
-/// sidebar, background attachments, workbar pollers, control socket, event hub) and is left exactly
-/// as it was, so a create no longer rebuilds — and silently loses — that state. The caller is
-/// responsible for releasing or parking the session being replaced *before* calling this; the popup
-/// and scratchpad, which are bound to the outgoing session, are closed here.
-pub(crate) fn install_fresh_attachment(
-    ctx: &mut Context<HyprmuxApp>,
-    attachment: crate::state::Attachment,
-) {
+/// Shared cleanup when a new current session is installed: close the popup and scratchpad (bound to
+/// the outgoing session) and the session/profile selection overlays that led here, and mark the
+/// Sessions tab stale so the post-update chokepoint re-sweeps for the new current.
+fn prepare_session_install(ctx: &mut Context<HyprmuxApp>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
-    // The session/profile selection overlays that led here have resolved into this install; close
-    // them (the old whole-State swap did this implicitly by starting from a fresh State).
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
-    ctx.state.attachment = attachment;
+    ctx.state.sidebar.invalidate_sessions();
+}
+
+/// Shared tail after a new current attachment is in place: snap geometry, resync commands and the
+/// terminal palette.
+fn finish_session_install(ctx: &mut Context<HyprmuxApp>) {
     // Snap to the new session's geometry rather than interpolating from the previous layout.
     ctx.state.animation = crate::anim::GeometryAnimation::None;
-    // The Sessions tab excludes the current session, so a new current means a stale list; the
-    // post-update chokepoint re-arms discovery from the bumped epoch.
-    ctx.state.sidebar.invalidate_sessions();
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
+}
+
+/// Install `attachment` as the current session, dropping the outgoing one. Used only where the
+/// outgoing session has *already* been torn down by the caller (kill / disconnect → fresh ephemeral),
+/// so there is nothing to retain.
+///
+/// Only the *current attachment* changes: everything else on [`State`] is client-global (theme,
+/// sidebar, background attachments, workbar pollers, control socket, event hub) and is left exactly
+/// as it was, so this no longer rebuilds — and silently loses — that state.
+pub(crate) fn install_fresh_attachment(
+    ctx: &mut Context<HyprmuxApp>,
+    attachment: crate::state::Attachment,
+) {
+    prepare_session_install(ctx);
+    ctx.state.attachment = attachment;
+    finish_session_install(ctx);
+}
+
+/// Install `attachment` as the current session, leaving the outgoing one exactly the way a switch
+/// does: **parked** — kept live in the background so returning to it is instant — when it is
+/// attached, or released when it is not (mid-connect, never attached). This is what makes creating a
+/// session consistent with switching to one and with creating on a remote host.
+///
+/// Returns `(parked_epoch, left)` for the pending attach: `parked_epoch` is the retained session's
+/// id, so a failed attach restores it instead of stranding the user on a broken empty session;
+/// `left` names a *released* session for the confirmation toast (`None` when parked, since parking
+/// is not a detach). `new_epoch` becomes the runtime epoch.
+pub(crate) fn install_replacing_current(
+    ctx: &mut Context<HyprmuxApp>,
+    attachment: crate::state::Attachment,
+    new_epoch: crate::state::AttachmentId,
+) -> (
+    Option<crate::state::AttachmentId>,
+    Option<crate::state::LeftSession>,
+) {
+    prepare_session_install(ctx);
+    crate::update::flush_layout_commit(ctx);
+    let outcome = if ctx.state.current().session_attached {
+        let old_epoch = ctx.state.runtime_epoch;
+        ctx.state.park_current(old_epoch, attachment);
+        (Some(old_epoch), None)
+    } else {
+        let left = ctx
+            .state
+            .current()
+            .session_name
+            .clone()
+            .map(|name| crate::state::LeftSession {
+                name,
+                was_ephemeral_shutdown: may_shutdown_ephemeral(&ctx.state),
+            });
+        release_current_session(ctx);
+        ctx.state.attachment = attachment;
+        (None, left)
+    };
+    ctx.state.runtime_epoch = new_epoch;
+    finish_session_install(ctx);
+    outcome
 }
 
 /// Detach the current named session and exit the client, leaving the server running for reattach.
@@ -1175,24 +1225,9 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
             }
 
-            // Creating a session from an ephemeral one discards that disposable session. Guard it
-            // with a two-press confirm shown *in the modal* (red border + inline note) rather than a
-            // toast: the first Enter arms, a second commits. Editing the name clears the arm (see
-            // `Msg::RenameSessionChanged`).
-            let needs_confirm =
-                ctx.state.current().session_attached && ctx.state.is_ephemeral_session();
-            let armed = ctx
-                .state
-                .rename_session
-                .as_ref()
-                .is_some_and(|rename| rename.pending_confirm);
-            if needs_confirm && !armed {
-                if let Some(rename) = ctx.state.rename_session.as_mut() {
-                    rename.pending_confirm = true;
-                }
-                request_rename_session_focus(ctx);
-                return Update::full();
-            }
+            // Creating a session no longer discards the current ephemeral one — like switching, it
+            // parks it live in the background — so there is nothing destructive to confirm; a single
+            // Enter commits.
             let profile_seed = ctx
                 .state
                 .rename_session
@@ -1715,9 +1750,8 @@ mod tests {
                     // Simulate a profile-seeded session: the current pane carries a command.
                     state.current_mut().workspaces[0].panes[0].identity.command =
                         Some("nvim".to_string());
-                    let mut rename = SessionRenameState::new(&name, NamingMode::CreateSession);
-                    rename.pending_confirm = true;
-                    state.rename_session = Some(rename);
+                    state.rename_session =
+                        Some(SessionRenameState::new(&name, NamingMode::CreateSession));
                 }
                 backend.render();
                 backend
@@ -1732,8 +1766,14 @@ mod tests {
                     .expect("create queues an attach");
                 assert_eq!(pending.name, name);
                 assert_eq!(pending.intent, crate::state::AttachIntent::Plain);
+                // Creating from an attached (ephemeral) session parks it rather than detaching, so
+                // there is no "left" session named in the toast, and the parked id is recorded so a
+                // failed attach can restore it. The parked session is retained in the background.
+                assert_eq!(pending.left, None);
+                let parked_epoch = pending.parked_epoch.expect("current session was parked");
+                assert!(state.background.contains_key(&parked_epoch));
                 assert_eq!(
-                    pending.left.as_ref().map(|left| left.name.as_str()),
+                    state.background[&parked_epoch].session_name.as_deref(),
                     Some("eph-test")
                 );
                 // The new session must not inherit the current layout: the installed attachment is a

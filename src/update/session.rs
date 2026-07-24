@@ -63,8 +63,6 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     if pending.epoch != epoch {
         return Update::none();
     }
-    // Only a failed *remote* attach falls back below. A local ephemeral attach is itself the
-    // fallback, so retrying it here on failure would spin forever (fail → fall back → fail → …).
     let was_remote = pending.remote_host.is_some();
     let was_reconnect = pending.reconnect;
     let parked_epoch = pending.parked_epoch;
@@ -76,24 +74,28 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     };
     ctx.toast()
         .push(error_toast(&ctx.state.theme, "Attach failed", message));
-    if was_remote && !was_reconnect {
-        // The connect parked a live session to switch away from it. Restore that session rather
-        // than attach a fresh ephemeral: the ephemeral fallback would re-attach to this process's
-        // own `eph-<pid>` server — still controlled by the parked client — and join as a follower.
+    if !was_reconnect {
+        // Creating/switching parked a live session to move away from it. If the new attach failed,
+        // restore that session rather than strand the user on the broken empty attachment — for a
+        // remote connect this also avoids the ephemeral fallback re-attaching to this process's own
+        // `eph-<pid>` server (still controlled by the parked client) and joining as a follower.
         if let Some(parked_id) = parked_epoch
             && ctx.state.background.contains_key(&parked_id)
         {
             let failed_epoch = ctx.state.runtime_epoch;
             let update = crate::ops::session::switch_to_parked(ctx, parked_id);
-            // Drop the dead empty attachment the failed connect left behind; it never attached, so
-            // it holds no client to detach.
+            // Drop the dead empty attachment the failed attach left behind; it never attached, so it
+            // holds no client to detach.
             ctx.state.background.remove(&failed_epoch);
             return update;
         }
         // Nothing to restore (a bare `--remote` launch, say): an unreachable host would otherwise
-        // strand the UI with no session at all, so fall back to a fresh local ephemeral. The error
-        // toast above already explains what went wrong.
-        if !ctx.state.current().session_attached && ctx.state.current().session_client.is_none() {
+        // strand the UI with no session at all, so fall back to a fresh local ephemeral. Remote-only:
+        // a *local* ephemeral attach is itself the fallback, and retrying it here would spin forever.
+        if was_remote
+            && !ctx.state.current().session_attached
+            && ctx.state.current().session_client.is_none()
+        {
             return crate::ops::session::attach_startup_ephemeral(ctx);
         }
     }
@@ -1799,6 +1801,63 @@ mod tests {
             .expect("spawn failed-connect-restore test")
             .join()
             .expect("failed-connect-restore test completes");
+    }
+
+    /// A failed *local* create also restores the parked session — creating now parks the current
+    /// session like a switch, so a create that can't start its server must not strand the user on
+    /// the broken empty attachment either. (The remote-only ephemeral fallback stays remote-only.)
+    #[test]
+    fn failed_local_create_restores_the_parked_session() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                {
+                    let state = backend.state_mut();
+                    let mut parked = crate::state::Attachment::new();
+                    parked.epoch = 1;
+                    parked.session_name = Some("eph-local".to_string());
+                    parked.session_attached = true;
+                    parked.connection = crate::state::ConnectionState::Connected;
+                    state.background.insert(1, parked);
+
+                    state.runtime_epoch = 2;
+                    state.current_mut().epoch = 2;
+                    state.current_mut().pending_session_attach =
+                        Some(crate::state::PendingSessionAttach {
+                            epoch: 2,
+                            name: "work".to_string(),
+                            client: None,
+                            autostart: true,
+                            read_only: false,
+                            reconnect: false,
+                            // Local create: no remote host.
+                            remote_host: None,
+                            intent: crate::state::AttachIntent::Plain,
+                            left: None,
+                            parked_epoch: Some(1),
+                        });
+                }
+
+                backend
+                    .dispatch(Msg::SessionAttachFailed {
+                        epoch: 2,
+                        message: "could not start session server".to_string(),
+                    })
+                    .expect("dispatch local create failure");
+
+                assert_eq!(
+                    backend.state().current().session_name.as_deref(),
+                    Some("eph-local")
+                );
+                assert!(backend.state().current().session_attached);
+                assert!(backend.state().current().pending_session_attach.is_none());
+                assert!(!backend.state().background.contains_key(&1));
+                assert!(!backend.state().background.contains_key(&2));
+            })
+            .expect("spawn failed-local-create test")
+            .join()
+            .expect("failed-local-create test completes");
     }
 
     #[test]

@@ -619,18 +619,25 @@ pub(crate) fn open_named_target(
             crate::state::AttachIntent::Plain,
         )
     };
-    let left =
-        ctx.state
-            .current()
-            .session_name
-            .clone()
-            .map(|left_name| crate::state::LeftSession {
-                name: left_name,
-                was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
-            });
-    crate::ops::session::release_current_session(ctx);
     let epoch = ctx.state.mint_attachment_id();
-    crate::ops::session::install_fresh_attachment(ctx, attachment);
+    let (parked_epoch, left) =
+        if explicit_create {
+            // Creating a session parks the current one, like switching to a session or creating one on
+            // a remote host: it stays live in the background, instant to return to.
+            crate::ops::session::install_replacing_current(ctx, attachment, epoch)
+        } else {
+            // Resolving a profile *replaces* the current session — a deliberate, confirmed action (see
+            // `[confirm].load_profile`) — so release it rather than park.
+            let left = ctx.state.current().session_name.clone().map(|left_name| {
+                crate::state::LeftSession {
+                    name: left_name,
+                    was_ephemeral_shutdown: crate::ops::session::may_shutdown_ephemeral(&ctx.state),
+                }
+            });
+            crate::ops::session::release_current_session(ctx);
+            crate::ops::session::install_fresh_attachment(ctx, attachment);
+            (None, left)
+        };
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -641,7 +648,7 @@ pub(crate) fn open_named_target(
         remote_host: None,
         intent: attach_intent.clone(),
         left,
-        parked_epoch: None,
+        parked_epoch,
     });
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     Update::with_command(Command::spawn(move |link| {
@@ -688,9 +695,10 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
         }
     };
 
-    // Loading a profile replaces the whole layout, so release the current session (an ephemeral
-    // one is disposable and shut down; a named one is parked for reattach) and start the profile in
-    // a fresh ephemeral.
+    // Loading a profile *replaces* the current session — a deliberate, confirmed action (see
+    // `[confirm].load_profile`), distinct from creating a session alongside it. So release the
+    // current session (an ephemeral one is disposable and shut down; a named one is detached and
+    // left running) and start the profile in a fresh ephemeral.
     crate::ops::session::release_current_session(ctx);
 
     let epoch = ctx.state.mint_attachment_id();

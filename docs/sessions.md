@@ -120,21 +120,18 @@ layout, and focus remain live, and background output continues to be parsed. Sel
 instant and does not reconnect. This applies to named and ephemeral sessions and to local and remote
 attachments; a parked remote link reconnects in place if it drops while another session is current.
 
-Creating a separate named session still replaces the current ephemeral layout rather than switching
-to an existing attachment, so it retains its destructive confirmation:
-
-- **Creating** a named session (`Ctrl+N`): the name prompt's border and title turn red with an
-  *"again to confirm (ends ephemeral session)"* caption; a second `Enter` commits, editing the name
-  re-arms, and `Esc` cancels.
+Creating a named session (`Ctrl+N`) parks the current session in the background exactly like
+switching to one — it is not destructive, so a single `Enter` commits with no confirmation. The
+session you were on stays live and is one selection away.
 
 Killing the **current** session is allowed, either with `Ctrl+K` in the picker or with *Kill
 session* in the command palette: its server is shut down (its PTYs die) and the UI hops onto a fresh
 ephemeral session, so the client stays alive rather than quitting.
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
-disappear on their own), so there is no manual refresh key. A session row also reports attached
-clients besides the current UI (for example, `2 panes · 1 other client`), making it clear before
-you attach that you will initially join that session as a follower. When available, it also shows
+disappear on their own), so there is no manual refresh key. A session row also reports other clients
+sharing it besides your own connection (for example, `2 panes · shared with 1 other`), making it
+clear before you attach that you will initially join that session as a follower. When available, it also shows
 the creation recipe as `from <profile>`. This `created_from_profile` value survives detach,
 reattach, and resurrection snapshots; replacing the session with another profile does not rewrite
 its historical creation origin.

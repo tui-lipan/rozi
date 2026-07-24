@@ -182,11 +182,6 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             "host, user@host:port, or ssh:// URL".to_string(),
         ),
     };
-    // A create-session prompt that would discard the current disposable ephemeral session shows an
-    // in-modal warning once armed (see `SessionRenameState::pending_confirm`).
-    let confirm = rename
-        .pending_confirm
-        .then_some("again to confirm (ends ephemeral session)");
     prompt_overlay(
         ctx,
         &title,
@@ -196,7 +191,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::RenameSessionChanged,
         Msg::CloseRenameSession,
         Msg::SubmitRenameSession,
-        confirm,
+        None,
     )
 }
 

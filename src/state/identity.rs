@@ -67,11 +67,6 @@ pub struct SessionRenameState {
     pub input: TextInput,
     pub mode: NamingMode,
     pub detach_after: bool,
-    /// Set once the first Enter has warned that creating this session will discard the current
-    /// disposable ephemeral one; the modal shows the armed state (red border + inline note) and a
-    /// second Enter commits. Cleared when the name is edited so the guard re-arms. Only meaningful
-    /// for [`NamingMode::CreateSession`] while attached to an ephemeral session.
-    pub pending_confirm: bool,
     pub profile_seed: Option<(String, std::path::PathBuf)>,
     /// When set, a [`NamingMode::CreateSession`] prompt creates the session on this remote host
     /// (parking the current session in the background) instead of locally. Only the target string
@@ -85,7 +80,6 @@ impl SessionRenameState {
             input: TextInput::new(initial.as_ref()),
             mode,
             detach_after: false,
-            pending_confirm: false,
             profile_seed: None,
             host_target: None,
         }
@@ -97,7 +91,6 @@ impl SessionRenameState {
             input: TextInput::new(""),
             mode: NamingMode::NameEphemeralSession,
             detach_after: true,
-            pending_confirm: false,
             profile_seed: None,
             host_target: None,
         }

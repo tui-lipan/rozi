@@ -97,9 +97,6 @@ pub(super) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(super) fn rename_session_changed(ctx: &mut Context<HyprmuxApp>, event: InputEvent) -> Update {
     if let Some(rename) = ctx.state.rename_session.as_mut() {
         event.apply_to(&mut rename.input);
-        // Editing the name reconsiders the create-from-ephemeral choice, so drop any armed
-        // confirmation; the next Enter re-arms it (see `apply_rename_session`).
-        rename.pending_confirm = false;
     }
     crate::ops::focus::request_rename_session_focus(ctx);
     Update::full()

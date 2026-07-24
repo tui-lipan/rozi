@@ -98,8 +98,8 @@ fn host_header_row(ctx: &Context<HyprmuxApp>, host: &HostEntry, status: HostStat
         .title_style(super::super::fg_only(&theme.accent).bold())
         .badge(format!("{dot} {label}"), color);
     // Only a real error adds a second line — an empty detail would still cost the row its height.
-    if let Some(error) = &host.error {
-        row = row.detail(error.clone(), Style::new().fg(theme.status.error));
+    if let Some(error) = host.probe.error() {
+        row = row.detail(error.to_string(), Style::new().fg(theme.status.error));
     }
     SidebarRow::item(row, RowTarget::HostToggle(host.target.clone()))
 }
@@ -140,12 +140,14 @@ fn cached_session_row(
 
 /// The muted placeholder shown inside an expanded host group that has no sessions to list.
 fn host_placeholder(ctx: &Context<HyprmuxApp>, status: HostStatus) -> SidebarRow {
+    // The header caret + status dot already say whether we are connecting/online/unreachable, and
+    // the "New session on <host>" action row below is the way to start one — so this line only
+    // names the empty state, never claims that selecting the host header connects (it toggles).
     let text = match status {
-        // Reachable implies at least one listed session, so this arm is only reached transiently.
-        HostStatus::Connected | HostStatus::Reachable => "No sessions on this host",
         HostStatus::Connecting => "Connecting…",
-        HostStatus::Unreachable => "Unreachable — select the host to retry",
-        HostStatus::Disconnected => "Select the host to connect",
+        HostStatus::Connected | HostStatus::Reachable => "No sessions here yet",
+        HostStatus::Unreachable => "Host unreachable",
+        HostStatus::Disconnected => "Not connected",
     };
     SidebarRow::item(
         Row::new(text).title_style(super::super::fg_only(&ctx.state.theme.muted)),

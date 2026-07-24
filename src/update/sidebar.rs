@@ -863,8 +863,8 @@ pub(super) fn sessions_discovered(
         ctx.state.sidebar.sessions = rows;
     }
     crate::ops::session::seed_host_registry(ctx);
-    // Apply fresh probe outcomes after the reseed so they win over the carried-over error: a host
-    // that just answered has its error cleared, a host that failed shows why on its group header.
+    // Apply fresh probe outcomes after the reseed so they win over the carried-over state: a host
+    // that answered reads as reached (online), a host that failed shows why on its group header.
     // A host that answered also refreshes its persisted session cache (written only when it
     // changed, so a steady 1.5s sweep does not churn the disk).
     for (target, status) in host_status {
@@ -900,7 +900,10 @@ pub(super) fn sessions_discovered(
             }
         }
         if let Some(entry) = ctx.state.hosts.get_mut(&target) {
-            entry.error = status;
+            entry.probe = match status {
+                Some(error) => crate::state::HostProbe::Failed(error),
+                None => crate::state::HostProbe::Reached,
+            };
         }
     }
     Update::with_command(Command::after(
@@ -928,11 +931,15 @@ pub(super) fn toggle_host_group(
         return Update::none();
     };
     entry.expanded = !entry.expanded;
-    // Expanding is the on-demand connect gesture: probe the host now so its sessions stream in
-    // without waiting for the next periodic sweep. Collapsing just redraws.
     if entry.expanded {
+        // Expanding is the connect gesture: mark the probe in flight (so the header reads
+        // "connecting" right away, not "disconnected"), then probe now so its sessions stream in
+        // without waiting for the next periodic sweep.
+        entry.probe = crate::state::HostProbe::InFlight;
         refresh_sessions(ctx, ctx.state.sidebar.sessions_epoch)
     } else {
+        // Collapsing drops the link back to disconnected.
+        entry.probe = crate::state::HostProbe::Idle;
         Update::full()
     }
 }
@@ -1335,8 +1342,8 @@ mod tests {
     }
 
     /// A probe failure records the reason on the host's registry entry (surfaced inline on its
-    /// group header); a subsequent success clears it. The host is seeded from config by the
-    /// handler, so the registry entry exists to receive the error.
+    /// group header) as a failed probe; a subsequent success flips it to reached. The host is
+    /// seeded from config by the handler, so the registry entry exists to receive the outcome.
     #[test]
     fn host_probe_errors_are_recorded_then_cleared() {
         on_test_thread(|| {
@@ -1360,7 +1367,7 @@ mod tests {
                 })
                 .expect("failed probe");
             assert_eq!(
-                backend.state().hosts.get(&target).unwrap().error.as_deref(),
+                backend.state().hosts.get(&target).unwrap().probe.error(),
                 Some("no route to host")
             );
 
@@ -1371,7 +1378,10 @@ mod tests {
                     host_status: vec![(target.clone(), None)],
                 })
                 .expect("recovered probe");
-            assert!(backend.state().hosts.get(&target).unwrap().error.is_none());
+            assert_eq!(
+                backend.state().hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::Reached
+            );
         });
     }
 

@@ -33,24 +33,51 @@ pub struct HostEntry {
     /// `dev@box:22` and `box` never collapse into one row.
     pub target: RemoteTarget,
     pub origin: HostOrigin,
-    /// Whether the group is expanded in the sidebar tree. Persisted across refreshes so a live
-    /// session sweep never re-collapses a group the user opened.
+    /// Whether the group is expanded in the sidebar tree. Expanding a host is the *connect* gesture:
+    /// it opens the group and probes the host; collapsing it drops back to disconnected. Persisted
+    /// across refreshes so a live session sweep never re-collapses a group the user opened.
     pub expanded: bool,
-    /// Last discovery/connection error, surfaced on the group header instead of dropping the host.
-    pub error: Option<String>,
+    /// Live probe/connection state for the host, driving its status dot and any inline error.
+    pub probe: HostProbe,
+}
+
+/// The state of this client's link to a host: what expanding/collapsing a group and the on-demand
+/// probe move through. Distinct from any *session* attachment on the host.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum HostProbe {
+    /// Collapsed, or never contacted — no live link to the host.
+    #[default]
+    Idle,
+    /// A probe is in flight because the group was just expanded (the connect gesture).
+    InFlight,
+    /// The last probe reached the host.
+    Reached,
+    /// The last probe failed; carries the reason to surface on the group header.
+    Failed(String),
+}
+
+impl HostProbe {
+    /// The failure reason, if the last probe failed.
+    pub fn error(&self) -> Option<&str> {
+        match self {
+            HostProbe::Failed(message) => Some(message),
+            _ => None,
+        }
+    }
 }
 
 /// Derived, render-time connection status for a host. Never stored — computed from the live
-/// attachments on the host plus any recorded probe error.
+/// attachments on the host plus its probe state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostStatus {
     /// At least one attachment on this host is live.
     Connected,
-    /// An attachment on this host is (re)connecting, or the host is being probed.
+    /// An attachment on this host is (re)connecting, or the host is being probed (just expanded).
     Connecting,
-    /// Reachable — discovery found sessions here — but this client holds no attachment.
+    /// Reachable — the probe reached the host (whether or not it has sessions) — but this client
+    /// holds no attachment.
     Reachable,
-    /// Known but idle: no attachment, no listed sessions, no error.
+    /// Collapsed / not contacted: no attachment, no live probe.
     Disconnected,
     /// The last probe/connect attempt failed.
     Unreachable,
@@ -83,7 +110,7 @@ impl HostRegistry {
     }
 
     /// Rebuild the known-host set from its three sources, preserving per-host UI state
-    /// (`expanded` / `error`) for hosts that survive. Called whenever the Sessions view opens or
+    /// (`expanded` / `probe`) for hosts that survive. Called whenever the Sessions view opens or
     /// refreshes.
     ///
     /// - `remote_config`: configured `[remote.hosts.*]` aliases and `default_host`.
@@ -115,7 +142,7 @@ impl HostRegistry {
                 origin,
                 // Preserved below from the prior entry if the host survives.
                 expanded: false,
-                error: None,
+                probe: HostProbe::Idle,
             });
         };
 
@@ -153,7 +180,7 @@ impl HostRegistry {
             match self.entries.iter().find(|old| old.target == entry.target) {
                 Some(prior) => {
                     entry.expanded = prior.expanded;
-                    entry.error = prior.error.clone();
+                    entry.probe = prior.probe.clone();
                 }
                 None => {
                     entry.expanded = held.iter().any(|(target, _)| *target == entry.target);
@@ -166,11 +193,11 @@ impl HostRegistry {
     }
 
     /// Derive the display status of a host from `connections` — the connection state of every live
-    /// attachment on this host — plus whether discovery currently lists any session on it and the
-    /// host's recorded probe error. A live/connecting attachment always wins over a stale error, so
-    /// a reconnect that succeeds clears the "unreachable" look without the registry having to be
-    /// told; a host with listed sessions but no attachment reads as *reachable*, distinct from both
-    /// "attached" and "idle".
+    /// attachment on this host — plus its probe state and whether discovery lists any session on it.
+    /// A live/connecting attachment wins over everything (a reconnect that succeeds clears an
+    /// "unreachable" look without the registry being told); otherwise the probe decides: in-flight
+    /// reads as *connecting*, a reached host (even with zero sessions) as *reachable*, a failed
+    /// probe as *unreachable*, and an idle/collapsed host as *disconnected*.
     pub fn status_for<'a>(
         &self,
         target: &RemoteTarget,
@@ -190,13 +217,13 @@ impl HostRegistry {
         if any_connecting {
             return HostStatus::Connecting;
         }
-        if self.get(target).is_some_and(|entry| entry.error.is_some()) {
-            return HostStatus::Unreachable;
+        match self.get(target).map(|entry| &entry.probe) {
+            Some(HostProbe::InFlight) => HostStatus::Connecting,
+            Some(HostProbe::Failed(_)) => HostStatus::Unreachable,
+            Some(HostProbe::Reached) => HostStatus::Reachable,
+            _ if has_sessions => HostStatus::Reachable,
+            _ => HostStatus::Disconnected,
         }
-        if has_sessions {
-            return HostStatus::Reachable;
-        }
-        HostStatus::Disconnected
     }
 }
 
@@ -237,38 +264,38 @@ mod tests {
     }
 
     #[test]
-    fn reseed_preserves_expanded_and_error_for_surviving_hosts() {
+    fn reseed_preserves_expanded_and_probe_for_surviving_hosts() {
         let mut registry = HostRegistry::default();
         registry.seed(&config(&["workbox"], None), &[], &[]);
         let target = RemoteTarget::Alias("workbox".into());
         {
             let entry = registry.get_mut(&target).unwrap();
             entry.expanded = true;
-            entry.error = Some("timed out".to_string());
+            entry.probe = HostProbe::Failed("timed out".to_string());
         }
         // A recent is added, but workbox survives and keeps its UI state.
         registry.seed(&config(&["workbox"], None), &["scratch".to_string()], &[]);
         let entry = registry.get(&target).unwrap();
         assert!(entry.expanded);
-        assert_eq!(entry.error.as_deref(), Some("timed out"));
+        assert_eq!(entry.probe.error(), Some("timed out"));
         // A host that dropped out of every source is gone.
         registry.seed(&config(&[], None), &[], &[]);
         assert!(registry.is_empty());
     }
 
     #[test]
-    fn status_prefers_live_attachments_over_a_stale_error() {
+    fn status_reflects_attachments_then_probe_state() {
         let mut registry = HostRegistry::default();
         registry.seed(&config(&["workbox"], None), &[], &[]);
         let target = RemoteTarget::Alias("workbox".into());
-        registry.get_mut(&target).unwrap().error = Some("was down".to_string());
+        registry.get_mut(&target).unwrap().probe = HostProbe::Failed("was down".to_string());
 
-        // No attachments + recorded error → unreachable, even with sessions listed.
+        // Failed probe + no attachment → unreachable, even with sessions listed.
         assert_eq!(
             registry.status_for(&target, std::iter::empty(), true),
             HostStatus::Unreachable
         );
-        // A connecting attachment overrides the error.
+        // A connecting attachment overrides the failed probe.
         assert_eq!(
             registry.status_for(&target, &[super::super::ConnectionState::Connecting], false),
             HostStatus::Connecting
@@ -286,15 +313,27 @@ mod tests {
             HostStatus::Connected
         );
 
-        // No error, no attachment, but sessions listed → reachable; nothing at all → disconnected.
-        registry.get_mut(&target).unwrap().error = None;
+        // An in-flight probe reads as connecting.
+        registry.get_mut(&target).unwrap().probe = HostProbe::InFlight;
         assert_eq!(
-            registry.status_for(&target, std::iter::empty(), true),
+            registry.status_for(&target, std::iter::empty(), false),
+            HostStatus::Connecting
+        );
+        // A reached host is online even with zero sessions.
+        registry.get_mut(&target).unwrap().probe = HostProbe::Reached;
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), false),
             HostStatus::Reachable
         );
+        // Idle + no sessions → disconnected; idle + sessions listed → reachable.
+        registry.get_mut(&target).unwrap().probe = HostProbe::Idle;
         assert_eq!(
             registry.status_for(&target, std::iter::empty(), false),
             HostStatus::Disconnected
+        );
+        assert_eq!(
+            registry.status_for(&target, std::iter::empty(), true),
+            HostStatus::Reachable
         );
     }
 }

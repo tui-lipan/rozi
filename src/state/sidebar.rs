@@ -26,6 +26,11 @@ pub struct SidebarState {
     pub config_epoch: u64,
     pub sessions: Vec<crate::session::discovery::DiscoveredSession>,
     pub sessions_epoch: u64,
+    /// The `sessions_epoch` the auto-refresh loop is currently live for. When it lags behind
+    /// `sessions_epoch` (a session switch, a create, a reopen bumped the epoch and killed the old
+    /// loop), the post-update chokepoint re-arms the loop so the tab keeps updating instead of
+    /// freezing until it is reopened.
+    pub sessions_refresh_armed_epoch: Option<u64>,
     /// Resolved roots for the file-tree tabs: the focused pane's local working directory, and the
     /// git repository containing it. Both are recomputed only when the pane's reported directory
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.

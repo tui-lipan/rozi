@@ -1332,8 +1332,8 @@ mod tests {
                     .find(|line| line.contains("shared-dev"))
                     .unwrap_or_else(|| panic!("shared session row missing\n{}", lines.join("\n")));
                 assert!(
-                    shared_row.contains("2 panes · 1 other client"),
-                    "occupied session should identify its attached client\n{shared_row}"
+                    shared_row.contains("2 panes · shared with 1 other"),
+                    "occupied session should identify the other client sharing it\n{shared_row}"
                 );
                 assert!(
                     lines.iter().any(|line| line.contains("LOCAL")),

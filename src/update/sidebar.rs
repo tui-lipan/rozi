@@ -48,6 +48,9 @@ pub(crate) fn invalidate_sessions(ctx: &mut Context<HyprmuxApp>) {
     ctx.state.sidebar.invalidate_sessions();
 }
 
+/// Nudge the open Sessions tab to re-sweep now (e.g. after a config reload or a session change),
+/// without disturbing the epoch. The steady-state loop is kept alive by [`ensure_sessions_refresh_armed`];
+/// this just kicks an extra immediate sweep for the current epoch.
 pub(crate) fn request_sessions_refresh(ctx: &Context<HyprmuxApp>) {
     if sessions_active(ctx)
         && let Some(link) = ctx.state.command_link.as_ref()
@@ -56,6 +59,34 @@ pub(crate) fn request_sessions_refresh(ctx: &Context<HyprmuxApp>) {
             epoch: ctx.state.sidebar.sessions_epoch,
         });
     }
+}
+
+/// Keep the Sessions tab's auto-refresh loop alive. Called from the post-update chokepoint after
+/// every message: if the tab is active but the loop's epoch has fallen behind (a session switch,
+/// create, or reopen bumped `sessions_epoch` and killed the old loop), re-arm it. The armed-epoch
+/// guard makes this fire exactly once per epoch, so it never stacks parallel loops.
+pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<HyprmuxApp>) {
+    if !sessions_active(ctx) {
+        ctx.state.sidebar.sessions_refresh_armed_epoch = None;
+        return;
+    }
+    let epoch = ctx.state.sidebar.sessions_epoch;
+    if ctx.state.sidebar.sessions_refresh_armed_epoch == Some(epoch) {
+        return;
+    }
+    // Only mark the epoch armed once we can actually kick the loop, so a missing link (very early
+    // startup) retries on the next message instead of latching a loop that never started.
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    ctx.state.sidebar.sessions_refresh_armed_epoch = Some(epoch);
+    // Fill the tab instantly with local rows + known hosts when it would otherwise be blank (the
+    // epoch bump on a switch clears the list), so it never flashes empty while the async sweep runs.
+    if ctx.state.sidebar.sessions.is_empty() {
+        ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
+    }
+    crate::ops::session::seed_host_registry(ctx);
+    link.send(crate::Msg::SidebarSessionsRefresh { epoch });
 }
 
 pub(crate) fn request_command_poll(ctx: &Context<HyprmuxApp>) {
@@ -818,10 +849,12 @@ fn row(text: &str, error: bool) -> SidebarCommandRow {
     }
 }
 
-pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(super) fn refresh_sessions(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
     if !sessions_active(ctx) || epoch != ctx.state.sidebar.sessions_epoch {
         return Update::none();
     }
+    // The loop is now live for this epoch, so the post-update chokepoint won't kick a duplicate.
+    ctx.state.sidebar.sessions_refresh_armed_epoch = Some(epoch);
     let current_name = ctx.state.current().session_name.clone();
     let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
@@ -933,15 +966,16 @@ pub(super) fn toggle_host_group(
     entry.expanded = !entry.expanded;
     if entry.expanded {
         // Expanding is the connect gesture: mark the probe in flight (so the header reads
-        // "connecting" right away, not "disconnected"), then probe now so its sessions stream in
-        // without waiting for the next periodic sweep.
+        // "connecting" right away, not "disconnected"), then bump the epoch so the post-update
+        // chokepoint re-arms a fresh sweep that now includes this host — probing it at once rather
+        // than waiting for the next periodic tick.
         entry.probe = crate::state::HostProbe::InFlight;
-        refresh_sessions(ctx, ctx.state.sidebar.sessions_epoch)
+        ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     } else {
         // Collapsing drops the link back to disconnected.
         entry.probe = crate::state::HostProbe::Idle;
-        Update::full()
     }
+    Update::full()
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId) -> Update {
@@ -1338,6 +1372,47 @@ mod tests {
                 })
                 .expect("current result");
             assert_eq!(backend.state().sidebar.sessions, vec![discovered("dev")]);
+        });
+    }
+
+    /// After a session switch bumps the sessions epoch — which kills the old refresh loop — the
+    /// post-update chokepoint re-arms it while the tab is open, so the Sessions tab keeps updating
+    /// instead of freezing on "No local sessions" until it is reopened.
+    #[test]
+    fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            // Let init settle so the command link is wired (the re-arm sends through it).
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("settle init");
+            assert!(
+                backend.state().command_link.is_some(),
+                "command link should be wired after init"
+            );
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                // Simulate a session switch: epoch advanced, old loop's armed epoch left behind.
+                state.sidebar.sessions_epoch = 99;
+                state.sidebar.sessions_refresh_armed_epoch = Some(98);
+            }
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("post-update runs");
+            assert_eq!(
+                backend.state().sidebar.sessions_refresh_armed_epoch,
+                Some(99),
+                "the refresh loop must re-arm for the new epoch"
+            );
+
+            // Leaving the sessions tab clears the arm so it re-arms cleanly on return.
+            backend.state_mut().sidebar.active_tab = Some(SidebarTabId::new("panes"));
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("tab left");
+            assert_eq!(backend.state().sidebar.sessions_refresh_armed_epoch, None);
         });
     }
 

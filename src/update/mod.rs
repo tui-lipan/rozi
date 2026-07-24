@@ -295,6 +295,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
 
     clear_finished_unseen_on_focus(ctx);
     sidebar::sync_tree_roots(ctx);
+    // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
+    // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.
+    sidebar::ensure_sessions_refresh_armed(ctx);
 
     if crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state) {
         let command = update.command.take();

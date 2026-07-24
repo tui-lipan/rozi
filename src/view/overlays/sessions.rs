@@ -221,11 +221,14 @@ fn session_picker_palette(
             .state
             .attachment_by_identity(&entry.name, entry.remote_target.as_ref());
         let connection = attachment.map(|attachment| attachment.connection);
-        let is_attached = connection == Some(crate::state::ConnectionState::Connected);
+        // We hold a live client connection to this session (current, or retained in the background).
+        let we_hold = attachment.is_some();
+        let is_connected = connection == Some(crate::state::ConnectionState::Connected);
         if is_current {
             label.push_str("  • current");
-        } else if is_attached {
-            label.push_str("  • attached");
+        } else if is_connected {
+            // Attached but not on screen: our connection is retained in the background.
+            label.push_str("  • background");
         } else if matches!(
             connection,
             Some(
@@ -238,11 +241,8 @@ fn session_picker_palette(
             label.push_str("  • offline");
         }
         entries.push(
-            SearchEntry::item(label, index).description(session_description(
-                entry,
-                is_current,
-                is_attached,
-            )),
+            SearchEntry::item(label, index)
+                .description(session_description(entry, we_hold)),
         );
     }
     let empty_text = if picker.entries.is_empty() {
@@ -304,8 +304,7 @@ fn session_picker_palette(
 
 fn session_description(
     entry: &crate::session::discovery::DiscoveredSession,
-    is_current: bool,
-    is_attached: bool,
+    we_hold: bool,
 ) -> ItemDescription {
     use crate::session::discovery::DiscoveredSessionStatus;
     match &entry.status {
@@ -320,18 +319,15 @@ fn session_description(
             } else {
                 format!("{panes} panes")
             };
-            // A discovery probe is not attached, so every reported client on another session is
-            // already there and a new attach will join as a follower. The current row is built
-            // locally and includes this UI in its count, so only surface clients besides us.
-            let other_clients = clients.saturating_sub(u32::from(is_current));
-            let mut label = match other_clients {
+            // `clients` counts every client attached to the server, ours included. Drop our own
+            // connection (current or retained in the background) so this reports only *other* people
+            // sharing the session — the ones a new attach would join.
+            let others = clients.saturating_sub(u32::from(we_hold));
+            let mut label = match others {
                 0 => panes_label,
-                1 => format!("{panes_label} · 1 other client"),
-                count => format!("{panes_label} · {count} other clients"),
+                1 => format!("{panes_label} · shared with 1 other"),
+                count => format!("{panes_label} · shared with {count} others"),
             };
-            if is_attached && !is_current {
-                label.push_str(" · retained");
-            }
             if let Some(profile) = created_from_profile {
                 label.push_str(&format!(" · from {profile}"));
             }

@@ -773,6 +773,12 @@ pub(crate) fn swap_state_for_attach(
     ctx: &mut Context<HyprmuxApp>,
     mut replacement: crate::state::State,
 ) {
+    // Creating/killing a session replaces the window-manager state but must not disturb the sidebar
+    // chrome: it is client-local view state, like switching sessions leaves it. Carry the panel's
+    // visibility and which tab is open across the swap; the epochs below still bump so its content
+    // (sessions list, command output) reconciles fresh against the new session.
+    replacement.sidebar_visible = ctx.state.sidebar_visible;
+    replacement.sidebar.active_tab = ctx.state.sidebar.active_tab.clone();
     replacement.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     replacement.sidebar.command_epoch = ctx.state.sidebar.command_epoch.wrapping_add(1);
     replacement.sidebar.config_epoch = ctx.state.sidebar.config_epoch.wrapping_add(1);

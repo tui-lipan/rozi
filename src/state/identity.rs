@@ -73,6 +73,10 @@ pub struct SessionRenameState {
     /// for [`NamingMode::CreateSession`] while attached to an ephemeral session.
     pub pending_confirm: bool,
     pub profile_seed: Option<(String, std::path::PathBuf)>,
+    /// When set, a [`NamingMode::CreateSession`] prompt creates the session on this remote host
+    /// (parking the current session in the background) instead of locally. Only the target string
+    /// is involved — SSH handles authentication out of band.
+    pub host_target: Option<crate::session::remote::RemoteTarget>,
 }
 
 impl SessionRenameState {
@@ -83,6 +87,7 @@ impl SessionRenameState {
             detach_after: false,
             pending_confirm: false,
             profile_seed: None,
+            host_target: None,
         }
     }
 
@@ -94,11 +99,19 @@ impl SessionRenameState {
             detach_after: true,
             pending_confirm: false,
             profile_seed: None,
+            host_target: None,
         }
     }
 
     pub fn new_create() -> Self {
         Self::new("", NamingMode::CreateSession)
+    }
+
+    /// A "New session on `<host>`" prompt: names a session to create on `target`.
+    pub fn new_create_on_host(target: crate::session::remote::RemoteTarget) -> Self {
+        let mut state = Self::new("", NamingMode::CreateSession);
+        state.host_target = Some(target);
+        state
     }
 
     /// A "Connect remote host…" prompt, prefilled with the most recently used ad-hoc target so a

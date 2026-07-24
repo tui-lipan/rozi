@@ -149,7 +149,11 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     };
     let (title, placeholder) = match rename.mode {
         crate::state::NamingMode::CreateSession => {
-            ("Create session".to_string(), "Session name".to_string())
+            let title = match &rename.host_target {
+                Some(target) => format!("New session on {}", target.display_label()),
+                None => "Create session".to_string(),
+            };
+            (title, "Session name".to_string())
         }
         crate::state::NamingMode::OpenProfileAs => {
             (

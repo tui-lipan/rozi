@@ -1044,6 +1044,16 @@ pub(crate) fn open_create_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     enter_session_rename(ctx, SessionRenameState::new_create())
 }
 
+/// Raise the create-session prompt pre-targeted at a remote host ("New session on `<host>`"). The
+/// named session is created on that host's server when the name is submitted.
+pub(crate) fn open_create_session_on_host(
+    ctx: &mut Context<HyprmuxApp>,
+    target: crate::session::remote::RemoteTarget,
+) -> Update {
+    clear_pending_session_arms(ctx);
+    enter_session_rename(ctx, SessionRenameState::new_create_on_host(target))
+}
+
 /// Raise the "name this session to detach" prompt for the current ephemeral session. An ephemeral
 /// session has no reattachable name, so naming it (Enter) is what makes a detach meaningful: the
 /// server is renamed, kept running, and the client leaves (see `apply_rename_session`,
@@ -1101,6 +1111,20 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 ));
                 request_rename_session_focus(ctx);
                 return Update::full();
+            }
+
+            // "New session on <host>": create/attach the named session on the remote host, parking
+            // the current session in the background. No ephemeral-discard confirm — switching away
+            // retains the current session rather than discarding it.
+            let host_target = ctx
+                .state
+                .rename_session
+                .as_ref()
+                .and_then(|rename| rename.host_target.clone());
+            if let Some(target) = host_target {
+                ctx.state.rename_session = None;
+                let alias = target.display_label();
+                return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
             }
 
             // Creating a session from an ephemeral one discards that disposable session. Guard it

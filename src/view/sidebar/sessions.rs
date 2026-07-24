@@ -119,6 +119,18 @@ fn host_placeholder(ctx: &Context<HyprmuxApp>, status: HostStatus) -> SidebarRow
     )
 }
 
+/// A muted "＋ …" action row (new session, connect a host). Rendered like a session row so it reads
+/// as part of the tree, but styled subdued so it never competes with a real session.
+fn action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> SidebarRow {
+    let style = super::super::fg_only(&ctx.state.theme.accent);
+    SidebarRow::item(
+        Row::new(label)
+            .glyph(Text::new("+").style(style))
+            .title_style(style),
+        target,
+    )
+}
+
 pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     let theme = &ctx.state.theme;
     let mut rows = Vec::new();
@@ -145,6 +157,7 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
             RowTarget::Inert,
         ));
     }
+    rows.push(action_row(ctx, "New session", RowTarget::NewSession(None)));
 
     // One collapsible group per known remote host — configured, recently used, or currently
     // attached — so a host stays listed even while disconnected or empty.
@@ -173,7 +186,17 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                 rows.push(session_row(ctx, entry));
             }
         }
+        rows.push(action_row(
+            ctx,
+            &format!("New session on {}", host.alias),
+            RowTarget::NewSession(Some(host.target.clone())),
+        ));
     }
+
+    // A discoverable path to the connect-remote-host prompt, so a host that is not yet configured or
+    // recent can still be reached without knowing the Ctrl+R binding.
+    rows.push(SidebarRow::spacer());
+    rows.push(action_row(ctx, "Connect a host…", RowTarget::ConnectHost));
 
     rows
 }

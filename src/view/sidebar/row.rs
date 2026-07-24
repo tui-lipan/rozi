@@ -15,6 +15,10 @@ pub(crate) enum RowTarget {
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// A remote-host group header in the Sessions tab. Activating it collapses or expands the group.
     HostToggle(crate::session::remote::RemoteTarget),
+    /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
+    NewSession(Option<crate::session::remote::RemoteTarget>),
+    /// The "Connect a host…" action row, opening the remote-host connect prompt.
+    ConnectHost,
     Launcher {
         config_epoch: u64,
         tab_id: SidebarTabId,

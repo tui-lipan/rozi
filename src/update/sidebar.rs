@@ -317,6 +317,11 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::Session(entry) => activate_session(ctx, *entry),
         RowTarget::HostToggle(target) => toggle_host_group(ctx, target),
+        RowTarget::NewSession(None) => crate::ops::session::open_create_session(ctx),
+        RowTarget::NewSession(Some(target)) => {
+            crate::ops::session::open_create_session_on_host(ctx, target)
+        }
+        RowTarget::ConnectHost => crate::ops::session::open_connect_remote_host(ctx),
         RowTarget::Launcher {
             config_epoch,
             tab_id,

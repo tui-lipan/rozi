@@ -6,11 +6,10 @@
 //! user's remote workplaces are locations they return to, so a host must not vanish from the tree
 //! just because its link is down or it happens to have no live sessions right now.
 //!
-//! The registry owns only the *host-level* state that has to persist across the recurring session
-//! sweep — which group is expanded, and the last probe error to surface inline. A host's connection
-//! *status* is derived from the live attachments plus that error at render time (see
-//! [`HostRegistry::status_for`]); it is never stored, so it can never go stale behind the
-//! attachments it describes.
+//! The registry owns only the *host-level* connection state that has to persist across the recurring
+//! session sweep — whether each host is connected/connecting and the last probe error. A host's
+//! display *status* is derived from that plus the live attachments at render time (see
+//! [`HostRegistry::status_for`]).
 
 use crate::config::HyprmuxRemoteConfig;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
@@ -33,26 +32,25 @@ pub struct HostEntry {
     /// `dev@box:22` and `box` never collapse into one row.
     pub target: RemoteTarget,
     pub origin: HostOrigin,
-    /// Whether the group is expanded in the sidebar tree. Expanding a host is the *connect* gesture:
-    /// it opens the group and probes the host; collapsing it drops back to disconnected. Persisted
-    /// across refreshes so a live session sweep never re-collapses a group the user opened.
-    pub expanded: bool,
-    /// Live probe/connection state for the host, driving its status dot and any inline error.
+    /// Live connection state for the host, driving its status (Online / Offline / Connecting) and
+    /// any inline error. A host is *connected* — its sessions are listed and kept fresh — while this
+    /// is `InFlight`/`Reached`; "Click to connect" moves it there and "Click to disconnect" returns
+    /// it to `Idle`.
     pub probe: HostProbe,
 }
 
-/// The state of this client's link to a host: what expanding/collapsing a group and the on-demand
-/// probe move through. Distinct from any *session* attachment on the host.
+/// The state of this client's link to a host: what connecting/disconnecting and the on-demand probe
+/// move through. Distinct from any *session* attachment on the host.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum HostProbe {
-    /// Collapsed, or never contacted — no live link to the host.
+    /// Disconnected — never contacted, or explicitly disconnected.
     #[default]
     Idle,
-    /// A probe is in flight because the group was just expanded (the connect gesture).
+    /// A probe is in flight because the user just connected the host.
     InFlight,
     /// The last probe reached the host.
     Reached,
-    /// The last probe failed; carries the reason to surface on the group header.
+    /// The last probe failed; carries the reason to surface on the host header.
     Failed(String),
 }
 
@@ -72,7 +70,7 @@ impl HostProbe {
 pub enum HostStatus {
     /// At least one attachment on this host is live.
     Connected,
-    /// An attachment on this host is (re)connecting, or the host is being probed (just expanded).
+    /// An attachment on this host is (re)connecting, or the host is being probed (just connected).
     Connecting,
     /// Reachable — the probe reached the host (whether or not it has sessions) — but this client
     /// holds no attachment.
@@ -109,9 +107,8 @@ impl HostRegistry {
             .find(|entry| &entry.target == target)
     }
 
-    /// Rebuild the known-host set from its three sources, preserving per-host UI state
-    /// (`expanded` / `probe`) for hosts that survive. Called whenever the Sessions view opens or
-    /// refreshes.
+    /// Rebuild the known-host set from its three sources, preserving each surviving host's `probe`
+    /// (connection) state. Called whenever the Sessions view opens or refreshes.
     ///
     /// - `remote_config`: configured `[remote.hosts.*]` aliases and `default_host`.
     /// - `recents`: recently used ad-hoc `--remote` target strings, most-recent first.
@@ -141,7 +138,6 @@ impl HostRegistry {
                 target,
                 origin,
                 // Preserved below from the prior entry if the host survives.
-                expanded: false,
                 probe: HostProbe::Idle,
             });
         };
@@ -171,20 +167,11 @@ impl HostRegistry {
             upsert(target.clone(), alias.clone(), HostOrigin::Attached);
         }
 
-        // Carry over per-host UI state for surviving hosts. A host appearing for the first time
-        // starts collapsed — a launch must not fan out to every configured host — *unless* an
-        // attachment already targets it, in which case it opens so the session you just connected to
-        // is visible without a keystroke. A host the user has since collapsed stays collapsed across
-        // the refresh; only its first appearance auto-expands.
+        // Carry over each surviving host's connection state across the refresh; a host appearing for
+        // the first time starts disconnected (a launch contacts nothing until the user connects it).
         for entry in &mut rebuilt {
-            match self.entries.iter().find(|old| old.target == entry.target) {
-                Some(prior) => {
-                    entry.expanded = prior.expanded;
-                    entry.probe = prior.probe.clone();
-                }
-                None => {
-                    entry.expanded = held.iter().any(|(target, _)| *target == entry.target);
-                }
+            if let Some(prior) = self.entries.iter().find(|old| old.target == entry.target) {
+                entry.probe = prior.probe.clone();
             }
         }
 
@@ -197,7 +184,7 @@ impl HostRegistry {
     /// A live/connecting attachment wins over everything (a reconnect that succeeds clears an
     /// "unreachable" look without the registry being told); otherwise the probe decides: in-flight
     /// reads as *connecting*, a reached host (even with zero sessions) as *reachable*, a failed
-    /// probe as *unreachable*, and an idle/collapsed host as *disconnected*.
+    /// probe as *unreachable*, and an idle host as *disconnected*.
     pub fn status_for<'a>(
         &self,
         target: &RemoteTarget,
@@ -264,19 +251,14 @@ mod tests {
     }
 
     #[test]
-    fn reseed_preserves_expanded_and_probe_for_surviving_hosts() {
+    fn reseed_preserves_probe_state_for_surviving_hosts() {
         let mut registry = HostRegistry::default();
         registry.seed(&config(&["workbox"], None), &[], &[]);
         let target = RemoteTarget::Alias("workbox".into());
-        {
-            let entry = registry.get_mut(&target).unwrap();
-            entry.expanded = true;
-            entry.probe = HostProbe::Failed("timed out".to_string());
-        }
-        // A recent is added, but workbox survives and keeps its UI state.
+        registry.get_mut(&target).unwrap().probe = HostProbe::Failed("timed out".to_string());
+        // A recent is added, but workbox survives and keeps its connection state.
         registry.seed(&config(&["workbox"], None), &["scratch".to_string()], &[]);
         let entry = registry.get(&target).unwrap();
-        assert!(entry.expanded);
         assert_eq!(entry.probe.error(), Some("timed out"));
         // A host that dropped out of every source is gone.
         registry.seed(&config(&[], None), &[], &[]);

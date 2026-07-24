@@ -306,6 +306,8 @@ pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update
     if ctx.state.sidebar.cursor == cursor {
         return Update::none();
     }
+    // Moving off a row disarms any pending disconnect confirmation.
+    ctx.state.sidebar.pending_host_disconnect = None;
     ctx.state.sidebar.cursor = cursor;
     ctx.state.sidebar.suppress_row_hover = true;
     Update::full()
@@ -343,11 +345,15 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     if index >= rows.len() {
         return Update::none();
     }
+    // Acting on anything disarms a pending host-disconnect confirmation; capture it first so the
+    // matching disconnect row can still see its own armed state below.
+    let armed_disconnect = ctx.state.sidebar.pending_host_disconnect.take();
     match rows.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::Session(entry) => activate_session(ctx, *entry),
-        RowTarget::HostToggle(target) => toggle_host_group(ctx, target),
+        RowTarget::HostConnect(target) => connect_host(ctx, target),
+        RowTarget::HostDisconnect(target) => disconnect_host(ctx, target, armed_disconnect),
         RowTarget::NewSession(None) => crate::ops::session::open_create_session(ctx),
         RowTarget::NewSession(Some(target)) => {
             crate::ops::session::open_create_session_on_host(ctx, target)
@@ -858,14 +864,24 @@ pub(super) fn refresh_sessions(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
     let current_name = ctx.state.current().session_name.clone();
     let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
-    // On-demand: only the expanded host groups are contacted over ssh. A collapsed host — the
-    // default for a freshly known host — is never probed, so the sweep touches nothing the user has
-    // not opened.
+    // On-demand: only *connected* hosts are contacted over ssh — those the user connected (probe in
+    // flight or reached) or already holds an attachment to. An offline host is never probed, so the
+    // sweep touches nothing the user has not connected.
     let probe_targets: Vec<crate::session::remote::RemoteTarget> = ctx
         .state
         .hosts
         .iter()
-        .filter(|host| host.expanded)
+        .filter(|host| {
+            matches!(
+                host.probe,
+                crate::state::HostProbe::InFlight | crate::state::HostProbe::Reached
+            ) || ctx
+                .state
+                .background
+                .values()
+                .chain(std::iter::once(ctx.state.current()))
+                .any(|attachment| attachment.remote_target.as_ref() == Some(&host.target))
+        })
         .map(|host| host.target.clone())
         .collect();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
@@ -954,27 +970,43 @@ pub(super) fn activate_session(
     crate::ops::session::activate_discovered_session(ctx, entry)
 }
 
-/// Collapse or expand a remote-host group in the Sessions tab. Purely local view state — the toggle
-/// only changes what the tree shows, never any connection.
-pub(super) fn toggle_host_group(
+/// "Click to connect": bring a host online. Mark its probe in flight (so the header reads
+/// "Connecting…" at once) and bump the sessions epoch so the post-update chokepoint re-sweeps with
+/// this host now included, probing it immediately rather than at the next periodic tick.
+pub(super) fn connect_host(
     ctx: &mut Context<HyprmuxApp>,
     target: crate::session::remote::RemoteTarget,
 ) -> Update {
     let Some(entry) = ctx.state.hosts.get_mut(&target) else {
         return Update::none();
     };
-    entry.expanded = !entry.expanded;
-    if entry.expanded {
-        // Expanding is the connect gesture: mark the probe in flight (so the header reads
-        // "connecting" right away, not "disconnected"), then bump the epoch so the post-update
-        // chokepoint re-arms a fresh sweep that now includes this host — probing it at once rather
-        // than waiting for the next periodic tick.
-        entry.probe = crate::state::HostProbe::InFlight;
-        ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
-    } else {
-        // Collapsing drops the link back to disconnected.
+    if matches!(entry.probe, crate::state::HostProbe::InFlight) {
+        return Update::none();
+    }
+    entry.probe = crate::state::HostProbe::InFlight;
+    ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
+    Update::full()
+}
+
+/// "Click to disconnect": the first activation arms a confirmation (`armed` is what the row was
+/// showing); the second commits it. Disconnecting closes any live attachments to the host — their
+/// servers keep running — and returns it to offline.
+pub(super) fn disconnect_host(
+    ctx: &mut Context<HyprmuxApp>,
+    target: crate::session::remote::RemoteTarget,
+    armed: Option<crate::session::remote::RemoteTarget>,
+) -> Update {
+    if armed.as_ref() != Some(&target) {
+        // Arm: the render turns the row red and reads "Click again to confirm".
+        ctx.state.sidebar.pending_host_disconnect = Some(target);
+        return Update::full();
+    }
+    crate::ops::session::disconnect_host(ctx, &target);
+    // Drop the host back to offline; the sweep stops probing it.
+    if let Some(entry) = ctx.state.hosts.get_mut(&target) {
         entry.probe = crate::state::HostProbe::Idle;
     }
+    ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
     Update::full()
 }
 
@@ -1372,6 +1404,74 @@ mod tests {
                 })
                 .expect("current result");
             assert_eq!(backend.state().sidebar.sessions, vec![discovered("dev")]);
+        });
+    }
+
+    /// Connecting a host from its "Click to connect" row marks it in flight and bumps the sweep
+    /// epoch; disconnecting takes two clicks — the first arms the confirmation, the second commits it
+    /// and returns the host to offline (Idle).
+    #[test]
+    fn host_connect_and_two_click_disconnect() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+            {
+                let state = backend.state_mut();
+                state.config.remote.hosts.insert(
+                    "winvm".to_string(),
+                    crate::config::RemoteHostConfig::default(),
+                );
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+            }
+            // Seed the host registry (offline) the way opening the tab does.
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("settle");
+            assert!(
+                backend.state().hosts.get(&target).is_some(),
+                "the configured host is seeded into the registry"
+            );
+
+            // `row_activate` rebuilds the rows from the current state before the post-update sweep
+            // repopulates local sessions, so clearing them here makes the layout deterministic:
+            //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer
+            //   4 WINVM header · 5 "Click to connect" · 6 spacer · 7 "Connect a host…"
+            backend.state_mut().sidebar.sessions.clear();
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(5))
+                .expect("connect click");
+            assert_eq!(
+                backend.state().hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::InFlight,
+                "connecting marks the host in flight"
+            );
+
+            // Now online, the same row is "Click to disconnect". Force the host reached and arm.
+            backend.state_mut().hosts.get_mut(&target).unwrap().probe =
+                crate::state::HostProbe::Reached;
+            //   … 4 WINVM header · 5 "Click to disconnect" · 6 "No sessions here yet" · 7 "+ New…"
+            backend.state_mut().sidebar.sessions.clear();
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(5))
+                .expect("arm disconnect");
+            assert_eq!(
+                backend.state().sidebar.pending_host_disconnect.as_ref(),
+                Some(&target),
+                "first click arms the confirmation"
+            );
+            backend.state_mut().hosts.get_mut(&target).unwrap().probe =
+                crate::state::HostProbe::Reached;
+            backend.state_mut().sidebar.sessions.clear();
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(5))
+                .expect("confirm disconnect");
+            assert_eq!(
+                backend.state().hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::Idle,
+                "confirming disconnect returns the host to offline"
+            );
+            assert!(backend.state().sidebar.pending_host_disconnect.is_none());
         });
     }
 

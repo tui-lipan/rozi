@@ -1481,13 +1481,23 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
             .push(info_toast(&ctx.state.theme, "Not a remote session"));
         return Update::full();
     };
-    let host_label = entry.host.clone().unwrap_or_else(|| entry.name.clone());
+    disconnect_host(ctx, &target)
+}
+
+/// Disconnect from a remote host: close every attachment to it — current and retained — leaving the
+/// remote servers running for reattach. If the current session lives on that host, the UI hops onto
+/// a fresh local ephemeral. Non-destructive.
+pub(crate) fn disconnect_host(
+    ctx: &mut Context<HyprmuxApp>,
+    target: &crate::session::remote::RemoteTarget,
+) -> Update {
+    let host_label = target.display_label();
     // Close every retained background attachment on this host; their servers keep running.
     let ids: Vec<crate::state::AttachmentId> = ctx
         .state
         .background
         .iter()
-        .filter(|(_, attachment)| attachment.remote_target.as_ref() == Some(&target))
+        .filter(|(_, attachment)| attachment.remote_target.as_ref() == Some(target))
         .map(|(id, _)| *id)
         .collect();
     let mut closed = 0usize;
@@ -1500,7 +1510,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
         }
     }
     let current_on_host = ctx.state.current().session_attached
-        && ctx.state.current().remote_target.as_ref() == Some(&target);
+        && ctx.state.current().remote_target.as_ref() == Some(target);
     if current_on_host {
         if let Some(client) = ctx.state.current().session_client.clone() {
             crate::ops::exit::mark_session_detached(ctx, None);
@@ -1517,7 +1527,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
     if closed == 0 {
         ctx.toast().push(info_toast(
             &ctx.state.theme,
-            format!("No attachments to `{host_label}`"),
+            format!("Not connected to `{host_label}`"),
         ));
         return Update::full();
     }
@@ -1525,7 +1535,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
         &ctx.state.theme,
         format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
     ));
-    refresh_session_picker(ctx)
+    Update::full()
 }
 
 fn shutdown_discovered_session(

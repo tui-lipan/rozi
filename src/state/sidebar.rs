@@ -31,6 +31,9 @@ pub struct SidebarState {
     /// loop), the post-update chokepoint re-arms the loop so the tab keeps updating instead of
     /// freezing until it is reopened.
     pub sessions_refresh_armed_epoch: Option<u64>,
+    /// A host whose "Click to disconnect" is armed for a confirming second click. Cleared by
+    /// navigating away or acting on anything else, so the confirmation never outlives the moment.
+    pub pending_host_disconnect: Option<crate::session::remote::RemoteTarget>,
     /// Resolved roots for the file-tree tabs: the focused pane's local working directory, and the
     /// git repository containing it. Both are recomputed only when the pane's reported directory
     /// actually changes, so the ancestor walk does not run on every frame or every shell prompt.

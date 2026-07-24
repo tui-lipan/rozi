@@ -13,8 +13,10 @@ pub(crate) enum RowTarget {
     Inert,
     Pane(PaneId),
     Session(Box<crate::session::discovery::DiscoveredSession>),
-    /// A remote-host group header in the Sessions tab. Activating it collapses or expands the group.
-    HostToggle(crate::session::remote::RemoteTarget),
+    /// "Click to connect" under an offline host in the Sessions tab: connect (probe) that host.
+    HostConnect(crate::session::remote::RemoteTarget),
+    /// "Click to disconnect" under an online host: disconnect it (a confirming second click).
+    HostDisconnect(crate::session::remote::RemoteTarget),
     /// A "New session" action row. `None` creates locally; `Some(host)` creates on that host.
     NewSession(Option<crate::session::remote::RemoteTarget>),
     /// The "Connect a host…" action row, opening the remote-host connect prompt.

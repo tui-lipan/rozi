@@ -836,14 +836,17 @@ pub(super) fn refresh_sessions(ctx: &Context<HyprmuxApp>, epoch: u64) -> Update 
         .map(|host| host.target.clone())
         .collect();
     Update::with_command(Command::spawn(move |link: CommandLink<crate::Msg>| {
-        let rows = crate::ops::session::discover_sidebar_sessions(
+        let (rows, host_status) = crate::ops::session::discover_sidebar_sessions(
             current_name.as_deref(),
             &remote_config,
             probe_targets,
             attached,
-        )
-        .map_err(|error| error.to_string());
-        link.send(crate::Msg::SidebarSessionsDiscovered { epoch, rows });
+        );
+        link.send(crate::Msg::SidebarSessionsDiscovered {
+            epoch,
+            rows: rows.map_err(|error| error.to_string()),
+            host_status,
+        });
     }))
 }
 
@@ -851,6 +854,7 @@ pub(super) fn sessions_discovered(
     ctx: &mut Context<HyprmuxApp>,
     epoch: u64,
     rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+    host_status: Vec<(crate::session::remote::RemoteTarget, Option<String>)>,
 ) -> Update {
     if !sessions_active(ctx) || epoch != ctx.state.sidebar.sessions_epoch {
         return Update::none();
@@ -859,6 +863,13 @@ pub(super) fn sessions_discovered(
         ctx.state.sidebar.sessions = rows;
     }
     crate::ops::session::seed_host_registry(ctx);
+    // Apply fresh probe outcomes after the reseed so they win over the carried-over error: a host
+    // that just answered has its error cleared, a host that failed shows why on its group header.
+    for (target, status) in host_status {
+        if let Some(entry) = ctx.state.hosts.get_mut(&target) {
+            entry.error = status;
+        }
+    }
     Update::with_command(Command::after(
         SESSION_REFRESH_INTERVAL,
         move |link: CommandLink<crate::Msg>| {
@@ -1237,6 +1248,7 @@ mod tests {
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 10,
                     rows: Ok(stale.clone()),
+                    host_status: Vec::new(),
                 })
                 .expect("stale close result");
             assert!(backend.state().sidebar.sessions.is_empty());
@@ -1248,6 +1260,7 @@ mod tests {
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 11,
                     rows: Ok(stale.clone()),
+                    host_status: Vec::new(),
                 })
                 .expect("stale tab result");
             assert!(backend.state().sidebar.sessions.is_empty());
@@ -1260,6 +1273,7 @@ mod tests {
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 12,
                     rows: Ok(stale),
+                    host_status: Vec::new(),
                 })
                 .expect("stale reload result");
             assert!(backend.state().sidebar.sessions.is_empty());
@@ -1280,9 +1294,51 @@ mod tests {
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 7,
                     rows: Ok(vec![discovered("dev")]),
+                    host_status: Vec::new(),
                 })
                 .expect("current result");
             assert_eq!(backend.state().sidebar.sessions, vec![discovered("dev")]);
+        });
+    }
+
+    /// A probe failure records the reason on the host's registry entry (surfaced inline on its
+    /// group header); a subsequent success clears it. The host is seeded from config by the
+    /// handler, so the registry entry exists to receive the error.
+    #[test]
+    fn host_probe_errors_are_recorded_then_cleared() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let target = crate::session::remote::RemoteTarget::Alias("prod".to_string());
+            {
+                let state = backend.state_mut();
+                state.config.remote.hosts.insert(
+                    "prod".to_string(),
+                    crate::config::RemoteHostConfig::default(),
+                );
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.sessions_epoch = 3;
+            }
+            backend
+                .dispatch(crate::Msg::SidebarSessionsDiscovered {
+                    epoch: 3,
+                    rows: Ok(Vec::new()),
+                    host_status: vec![(target.clone(), Some("no route to host".to_string()))],
+                })
+                .expect("failed probe");
+            assert_eq!(
+                backend.state().hosts.get(&target).unwrap().error.as_deref(),
+                Some("no route to host")
+            );
+
+            backend
+                .dispatch(crate::Msg::SidebarSessionsDiscovered {
+                    epoch: 3,
+                    rows: Ok(Vec::new()),
+                    host_status: vec![(target.clone(), None)],
+                })
+                .expect("recovered probe");
+            assert!(backend.state().hosts.get(&target).unwrap().error.is_none());
         });
     }
 

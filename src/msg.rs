@@ -82,6 +82,9 @@ pub enum Msg {
     SidebarSessionsDiscovered {
         epoch: u64,
         rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
+        /// Per-probed-host outcome: `None` cleared the host's error, `Some(msg)` records why the
+        /// probe failed. Empty when no remote host was probed (every group collapsed).
+        host_status: Vec<(crate::session::remote::RemoteTarget, Option<String>)>,
     },
     SidebarSessionActivate(crate::session::discovery::DiscoveredSession),
     ThemeError(String),

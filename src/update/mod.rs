@@ -85,9 +85,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             line,
         } => sidebar::command_row_activate(ctx, config_epoch, tab_id, output_epoch, line),
         Msg::SidebarSessionsRefresh { epoch } => sidebar::refresh_sessions(ctx, epoch),
-        Msg::SidebarSessionsDiscovered { epoch, rows } => {
-            sidebar::sessions_discovered(ctx, epoch, rows)
-        }
+        Msg::SidebarSessionsDiscovered {
+            epoch,
+            rows,
+            host_status,
+        } => sidebar::sessions_discovered(ctx, epoch, rows, host_status),
         Msg::SidebarSessionActivate(entry) => sidebar::activate_session(ctx, entry),
         Msg::ThemeError(message) => overlays::theme_error(ctx, message),
         Msg::CloseSearch => prompts::close_search(ctx),

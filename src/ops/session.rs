@@ -187,6 +187,14 @@ fn discover_picker_sessions(
     Ok(rows)
 }
 
+/// Per-probed-host outcome carried back from a sidebar sweep: `None` cleared the host's error,
+/// `Some(msg)` records why its probe failed so it can be surfaced inline.
+pub(crate) type HostProbeStatus = Vec<(crate::session::remote::RemoteTarget, Option<String>)>;
+
+/// The result of a sidebar discovery sweep: the session rows (or a local-discovery error) plus the
+/// per-host probe outcomes.
+type SidebarDiscovery = (std::io::Result<Vec<DiscoveredSession>>, HostProbeStatus);
+
 /// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
 fn configured_targets(
     remote_config: &crate::config::HyprmuxRemoteConfig,
@@ -205,31 +213,49 @@ fn configured_targets(
         .collect()
 }
 
-/// Probe `targets` for their sessions, one ssh round-trip each, in parallel. Unreachable hosts are
-/// skipped (their rows simply do not appear) so one down host never blocks the sweep.
-fn probe_remote_targets(
+/// Probe `targets` for their sessions, one ssh round-trip each, in parallel, reporting each host's
+/// outcome. A host's rows are returned on success; on failure the host contributes no rows but a
+/// `Some(error)` outcome so the caller can surface it inline instead of the host silently going
+/// empty. One down host never blocks the others.
+fn probe_remote_targets_reporting(
     targets: &[crate::session::remote::RemoteTarget],
     remote_config: &crate::config::HyprmuxRemoteConfig,
-) -> Vec<DiscoveredSession> {
+) -> (Vec<DiscoveredSession>, HostProbeStatus) {
     let mut handles = Vec::with_capacity(targets.len());
     for target in targets {
         let config = remote_config.clone();
         let target = target.clone();
         handles.push(std::thread::spawn(move || {
-            crate::session::discovery::discover_sessions_from(
-                &crate::session::discovery::SessionSource::Remote(target),
+            let outcome = crate::session::discovery::discover_sessions_from(
+                &crate::session::discovery::SessionSource::Remote(target.clone()),
                 &config,
-            )
-            .unwrap_or_default()
+            );
+            (target, outcome)
         }));
     }
     let mut rows = Vec::new();
+    let mut host_status = Vec::with_capacity(handles.len());
     for handle in handles {
-        if let Ok(mut remote_rows) = handle.join() {
-            rows.append(&mut remote_rows);
+        if let Ok((target, outcome)) = handle.join() {
+            match outcome {
+                Ok(mut remote_rows) => {
+                    rows.append(&mut remote_rows);
+                    host_status.push((target, None));
+                }
+                Err(error) => host_status.push((target, Some(error.to_string()))),
+            }
         }
     }
-    rows
+    (rows, host_status)
+}
+
+/// Probe `targets` for their sessions, discarding per-host errors (used by the picker's eager
+/// sweep, which shows only whatever hosts answer).
+fn probe_remote_targets(
+    targets: &[crate::session::remote::RemoteTarget],
+    remote_config: &crate::config::HyprmuxRemoteConfig,
+) -> Vec<DiscoveredSession> {
+    probe_remote_targets_reporting(targets, remote_config).0
 }
 
 fn discover_configured_remote_sessions(
@@ -246,14 +272,18 @@ pub(crate) fn discover_sidebar_sessions(
     remote_config: &crate::config::HyprmuxRemoteConfig,
     probe_targets: Vec<crate::session::remote::RemoteTarget>,
     attached: Vec<DiscoveredSession>,
-) -> std::io::Result<Vec<DiscoveredSession>> {
-    let mut rows = crate::session::discovery::discover_selectable_sessions(current_name)?;
-    rows.extend(probe_remote_targets(&probe_targets, remote_config));
-    for row in attached {
-        merge_current_session_row(&mut rows, row);
-    }
-    sort_session_rows(&mut rows);
-    Ok(rows)
+) -> SidebarDiscovery {
+    let (remote_rows, host_status) = probe_remote_targets_reporting(&probe_targets, remote_config);
+    let rows =
+        crate::session::discovery::discover_selectable_sessions(current_name).map(|mut rows| {
+            rows.extend(remote_rows);
+            for row in attached {
+                merge_current_session_row(&mut rows, row);
+            }
+            sort_session_rows(&mut rows);
+            rows
+        });
+    (rows, host_status)
 }
 
 /// Add the attached session to `rows` unless it is already listed. Remote discovery returns the

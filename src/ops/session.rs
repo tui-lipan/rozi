@@ -267,6 +267,35 @@ fn push_attached_session_rows(ctx: &Context<HyprmuxApp>, rows: &mut Vec<Discover
     sort_session_rows(rows);
 }
 
+/// `(target, alias)` for every remote host a live attachment (current or retained) targets. Feeds
+/// the host registry so a host you are attached to stays listed even if configured-host discovery
+/// does not cover it (an ad-hoc `--remote` target).
+pub(crate) fn held_host_targets(
+    state: &crate::state::State,
+) -> Vec<(crate::session::remote::RemoteTarget, String)> {
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .filter_map(|attachment| {
+            let target = attachment.remote_target.clone()?;
+            let alias = attachment
+                .remote_host
+                .clone()
+                .unwrap_or_else(|| target.display_label());
+            Some((target, alias))
+        })
+        .collect()
+}
+
+/// Refresh the unified Sessions view's known-host registry from config, recent ad-hoc targets, and
+/// live attachments. Preserves each host's expand/collapse and error state (see
+/// [`crate::state::HostRegistry::seed`]).
+pub(crate) fn seed_host_registry(ctx: &mut Context<HyprmuxApp>) {
+    let recents = crate::session::read_recent_remotes();
+    let held = held_host_targets(&ctx.state);
+    let remote_config = ctx.state.config.remote.clone();
+    ctx.state.hosts.seed(&remote_config, &recents, &held);
+}
+
 pub(crate) fn attached_session_rows(state: &crate::state::State) -> Vec<DiscoveredSession> {
     std::iter::once(state.current())
         .chain(state.background.values())

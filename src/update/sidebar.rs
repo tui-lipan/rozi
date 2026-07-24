@@ -231,6 +231,7 @@ fn open_sessions(ctx: &mut Context<HyprmuxApp>) -> Update {
     // included) off the UI thread. Querying remote hosts over ssh here used to block the tab switch
     // on a round-trip — or the whole connect timeout when a host was down — every time it opened.
     ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
+    crate::ops::session::seed_host_registry(ctx);
     refresh_sessions(ctx, epoch)
 }
 
@@ -315,6 +316,7 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
         RowTarget::Session(entry) => activate_session(ctx, *entry),
+        RowTarget::HostToggle(target) => toggle_host_group(ctx, target),
         RowTarget::Launcher {
             config_epoch,
             tab_id,
@@ -840,6 +842,7 @@ pub(super) fn sessions_discovered(
     if let Ok(rows) = rows {
         ctx.state.sidebar.sessions = rows;
     }
+    crate::ops::session::seed_host_registry(ctx);
     Update::with_command(Command::after(
         SESSION_REFRESH_INTERVAL,
         move |link: CommandLink<crate::Msg>| {
@@ -853,6 +856,21 @@ pub(super) fn activate_session(
     entry: crate::session::discovery::DiscoveredSession,
 ) -> Update {
     crate::ops::session::activate_discovered_session(ctx, entry)
+}
+
+/// Collapse or expand a remote-host group in the Sessions tab. Purely local view state — the toggle
+/// only changes what the tree shows, never any connection.
+pub(super) fn toggle_host_group(
+    ctx: &mut Context<HyprmuxApp>,
+    target: crate::session::remote::RemoteTarget,
+) -> Update {
+    match ctx.state.hosts.get_mut(&target) {
+        Some(entry) => {
+            entry.expanded = !entry.expanded;
+            Update::full()
+        }
+        None => Update::none(),
+    }
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId) -> Update {

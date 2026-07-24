@@ -209,6 +209,7 @@ pub fn restore_state_from_profile(
         config,
         attachment,
         background: std::collections::HashMap::new(),
+        hosts: crate::state::HostRegistry::default(),
         runtime_epoch: 0,
         next_attachment_id: 1,
         command_link: None,

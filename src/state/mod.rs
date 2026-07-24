@@ -19,6 +19,7 @@ mod pane;
 mod pickers;
 mod search;
 mod session;
+mod sessions_view;
 mod sidebar;
 mod workspace;
 
@@ -32,6 +33,7 @@ pub use pane::*;
 pub use pickers::*;
 pub use search::*;
 pub use session::*;
+pub use sessions_view::*;
 pub use sidebar::*;
 pub use workspace::*;
 
@@ -125,6 +127,10 @@ pub struct State {
     /// stays attached and their screens stay live (server output routes to them by epoch), so
     /// switching back is instant. Keyed by [`Attachment::epoch`]. Empty until a switch parks one.
     pub background: HashMap<AttachmentId, Attachment>,
+    /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
+    /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
+    /// per-host expand/collapse and error state that must survive the recurring session sweep.
+    pub hosts: HostRegistry,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -220,6 +226,7 @@ impl State {
             event_hub: crate::events::EventHub::default(),
             attachment,
             background: HashMap::new(),
+            hosts: HostRegistry::default(),
             pending_destructive: None,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),

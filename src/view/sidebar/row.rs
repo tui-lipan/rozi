@@ -13,6 +13,8 @@ pub(crate) enum RowTarget {
     Inert,
     Pane(PaneId),
     Session(Box<crate::session::discovery::DiscoveredSession>),
+    /// A remote-host group header in the Sessions tab. Activating it collapses or expands the group.
+    HostToggle(crate::session::remote::RemoteTarget),
     Launcher {
         config_epoch: u64,
         tab_id: SidebarTabId,

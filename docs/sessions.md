@@ -152,6 +152,32 @@ Set `[session] startup = "last"` to reopen the most recently attached named sess
 history, hyprmux tries the newest resurrection snapshot, any running named session, then `main`.
 Explicit targets and `--pick` take precedence.
 
+## The Sessions sidebar (grouped view)
+
+The sidebar's **Sessions** tab is a location-aware tree: a `LOCAL` group followed by one
+collapsible group per **known remote host**. A host is *known* — and therefore listed even while
+disconnected or empty — when it is configured (`[remote.hosts.*]` or `default_host`), a recently
+used ad-hoc `--remote` target, or a host a live attachment currently targets. A remote host is a
+location you return to, so it does not vanish from the tree just because its link is down.
+
+- **Connect on demand.** Host groups start collapsed and nothing is contacted over SSH until you
+  open one. Selecting a host header (`Enter` or click) expands it and probes that host; collapsing
+  it again stops the probing. A host you are already attached to opens automatically.
+- **Status at a glance.** Each header carries a dot: `● connected` (you hold a live attachment),
+  `● online` (reachable, sessions listed, not attached), `◌ connecting…`, `○ disconnected`
+  (idle), or `⊘ unreachable` with the SSH error shown inline.
+- **Offline workplaces persist.** The last-seen sessions on each host are cached under
+  `state_dir/host-sessions.json` (session name, ephemeral flag, and pane count only — never any
+  credential; SSH handles authentication out of band). When an expanded host is offline or
+  unreachable, its known sessions still appear as muted *"offline · N panes · cached"* rows;
+  selecting one reconnects to the host and attaches.
+- **Create and connect from the tree.** Each group ends with a `+ New session` / `+ New session on
+  <host>` action row, and a `+ Connect a host…` row at the bottom opens the connect-remote-host
+  prompt. Creating a session on a host parks the current session in the background and attaches the
+  new one, exactly like switching.
+
+Activating a session row attaches to it with the same background-retention semantics as the picker.
+
 ## Attach, detach, and quit
 
 All panes are server-backed. The UI receives raw pane output frames and sends input, resize,

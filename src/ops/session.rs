@@ -807,16 +807,17 @@ pub(crate) fn install_fresh_attachment(
     finish_session_install(ctx);
 }
 
-/// Install `attachment` as the current session, leaving the outgoing one exactly the way a switch
-/// does: **parked** — kept live in the background so returning to it is instant — when it is
-/// attached, or released when it is not (mid-connect, never attached). This is what makes creating a
-/// session consistent with switching to one and with creating on a remote host.
+/// Park the current session and install `attachment` in its place. The outgoing session is kept
+/// exactly the way a switch keeps it — **parked**, live in the background so returning to it is
+/// instant — when it is attached; it is released only when there is nothing live to keep (a session
+/// that was never attached: mid-connect, failed). This is what makes creating a session consistent
+/// with switching to one and with creating on a remote host.
 ///
-/// Returns `(parked_epoch, left)` for the pending attach: `parked_epoch` is the retained session's
-/// id, so a failed attach restores it instead of stranding the user on a broken empty session;
-/// `left` names a *released* session for the confirmation toast (`None` when parked, since parking
-/// is not a detach). `new_epoch` becomes the runtime epoch.
-pub(crate) fn install_replacing_current(
+/// Returns `(parked_epoch, left)` for the pending attach: `parked_epoch` is the parked session's id,
+/// so a failed attach restores it instead of stranding the user on a broken empty session; `left`
+/// names a *released* session for the confirmation toast (`None` when parked, since parking is not a
+/// detach). `new_epoch` becomes the runtime epoch.
+pub(crate) fn park_current_and_install(
     ctx: &mut Context<HyprmuxApp>,
     attachment: crate::state::Attachment,
     new_epoch: crate::state::AttachmentId,

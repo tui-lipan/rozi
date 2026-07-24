@@ -624,7 +624,7 @@ pub(crate) fn open_named_target(
         if explicit_create {
             // Creating a session parks the current one, like switching to a session or creating one on
             // a remote host: it stays live in the background, instant to return to.
-            crate::ops::session::install_replacing_current(ctx, attachment, epoch)
+            crate::ops::session::park_current_and_install(ctx, attachment, epoch)
         } else {
             // Resolving a profile *replaces* the current session — a deliberate, confirmed action (see
             // `[confirm].load_profile`) — so release it rather than park.

@@ -104,6 +104,40 @@ fn host_header_row(ctx: &Context<HyprmuxApp>, host: &HostEntry, status: HostStat
     SidebarRow::item(row, RowTarget::HostToggle(host.target.clone()))
 }
 
+/// A cached (last-seen) session row for an offline host: muted, tagged "offline (cached)", and
+/// activatable — selecting it connects to the host and attaches. Built from the persisted cache so
+/// a host's known workplaces stay visible while it is unreachable.
+fn cached_session_row(
+    ctx: &Context<HyprmuxApp>,
+    host: &HostEntry,
+    cached: &crate::session::CachedHostSession,
+) -> SidebarRow {
+    let panes = format!(
+        "{} pane{}",
+        cached.panes,
+        if cached.panes == 1 { "" } else { "s" }
+    );
+    let entry = DiscoveredSession {
+        name: cached.name.clone(),
+        ephemeral: false,
+        host: Some(host.alias.clone()),
+        remote_target: Some(host.target.clone()),
+        status: DiscoveredSessionStatus::Running {
+            panes: cached.panes,
+            clients: 0,
+            has_layout: false,
+            created_from_profile: None,
+        },
+    };
+    let muted = super::super::fg_only(&ctx.state.theme.muted);
+    SidebarRow::item(
+        Row::new(cached.name.clone())
+            .title_style(muted)
+            .detail(format!("offline · {panes} · cached"), muted),
+        RowTarget::Session(Box::new(entry)),
+    )
+}
+
 /// The muted placeholder shown inside an expanded host group that has no sessions to list.
 fn host_placeholder(ctx: &Context<HyprmuxApp>, status: HostStatus) -> SidebarRow {
     let text = match status {
@@ -179,11 +213,25 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
         if !host.expanded {
             continue;
         }
-        if sessions.is_empty() {
-            rows.push(host_placeholder(ctx, status));
-        } else {
+        if !sessions.is_empty() {
             for entry in sessions {
                 rows.push(session_row(ctx, entry));
+            }
+        } else {
+            // No live sessions: fall back to the persisted cache so an offline host still shows the
+            // workplaces it had. Ephemeral (disposable) sessions are never offered for reconnect.
+            let cached: Vec<&crate::session::CachedHostSession> = ctx
+                .state
+                .host_session_cache
+                .get(&host.target.display_label())
+                .map(|list| list.iter().filter(|s| !s.ephemeral).collect())
+                .unwrap_or_default();
+            if cached.is_empty() {
+                rows.push(host_placeholder(ctx, status));
+            } else {
+                for entry in cached {
+                    rows.push(cached_session_row(ctx, host, entry));
+                }
             }
         }
         rows.push(action_row(

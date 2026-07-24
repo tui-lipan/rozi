@@ -342,6 +342,11 @@ pub(crate) fn seed_host_registry(ctx: &mut Context<HyprmuxApp>) {
     let held = held_host_targets(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
     ctx.state.hosts.seed(&remote_config, &recents, &held);
+    // Load the persisted last-seen sessions once the known hosts exist, so an offline host can
+    // still list its workplaces. Empty on first run or any read error.
+    if ctx.state.host_session_cache.is_empty() {
+        ctx.state.host_session_cache = crate::session::read_host_session_cache();
+    }
 }
 
 pub(crate) fn attached_session_rows(state: &crate::state::State) -> Vec<DiscoveredSession> {

@@ -79,3 +79,94 @@ pub(crate) fn read_recent_remotes() -> Vec<String> {
         })
         .unwrap_or_default()
 }
+
+/// A last-seen session on a remote host, cached so a host's known workplaces stay visible when it is
+/// offline. Only the display metadata is stored — name, whether it was ephemeral, and pane count —
+/// never any credential or key material, which SSH handles out of band.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CachedHostSession {
+    pub name: String,
+    #[serde(default)]
+    pub ephemeral: bool,
+    #[serde(default)]
+    pub panes: usize,
+}
+
+/// Per-host cache of last-seen sessions, keyed by the host's exact display target (so `box` and
+/// `dev@box:22` cache separately). Persisted under the state dir.
+pub type HostSessionCache = std::collections::HashMap<String, Vec<CachedHostSession>>;
+
+fn host_sessions_path() -> Option<std::path::PathBuf> {
+    let env = crate::platform::paths::PlatformEnv::from_process();
+    (env.home.is_some() || env.xdg_state_home.is_some())
+        .then(|| crate::platform::paths::state_dir(&env).join("host-sessions.json"))
+}
+
+/// Read the persisted per-host session cache. Empty on any error (missing file, parse failure): the
+/// cache is a convenience, never a source of truth.
+pub(crate) fn read_host_session_cache() -> HostSessionCache {
+    let Some(path) = host_sessions_path() else {
+        return HostSessionCache::new();
+    };
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Replace the cached session list for one host after a successful probe. An empty list is retained
+/// (the host answered with no sessions) so a stale non-empty entry does not linger. Writing the
+/// whole map keeps the file self-consistent.
+pub(crate) fn record_host_sessions(target_label: &str, sessions: Vec<CachedHostSession>) {
+    let target_label = target_label.trim();
+    if target_label.is_empty() {
+        return;
+    }
+    let Some(path) = host_sessions_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent()
+        && crate::platform::fs_security::ensure_private_dir(parent).is_err()
+    {
+        return;
+    }
+    let mut cache = read_host_session_cache();
+    cache.insert(target_label.to_string(), sessions);
+    if let Ok(text) = serde_json::to_string_pretty(&cache) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The host session cache is a plain string-keyed map of session summaries; it must survive a
+    /// serialize/parse round-trip so an offline host's workplaces reload intact, and it must hold no
+    /// field beyond name/ephemeral/panes (never a credential).
+    #[test]
+    fn host_session_cache_round_trips() {
+        let sessions = vec![
+            CachedHostSession {
+                name: "dev".into(),
+                ephemeral: false,
+                panes: 3,
+            },
+            CachedHostSession {
+                name: "api".into(),
+                ephemeral: false,
+                panes: 1,
+            },
+        ];
+        let mut cache = HostSessionCache::new();
+        cache.insert("workbox".into(), sessions.clone());
+        let json = serde_json::to_string(&cache).unwrap();
+        let back: HostSessionCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get("workbox"), Some(&sessions));
+        // Missing optional fields default rather than failing to parse.
+        let sparse: HostSessionCache =
+            serde_json::from_str(r#"{"box":[{"name":"only"}]}"#).unwrap();
+        assert_eq!(sparse["box"][0].name, "only");
+        assert_eq!(sparse["box"][0].panes, 0);
+    }
+}

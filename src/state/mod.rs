@@ -131,6 +131,11 @@ pub struct State {
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
     pub hosts: HostRegistry,
+    /// Last-seen sessions per remote host, loaded from disk when the Sessions view is seeded and
+    /// refreshed on each successful probe. Lets an offline or unreachable host still list the
+    /// workplaces it had, rather than reading as empty. Convenience only — never authoritative, and
+    /// it holds no credentials.
+    pub host_session_cache: crate::session::HostSessionCache,
     /// A destructive action armed by its first press; the second press only fires while the arm
     /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
@@ -227,6 +232,7 @@ impl State {
             attachment,
             background: HashMap::new(),
             hosts: HostRegistry::default(),
+            host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),

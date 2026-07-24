@@ -865,7 +865,40 @@ pub(super) fn sessions_discovered(
     crate::ops::session::seed_host_registry(ctx);
     // Apply fresh probe outcomes after the reseed so they win over the carried-over error: a host
     // that just answered has its error cleared, a host that failed shows why on its group header.
+    // A host that answered also refreshes its persisted session cache (written only when it
+    // changed, so a steady 1.5s sweep does not churn the disk).
     for (target, status) in host_status {
+        if status.is_none() {
+            let label = target.display_label();
+            let sessions: Vec<crate::session::CachedHostSession> = ctx
+                .state
+                .sidebar
+                .sessions
+                .iter()
+                .filter(|entry| entry.remote_target.as_ref() == Some(&target))
+                .map(|entry| crate::session::CachedHostSession {
+                    name: entry.name.clone(),
+                    ephemeral: entry.ephemeral,
+                    panes: match &entry.status {
+                        crate::session::discovery::DiscoveredSessionStatus::Running {
+                            panes,
+                            ..
+                        } => *panes,
+                        _ => 0,
+                    },
+                })
+                .collect();
+            // Only persist a real change, and never write an empty list for a host that never had
+            // one cached — there is nothing to remember, and it keeps the sweep from creating a
+            // file on the first probe of a session-less host.
+            let known = ctx.state.host_session_cache.contains_key(&label);
+            if (!sessions.is_empty() || known)
+                && ctx.state.host_session_cache.get(&label) != Some(&sessions)
+            {
+                crate::session::record_host_sessions(&label, sessions.clone());
+                ctx.state.host_session_cache.insert(label, sessions);
+            }
+        }
         if let Some(entry) = ctx.state.hosts.get_mut(&target) {
             entry.error = status;
         }

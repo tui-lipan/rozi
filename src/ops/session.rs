@@ -769,30 +769,32 @@ pub(crate) fn release_background(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
-pub(crate) fn swap_state_for_attach(
+/// Install `attachment` as the current session, replacing the outgoing one. Used by the paths that
+/// start a freshly-built session in place — create, load-profile, kill/disconnect → fresh ephemeral.
+///
+/// Only the *current attachment* changes: everything else on [`State`] is client-global (theme,
+/// sidebar, background attachments, workbar pollers, control socket, event hub) and is left exactly
+/// as it was, so a create no longer rebuilds — and silently loses — that state. The caller is
+/// responsible for releasing or parking the session being replaced *before* calling this; the popup
+/// and scratchpad, which are bound to the outgoing session, are closed here.
+pub(crate) fn install_fresh_attachment(
     ctx: &mut Context<HyprmuxApp>,
-    mut replacement: crate::state::State,
+    attachment: crate::state::Attachment,
 ) {
-    // Creating/killing a session replaces the window-manager state but must not disturb the sidebar
-    // chrome: it is client-local view state, like switching sessions leaves it. Carry the panel's
-    // visibility and which tab is open across the swap; the epochs below still bump so its content
-    // (sessions list, command output) reconciles fresh against the new session.
-    replacement.sidebar_visible = ctx.state.sidebar_visible;
-    replacement.sidebar.active_tab = ctx.state.sidebar.active_tab.clone();
-    replacement.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
-    replacement.sidebar.command_epoch = ctx.state.sidebar.command_epoch.wrapping_add(1);
-    replacement.sidebar.config_epoch = ctx.state.sidebar.config_epoch.wrapping_add(1);
-    replacement.theme_watcher = ctx.state.theme_watcher.take();
-    replacement.system_theme = ctx.state.system_theme.clone();
-    replacement.control_socket_path = ctx.state.control_socket_path.clone();
-    replacement.command_link = ctx.state.command_link.clone();
-    replacement.event_hub = ctx.state.event_hub.clone();
-    replacement.runtime_epoch = ctx.state.runtime_epoch;
-    replacement.next_attachment_id = ctx.state.next_attachment_id;
-    // Retained background attachments survive a fresh-ephemeral/kill swap: only the *current*
-    // session is being replaced. Dropping them here would leak their live clients and servers.
-    replacement.background = std::mem::take(&mut ctx.state.background);
-    ctx.state = replacement;
+    crate::popup::kill_if_open(ctx);
+    crate::scratchpad::close_for_session_switch(ctx);
+    // The session/profile selection overlays that led here have resolved into this install; close
+    // them (the old whole-State swap did this implicitly by starting from a fresh State).
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
+    ctx.state.attachment = attachment;
+    // Snap to the new session's geometry rather than interpolating from the previous layout.
+    ctx.state.animation = crate::anim::GeometryAnimation::None;
+    // The Sessions tab excludes the current session, so a new current means a stale list; the
+    // post-update chokepoint re-arms discovery from the bumped epoch.
+    ctx.state.sidebar.invalidate_sessions();
     ctx.state.commands_dirty = true;
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 }
@@ -822,15 +824,13 @@ pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) 
     update
 }
 
-/// Replace `ctx.state` with a brand-new ephemeral session and spawn its attach after the current
-/// session has been shut down.
+/// Install a brand-new ephemeral session as current and spawn its attach, after the outgoing
+/// session has already been shut down or detached by the caller.
 pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let config = ctx.state.config.clone();
-    let theme = ctx.state.theme.clone();
     let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
-    let fresh = crate::state::State::new(config, theme);
-    swap_state_for_attach(ctx, fresh);
+    let attachment = crate::state::fresh_default_attachment(&ctx.state.config);
+    install_fresh_attachment(ctx, attachment);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -1707,6 +1707,11 @@ mod tests {
                     state.current_mut().pending_session_attach = None;
                     state.sidebar.command_epoch = 7;
                     state.sidebar.config_epoch = 11;
+                    // Client-global chrome that must survive a create: an open sidebar on a chosen
+                    // tab, and a running workbar command poller.
+                    state.sidebar_visible = true;
+                    state.sidebar.active_tab = Some(crate::config::SidebarTabId::new("sessions"));
+                    state.workbar_commands_running.insert("date".to_string());
                     // Simulate a profile-seeded session: the current pane carries a command.
                     state.current_mut().workspaces[0].panes[0].identity.command =
                         Some("nvim".to_string());
@@ -1731,15 +1736,25 @@ mod tests {
                     pending.left.as_ref().map(|left| left.name.as_str()),
                     Some("eph-test")
                 );
-                // The new session must not inherit the current layout: the swapped state is a
+                // The new session must not inherit the current layout: the installed attachment is a
                 // fresh single-pane default with no launch command to respawn.
                 assert_eq!(state.current().workspaces[0].panes.len(), 1);
                 assert_eq!(
                     state.current().workspaces[0].panes[0].identity.command,
                     None
                 );
-                assert_eq!(state.sidebar.command_epoch, 8);
-                assert_eq!(state.sidebar.config_epoch, 12);
+                // Client-global state is not per-session, so installing a fresh attachment leaves it
+                // untouched: command/config epochs don't churn (command tabs keep polling, no
+                // flicker), the sidebar stays open on its tab, and workbar pollers keep running.
+                // This is the whole point of installing an attachment instead of rebuilding State.
+                assert_eq!(state.sidebar.command_epoch, 7);
+                assert_eq!(state.sidebar.config_epoch, 11);
+                assert!(state.sidebar_visible);
+                assert_eq!(
+                    state.sidebar.active_tab,
+                    Some(crate::config::SidebarTabId::new("sessions"))
+                );
+                assert!(state.workbar_commands_running.contains("date"));
             })
             .expect("spawn test thread")
             .join()

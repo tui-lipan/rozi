@@ -9,7 +9,7 @@ use crate::ops::focus::request_profile_picker_focus;
 use crate::ops::focus::request_save_profile_focus;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::pty_events::{error_toast, info_toast};
-use crate::state::{Mode, ProfilePickerState, SaveProfileState, State};
+use crate::state::{Mode, ProfilePickerState, SaveProfileState};
 
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     let initial = ctx
@@ -591,7 +591,7 @@ pub(crate) fn open_named_target(
         OpenNamedIntent::CreateFresh => None,
         OpenNamedIntent::CreateFromProfile { profile, path } => Some((profile, path)),
     };
-    let (replacement, attach_intent) = if let Some((profile_name, path)) = seed {
+    let (attachment, attach_intent) = if let Some((profile_name, path)) = seed {
         let profile = match load_profile(&path) {
             Ok(profile) => profile,
             Err(message) => {
@@ -603,8 +603,11 @@ pub(crate) fn open_named_target(
                 return Update::full();
             }
         };
+        // An empty profile still yields a working session: fall back to the default attachment.
+        let attachment = crate::profiles::attachment_from_profile(&ctx.state.config, profile)
+            .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config));
         (
-            State::from_profile(ctx.state.config.clone(), ctx.state.theme.clone(), profile),
+            attachment,
             crate::state::AttachIntent::ProfileSeed {
                 profile: profile_name,
                 path,
@@ -612,7 +615,7 @@ pub(crate) fn open_named_target(
         )
     } else {
         (
-            State::new(ctx.state.config.clone(), ctx.state.theme.clone()),
+            crate::state::fresh_default_attachment(&ctx.state.config),
             crate::state::AttachIntent::Plain,
         )
     };
@@ -627,7 +630,7 @@ pub(crate) fn open_named_target(
             });
     crate::ops::session::release_current_session(ctx);
     let epoch = ctx.state.mint_attachment_id();
-    crate::ops::session::swap_state_for_attach(ctx, replacement);
+    crate::ops::session::install_fresh_attachment(ctx, attachment);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -692,11 +695,11 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
 
     let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
-    let config = ctx.state.config.clone();
-    let theme = ctx.state.theme.clone();
 
-    let new_state = State::from_profile(config, theme, profile);
-    crate::ops::session::swap_state_for_attach(ctx, new_state);
+    // An empty profile still yields a working session: fall back to the default attachment.
+    let attachment = crate::profiles::attachment_from_profile(&ctx.state.config, profile)
+        .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config));
+    crate::ops::session::install_fresh_attachment(ctx, attachment);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),

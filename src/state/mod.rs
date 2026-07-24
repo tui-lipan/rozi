@@ -154,30 +154,39 @@ pub struct State {
     pub commands_dirty: bool,
 }
 
+/// The default single-pane attachment a fresh launch, a fresh ephemeral session, or a killed
+/// session hops onto. Its one pane inherits the launch directory so the shell starts where hyprmux
+/// was invoked. Factored out so every "start a blank session" path builds the same thing without
+/// rebuilding the whole [`State`].
+pub fn fresh_default_attachment(config: &HyprmuxConfig) -> Attachment {
+    let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
+    let initial_id = 1;
+    let initial_rect = FloatRect {
+        x: 4.0,
+        y: 3.0,
+        w: 80.0,
+        h: 24.0,
+    };
+    let mut initial_pane = Pane::new(initial_id, config.scrollback, initial_rect);
+    // Launch the first pane in the directory hyprmux was started from; without this it spawns with
+    // no cwd and the PTY falls back to the shell's home directory.
+    initial_pane.identity.cwd = config.cwd.clone();
+    workspaces[0].panes.push(initial_pane);
+    append_tiled_window(&mut workspaces[0], initial_id);
+    workspaces[0].focused_pane = Some(initial_id);
+
+    let mut attachment = Attachment::new();
+    attachment.workspaces = workspaces;
+    attachment.focused_pane = Some(initial_id);
+    attachment.next_pane_id = initial_id + 1;
+    attachment
+}
+
 impl State {
     pub fn new(config: HyprmuxConfig, theme: Theme) -> Self {
         let sidebar_visible = config.sidebar.visible;
         let sidebar = SidebarState::new(&config.sidebar);
-        let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
-        let initial_id = 1;
-        let initial_rect = FloatRect {
-            x: 4.0,
-            y: 3.0,
-            w: 80.0,
-            h: 24.0,
-        };
-        let mut initial_pane = Pane::new(initial_id, config.scrollback, initial_rect);
-        // Launch the first pane in the directory hyprmux was started from; without this it
-        // spawns with no cwd and the PTY falls back to the shell's home directory.
-        initial_pane.identity.cwd = config.cwd.clone();
-        workspaces[0].panes.push(initial_pane);
-        append_tiled_window(&mut workspaces[0], initial_id);
-        workspaces[0].focused_pane = Some(initial_id);
-
-        let mut attachment = Attachment::new();
-        attachment.workspaces = workspaces;
-        attachment.focused_pane = Some(initial_id);
-        attachment.next_pane_id = initial_id + 1;
+        let attachment = fresh_default_attachment(&config);
 
         Self {
             config,

@@ -7,7 +7,7 @@ use tui_lipan::prelude::FloatRect;
 use crate::layout_tree_ser::{
     SerializedLayoutKind, SerializedSplitAxis, SerializedTree, from_dwindle, to_dwindle,
 };
-use crate::state::{Mode, Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
+use crate::state::{Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
 use crate::tiling::DwindleTree;
 use crate::tiling::append_tiled_window;
 
@@ -99,12 +99,32 @@ pub fn restore_state_from_profile(
     theme: tui_lipan::prelude::Theme,
     profile: HyprmuxProfile,
 ) -> State {
+    // A profile only ever seeds the *attachment* (the window-manager layout); everything else on
+    // `State` is the same as a fresh launch, so build one and drop the profile's attachment in.
+    match attachment_from_profile(&config, profile) {
+        Some(attachment) => {
+            let mut state = State::new(config, theme);
+            state.attachment = attachment;
+            state
+        }
+        None => State::new(config, theme),
+    }
+}
+
+/// Build the window-manager attachment a profile describes: its workspaces, panes (as identities,
+/// not yet PTY-backed), tile trees, focus, and active workspace. Returns `None` when the profile has
+/// no panes, so the caller falls back to a fresh default attachment. The panes are spawned on the
+/// session server once the attach completes (see `spawn_state_panes_on_session`).
+pub(crate) fn attachment_from_profile(
+    config: &crate::config::HyprmuxConfig,
+    profile: HyprmuxProfile,
+) -> Option<crate::state::Attachment> {
     if profile
         .workspaces
         .iter()
         .all(|workspace| workspace.panes.is_empty())
     {
-        return State::new(config, theme);
+        return None;
     }
 
     let scrollback = config.scrollback;
@@ -195,75 +215,15 @@ pub fn restore_state_from_profile(
         .iter()
         .all(|workspace| workspace.panes.is_empty())
     {
-        return State::new(config, theme);
+        return None;
     }
 
-    let sidebar_visible = config.sidebar.visible;
-    let sidebar = crate::state::SidebarState::new(&config.sidebar);
     let mut attachment = crate::state::Attachment::new();
     attachment.workspaces = workspaces;
     attachment.active_workspace = active_workspace;
     attachment.focused_pane = focused_pane;
     attachment.next_pane_id = next_pane_id;
-    State {
-        config,
-        attachment,
-        background: std::collections::HashMap::new(),
-        hosts: crate::state::HostRegistry::default(),
-        host_session_cache: crate::session::HostSessionCache::new(),
-        runtime_epoch: 0,
-        next_attachment_id: 1,
-        command_link: None,
-        mode: Mode::Normal,
-        moving_pane: None,
-        resizing_pane: None,
-        split_drag: None,
-        animation: crate::anim::GeometryAnimation::None,
-        last_viewport: std::cell::Cell::new(None),
-        last_content_viewport: std::cell::Cell::new(None),
-        last_clock_text: std::cell::RefCell::new(None),
-        sidebar_visible,
-        sidebar,
-        show_palette: false,
-        show_help: false,
-        show_appearance: false,
-        pane_padding_editor: None,
-        show_theme_picker: false,
-        theme_picker_preview: None,
-        theme,
-        system_theme: None,
-        theme_watcher: None,
-        search: None,
-        rename: None,
-        rename_session: None,
-        save_profile_prompt: None,
-        show_profile_picker: false,
-        profile_picker: None,
-        show_session_picker: false,
-        session_picker: None,
-        client_list: None,
-        last_blocked_input_toast: None,
-        replaceable_toasts: std::collections::HashMap::new(),
-        session_picker_epoch: 0,
-        profile_picker_epoch: 0,
-        copy_mode: None,
-        hint_mode: None,
-        copy_flash: None,
-        next_copy_flash_id: 1,
-        scratch: None,
-        scratch_visible: false,
-        scratch_return_focus: None,
-        scratch_height: None,
-        scratch_resize_start: None,
-        popup: None,
-        popup_return_focus: None,
-        control_socket_path: None,
-        event_hub: crate::events::EventHub::default(),
-        pending_destructive: None,
-        workbar_command_output: std::collections::HashMap::new(),
-        workbar_commands_running: std::collections::HashSet::new(),
-        commands_dirty: false,
-    }
+    Some(attachment)
 }
 
 pub fn replace_layout_from_profile(

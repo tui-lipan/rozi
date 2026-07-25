@@ -41,6 +41,7 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
         runtime: protocol::PaneRuntimeState::default(),
         last_agent_probe: None,
         last_agent_detect: None,
+        last_git_read: None,
         initial_cursor_report_primed: false,
     }
 }
@@ -703,6 +704,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             runtime: protocol::PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -758,6 +760,7 @@ fn duplicate_spawn_is_rejected() {
             runtime: protocol::PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -805,6 +808,7 @@ fn exited_pane_can_be_respawned() {
             runtime: protocol::PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -858,6 +862,7 @@ fn attach_reports_layout_and_panes() {
         runtime: protocol::PaneRuntimeState::default(),
         last_agent_probe: None,
         last_agent_detect: None,
+        last_git_read: None,
         initial_cursor_report_primed: false,
     };
     pane.screen.process_bytes(b"ready");
@@ -936,6 +941,7 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             runtime: protocol::PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -995,6 +1001,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             runtime: protocol::PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         },
     );
@@ -1057,6 +1064,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 runtime: protocol::PaneRuntimeState::default(),
                 last_agent_probe: None,
                 last_agent_detect: None,
+                last_git_read: None,
                 initial_cursor_report_primed: false,
             },
         );
@@ -1137,8 +1145,8 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         while let Ok(event) = server.event_rx.try_recv() {
             if let Some(outbound) = server.handle_event(event) {
                 if matches!(
-                    outbound,
-                    ServerOutbound::Control(ServerMessage::Exited { .. })
+                &outbound,
+                ServerOutbound::Control(message) if matches!(**message, ServerMessage::Exited { .. })
                 ) {
                     saw_exit_broadcast = true;
                 }
@@ -1213,8 +1221,8 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         while let Ok(event) = server.event_rx.try_recv() {
             if let Some(outbound) = server.handle_event(event) {
                 saw_exit |= matches!(
-                    outbound,
-                    ServerOutbound::Control(ServerMessage::Exited { .. })
+                &outbound,
+                ServerOutbound::Control(message) if matches!(**message, ServerMessage::Exited { .. })
                 );
                 server.broadcast_outbound(&outbound);
             }

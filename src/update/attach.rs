@@ -43,6 +43,9 @@ pub(super) fn bind_attached_pane_backends(
             pane.terminal.original_user = meta.original_user;
             pane.terminal.cwd = meta.runtime.cwd.clone();
             pane.terminal.cwd_host = meta.runtime.cwd_host.clone();
+            pane.terminal.display_path = meta.runtime.display_path.clone();
+            pane.terminal.project_root = meta.runtime.project_root.clone();
+            pane.terminal.git_branch = meta.runtime.git_branch.clone();
             pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
             pane.terminal.reported_status = meta.runtime.status.clone();
             pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
@@ -110,6 +113,9 @@ pub(super) fn apply_attached_panes(
             pane.terminal.original_user = attached.original_user;
             pane.terminal.cwd = attached.runtime.cwd.clone();
             pane.terminal.cwd_host = attached.runtime.cwd_host.clone();
+            pane.terminal.display_path = attached.runtime.display_path.clone();
+            pane.terminal.project_root = attached.runtime.project_root.clone();
+            pane.terminal.git_branch = attached.runtime.git_branch.clone();
             pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
             pane.terminal.reported_status = attached.runtime.status.clone();
             pane.terminal.detected_agent = attached.runtime.detected_agent.clone();

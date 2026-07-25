@@ -241,6 +241,21 @@ impl From<TerminalCommandPhase> for PaneCommandPhase {
 pub struct PaneRuntimeState {
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
+    /// Server-computed compact cwd for pane chrome: project-qualified when inside a detected Git
+    /// project, otherwise home-relative or absolute. Optional for compatibility with older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_path: Option<String>,
+    /// Absolute path of the Git project containing `cwd`, as the session server sees it. Set only
+    /// for a server-local `cwd` — a `cwd_host` path names a filesystem the server cannot probe.
+    /// This, not `cwd`, is what the sidebar groups agents by, so a pane in `repo/src` lands in the
+    /// same project as one in `repo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+    /// Checked-out branch of `project_root`, or a short commit id when `HEAD` is detached. Read
+    /// from `HEAD` on a slow tick rather than derived from `cwd`, since a checkout changes it
+    /// without the directory moving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
     pub cwd_source: PaneCwdSource,
     pub command_phase: PaneCommandPhase,
     /// Normalized executable basename only - never a full command line (shell integrations are
@@ -1131,6 +1146,7 @@ mod tests {
             "sequence": 4
         });
         let decoded: PaneRuntimeState = serde_json::from_value(old_shape).unwrap();
+        assert_eq!(decoded.display_path, None);
         assert_eq!(decoded.status, None);
         assert_eq!(decoded.detected_agent, None);
 

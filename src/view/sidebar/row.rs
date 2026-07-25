@@ -323,6 +323,31 @@ pub(super) fn header(ctx: &Context<HyprmuxApp>, label: impl Into<String>, muted:
         .into()
 }
 
+/// A section header carrying a right-aligned note — the project header's branch. The label flexes,
+/// so an overlong project name truncates rather than pushing the note off the edge: the note is a
+/// fixed short thing that is either fully readable or worthless, while a clipped project name is
+/// still recognizable.
+pub(super) fn header_with_note(
+    ctx: &Context<HyprmuxApp>,
+    label: impl Into<String>,
+    note: impl Into<String>,
+) -> Element {
+    HStack::new()
+        .gap(1)
+        .height(Length::Px(1))
+        // Left cell aligns with the plain header's leading space. Nothing on the right: the note
+        // lands in the same column as the rows' badges below it, which is what makes the two read
+        // as one right-hand rail rather than two near-misses.
+        .padding((0, 0, 0, 1))
+        .child(
+            Text::new(label.into())
+                .style(super::super::fg_only(&ctx.state.theme.accent).bold())
+                .width(Length::Flex(1)),
+        )
+        .child(Text::new(note.into()).style(super::super::fg_only(&ctx.state.theme.muted).dim()))
+        .into()
+}
+
 /// Shortens a value by dropping characters from the *front*, keeping the tail. For a path, the tail
 /// is the part that identifies it — clipping `~/Work/Projects/hyprmux` to `~/Work/Project…` throws
 /// away the only word that distinguishes it from its neighbours.

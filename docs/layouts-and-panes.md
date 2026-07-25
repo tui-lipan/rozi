@@ -107,15 +107,23 @@ transitions as workspace panes.
 Each pane shows a titlebar with an icon (tiled / floating / fullscreen) and a title. Toggle
 titlebars on/off with the *Toggle pane titlebars* palette command.
 
-A custom title set by renaming the pane (`n`) is shown verbatim. Otherwise the titlebar shows the
-pane's current working directory, compressing the local home directory to `~`. Shell-provided
-`user@host:` prefixes are removed because the workbar already identifies the active local or remote
-host. When the shell reports an account different from the one that originally launched the pane,
-the changed account remains visible, for example `root · /etc/nginx`.
+The displayed title uses this precedence:
 
-If neither runtime nor launch metadata provides a working directory, the terminal title and then
-the default label `shell` are used as fallbacks. See
-[Project profiles & pane identity](project-profiles.md).
+1. a **custom title** set by renaming the pane (`n`),
+2. an **application-provided terminal title**, such as a filename set by an editor,
+3. the pane's **current working directory**,
+4. the pane's generic fallback label, normally `shell`.
+
+A custom or application title is qualified with location context: `<primary title> · <path>`. Inside
+a detected Git project, the path is compact but project-qualified (`hyprmux/src/view`); at the
+project root it is just the project name (`hyprmux`). Outside a project, it is the home-relative or
+absolute cwd.
+
+Conventional shell titles shaped like `user@host:cwd` count as working-directory metadata, not
+application titles. Their normal username and hostname are removed because the workbar already
+identifies the active local or remote host. When the shell reports an account different from the
+one that originally launched the pane, the changed account remains visible, for example
+`root · /etc/nginx`. See [Project profiles & pane identity](project-profiles.md).
 
 ## Workspaces
 

@@ -23,6 +23,13 @@ const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// [`RUNTIME_POLL_INTERVAL`]; see `ServerPane::last_agent_probe`.
 pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 
+/// How often a pane re-reads its project root and branch from disk. Both change without the cwd
+/// moving — `git checkout` swaps the branch under a stationary shell, `git init` turns a plain
+/// directory into a project — so neither can hang off the cwd-changed guard the way `display_path`
+/// does. A read is an ancestor walk of `.git` probes plus one small file, cheap enough at this rate
+/// that it is not worth a finer trigger.
+pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
+
 impl SessionServer {
     pub(super) fn set_pane_status(
         &mut self,
@@ -166,6 +173,43 @@ fn compute_runtime_state(
     // pane exits, its own exit code is at least as informative a fallback as leaving this `None`.
     let last_exit_status = last_exit_status.or(pane.exited);
     let (cwd, cwd_host, cwd_source) = resolve_cwd(pane, semantic.cwd.as_ref(), inspector);
+    let cwd_changed = !cwd_unchanged(&cwd, &pane.runtime.cwd) || cwd_host != pane.runtime.cwd_host;
+    let display_path_missing = cwd.is_some() && pane.runtime.display_path.is_none();
+    let display_path = if cwd_changed || display_path_missing {
+        match (cwd.as_deref(), cwd_host.as_deref()) {
+            (Some(cwd), None) => Some(crate::platform::paths::display_cwd(cwd)),
+            // A nested remote cwd belongs to a host whose filesystem and home directory the session
+            // server cannot inspect, so preserve the reported absolute spelling.
+            (Some(cwd), Some(_)) => Some(cwd.to_string()),
+            (None, _) => None,
+        }
+    } else {
+        pane.runtime.display_path.clone()
+    };
+    // Local paths only: a `cwd_host` directory lives on a machine whose `.git` this server cannot
+    // stat, and reporting this host's answer for it would attribute one repository's branch to
+    // another machine's directory.
+    let git_stale = pane
+        .last_git_read
+        .is_none_or(|at| at.elapsed() >= GIT_REFRESH);
+    let (project_root, git_branch) = if cwd_changed || git_stale {
+        pane.last_git_read = Some(Instant::now());
+        match (cwd.as_deref(), cwd_host.as_deref()) {
+            (Some(cwd), None) => {
+                let root = crate::platform::paths::discover_project_root(cwd);
+                let branch = root
+                    .as_deref()
+                    .and_then(crate::platform::paths::head_branch);
+                (root, branch)
+            }
+            _ => (None, None),
+        }
+    } else {
+        (
+            pane.runtime.project_root.clone(),
+            pane.runtime.git_branch.clone(),
+        )
+    };
     let foreground_program = semantic
         .executable
         .as_deref()
@@ -207,6 +251,9 @@ fn compute_runtime_state(
     let candidate = PaneRuntimeState {
         cwd,
         cwd_host,
+        display_path,
+        project_root,
+        git_branch,
         cwd_source,
         command_phase,
         foreground_program,
@@ -217,6 +264,9 @@ fn compute_runtime_state(
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
         || candidate.cwd_host != pane.runtime.cwd_host
+        || candidate.display_path != pane.runtime.display_path
+        || candidate.project_root != pane.runtime.project_root
+        || candidate.git_branch != pane.runtime.git_branch
         || candidate.cwd_source != pane.runtime.cwd_source
         || candidate.command_phase != pane.runtime.command_phase
         || candidate.foreground_program != pane.runtime.foreground_program
@@ -380,6 +430,7 @@ mod tests {
             runtime: PaneRuntimeState::default(),
             last_agent_probe: None,
             last_agent_detect: None,
+            last_git_read: None,
             initial_cursor_report_primed: false,
         }
     }

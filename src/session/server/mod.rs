@@ -166,6 +166,11 @@ pub struct ServerPane {
     pub last_agent_probe: Option<AgentProbe>,
     /// When detection last actually swept, for the periodic refresh.
     pub last_agent_detect: Option<std::time::Instant>,
+    /// When this pane's project root and branch were last read from disk. A checkout changes the
+    /// branch without the working directory moving, so unlike the rest of the runtime state this
+    /// cannot be driven by a cwd change alone; see
+    /// [`GIT_REFRESH`](super::runtime::GIT_REFRESH).
+    pub last_git_read: Option<std::time::Instant>,
     /// The framework answered ConPTY's startup cursor query before spawning. Suppress the parser's
     /// later duplicate cursor report so it cannot leak into child stdin.
     pub initial_cursor_report_primed: bool,
@@ -250,12 +255,20 @@ enum ServerEvent {
 }
 
 enum ServerOutbound {
-    Control(ServerMessage),
+    /// Boxed because `PaneOutput` is the variant that actually flows in volume: an inline control
+    /// message would make every byte-carrying move pay the largest control message's footprint.
+    Control(Box<ServerMessage>),
     PaneOutput {
         pane_id: PaneId,
         generation: u64,
         bytes: Vec<u8>,
     },
+}
+
+impl ServerOutbound {
+    fn control(message: ServerMessage) -> Self {
+        Self::Control(Box::new(message))
+    }
 }
 
 /// Where a response frame should go.

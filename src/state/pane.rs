@@ -60,40 +60,52 @@ impl Pane {
             .unwrap_or_else(|| self.title.clone())
     }
 
-    /// Titlebar text for an unrenamed pane: its current working directory, optionally qualified by
-    /// an account that differs from the one that launched the shell. Hostnames are intentionally
-    /// omitted because the workbar already identifies the active local or remote host.
+    /// Titlebar text in user name → application title → contextual cwd → generic fallback order.
+    /// A custom/application primary title is qualified with the project-relative cwd when known.
+    /// Conventional shell `user@host:cwd` titles count as cwd metadata rather than application
+    /// titles; their hostname is omitted, while a user changed after shell launch remains visible.
     pub fn titlebar_title(&self, remote_attached: bool) -> String {
-        if let Some(custom_title) = self.identity.custom_title.as_ref() {
-            return custom_title.clone();
-        }
-
         let terminal_title = self.terminal.title();
         let shell_title = terminal_title.as_deref().and_then(shell_title_parts);
-        let cwd = shell_title
-            .map(|(_, cwd)| cwd.to_string())
+        let primary = self.identity.custom_title.clone().or_else(|| {
+            shell_title
+                .is_none()
+                .then(|| terminal_title.clone())
+                .flatten()
+        });
+
+        let path = self
+            .terminal
+            .display_path
+            .clone()
+            .or_else(|| shell_title.map(|(_, cwd)| cwd.to_string()))
             .or_else(|| self.live_cwd())
             .or_else(|| self.identity.cwd.clone())
             .map(|cwd| {
-                if remote_attached {
+                if remote_attached || self.terminal.display_path.is_some() {
                     cwd
                 } else {
                     crate::platform::paths::compress_home(&cwd)
                 }
             });
-
-        let Some(cwd) = cwd else {
-            return terminal_title.unwrap_or_else(|| self.title.clone());
-        };
         let switched_user = shell_title.and_then(|(user, _)| user).filter(|user| {
             self.terminal
                 .original_user
                 .as_deref()
                 .is_some_and(|original| original != *user)
         });
-        match switched_user {
-            Some(user) => format!("{user} · {cwd}"),
-            None => cwd,
+        let location = path.map(|path| match switched_user {
+            Some(user) => format!("{user} · {path}"),
+            None => path,
+        });
+
+        match (primary, location) {
+            (Some(primary), Some(location)) if primary != location => {
+                format!("{primary} · {location}")
+            }
+            (Some(primary), _) => primary,
+            (None, Some(location)) => location,
+            (None, None) => self.title.clone(),
         }
     }
 
@@ -189,23 +201,41 @@ mod tests {
     }
 
     #[test]
-    fn titlebar_prefers_a_custom_name_over_runtime_location() {
+    fn titlebar_qualifies_a_custom_name_with_the_project_path() {
         let mut pane = pane();
         pane.set_custom_title("logs");
-        pane.terminal.title = Some("root@workstation:/var/log".to_string());
+        pane.terminal.title = Some("razuer@workstation:/work/hyprmux/services/api".to_string());
         pane.terminal.original_user = Some("razuer".to_string());
-        pane.terminal.cwd = Some("/var/log".to_string());
+        pane.terminal.cwd = Some("/work/hyprmux/services/api".to_string());
+        pane.terminal.display_path = Some("hyprmux/services/api".to_string());
 
-        assert_eq!(pane.titlebar_title(false), "logs");
+        assert_eq!(pane.titlebar_title(false), "logs · hyprmux/services/api");
     }
 
     #[test]
-    fn titlebar_uses_structured_cwd_instead_of_an_application_title() {
+    fn titlebar_qualifies_an_application_title_with_the_project_path() {
         let mut pane = pane();
         pane.terminal.title = Some("nvim src/main.rs".to_string());
+        pane.terminal.cwd = Some("/work/hyprmux/src".to_string());
+        pane.terminal.display_path = Some("hyprmux/src".to_string());
+
+        assert_eq!(pane.titlebar_title(false), "nvim src/main.rs · hyprmux/src");
+    }
+
+    #[test]
+    fn titlebar_uses_structured_cwd_without_a_terminal_title() {
+        let mut pane = pane();
         pane.terminal.cwd = Some("/work/hyprmux".to_string());
 
         assert_eq!(pane.titlebar_title(false), "/work/hyprmux");
+    }
+
+    #[test]
+    fn titlebar_uses_the_generic_fallback_when_no_identity_is_available() {
+        let mut pane = pane();
+        pane.title = "Shell".to_string();
+
+        assert_eq!(pane.titlebar_title(false), "Shell");
     }
 
     #[test]

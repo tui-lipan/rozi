@@ -865,6 +865,9 @@ pub(super) fn pane_runtime_changed(
                 pane.terminal.runtime_sequence = state.sequence;
                 pane.terminal.cwd = state.cwd;
                 pane.terminal.cwd_host = state.cwd_host;
+                pane.terminal.display_path = state.display_path;
+                pane.terminal.project_root = state.project_root;
+                pane.terminal.git_branch = state.git_branch;
                 pane.terminal.foreground_program = state.foreground_program;
                 pane.terminal.command_phase = state.command_phase;
                 pane.terminal.last_exit_status = state.last_exit_status;
@@ -899,6 +902,9 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.runtime_sequence = state.sequence;
         pane.terminal.cwd = state.cwd;
         pane.terminal.cwd_host = state.cwd_host;
+        pane.terminal.display_path = state.display_path;
+        pane.terminal.project_root = state.project_root;
+        pane.terminal.git_branch = state.git_branch;
         pane.terminal.foreground_program = state.foreground_program;
         pane.terminal.command_phase = state.command_phase;
         pane.terminal.last_exit_status = state.last_exit_status;

@@ -357,8 +357,8 @@ While an overlay is open (command palette, help, theme picker, search, rename):
 - In **search**, `Enter` jumps to the next match and `Shift+Enter` jumps to the previous one.
   `Tab` cycles the search **scope** (focused pane → workspace → all panes); jumping to a match
   in another pane (or workspace) switches focus there.
-- In **rename**, submitting an empty name clears the custom title (falling back to the pane's
-  current working directory).
+- In **rename**, submitting an empty name clears the custom title (falling back to an
+  application-provided terminal title, then the contextual current working directory).
 
 In the **Profiles** picker, `Enter` attaches to or launches the highlighted profile's canonical
 same-name session. `Ctrl+O` opens that recipe under a new name, or as an ephemeral session when the

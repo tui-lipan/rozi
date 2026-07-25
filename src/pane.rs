@@ -16,6 +16,12 @@ pub struct TerminalPane {
     pub original_user: Option<String>,
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
+    /// Compact, server-computed cwd used as titlebar context.
+    pub display_path: Option<String>,
+    /// Server-computed Git project containing `cwd`, and the branch it has checked out. The
+    /// sidebar's Agents tab groups by the root and heads each group with the branch.
+    pub project_root: Option<String>,
+    pub git_branch: Option<String>,
     pub child_pid: Option<u32>,
     /// Normalized foreground-executable basename, server-authoritative (cross-platform plan
     /// Phase 6/7): pushed down via [`crate::session::protocol::PaneMeta::runtime`] and
@@ -89,6 +95,9 @@ impl TerminalPane {
             original_user: None,
             cwd: None,
             cwd_host: None,
+            display_path: None,
+            project_root: None,
+            git_branch: None,
             child_pid: None,
             foreground_program: None,
             reported_status: None,
@@ -118,6 +127,9 @@ impl TerminalPane {
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
             self.original_user = None;
+            self.display_path = None;
+            self.project_root = None;
+            self.git_branch = None;
             self.reported_status = None;
             self.detected_agent = None;
             self.finished_unseen = false;

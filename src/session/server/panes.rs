@@ -91,7 +91,7 @@ impl SessionServer {
         if let Some(old) = self.panes.remove(&id)
             && old.log.is_some()
         {
-            self.broadcast_outbound(&ServerOutbound::Control(
+            self.broadcast_outbound(&ServerOutbound::control(
                 ServerMessage::PaneLoggingChanged {
                     pane_id: id,
                     generation: old.generation,
@@ -162,6 +162,7 @@ impl SessionServer {
                         runtime: protocol::PaneRuntimeState::default(),
                         last_agent_probe: None,
                         last_agent_detect: None,
+                        last_git_read: None,
                         initial_cursor_report_primed: cfg!(windows),
                     },
                 );
@@ -198,6 +199,7 @@ impl SessionServer {
                             runtime: protocol::PaneRuntimeState::default(),
                             last_agent_probe: None,
                             last_agent_detect: None,
+                            last_git_read: None,
                             initial_cursor_report_primed: false,
                         },
                     );
@@ -259,7 +261,7 @@ impl SessionServer {
                         };
                         self.broadcast_outbound(&output);
                         if let Some(error) = logging_error {
-                            self.broadcast_outbound(&ServerOutbound::Control(
+                            self.broadcast_outbound(&ServerOutbound::control(
                                 ServerMessage::PaneLoggingChanged {
                                     pane_id: id,
                                     generation,
@@ -292,14 +294,14 @@ impl SessionServer {
                         pane.exited = Some(code);
                         self.dirty = true;
                         self.sync_pane_runtime(id, generation);
-                        Some(ServerOutbound::Control(ServerMessage::Exited {
+                        Some(ServerOutbound::control(ServerMessage::Exited {
                             pane_id: id,
                             generation,
                             code,
                         }))
                     }
                     TerminalPtyEvent::Error(message) => {
-                        Some(ServerOutbound::Control(ServerMessage::SpawnResult {
+                        Some(ServerOutbound::control(ServerMessage::SpawnResult {
                             pane_id: id,
                             generation,
                             pid: None,
@@ -341,7 +343,7 @@ impl SessionServer {
             generation,
             bytes,
         });
-        Some(ServerOutbound::Control(ServerMessage::Exited {
+        Some(ServerOutbound::control(ServerMessage::Exited {
             pane_id: id,
             generation,
             code,
@@ -417,7 +419,7 @@ impl SessionServer {
                 generation,
                 bytes,
             });
-            return Some(ServerOutbound::Control(ServerMessage::Exited {
+            return Some(ServerOutbound::control(ServerMessage::Exited {
                 pane_id: id,
                 generation,
                 code,

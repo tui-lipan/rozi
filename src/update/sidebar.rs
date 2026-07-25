@@ -756,13 +756,6 @@ fn wire_state_to_status(state: crate::session::protocol::WireChangeState) -> Fil
     }
 }
 
-fn discover_repo_root(cwd: &str) -> Option<String> {
-    std::path::Path::new(cwd)
-        .ancestors()
-        .find(|dir| dir.join(".git").exists())
-        .map(|dir| dir.to_string_lossy().into_owned())
-}
-
 fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
     // The widget ignores a token that does not increase, so this only counts up.
     sidebar.git_refresh_token = sidebar.git_refresh_token.saturating_add(1);
@@ -788,7 +781,8 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
         ctx.state.sidebar.tree_repo = if ctx.state.current().remote_host.is_some() {
             None
         } else {
-            cwd.as_deref().and_then(discover_repo_root)
+            cwd.as_deref()
+                .and_then(crate::platform::paths::discover_project_root)
         };
         ctx.state.sidebar.tree_cwd = cwd;
         // A new root invalidates every server-served listing: paths under the old root will never
@@ -1166,11 +1160,24 @@ mod tests {
 
         let repo_str = repo.to_string_lossy().into_owned();
         assert_eq!(
-            discover_repo_root(&nested.to_string_lossy()),
+            crate::platform::paths::discover_project_root(&nested.to_string_lossy()),
             Some(repo_str.clone())
         );
-        assert_eq!(discover_repo_root(&repo_str), Some(repo_str));
-        assert_eq!(discover_repo_root(&dir.path().to_string_lossy()), None);
+        assert_eq!(
+            crate::platform::paths::discover_project_root(&repo_str),
+            Some(repo_str.clone())
+        );
+        assert_eq!(
+            crate::platform::paths::discover_project_root(&dir.path().to_string_lossy()),
+            None
+        );
+        assert_eq!(
+            crate::platform::paths::display_cwd(&nested.to_string_lossy()),
+            std::path::Path::new("repo")
+                .join("src/deep")
+                .to_string_lossy()
+        );
+        assert_eq!(crate::platform::paths::display_cwd(&repo_str), "repo");
     }
 
     /// The roots follow the focused pane, and a repeated directory report — which a shell emits at

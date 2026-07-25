@@ -110,6 +110,9 @@ pub fn attached_message() -> ServerMessage {
                 runtime: PaneRuntimeState {
                     cwd: pane.cwd.clone(),
                     cwd_host: None,
+                    display_path: pane.cwd.clone(),
+                    project_root: pane.cwd.clone(),
+                    git_branch: Some("bench".to_string()),
                     cwd_source: PaneCwdSource::ShellReport,
                     command_phase: PaneCommandPhase::Executing,
                     foreground_program: Some("benchmark-worker".to_string()),

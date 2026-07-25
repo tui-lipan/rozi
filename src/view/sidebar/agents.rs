@@ -21,16 +21,25 @@ pub(crate) struct AgentRow {
     pub run: Option<std::time::Duration>,
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
+    /// Git project containing `cwd`, as the session server resolved it. This is the grouping key
+    /// where it exists, so agents working in `repo` and `repo/src` share one project.
+    pub project_root: Option<String>,
+    /// Where in the project this agent sits (`src`, `services/api`), `None` at its root. In a
+    /// monorepo this is the only thing telling two rows of the same project apart.
+    pub subpath: Option<String>,
+    pub branch: Option<String>,
     /// The agent finished a run (went quiescent) since the pane was last focused; drives the filled
     /// attention pulse until the pane is looked at.
     pub finished_unseen: bool,
 }
 
-/// Agents that share a working directory, herdr-style "space" grouping. `project` is `None` for
-/// the trailing fallback group of agents whose pane has no usable cwd.
+/// Agents that share a project, herdr-style "space" grouping. `project` is `None` for the trailing
+/// fallback group of agents whose pane has no usable cwd.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentGroup {
     pub project: Option<String>,
+    /// Branch checked out in the group's project, shown on its header.
+    pub branch: Option<String>,
     pub rows: Vec<AgentRow>,
 }
 
@@ -154,6 +163,17 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         .cwd
                         .clone()
                         .filter(|cwd| !cwd.trim().is_empty());
+                    let project_root = cwd
+                        .is_some()
+                        .then(|| pane.terminal.project_root.clone())
+                        .flatten();
+                    let subpath =
+                        project_root
+                            .as_deref()
+                            .zip(cwd.as_deref())
+                            .and_then(|(root, cwd)| {
+                                crate::platform::paths::project_relative_path(root, cwd)
+                            });
                     AgentRow {
                         pane_id: pane.id,
                         workspace_index,
@@ -172,6 +192,12 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                             .then(|| pane.terminal.cwd_host.clone())
                             .flatten(),
                         cwd,
+                        branch: project_root
+                            .is_some()
+                            .then(|| pane.terminal.git_branch.clone())
+                            .flatten(),
+                        project_root,
+                        subpath,
                         finished_unseen: pane.terminal.finished_unseen,
                     }
                 })
@@ -187,30 +213,36 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
     rows
 }
 
-/// Group agent rows by working directory (host + path). Group order is stable — alphabetical by
-/// label, fallback group last — never by status, so blocks do not jump while agents flip between
-/// states; urgency surfaces through the aggregated header glyph and the within-group row sort
+/// Group agent rows by project (host + project root, falling back to the working directory when the
+/// pane is not in one). Grouping on the *root* is what puts an agent in `repo/src` beside one in
+/// `repo` instead of inventing a project called `src`; where the two differ, the row carries the
+/// project-relative remainder.
+///
+/// Group order is stable — alphabetical by label, fallback group last — never by status, so blocks
+/// do not jump while agents flip between states; urgency surfaces through the within-group row sort
 /// instead. Row order inside a group keeps the [`agent_rows`] status sort.
 pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
     struct Keyed {
         host: Option<String>,
-        cwd: String,
+        /// Project root where there is one, else the raw cwd: what the label is derived from and
+        /// what rows are matched against.
+        path: String,
         rows: Vec<AgentRow>,
     }
     let mut known: Vec<Keyed> = Vec::new();
     let mut unknown: Vec<AgentRow> = Vec::new();
     for row in agent_rows(state) {
-        match row.cwd.clone() {
-            Some(cwd) => {
+        match row.project_root.clone().or_else(|| row.cwd.clone()) {
+            Some(path) => {
                 let host = row.cwd_host.clone();
                 if let Some(group) = known.iter_mut().find(|group| {
-                    group.host == host && crate::platform::paths::paths_equal(&group.cwd, &cwd)
+                    group.host == host && crate::platform::paths::paths_equal(&group.path, &path)
                 }) {
                     group.rows.push(row);
                 } else {
                     known.push(Keyed {
                         host,
-                        cwd,
+                        path,
                         rows: vec![row],
                     });
                 }
@@ -221,7 +253,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
 
     let mut labels: Vec<String> = known
         .iter()
-        .map(|group| project_label(&group.cwd, group.host.as_deref(), false))
+        .map(|group| project_label(&group.path, group.host.as_deref(), false))
         .collect();
     // Disambiguate duplicate final labels with one parent segment (VS Code-style); a residual
     // collision after that is accepted — group identity is the full path, the label is display.
@@ -237,7 +269,7 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
         .collect();
     for (index, group) in known.iter().enumerate() {
         if ambiguous[index] {
-            labels[index] = project_label(&group.cwd, group.host.as_deref(), true);
+            labels[index] = project_label(&group.path, group.host.as_deref(), true);
         }
     }
 
@@ -245,27 +277,36 @@ pub(crate) fn agent_groups(state: &State) -> Vec<AgentGroup> {
         .into_iter()
         .zip(labels)
         .map(|(keyed, label)| {
+            // Every row in the group shares a root and so a branch; the first that has one answers
+            // for the group, which also covers a client that attached before the server had read it.
+            let branch = keyed
+                .rows
+                .iter()
+                .find_map(|row| row.branch.clone())
+                .filter(|branch| !branch.trim().is_empty());
             (
-                keyed.cwd,
+                keyed.path,
                 AgentGroup {
                     project: Some(label),
+                    branch,
                     rows: keyed.rows,
                 },
             )
         })
         .collect();
-    groups.sort_by(|(cwd_a, a), (cwd_b, b)| {
+    groups.sort_by(|(path_a, a), (path_b, b)| {
         let label_a = a.project.as_deref().unwrap_or_default();
         let label_b = b.project.as_deref().unwrap_or_default();
         label_a
             .to_lowercase()
             .cmp(&label_b.to_lowercase())
-            .then_with(|| cwd_a.cmp(cwd_b))
+            .then_with(|| path_a.cmp(path_b))
     });
     let mut groups: Vec<AgentGroup> = groups.into_iter().map(|(_, group)| group).collect();
     if !unknown.is_empty() {
         groups.push(AgentGroup {
             project: None,
+            branch: None,
             rows: unknown,
         });
     }
@@ -453,18 +494,43 @@ fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Col
     (glyph.to_string(), color, working)
 }
 
-/// One-line project header: the project label alone, at the same column every other tab's headers
-/// use.
+/// One-line project header: the project label at the same column every other tab's headers use,
+/// with the branch it has checked out pinned to the right edge.
 ///
-/// It deliberately carries no aggregated status glyph. Groups never collapse, so every row it would
-/// summarize is already on screen directly beneath it — and the glyph plus the nesting it forced
-/// cost four cells on every row of the narrowest surface in the app.
+/// The branch earns that space because the group is a *directory*: a worktree of the same
+/// repository is its own group under a name that says nothing about which line of work it holds
+/// (`api` and `api-2`), and knowing which branch an agent is committing to is the difference
+/// between reading its output and trusting it. Nothing else about the repository is here — how far
+/// the branch has diverged from its upstream cannot be known without a fetch, and a stale number
+/// presented as current is worse than no number.
+///
+/// The header deliberately carries no aggregated status glyph. Groups never collapse, so every row
+/// it would summarize is already on screen directly beneath it — and the glyph plus the nesting it
+/// forced cost four cells on every row of the narrowest surface in the app.
 fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
-    match group.project.as_deref() {
-        Some(label) => row::header(ctx, label, false),
-        None => row::header(ctx, "elsewhere", true),
+    let Some(label) = group.project.as_deref() else {
+        return row::header(ctx, "elsewhere", true);
+    };
+    match group.branch.as_deref() {
+        Some(branch) => row::header_with_note(
+            ctx,
+            label,
+            row::truncate_start(branch, branch_budget(ctx.state.config.sidebar.width)),
+        ),
+        None => row::header(ctx, label, false),
     }
 }
+
+/// Character budget for the branch on a project header. Half the sidebar is the most a branch may
+/// take from the project name beside it; below that the pair stops being two readable things.
+fn branch_budget(width: u16) -> usize {
+    (usize::from(width) / 2).max(6)
+}
+
+/// How much of a row's in-project path may sit in the badge. The badge shares the name line with
+/// the agent's own name, which has to stay readable; a deeper path keeps its tail, the part that
+/// says which component the agent is actually in.
+const SUBPATH_MAX_CHARS: usize = 12;
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
@@ -489,8 +555,19 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
         // spread across workspaces, so this is the cross-reference to the Panes tab — and the hint
         // that two rows cannot be watched side by side.
+        //
+        // Where the agent sits below its project root leads it: in a monorepo, `services/api` is
+        // the only thing separating two rows that otherwise read identically, and the group header
+        // can no longer say it now that it names the project rather than the directory.
         .badge(
-            super::workspace_badge(&ctx.state, row.workspace_index),
+            match row.subpath.as_deref() {
+                Some(subpath) => format!(
+                    "{} · {}",
+                    row::truncate_start(subpath, SUBPATH_MAX_CHARS),
+                    super::workspace_badge(&ctx.state, row.workspace_index)
+                ),
+                None => super::workspace_badge(&ctx.state, row.workspace_index),
+            },
             super::super::fg_only(&ctx.state.theme.muted).dim(),
         );
 
@@ -547,6 +624,20 @@ mod tests {
             set_at: 1,
         });
         pane.terminal.cwd = cwd.map(str::to_string);
+        pane
+    }
+
+    /// A pane the session server resolved a Git project for: `cwd` may sit at `root` or below it.
+    fn pane_in_project(
+        id: PaneId,
+        value: Option<&str>,
+        cwd: &str,
+        root: &str,
+        branch: Option<&str>,
+    ) -> Pane {
+        let mut pane = pane_in(id, value, false, Some(cwd));
+        pane.terminal.project_root = Some(root.to_string());
+        pane.terminal.git_branch = branch.map(str::to_string);
         pane
     }
 
@@ -669,6 +760,111 @@ mod tests {
         assert_eq!(groups[2].rows[0].pane_id, 3);
     }
 
+    /// The point of grouping on the project root: an agent launched in `hyprmux/src` belongs to
+    /// `hyprmux`, not to a project called `src`. What it lost — where in the project it sits — comes
+    /// back on the row as the subpath.
+    #[test]
+    fn agents_below_the_project_root_join_the_project_not_a_directory() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.current_mut().workspaces[0].panes = vec![
+            pane_in_project(
+                1,
+                Some("idle"),
+                "/home/x/hyprmux",
+                "/home/x/hyprmux",
+                Some("master"),
+            ),
+            pane_in_project(
+                2,
+                Some("working"),
+                "/home/x/hyprmux/src/view",
+                "/home/x/hyprmux",
+                Some("master"),
+            ),
+        ];
+
+        let groups = agent_groups(&state);
+        assert_eq!(groups.len(), 1, "one project, one group");
+        assert_eq!(groups[0].project.as_deref(), Some("hyprmux"));
+        assert_eq!(groups[0].branch.as_deref(), Some("master"));
+        // Status order still decides the rows: the nested one is working, so it leads.
+        assert_eq!(
+            groups[0]
+                .rows
+                .iter()
+                .map(|row| (row.pane_id, row.subpath.clone()))
+                .collect::<Vec<_>>(),
+            vec![(2, Some("src/view".to_string())), (1, None)]
+        );
+    }
+
+    /// Two checkouts of one repository are two directories, so they stay two groups — and the
+    /// branch is what tells them apart when the directory names do not.
+    #[test]
+    fn worktrees_stay_separate_groups_and_head_their_own_branch() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.current_mut().workspaces[0].panes = vec![
+            pane_in_project(
+                1,
+                Some("idle"),
+                "/home/x/api",
+                "/home/x/api",
+                Some("master"),
+            ),
+            pane_in_project(
+                2,
+                Some("idle"),
+                "/home/x/api-2",
+                "/home/x/api-2",
+                Some("feat/pricing"),
+            ),
+        ];
+
+        assert_eq!(
+            agent_groups(&state)
+                .iter()
+                .map(|group| (group.project.clone(), group.branch.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some("api".into()), Some("master".into())),
+                (Some("api-2".into()), Some("feat/pricing".into())),
+            ]
+        );
+    }
+
+    /// A client can see a project before the server has read its branch, and a pane can be in no
+    /// project at all. Neither may lose the group or invent a branch for it.
+    #[test]
+    fn a_group_without_a_branch_still_heads_its_project() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.current_mut().workspaces[0].panes = vec![
+            pane_in_project(1, Some("idle"), "/home/x/api", "/home/x/api", None),
+            pane_in_project(2, Some("idle"), "/home/x/api", "/home/x/api", Some("  ")),
+            pane_in(3, Some("idle"), false, Some("/home/x/notes")),
+        ];
+
+        let groups = agent_groups(&state);
+        assert_eq!(groups[0].project.as_deref(), Some("api"));
+        assert_eq!(groups[0].branch, None, "blank is not a branch name");
+        assert_eq!(groups[1].project.as_deref(), Some("notes"));
+        assert_eq!(groups[1].branch, None);
+        assert!(groups[1].rows[0].subpath.is_none());
+    }
+
+    /// The branch column may take at most half the header, and keeps the tail of a long branch
+    /// name — `feat/pricing-v2` and `feat/pricing-v3` differ only there.
+    #[test]
+    fn branch_budget_splits_the_header_and_keeps_the_distinguishing_tail() {
+        assert_eq!(branch_budget(32), 16);
+        assert_eq!(branch_budget(48), 24);
+        assert_eq!(branch_budget(2), 6, "a floor, never zero");
+        assert_eq!(row::truncate_start("master", branch_budget(32)), "master");
+        assert_eq!(
+            row::truncate_start("feat/show-working-directory-v2", branch_budget(32)),
+            "…ng-directory-v2"
+        );
+    }
+
     #[test]
     fn duplicate_project_basenames_gain_a_parent_segment() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
@@ -786,6 +982,9 @@ mod tests {
             run: Some(Duration::from_secs(12 * 60)),
             cwd: None,
             cwd_host: None,
+            project_root: None,
+            subpath: None,
+            branch: None,
             finished_unseen,
         };
         // A live state reports how long it has held, and keeps advancing.
@@ -826,6 +1025,9 @@ mod tests {
             run: None,
             cwd: None,
             cwd_host: None,
+            project_root: None,
+            subpath: None,
+            branch: None,
             finished_unseen: false,
         };
         assert_eq!(row_duration(&row), None);

@@ -73,6 +73,11 @@ projects and a project's agents can be spread across workspaces, so this is the 
 the Panes tab, which groups the other way round. A long agent name truncates rather than pushing
 the badge off the edge.
 
+An agent working below its project root is badged with where it sits as well, as
+`services/api · 2`. The group header names the project, not the directory, so in a monorepo this is
+the only thing separating two rows that otherwise read identically. A deep path keeps its tail
+(`…/api`), which is the part that says which component the agent is in.
+
 The detail line reads `<elapsed> <activity>`. Elapsed time is dated from the reported status'
 server-side timestamp where there is one, so it survives a detach and reattach, and otherwise from
 the moment this client saw the state change. It coarsens as it grows (`45s`, `12m`, `3h`, `2d`). An
@@ -100,18 +105,36 @@ spend width. Where there is no activity, the status word takes the slot instead 
 custom status such as `compacting` renders as a neutral `•` and keeps its word either way, having
 no glyph of its own to lean on.
 
-Agents are grouped by project: the working directory the session server reports for the pane. Each
-group is headed by the directory basename alone; two projects sharing a basename are disambiguated
-with one parent segment (`work/api`, `oss/api`), and a remote working directory gains an `@host`
-suffix. The header carries no aggregated status glyph and its rows are not nested under it — groups
+Agents are grouped by project: the Git repository containing the working directory the session
+server reports for the pane, falling back to the working directory itself outside a repository. An
+agent launched in `hyprmux/src` therefore belongs to `hyprmux` rather than to a project called
+`src`. Each group is headed by the project's basename; two projects sharing a basename are
+disambiguated with one parent segment (`work/api`, `oss/api`), and a remote working directory gains
+an `@host` suffix. Group order is alphabetical and stable — never by status, so blocks do not jump
+while agents change state. Agents without a usable working directory collect in a trailing
+`elsewhere` group; when that is the only group, rows render flat with no header. Within a group,
+statuses sort as `blocked`, `working`, custom values, `done`, then `idle`. Well-known statuses are
+matched case-insensitively and use themed status glyphs, while custom status spelling is shown
+unchanged.
+
+The right edge of a project header carries the branch that project has checked out, in the badge
+column the rows below it use. Two worktrees of one repository are two directories and so two
+groups, under names that need not say anything about the work in them (`api`, `api-2`) — the branch
+is what tells them apart, and knowing which branch an agent is committing to is the difference
+between reading its output and trusting it. A branch too long for half the header keeps its tail
+(`…/pricing-v2`); a detached `HEAD` shows the short commit id instead. Nothing else about the
+repository appears here. How far a branch has diverged from its upstream cannot be known without
+fetching, and a stale count presented as current is worse than no count.
+
+The branch is read from the repository's `HEAD` on the session server's host — so under `--remote`
+it is the remote repository's branch — and re-read every couple of seconds, since `git checkout`
+moves it without the working directory changing. No `git` process is run for it, and a host without
+`git` installed still shows it.
+
+A project header carries no aggregated status glyph, and its rows are not nested under it — groups
 never collapse, so every row a summary glyph would stand for is already on screen directly beneath
 it, and the glyph plus the indent it forced cost four cells on every row of the narrowest surface in
-the app. Group order is alphabetical and stable — never by
-status, so blocks do not jump while agents change state. Agents without a usable working directory
-collect in a trailing `elsewhere` group; when that is the only group, rows render flat with no
-header. Within a group, statuses sort as `blocked`, `working`, custom values, `done`, then `idle`.
-Well-known statuses are matched case-insensitively and use themed status glyphs, while custom
-status spelling is shown unchanged.
+the app.
 
 Elapsed times refresh once a second, and only while the Agents tab is the visible tab with at least
 one row showing a still-advancing one — a screen of finished runs, whose figures are frozen, stops
@@ -121,9 +144,9 @@ comparison per second rather than sixty redraws.
 
 When an agent finishes a run — its effective status goes from `working` to a quiescent state such
 as `idle` or `done` — the row shows a filled attention dot in the success color instead of the calm
-idle glyph, so a completed run does not blend in with agents that were idle all along. The pulse
-also surfaces on the project header. `blocked` is never replaced by the pulse, since it already has
-its own glyph, and an agent that resumes working drops the pulse. The pulse is cleared as soon as
+idle glyph, so a completed run does not blend in with agents that were idle all along. `blocked` is
+never replaced by the pulse, since it already has its own glyph, and an agent that resumes working
+drops the pulse. The pulse is cleared as soon as
 the pane is focused through any path, so looking at a finished agent acknowledges it.
 
 Process detection infers `working` and `blocked` from server-owned terminal state where an agent

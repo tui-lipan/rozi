@@ -291,6 +291,105 @@ pub(crate) fn home_directory() -> Option<String> {
 ///
 /// Only ever apply this to a *local* path: a remote shell's home is not this machine's, so
 /// compressing a reported remote directory would claim a relationship that does not exist.
+/// Find the nearest Git project containing `cwd`. A `.git` file counts as well as a directory so
+/// worktrees and submodules are detected.
+pub fn discover_project_root(cwd: &str) -> Option<String> {
+    std::path::Path::new(cwd)
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .map(|dir| dir.to_string_lossy().into_owned())
+}
+
+/// The path `cwd` occupies inside its project, relative to `root` — `src/view` for a pane in
+/// `~/Work/hyprmux/src/view`. Empty (`None`) at the project root itself.
+pub fn project_relative_path(root: &str, cwd: &str) -> Option<String> {
+    let relative = std::path::Path::new(cwd)
+        .strip_prefix(std::path::Path::new(root))
+        .ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    // Always the display spelling, whatever the host's separator: this is read as one label beside
+    // a project name, not fed back to the filesystem.
+    Some(
+        relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
+}
+
+/// The branch `root` has checked out, or a short commit id when `HEAD` is detached. `None` when
+/// `root` is not a repository, or `HEAD` is unreadable or says something neither of those.
+///
+/// Reads `HEAD` directly rather than running `git`: this is re-read on a timer for every pane in a
+/// project (a checkout moves the branch without the working directory changing), where a process
+/// spawn per pane per tick would be an absurd price for one line of text — and a repository stays
+/// readable on a host with no `git` on `PATH`.
+pub fn head_branch(root: &str) -> Option<String> {
+    let git = std::path::Path::new(root).join(".git");
+    let git_dir = if git.is_dir() {
+        git
+    } else {
+        resolve_gitdir_file(&git)?
+    };
+    parse_head(&std::fs::read_to_string(git_dir.join("HEAD")).ok()?)
+}
+
+/// A linked worktree and a submodule have a `.git` *file* holding `gitdir: <path>`, pointing at the
+/// real git directory. A relative target is resolved against the directory holding the file.
+fn resolve_gitdir_file(git_file: &std::path::Path) -> Option<std::path::PathBuf> {
+    let contents = std::fs::read_to_string(git_file).ok()?;
+    let target = contents.trim().strip_prefix("gitdir:")?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let target = std::path::Path::new(target);
+    if target.is_absolute() {
+        return Some(target.to_path_buf());
+    }
+    Some(git_file.parent()?.join(target))
+}
+
+fn parse_head(head: &str) -> Option<String> {
+    let head = head.trim();
+    if let Some(reference) = head.strip_prefix("ref:") {
+        let reference = reference.trim();
+        let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+        return (!name.is_empty()).then(|| name.to_string());
+    }
+    // Detached: `HEAD` holds the raw commit id, shown short the way a shell prompt shows it. The
+    // hex check is what keeps a `HEAD` in some future format from being displayed as a branch.
+    let detached = head.len() >= 7 && head.chars().all(|ch| ch.is_ascii_hexdigit());
+    detached.then(|| head.chars().take(7).collect())
+}
+
+/// Compact cwd label for pane chrome. Inside a Git project this keeps the project name plus the
+/// path relative to its root (`hyprmux/src/view`), which identifies both project and location. An
+/// ordinary cwd falls back to its home-relative or absolute spelling.
+pub fn display_cwd(cwd: &str) -> String {
+    let Some(root) = discover_project_root(cwd) else {
+        return compress_home(cwd);
+    };
+    let root = std::path::Path::new(&root);
+    let cwd = std::path::Path::new(cwd);
+    let Some(project) = root.file_name() else {
+        return compress_home(cwd.to_string_lossy().as_ref());
+    };
+    let Ok(relative) = cwd.strip_prefix(root) else {
+        return compress_home(cwd.to_string_lossy().as_ref());
+    };
+    if relative.as_os_str().is_empty() {
+        project.to_string_lossy().into_owned()
+    } else {
+        std::path::Path::new(project)
+            .join(relative)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
 pub fn compress_home(path: &str) -> String {
     let Some(home) = display_home() else {
         return path.to_string();
@@ -318,6 +417,92 @@ pub fn compress_home(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_relative_path_names_the_place_inside_the_project() {
+        assert_eq!(
+            project_relative_path("/home/x/hyprmux", "/home/x/hyprmux/src/view").as_deref(),
+            Some("src/view")
+        );
+        // The root itself is not "somewhere inside" the project.
+        assert_eq!(
+            project_relative_path("/home/x/hyprmux", "/home/x/hyprmux"),
+            None
+        );
+        // A cwd outside the claimed root is not describable relative to it.
+        assert_eq!(
+            project_relative_path("/home/x/hyprmux", "/home/x/other"),
+            None
+        );
+    }
+
+    #[test]
+    fn head_is_read_as_a_branch_a_short_commit_or_nothing() {
+        assert_eq!(
+            parse_head("ref: refs/heads/master\n").as_deref(),
+            Some("master")
+        );
+        assert_eq!(
+            parse_head("ref: refs/heads/feat/pricing\n").as_deref(),
+            Some("feat/pricing")
+        );
+        // Detached: the raw commit id, shown short the way a prompt shows it.
+        assert_eq!(
+            parse_head("9fceb02d0ae598e95dc970b74767f19372d61af8\n").as_deref(),
+            Some("9fceb02")
+        );
+        // Neither shape: better nothing than a line of a format nobody here understands.
+        assert_eq!(parse_head("something else entirely"), None);
+        assert_eq!(parse_head("ref:  \n"), None);
+        assert_eq!(parse_head(""), None);
+    }
+
+    /// The end-to-end read against a real repository, including the worktree form where `.git` is a
+    /// file pointing elsewhere — the case a naive `<root>/.git/HEAD` join gets wrong.
+    #[test]
+    fn head_branch_reads_plain_repositories_and_worktree_pointers() {
+        let dir = std::env::temp_dir().join(format!("hyprmux-head-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git").join("HEAD"), b"ref: refs/heads/master\n").unwrap();
+        assert_eq!(
+            head_branch(&repo.to_string_lossy()).as_deref(),
+            Some("master")
+        );
+
+        // A linked worktree: `.git` is a file, and its `gitdir:` target holds the real HEAD.
+        let worktree = dir.join("wt");
+        let gitdir = repo.join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(gitdir.join("HEAD"), b"ref: refs/heads/feat/pricing\n").unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", gitdir.to_string_lossy()).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            head_branch(&worktree.to_string_lossy()).as_deref(),
+            Some("feat/pricing")
+        );
+
+        // A relative `gitdir:` resolves against the directory holding the file, not the process cwd.
+        std::fs::write(
+            worktree.join(".git"),
+            b"gitdir: ../repo/.git/worktrees/wt\n",
+        )
+        .unwrap();
+        assert_eq!(
+            head_branch(&worktree.to_string_lossy()).as_deref(),
+            Some("feat/pricing")
+        );
+
+        // Not a repository at all.
+        assert_eq!(head_branch(&dir.to_string_lossy()), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn path_leaf_and_segments_respect_the_path_shape() {

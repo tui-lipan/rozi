@@ -49,7 +49,7 @@ pub(crate) fn pane_element(
     pane: &Pane,
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
-    display_number: &str,
+    title_marker: Option<&str>,
     merge: PaneMerge,
 ) -> Element {
     let theme = &ctx.state.theme;
@@ -149,7 +149,11 @@ pub(crate) fn pane_element(
         if pane.logging {
             title.push_str(" [log]");
         }
-        let title_text: Element = Text::new(format!("{icon}  {display_number} · {title}"))
+        let title = match title_marker {
+            Some(marker) => format!("{icon}  {marker} · {title}"),
+            None => format!("{icon}  {title}"),
+        };
+        let title_text: Element = Text::new(title)
             .style(title_bar_text_style)
             .overflow(Overflow::Ellipsis)
             .width(Length::Flex(1))

@@ -155,13 +155,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             target_rect,
             config,
         );
-        // The titlebar shows a workspace-local position (1..N by insertion order), not the
-        // process-wide `PaneId`, so panes renumber after a close instead of ticking upward
-        // forever (the internal id still keys focus/tile-tree/sessions).
-        let display_number = workspace
-            .pane_display_number(pane.id)
-            .unwrap_or(pane.id as usize)
-            .to_string();
+
         let render_in_fullscreen_layer = !pane.closing && pane.fullscreen;
         let render_rect = if render_in_fullscreen_layer {
             animated_rect
@@ -206,15 +200,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             seam_left_bg,
             seam_right_bg,
         };
-        let element = pane_element(
-            app,
-            ctx,
-            pane,
-            render_rect,
-            focused_pane,
-            &display_number,
-            merge,
-        );
+        let element = pane_element(app, ctx, pane, render_rect, focused_pane, None, merge);
         if render_in_fullscreen_layer {
             has_fullscreen_layer = true;
             fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);

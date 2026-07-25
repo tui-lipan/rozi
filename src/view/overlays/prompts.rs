@@ -20,10 +20,7 @@ fn hint_pill(theme: &Theme, label: &str, key: &str) -> Element {
 /// The base footer row shared by every overlay hint bar: content-height with a leading gap above
 /// it. Callers add [`hint_pill`] children and may override justify/gap.
 fn hint_row() -> Flow {
-    Flow::new()
-        .padding((1, 1, 0, 1))
-        .gap(3)
-        .row_gap(0)
+    Flow::new().padding((1, 1, 0, 1)).gap(3).row_gap(0)
 }
 
 /// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save
@@ -124,15 +121,9 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(rename) = ctx.state.rename.as_ref() else {
         return Text::new("").into();
     };
-    let display_number = ctx
-        .state
-        .current().workspaces
-        .iter()
-        .find_map(|workspace| workspace.pane_display_number(rename.target))
-        .unwrap_or(rename.target as usize);
     prompt_overlay(
         ctx,
-        &format!("Rename pane {display_number}"),
+        "Rename pane",
         "Pane name, empty clears custom title",
         &rename.input,
         rename_input_key(),
@@ -155,12 +146,10 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             };
             (title, "Session name".to_string())
         }
-        crate::state::NamingMode::OpenProfileAs => {
-            (
-                "Open profile as".to_string(),
-                "Name (empty: ephemeral)".to_string(),
-            )
-        }
+        crate::state::NamingMode::OpenProfileAs => (
+            "Open profile as".to_string(),
+            "Name (empty: ephemeral)".to_string(),
+        ),
         // The same ephemeral-naming prompt serves in-place naming and detach-and-name; the latter
         // keeps the server running for reattach, so it names the action to make that clear.
         crate::state::NamingMode::NameEphemeralSession if rename.detach_after => (

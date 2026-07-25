@@ -279,7 +279,7 @@ pub(crate) fn scratch_placement(
         pane,
         rect,
         Some(SCRATCH_PANE_ID),
-        "S",
+        Some("S"),
         view::PaneMerge::default(),
     );
     Some((rect, element))

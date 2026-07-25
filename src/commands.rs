@@ -89,7 +89,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Rename pane",
         category: "Panes",
         default_keys: &["n", "shift-n"],
-        palette: false,
+        palette: true,
     },
     BuiltinCommand {
         action: Action::Paste,
@@ -1287,6 +1287,7 @@ mod tests {
     fn is_palette_eligible_excludes_workspace_and_frequent_single_key_actions() {
         assert!(!is_palette_eligible("workspace.switch.1"));
         assert!(!is_palette_eligible("spawn"));
+        assert!(is_palette_eligible("rename-pane"));
         assert!(is_palette_eligible("save-profile"));
     }
 

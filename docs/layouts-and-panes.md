@@ -104,8 +104,8 @@ transitions as workspace panes.
 
 ## Titlebars
 
-Each pane shows a titlebar with an icon (tiled / floating / fullscreen), the pane id, and a
-title. Toggle titlebars on/off with the *Toggle pane titlebars* palette command.
+Each pane shows a titlebar with an icon (tiled / floating / fullscreen) and a title. Toggle
+titlebars on/off with the *Toggle pane titlebars* palette command.
 
 The displayed title is, in order of preference:
 

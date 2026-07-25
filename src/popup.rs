@@ -188,7 +188,7 @@ pub(crate) fn placement(
             pane,
             rect,
             Some(POPUP_PANE_ID),
-            "P",
+            Some("P"),
             crate::view::PaneMerge::default(),
         ),
     ))

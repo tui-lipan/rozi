@@ -108,7 +108,10 @@ at least one cell), clamped so a sliver stays on screen.
 
 **Paste** reads the system clipboard and sends it to the focused pane's PTY, wrapped in
 bracketed-paste markers so shells/editors that opt in treat it as one paste instead of
-simulated keystrokes. `Ctrl+V` works directly in normal mode without entering the prefix.
+simulated keystrokes. Direct `Ctrl+V` pastes text this way but passes through when the clipboard
+contains files, an image, or another non-text format, allowing a clipboard-aware TUI in the pane
+to handle it. Prefix/modifier and command-palette paste stay text-only. Under `--remote`, rich
+pass-through can only reach the remote host's clipboard.
 
 ### Focus
 

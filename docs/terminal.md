@@ -93,7 +93,12 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
   [`--remote`](remote.md), OSC52 still targets the **local** client clipboard.
 - **Paste** (`v`, `Ctrl+V`, or *Paste from clipboard* in the palette) reads the system clipboard
   and sends it to the focused pane's PTY, wrapped in bracketed-paste markers so shells/editors that
-  opt in treat it as one paste instead of simulated keystrokes.
+  opt in treat it as one paste instead of simulated keystrokes. Direct `Ctrl+V` is performable:
+  plain text follows that path, while file, image, and other non-text clipboard content forwards
+  `Ctrl+V` to the pane application so a clipboard-aware TUI can read the richer format itself.
+  Prefix/modifier and palette paste remain explicit text paste commands. Rich pass-through is local:
+  under `--remote`, the pane application can only inspect the remote host's clipboard until a
+  MIME-aware terminal clipboard protocol is available end to end.
 
 ## Copy mode
 

@@ -374,7 +374,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
   `docs/remote.md`. `HYPRMUX_REMOTE_BINARY` forces which local binary is installed on the remote.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
-  crate uses `terminal`, `terminal-serde`, `theme-reload`, and `devtools`.
+  crate uses `terminal`, `terminal-serde`, `clipboard-images`, `theme-reload`, and `devtools`.
 
 ## Further Reading
 

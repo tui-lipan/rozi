@@ -268,6 +268,7 @@ pub(crate) fn pane_element(
 
     let mut terminal_widget = Terminal::new()
         .snapshot(snapshot)
+        .paste_shortcut_behavior(TerminalPasteShortcutBehavior::Performable)
         .show_cursor(show_cursor)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(selection_style)

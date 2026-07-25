@@ -6,7 +6,8 @@
 - A real terminal emulator (the app drives a full-screen TUI and spawns PTYs).
 
 The current `Cargo.toml` uses the sibling `../tui-lipan/` checkout directly, with the `terminal`,
-`terminal-serde`, and `theme-reload` features. Clone or place `tui-lipan` next to this repository
+`terminal-serde`, `clipboard-images`, and `theme-reload` features. Clone or place `tui-lipan` next
+to this repository
 before building. `terminal` brings in `portable-pty` + `alacritty_terminal` for the PTY-backed
 terminal widget; `theme-reload` enables live theme hot-reload.
 

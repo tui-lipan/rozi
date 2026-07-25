@@ -11,6 +11,9 @@ pub struct TerminalPane {
     pub rows: u16,
     pub status: ManagedTerminalStatus,
     pub title: Option<String>,
+    /// Account that launched the pane's original shell. Supplied by the session server on attach;
+    /// fresh panes also learn it from their first conventional `user@host:cwd` shell title.
+    pub original_user: Option<String>,
     pub cwd: Option<String>,
     pub cwd_host: Option<String>,
     pub child_pid: Option<u32>,
@@ -83,6 +86,7 @@ impl TerminalPane {
             rows,
             status: ManagedTerminalStatus::Starting,
             title: None,
+            original_user: None,
             cwd: None,
             cwd_host: None,
             child_pid: None,
@@ -113,6 +117,7 @@ impl TerminalPane {
 
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
         if self.pane_id != pane_id || self.generation != generation {
+            self.original_user = None;
             self.reported_status = None;
             self.detected_agent = None;
             self.finished_unseen = false;
@@ -149,11 +154,18 @@ impl TerminalPane {
     pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
         self.screen.borrow_mut().process_bytes(bytes);
         let _ = self.screen.borrow_mut().drain_responses();
-        self.title = self
+        let title = self
             .screen
             .borrow()
             .title()
             .and_then(sanitize_terminal_title);
+        if self.original_user.is_none() {
+            self.original_user = title
+                .as_deref()
+                .and_then(shell_title_parts)
+                .and_then(|(user, _)| user.map(str::to_string));
+        }
+        self.title = title;
         self.status = ManagedTerminalStatus::Ready;
         PaneEventOutcome::Repaint
     }
@@ -553,6 +565,34 @@ impl TerminalPane {
     }
 }
 
+/// Split a conventional shell title into its optional user and working-directory parts.
+///
+/// Accepted forms are `user@host:/path`, `user@host:~/path`, and a bare absolute/tilde/Windows
+/// path. Matching is deliberately narrow so application titles that merely mention a path remain
+/// application titles.
+pub(crate) fn shell_title_parts(title: &str) -> Option<(Option<&str>, &str)> {
+    let title = title.trim();
+    let (user, rest) = match title.split_once(':') {
+        Some((head, rest))
+            if head
+                .split_once('@')
+                .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty())
+                && !head.contains(['/', '\\', ' ']) =>
+        {
+            (
+                head.split_once('@').map(|(user, _)| user),
+                rest.trim_start(),
+            )
+        }
+        _ => (None, title),
+    };
+    let bare_path = !rest.contains(char::is_whitespace)
+        && (rest.starts_with('/')
+            || rest.starts_with('~')
+            || crate::platform::paths::is_windows_path_shape(rest));
+    bare_path.then_some((user, rest))
+}
+
 pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
     let title = title.trim();
     if title.is_empty() {
@@ -704,6 +744,27 @@ fn insert_styled_span(spans: &mut Vec<Span>, col: usize, content: &str, style: S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_title_parser_is_narrow_and_preserves_the_user_and_cwd() {
+        assert_eq!(
+            shell_title_parts("razuer@host:~/Work/Projects/hyprmux"),
+            Some((Some("razuer"), "~/Work/Projects/hyprmux"))
+        );
+        assert_eq!(shell_title_parts("/etc/nginx"), Some((None, "/etc/nginx")));
+        assert_eq!(shell_title_parts("nvim ~/src/main.rs"), None);
+        assert_eq!(shell_title_parts("make: *** [all] Error 1"), None);
+    }
+
+    #[test]
+    fn fresh_terminal_learns_original_user_from_its_first_shell_title() {
+        let mut pane = TerminalPane::new(100);
+        pane.process_server_output(b"\x1b]2;razuer@host:~\x07");
+        assert_eq!(pane.original_user.as_deref(), Some("razuer"));
+
+        pane.process_server_output(b"\x1b]2;root@host:/etc\x07");
+        assert_eq!(pane.original_user.as_deref(), Some("razuer"));
+    }
 
     /// The snapshot is rebuilt on read, so every path that changes what the pane should display
     /// must leave the screen dirty. A write path that forgets would show stale content until

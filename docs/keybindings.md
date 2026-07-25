@@ -264,11 +264,11 @@ overlay (under "Custom") and command palette with a generated label, but are con
 have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (search,
+keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (rename pane, search,
 copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
 palette groups theme, titlebar, workbar, animation, and border controls.
-Frequent single-key actions (spawn/close/float/fullscreen/rename/flip/grow/shrink) live in the
-help overlay only, since the key is faster than a search box. "Change appearance" and "Toggle
+Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
+overlay only, since the key is faster than a search box. "Change appearance" and "Toggle
 focus on hover" are palette-only - they have no default key. So are "Open config file" and
 "Reload config" - see
 [Reloading and editing](configuration.md#reloading-and-editing).
@@ -357,8 +357,8 @@ While an overlay is open (command palette, help, theme picker, search, rename):
 - In **search**, `Enter` jumps to the next match and `Shift+Enter` jumps to the previous one.
   `Tab` cycles the search **scope** (focused pane → workspace → all panes); jumping to a match
   in another pane (or workspace) switches focus there.
-- In **rename**, submitting an empty name clears the custom title (falling back to the
-  program's terminal title, then the pane's default label).
+- In **rename**, submitting an empty name clears the custom title (falling back to the pane's
+  current working directory).
 
 In the **Profiles** picker, `Enter` attaches to or launches the highlighted profile's canonical
 same-name session. `Ctrl+O` opens that recipe under a new name, or as an ephemeral session when the

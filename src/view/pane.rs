@@ -138,11 +138,7 @@ pub(crate) fn pane_element(
                 .contrast_policy(ContrastPolicy::BlackOrWhite)
         };
 
-        let mut title = pane.display_title(pane.terminal.title());
-        if let Some(subtitle) = pane.subtitle_for_title(&title) {
-            title.push_str(" - ");
-            title.push_str(&subtitle);
-        }
+        let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
         if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
             title.push_str(&format!(" [exited {code}]"));
         }

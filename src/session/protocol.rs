@@ -78,6 +78,10 @@ pub struct PaneMeta {
     pub rows: u16,
     pub pid: Option<u32>,
     pub title: Option<String>,
+    /// Account that owns the session server and launched the pane's original shell. Additive and
+    /// optional so protocol-12/13 peers that predate this field remain compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_user: Option<String>,
     pub exited: Option<i32>,
     pub logging: bool,
     /// Authoritative pane runtime state: CWD, command lifecycle,
@@ -993,6 +997,27 @@ mod tests {
         write_frame(&mut buf, &msg).unwrap();
         let decoded: ClientMessage = read_frame(&mut &buf[..]).unwrap();
         assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn pane_meta_from_older_peer_defaults_original_user() {
+        let mut value = serde_json::to_value(PaneMeta {
+            pane_id: 1,
+            generation: 2,
+            cols: 80,
+            rows: 24,
+            pid: Some(42),
+            title: Some("user@host:~".to_string()),
+            original_user: Some("user".to_string()),
+            exited: None,
+            logging: false,
+            runtime: PaneRuntimeState::default(),
+        })
+        .unwrap();
+        value.as_object_mut().unwrap().remove("original_user");
+
+        let decoded: PaneMeta = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.original_user, None);
     }
 
     #[test]

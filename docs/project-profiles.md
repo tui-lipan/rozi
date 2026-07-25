@@ -17,9 +17,10 @@ shell:
   metadata, reject remote-host cwd reports, and capture the non-shell executable basename of a
   command that is still running (a pane idling at its prompt saves no command).
 
-The titlebar shows the custom title if set, otherwise the program's terminal title, otherwise
-the default label `shell`. See [Layouts & panes › Titlebars](layouts-and-panes.md#titlebars)
-for the full precedence, and [Keybindings](keybindings.md) for the rename flow.
+The titlebar shows the custom title if set. Otherwise it shows the current working directory,
+qualified by the shell username only after switching away from the original account. See
+[Layouts & panes › Titlebars](layouts-and-panes.md#titlebars) for the full behavior, and
+[Keybindings](keybindings.md) for the rename flow.
 
 ## Capture and launch profiles
 

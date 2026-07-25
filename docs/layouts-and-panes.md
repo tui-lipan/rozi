@@ -107,15 +107,14 @@ transitions as workspace panes.
 Each pane shows a titlebar with an icon (tiled / floating / fullscreen) and a title. Toggle
 titlebars on/off with the *Toggle pane titlebars* palette command.
 
-The displayed title is, in order of preference:
+A custom title set by renaming the pane (`n`) is shown verbatim. Otherwise the titlebar shows the
+pane's current working directory, compressing the local home directory to `~`. Shell-provided
+`user@host:` prefixes are removed because the workbar already identifies the active local or remote
+host. When the shell reports an account different from the one that originally launched the pane,
+the changed account remains visible, for example `root · /etc/nginx`.
 
-1. a **custom title** you set by renaming the pane (`n`),
-2. the **program's terminal title** (what the running program sets via the OSC 0/2 escape,
-   e.g. the shell's `$PWD` or `vim`'s filename),
-3. the pane's default label (`shell`).
-
-A pane may also show a subtitle (its launch command, else its working directory) when that
-identity is known - for example, after being restored from a project profile. See
+If neither runtime nor launch metadata provides a working directory, the terminal title and then
+the default label `shell` are used as fallbacks. See
 [Project profiles & pane identity](project-profiles.md).
 
 ## Workspaces

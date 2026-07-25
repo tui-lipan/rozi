@@ -122,30 +122,7 @@ fn location_budget(width: u16) -> usize {
 /// Matched by shape and deliberately narrow: the remainder must be a bare path and nothing else, so
 /// a real title that merely mentions one (`nvim ~/Work/hyprmux/src/main.rs`) is left alone.
 fn prompt_echo_path(title: &str) -> Option<&str> {
-    let rest = strip_user_host(title.trim());
-    let bare_path = !rest.contains(char::is_whitespace)
-        && (rest.starts_with('/')
-            || rest.starts_with('~')
-            || crate::platform::paths::is_windows_path_shape(rest));
-    bare_path.then_some(rest)
-}
-
-/// The path half of a shell's `user@host:path` title, or the whole string when there is no such
-/// prefix. A `:` inside a path or a program's own title must not trigger this, so the prefix has to
-/// look like a bare `user@host` and nothing else.
-fn strip_user_host(title: &str) -> &str {
-    let Some((head, rest)) = title.split_once(':') else {
-        return title;
-    };
-    let is_user_host = head
-        .split_once('@')
-        .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty())
-        && !head.contains(['/', '\\', ' ']);
-    if is_user_host {
-        rest.trim_start()
-    } else {
-        title
-    }
+    crate::pane::shell_title_parts(title).map(|(_, cwd)| cwd)
 }
 
 #[cfg(test)]

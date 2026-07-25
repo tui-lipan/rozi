@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use tui_lipan::prelude::FloatRect;
 
-use crate::pane::TerminalPane;
+use crate::pane::{TerminalPane, shell_title_parts};
 
 use super::{PaneId, PaneIdentity};
 
@@ -60,39 +60,49 @@ impl Pane {
             .unwrap_or_else(|| self.title.clone())
     }
 
+    /// Titlebar text for an unrenamed pane: its current working directory, optionally qualified by
+    /// an account that differs from the one that launched the shell. Hostnames are intentionally
+    /// omitted because the workbar already identifies the active local or remote host.
+    pub fn titlebar_title(&self, remote_attached: bool) -> String {
+        if let Some(custom_title) = self.identity.custom_title.as_ref() {
+            return custom_title.clone();
+        }
+
+        let terminal_title = self.terminal.title();
+        let shell_title = terminal_title.as_deref().and_then(shell_title_parts);
+        let cwd = shell_title
+            .map(|(_, cwd)| cwd.to_string())
+            .or_else(|| self.live_cwd())
+            .or_else(|| self.identity.cwd.clone())
+            .map(|cwd| {
+                if remote_attached {
+                    cwd
+                } else {
+                    crate::platform::paths::compress_home(&cwd)
+                }
+            });
+
+        let Some(cwd) = cwd else {
+            return terminal_title.unwrap_or_else(|| self.title.clone());
+        };
+        let switched_user = shell_title.and_then(|(user, _)| user).filter(|user| {
+            self.terminal
+                .original_user
+                .as_deref()
+                .is_some_and(|original| original != *user)
+        });
+        match switched_user {
+            Some(user) => format!("{user} · {cwd}"),
+            None => cwd,
+        }
+    }
+
     pub fn set_custom_title(&mut self, title: impl AsRef<str>) {
         self.identity.set_custom_title(title);
     }
 
     pub fn clear_custom_title(&mut self) {
         self.identity.custom_title = None;
-    }
-
-    pub fn subtitle(&self) -> Option<&str> {
-        self.identity
-            .command
-            .as_deref()
-            .or(self.identity.cwd.as_deref())
-    }
-
-    pub fn subtitle_for_title(&self, title: &str) -> Option<String> {
-        // A replay pane (profile-restored command typed into its interactive shell) is
-        // behaviorally a shell pane: its live title/cwd describe it better than the launch
-        // command, which the shell may have long finished.
-        if !self.identity.replay
-            && let Some(command) = self.identity.command.as_deref()
-        {
-            return Some(command.to_string());
-        }
-
-        // Prefer the shell's real live cwd (which the initial pane never captures into its launch
-        // identity) and fall back to the configured launch cwd.
-        let cwd = self.live_cwd().or_else(|| self.identity.cwd.clone())?;
-        if title_contains_cwd(title, &cwd) {
-            None
-        } else {
-            Some(cwd)
-        }
     }
 
     /// The shell's current working directory if it can be discovered live, else `None`.
@@ -129,28 +139,6 @@ impl Pane {
     }
 }
 
-fn title_contains_cwd(title: &str, cwd: &str) -> bool {
-    if cwd.is_empty() || title.contains(cwd) {
-        return !cwd.is_empty();
-    }
-
-    let Ok(home) = std::env::var("HOME") else {
-        return false;
-    };
-    let home = home.trim_end_matches('/');
-    if home.is_empty() || !cwd.starts_with(home) {
-        return false;
-    }
-
-    let rest = cwd[home.len()..].trim_start_matches('/');
-    let tilde_cwd = if rest.is_empty() {
-        "~".to_string()
-    } else {
-        format!("~/{rest}")
-    };
-    title.contains(&tilde_cwd)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,6 +169,46 @@ mod tests {
     }
 
     #[test]
+    fn titlebar_uses_cwd_without_the_original_user_or_host() {
+        let mut pane = pane();
+        pane.terminal.title = Some("razuer@workstation:~/Work/Projects/hyprmux".to_string());
+        pane.terminal.original_user = Some("razuer".to_string());
+        pane.terminal.cwd = Some("/home/razuer/Work/Projects/hyprmux".to_string());
+
+        assert_eq!(pane.titlebar_title(false), "~/Work/Projects/hyprmux");
+    }
+
+    #[test]
+    fn titlebar_qualifies_cwd_after_switching_users() {
+        let mut pane = pane();
+        pane.terminal.title = Some("root@workstation:/etc/nginx".to_string());
+        pane.terminal.original_user = Some("razuer".to_string());
+        pane.terminal.cwd = Some("/etc/nginx".to_string());
+
+        assert_eq!(pane.titlebar_title(false), "root · /etc/nginx");
+    }
+
+    #[test]
+    fn titlebar_prefers_a_custom_name_over_runtime_location() {
+        let mut pane = pane();
+        pane.set_custom_title("logs");
+        pane.terminal.title = Some("root@workstation:/var/log".to_string());
+        pane.terminal.original_user = Some("razuer".to_string());
+        pane.terminal.cwd = Some("/var/log".to_string());
+
+        assert_eq!(pane.titlebar_title(false), "logs");
+    }
+
+    #[test]
+    fn titlebar_uses_structured_cwd_instead_of_an_application_title() {
+        let mut pane = pane();
+        pane.terminal.title = Some("nvim src/main.rs".to_string());
+        pane.terminal.cwd = Some("/work/hyprmux".to_string());
+
+        assert_eq!(pane.titlebar_title(false), "/work/hyprmux");
+    }
+
+    #[test]
     fn pane_display_title_uses_terminal_title_before_fallback() {
         let mut pane = pane();
         pane.title = "fallback title".to_string();
@@ -199,68 +227,5 @@ mod tests {
 
         assert_eq!(pane.identity.custom_title, None);
         assert_eq!(pane.display_title(None), "shell");
-    }
-
-    #[test]
-    fn pane_subtitle_prefers_command_before_cwd() {
-        let mut pane = pane();
-        pane.identity.cwd = Some("/tmp/project".to_string());
-        pane.identity.command = Some("vim src/main.rs".to_string());
-
-        assert_eq!(pane.subtitle(), Some("vim src/main.rs"));
-    }
-
-    #[test]
-    fn replay_pane_subtitle_shows_cwd_not_the_replayed_command() {
-        let mut pane = pane();
-        pane.identity.cwd = Some("/tmp/project".to_string());
-        pane.identity.command = Some("nvim".to_string());
-        pane.identity.replay = true;
-
-        // The replay command runs inside a live interactive shell; the pane's cwd (and live
-        // title) describe it, not the launch command the shell may have long finished.
-        assert_eq!(
-            pane.subtitle_for_title("shell"),
-            Some("/tmp/project".to_string())
-        );
-    }
-
-    #[test]
-    fn pane_subtitle_hides_cwd_already_in_terminal_title() {
-        let mut pane = pane();
-        pane.identity.cwd = Some("/tmp/project".to_string());
-
-        assert_eq!(pane.subtitle_for_title("razuer@host:/tmp/project"), None);
-    }
-
-    #[test]
-    fn pane_subtitle_hides_home_relative_cwd_in_terminal_title() {
-        let Ok(home) = std::env::var("HOME") else {
-            return;
-        };
-        let home = home.trim_end_matches('/');
-        if home.is_empty() {
-            return;
-        }
-
-        let mut pane = pane();
-        pane.identity.cwd = Some(format!("{home}/Work/Projects/opencode-tui"));
-
-        assert_eq!(
-            pane.subtitle_for_title("razuer@host:~/Work/Projects/opencode-tui"),
-            None
-        );
-    }
-
-    #[test]
-    fn pane_subtitle_keeps_command_even_when_title_contains_cwd() {
-        let mut pane = pane();
-        pane.identity.cwd = Some("/tmp/project".to_string());
-        pane.identity.command = Some("cargo run".to_string());
-
-        assert_eq!(
-            pane.subtitle_for_title("razuer@host:/tmp/project"),
-            Some("cargo run".to_string())
-        );
     }
 }

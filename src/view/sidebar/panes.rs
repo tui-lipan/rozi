@@ -43,7 +43,10 @@ pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                 // location would have used rather than leaving the row a lone title.
                 None => row.detail(program, super::super::fg_only(&ctx.state.theme.muted)),
             };
-            rows.push(SidebarRow::item(row, RowTarget::Pane(id)));
+            rows.push(
+                SidebarRow::item(row, RowTarget::Pane(id))
+                    .closable(crate::state::SidebarClose::Pane(id)),
+            );
         }
     }
     rows

@@ -179,6 +179,61 @@ pub fn discover_sessions_from(
     }
 }
 
+/// Why a host probe failed, in words a user can act on.
+///
+/// A failed probe carries whatever ssh, the remote shell, or the JSON parser said, which is a
+/// paragraph of plumbing (`remote list-sessions failed: ssh: connect to host winvm port 22:
+/// Connection refused`) written for a terminal, not for a sidebar column narrow enough that it
+/// clips before reaching the part that matters. This maps the shapes that actually occur onto a
+/// short phrase that names the thing to go fix. The raw message is kept in
+/// [`crate::state::HostProbe::Failed`] rather than replaced, so nothing is lost for diagnosis.
+///
+/// Each phrase describes the state of the world rather than restating the syscall that reported it,
+/// because the status badge beside it already says `Offline` and the only thing left worth saying is
+/// *which* kind of offline. The two that are easy to confuse are kept apart deliberately:
+///
+/// - **Host not responding** — nothing answered at all: the machine is off, on another network, or
+///   behind a firewall that drops. (`ETIMEDOUT`.)
+/// - **SSH port closed** — something answered and said no, so the machine is up but nothing is
+///   accepting SSH: `sshd` is stopped, the port is wrong, or a firewall rejects rather than drops.
+///   (`ECONNREFUSED`, which is also what a stopped VM behind a published port forward gives.)
+///
+/// Ordered most-specific first: an authentication failure and a missing remote binary both mention
+/// paths and files, so the distinctive phrases have to win before the generic ones are tried.
+pub fn probe_failure_reason(error: &str) -> &'static str {
+    let error = error.to_ascii_lowercase();
+    let says = |needle: &str| error.contains(needle);
+
+    if says("host key verification failed") || says("remote host identification has changed") {
+        "Host key not trusted"
+    } else if says("permission denied") || says("authentication failed") {
+        "SSH login rejected"
+    } else if says("could not resolve")
+        || says("name or service not known")
+        || says("nodename nor servname")
+        || says("no address associated")
+    {
+        "Unknown host name"
+    } else if says("connection refused") {
+        "SSH port closed"
+    } else if says("no route to host") || says("network is unreachable") {
+        "Host unreachable"
+    } else if says("timed out") {
+        "Host not responding"
+    } else if says("ssh was not found") {
+        "ssh not installed here"
+    // The remote shell could not run the binary. Checked after the ssh-level failures because
+    // "no such file or directory" is also how a local spawn failure reads.
+    } else if says("command not found")
+        || says("is not recognized")
+        || says("no such file or directory")
+    {
+        "No hyprmux on host"
+    } else {
+        "Connection failed"
+    }
+}
+
 fn discover_remote_sessions(
     target: &crate::session::remote::RemoteTarget,
     config: &crate::config::HyprmuxRemoteConfig,
@@ -305,6 +360,89 @@ pub fn sessions_to_json(rows: &[DiscoveredSession]) -> Result<String, serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real messages, verbatim from ssh/OpenSSH and from this module, mapped onto the phrase the
+    /// sidebar shows. The point of the test is the shapes, not the mapping: each of these is what
+    /// the user actually hits, and each names a different thing to go fix.
+    #[test]
+    fn probe_failures_name_what_to_go_fix_rather_than_quoting_ssh() {
+        let reason = |raw: &str| probe_failure_reason(raw);
+        let remote = |stderr: &str| format!("remote list-sessions failed: {stderr}");
+
+        assert_eq!(
+            reason(&remote(
+                "ssh: Could not resolve hostname winvm: Name or service not known"
+            )),
+            "Unknown host name"
+        );
+        // The two offline kinds must stay distinguishable: refused means the machine answered and
+        // SSH did not, timed out means nothing answered at all. They point at different fixes.
+        assert_eq!(
+            reason(&remote(
+                "ssh: connect to host winvm port 22: Connection refused"
+            )),
+            "SSH port closed"
+        );
+        assert_eq!(
+            reason(&remote(
+                "ssh: connect to host winvm port 22: Connection timed out"
+            )),
+            "Host not responding"
+        );
+        // macOS spells the same timeout differently.
+        assert_eq!(
+            reason(&remote(
+                "ssh: connect to host winvm port 22: Operation timed out"
+            )),
+            "Host not responding"
+        );
+        assert_eq!(
+            reason(&remote(
+                "ssh: connect to host winvm port 22: No route to host"
+            )),
+            "Host unreachable"
+        );
+        assert_eq!(
+            reason(&remote("winvm: Permission denied (publickey,password).")),
+            "SSH login rejected"
+        );
+        assert_eq!(
+            reason(&remote("Host key verification failed.")),
+            "Host key not trusted"
+        );
+        // The host answered; the remote shell could not run hyprmux.
+        assert_eq!(
+            reason(&remote("bash: line 1: hyprmux: command not found")),
+            "No hyprmux on host"
+        );
+        assert_eq!(
+            reason(&remote(
+                "'hyprmux' is not recognized as an internal or external command"
+            )),
+            "No hyprmux on host"
+        );
+        assert_eq!(
+            reason("ssh was not found on PATH"),
+            "ssh not installed here"
+        );
+
+        // Anything unrecognized still says something, and never leaks the raw text.
+        assert_eq!(
+            reason(&remote("kex_exchange_identification: read: Broken pipe")),
+            "Connection failed"
+        );
+        assert_eq!(reason(""), "Connection failed");
+
+        // An authentication failure mentions no file, but a missing binary does; the specific
+        // match has to win so the two do not collapse onto one phrase.
+        assert_eq!(
+            reason(&remote(
+                "Permission denied (publickey).\nbash: hyprmux: No such file or directory"
+            )),
+            "SSH login rejected"
+        );
+    }
+
     #[test]
     fn validates_in_app_session_names() {
         assert!(valid_session_name("dev_1-prod"));

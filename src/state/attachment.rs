@@ -80,6 +80,11 @@ pub struct Attachment {
     /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
     /// handshake completes (and while purely local, pre-attach).
     pub shared: Option<SharedSessionState>,
+    /// When this attachment was last parked, as a monotonic counter; `0` while it has never been.
+    /// Attachment ids are stable identities rather than a use order — parking one reuses its id —
+    /// so recency needs its own stamp. Read when something has to land the user on the session they
+    /// were most recently on, such as disconnecting the host the current one lives on.
+    pub parked_seq: u64,
 }
 
 impl Attachment {
@@ -109,6 +114,7 @@ impl Attachment {
             pending_background_layout: None,
             pending_background_closes: Vec::new(),
             shared: None,
+            parked_seq: 0,
         }
     }
 

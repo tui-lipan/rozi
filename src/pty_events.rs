@@ -65,7 +65,7 @@ pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
 /// window so its dismissal coincides with the pending action expiring.
 pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
-        .duration(crate::ops::exit::CONFIRM_WINDOW_SECS)
+        .duration(crate::ops::confirm::CONFIRM_WINDOW.as_secs_f64())
         .wrap(true)
         .max_width(Length::Px(64))
         .frame_style(toast_frame_style(theme.status.error))

@@ -44,6 +44,18 @@ pub enum Msg {
     /// through `on_activate`, so the two gestures cannot drift apart. The index is resolved
     /// against a freshly rebuilt row list, which is a pure function of `State`.
     SidebarRowActivate(usize),
+    /// The pointer entered or left a sidebar row (or its ✕), which is what reveals the ✕. Both the
+    /// row and the ✕ nested inside it report, because hover resolves to one innermost node: without
+    /// the inner report, moving onto the ✕ would read as leaving the row and hide it.
+    SidebarRowHover {
+        index: usize,
+        hovered: bool,
+    },
+    /// The ✕ on a sidebar row was clicked: arm a confirmation, or commit one already armed.
+    SidebarRowClose(usize),
+    /// The shared arm-then-confirm window lapsed for the arming identified by this token; whatever
+    /// is still armed under it is dropped. See [`crate::ops::confirm`].
+    ConfirmationExpired(u64),
     /// Escape while the row list has focus: hand the keyboard back to the pane.
     SidebarBlur,
     /// Tab / Shift-Tab while the row list has focus.
@@ -121,6 +133,7 @@ pub enum Msg {
     SessionsDiscovered {
         epoch: u64,
         rows: Vec<crate::session::discovery::DiscoveredSession>,
+        host_status: crate::ops::session::HostProbeStatus,
     },
     SessionPickerQueryChanged(String),
     SessionPickerSelect(usize),

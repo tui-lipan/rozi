@@ -137,8 +137,15 @@ pub struct State {
     /// it holds no credentials.
     pub host_session_cache: crate::session::HostSessionCache,
     /// A destructive action armed by its first press; the second press only fires while the arm
-    /// time is within [`crate::ops::exit::CONFIRM_WINDOW_SECS`].
+    /// time is within [`crate::ops::confirm::CONFIRM_WINDOW`].
     pub pending_destructive: Option<PendingDestructiveConfirmation>,
+    /// Identifies the currently armed confirmation, whichever surface armed it. Advanced by every
+    /// arming, so the expiry scheduled for one arming can recognize that a later one replaced it and
+    /// leave that one alone. See [`crate::ops::confirm`].
+    pub confirm_epoch: u64,
+    /// Source of [`Attachment::parked_seq`] stamps, counting parkings so background attachments can
+    /// be ordered by how recently they were used.
+    next_parked_seq: u64,
     /// Cached first-line stdout for each configured `WorkbarSegment::Command`, keyed by the raw
     /// command string. Refreshed on a background timer per command; empty until the first run
     /// completes.
@@ -243,6 +250,8 @@ impl State {
             hosts: HostRegistry::default(),
             host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
+            confirm_epoch: 0,
+            next_parked_seq: 0,
             workbar_command_output: HashMap::new(),
             workbar_commands_running: HashSet::new(),
             commands_dirty: false,
@@ -260,6 +269,21 @@ impl State {
     /// The current session attachment.
     pub fn current(&self) -> &Attachment {
         &self.attachment
+    }
+
+    /// The current session's name, but only while it is a *local* session.
+    ///
+    /// Local discovery scans this machine's runtime directory and skips this name, so the attached
+    /// session is not listed twice — it is re-added from live state, which knows more about it than
+    /// a probe does. Session names are per-machine, though: `dev` on a remote host and `dev` here
+    /// are unrelated sessions that merely share a spelling. Excluding by bare name while attached to
+    /// the remote one would hide the local one, which is a session the user can still switch to.
+    pub fn local_current_session_name(&self) -> Option<&str> {
+        self.current()
+            .remote_target
+            .is_none()
+            .then(|| self.current().session_name.as_deref())
+            .flatten()
     }
 
     /// Mutable access to the [current attachment](Self::current).
@@ -333,6 +357,7 @@ impl State {
     pub fn park_current(&mut self, current_epoch: AttachmentId, replacement: Attachment) {
         let mut parked = std::mem::replace(&mut self.attachment, replacement);
         parked.epoch = current_epoch;
+        parked.parked_seq = self.next_parked_seq();
         self.background.insert(current_epoch, parked);
     }
 
@@ -348,8 +373,35 @@ impl State {
         let restored_epoch = restored.epoch;
         let mut parked = std::mem::replace(&mut self.attachment, restored);
         parked.epoch = current_epoch;
+        parked.parked_seq = self.next_parked_seq();
         self.background.insert(current_epoch, parked);
         Some(restored_epoch)
+    }
+
+    fn next_parked_seq(&mut self) -> u64 {
+        self.next_parked_seq = self.next_parked_seq.wrapping_add(1);
+        self.next_parked_seq
+    }
+
+    /// Parked sessions worth returning to, most recently used first.
+    ///
+    /// This is the candidate order for landing the client somewhere when the current session is
+    /// taken away rather than left — killed, or its host disconnected. The caller walks the list and
+    /// takes the first that still switches, so an unusable candidate falls through to the next
+    /// instead of stranding the user.
+    ///
+    /// Attachments still mid-connect are skipped outright: they have nothing on screen to come back
+    /// to, so landing on one trades an empty session for another empty session — which is the whole
+    /// complaint about defaulting to a fresh ephemeral.
+    pub fn parked_by_recency(&self) -> Vec<AttachmentId> {
+        let mut candidates: Vec<_> = self
+            .background
+            .iter()
+            .filter(|(_, attachment)| attachment.pending_session_attach.is_none())
+            .map(|(id, attachment)| (*id, attachment.parked_seq))
+            .collect();
+        candidates.sort_by_key(|(_, parked_seq)| std::cmp::Reverse(*parked_seq));
+        candidates.into_iter().map(|(id, _)| id).collect()
     }
 
     /// Drop queued replay inputs whose spawn can no longer complete (see
@@ -612,6 +664,64 @@ mod retention_tests {
         assert_eq!(state.current().session_name.as_deref(), Some("dev"));
         assert!(state.background.contains_key(&6));
         assert!(!state.background.contains_key(&5));
+    }
+
+    /// The local scan skips the current session so it is not listed twice, but session names are
+    /// per-machine: `dev` on a remote host and `dev` here are unrelated. Attached to the remote one,
+    /// the local `dev` is still a session the user can switch to and must not be filtered out.
+    #[test]
+    fn only_a_local_current_session_is_excluded_from_the_local_scan() {
+        let mut state = state();
+        state.current_mut().session_name = Some("dev".to_string());
+        assert_eq!(state.local_current_session_name(), Some("dev"));
+
+        state.current_mut().remote_target = Some(crate::session::remote::RemoteTarget::Alias(
+            "winvm".to_string(),
+        ));
+        assert_eq!(
+            state.local_current_session_name(),
+            None,
+            "attached to `dev` on a host, the local `dev` stays listed"
+        );
+    }
+
+    /// Landing candidates are ordered by when they were last used, not by id — parking reuses an
+    /// attachment's id, so ids say nothing about recency. Mid-connect attachments are skipped: they
+    /// have nothing on screen, which is the very thing that makes a fresh ephemeral a bad landing.
+    #[test]
+    fn parked_candidates_are_ordered_by_recency_and_skip_mid_connect_ones() {
+        let mut state = state();
+        for (epoch, name) in [(10, "alpha"), (11, "beta"), (12, "gamma")] {
+            state.current_mut().session_name = Some(name.to_string());
+            state.park_current(epoch, Attachment::new());
+        }
+        // Most recently parked first.
+        assert_eq!(state.parked_by_recency(), vec![12, 11, 10]);
+
+        // Returning to `beta` and parking again makes it the most recent, without its id changing.
+        state.runtime_epoch = 20;
+        assert_eq!(state.unpark(11, state.runtime_epoch), Some(11));
+        state.park_current(11, Attachment::new());
+        assert_eq!(state.parked_by_recency().first(), Some(&11));
+
+        // A candidate still mid-connect is no landing spot at all.
+        state
+            .background
+            .get_mut(&12)
+            .unwrap()
+            .pending_session_attach = Some(crate::state::PendingSessionAttach {
+            epoch: 12,
+            name: "gamma".to_string(),
+            client: None,
+            autostart: false,
+            read_only: false,
+            reconnect: false,
+            remote_host: None,
+            intent: crate::state::AttachIntent::Plain,
+            left: None,
+            parked_epoch: None,
+        });
+        assert!(!state.parked_by_recency().contains(&12));
     }
 
     #[test]

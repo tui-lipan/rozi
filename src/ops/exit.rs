@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tui_lipan::prelude::*;
 
@@ -9,10 +9,6 @@ use crate::profiles;
 use crate::pty_events::{confirm_toast, info_toast};
 use crate::state::{PendingDestructive, PendingDestructiveConfirmation, State};
 
-/// How long a destructive action stays armed after its first press. The confirm toast is shown
-/// for the same duration, so the toast disappearing means the confirmation expired.
-pub(crate) const CONFIRM_WINDOW_SECS: f64 = 3.0;
-
 pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
     if let Some(pending) = ctx.state.pending_destructive.take() {
         ctx.toast().dismiss(pending.toast_id);
@@ -21,6 +17,11 @@ pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
 
 /// True when `pending` was armed by an earlier press and is still within the confirm window
 /// (consuming it); otherwise (re-)arms it and returns false.
+///
+/// This one is checked lazily against its arm time rather than cleared by a scheduled expiry the
+/// way the sidebar and picker confirmations are: nothing renders as armed for it, so a stale field
+/// is invisible. The confirm toast runs for the same window, which is what tells the user the
+/// confirmation is over.
 fn confirm_second_press(
     ctx: &mut Context<HyprmuxApp>,
     pending: PendingDestructive,
@@ -29,7 +30,7 @@ fn confirm_second_press(
     if let Some(armed) = ctx.state.pending_destructive.take() {
         ctx.toast().dismiss(armed.toast_id);
         if armed.action == pending
-            && armed.armed_at.elapsed() <= Duration::from_secs_f64(CONFIRM_WINDOW_SECS)
+            && armed.armed_at.elapsed() <= crate::ops::confirm::CONFIRM_WINDOW
         {
             return true;
         }
@@ -322,6 +323,7 @@ mod tests {
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::{ClientInfo, ClientMessage};
     use crate::state::SharedSessionState;
+    use std::time::Duration;
     use tui_lipan::TestBackend;
 
     fn confirming_backend() -> TestBackend<HyprmuxApp> {

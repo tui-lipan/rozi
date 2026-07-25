@@ -136,14 +136,14 @@ fn open_profile_picker_mode(ctx: &mut Context<HyprmuxApp>, apply_mode: bool) -> 
     request_profile_picker_focus(ctx);
     Update::with_command(profile_session_watch_command(
         epoch,
-        ctx.state.current().session_name.clone(),
+        ctx.state.local_current_session_name().map(str::to_string),
     ))
 }
 
 fn profile_session_rows(
     ctx: &Context<HyprmuxApp>,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
-    let current = ctx.state.current().session_name.as_deref();
+    let current = ctx.state.local_current_session_name();
     let mut rows =
         crate::session::discovery::discover_sessions_excluding(current).unwrap_or_default();
     rows.retain(|row| !row.ephemeral);
@@ -220,7 +220,7 @@ pub(crate) fn apply_profile_sessions(
     }
     Update::with_command(profile_session_watch_command(
         epoch,
-        ctx.state.current().session_name.clone(),
+        ctx.state.local_current_session_name().map(str::to_string),
     ))
 }
 
@@ -434,7 +434,7 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
         if let Some(picker) = ctx.state.profile_picker.as_mut() {
             picker.pending_delete = Some(index);
         }
-        return Update::full();
+        return crate::ops::confirm::arm(ctx);
     }
 
     let name = entry.name.clone();
@@ -498,7 +498,7 @@ pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upd
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_open = Some(index);
             }
-            return Update::full();
+            return crate::ops::confirm::arm(ctx);
         }
     }
 

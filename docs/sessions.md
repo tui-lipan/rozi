@@ -125,8 +125,23 @@ switching to one — it is not destructive, so a single `Enter` commits with no 
 session you were on stays live and is one selection away.
 
 Killing the **current** session is allowed, either with `Ctrl+K` in the picker or with *Kill
-session* in the command palette: its server is shut down (its PTYs die) and the UI hops onto a fresh
-ephemeral session, so the client stays alive rather than quitting.
+session* in the command palette: its server is shut down (its PTYs die) and the client stays alive
+rather than quitting. See [Where the client lands](#where-the-client-lands) for what it hops onto.
+
+### Where the Client Lands
+
+When the session on screen is taken away rather than left — killed, or the host it lives on
+disconnected — the client hops to the first of these that applies:
+
+1. The **most recently used** session still retained in the background. Its client and screens are
+   already live, so the switch is instant and lands on real work.
+2. The next background session after that, in order of when each was last used, if the first cannot
+   be switched to.
+3. A **fresh local ephemeral** session, only when none survives.
+
+A background session still mid-connect is skipped: it has nothing on screen to come back to, so
+landing on one would trade an empty session for another empty session. Detaching and quitting are
+unaffected — those are deliberate exits, not the current session being taken away.
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
 disappear on their own), so there is no manual refresh key. A session row also reports other clients

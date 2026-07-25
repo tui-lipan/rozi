@@ -305,10 +305,14 @@ impl Component for HyprmuxApp {
                     let watch_link = link.clone();
                     std::thread::spawn(move || {
                         std::thread::sleep(Duration::from_millis(1500));
-                        if let Ok(rows) =
-                            crate::session::discovery::discover_sessions_excluding(None)
+                        if let Ok((rows, host_status)) =
+                            crate::ops::session::discover_picker_sessions(None, &remote_config)
                         {
-                            watch_link.send(Msg::SessionsDiscovered { epoch, rows });
+                            watch_link.send(Msg::SessionsDiscovered {
+                                epoch,
+                                rows,
+                                host_status,
+                            });
                         }
                     });
                 }

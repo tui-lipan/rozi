@@ -186,8 +186,9 @@ pub(super) fn sessions_discovered(
     ctx: &mut Context<HyprmuxApp>,
     epoch: u64,
     rows: Vec<session::discovery::DiscoveredSession>,
+    host_status: crate::ops::session::HostProbeStatus,
 ) -> Update {
-    crate::ops::session::apply_discovered_sessions(ctx, epoch, rows)
+    crate::ops::session::apply_discovered_sessions(ctx, epoch, rows, host_status)
 }
 
 pub(super) fn session_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {

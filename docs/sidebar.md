@@ -43,6 +43,9 @@ directory beneath:
   …/deploy/backend/api/service
 ```
 
+Hovering a row reveals a `✕` in place of the program badge; clicking it kills that pane. See
+[Closing from a row](#closing-from-a-row).
+
 The name is a user-set title where there is one. Otherwise the terminal title is used only when a
 program actually chose it (`nvim src/main.rs`); a shell sets the title to its prompt — the same
 `user@host:` on every row followed by a path that clips before it says anything — so those rows are
@@ -141,7 +144,41 @@ the UI thread immediately when the visible tab is activated and refreshes while 
 active. Clicking a discovered row attaches to that already-running session without autostarting a
 replacement if it disappeared. Incompatible sessions are rejected. Leaving a disposable ephemeral
 session requires clicking the target row a second time; this confirmation is independent from the
-session picker's confirmation.
+session picker's confirmation. Hovering a live session row reveals a `✕` that kills it; see
+[Closing from a row](#closing-from-a-row).
+
+Session names are per-machine. `dev` on a remote host and `dev` here are unrelated sessions that
+merely share a spelling, and both are listed — attaching to one never hides the other.
+
+Only hosts you have **connected** are contacted over ssh, and they keep being contacted until you
+disconnect them. A probe that fails does not disconnect the host: the row shows why and the next
+sweep tries again, so a blip — a lid closing, a VPN reconnecting — heals on its own rather than
+leaving the host stuck `Offline` with its sessions missing. Sessions found on a connected host are
+always listed even when the local scan fails at the same moment; the two are gathered independently.
+
+A remote host that fails to connect says why on a third line. The badge already says `Offline`, so
+the line says *which kind* of offline, in the state it found rather than the ssh error behind it:
+
+```text
+  WINVM                ○ Offline
+  Click to connect
+  SSH port closed
+```
+
+| Line | What happened | Where to look |
+| --- | --- | --- |
+| `Host not responding` | Nothing answered. | The machine is off, on another network, or behind a firewall that drops. |
+| `SSH port closed` | Something answered and refused. | The machine is up but nothing is accepting SSH: `sshd` stopped, wrong port, or a firewall that rejects. Also what a stopped VM behind a published port forward gives. |
+| `Host unreachable` | No route to the address. | Routing or the local network segment. |
+| `Unknown host name` | The name did not resolve. | DNS, `/etc/hosts`, or the `[remote.hosts]` alias. |
+| `SSH login rejected` | Reached `sshd`, it refused the login. | Keys, agent, or the username in the target. |
+| `Host key not trusted` | The host key is unknown or changed. | `known_hosts`. |
+| `No hyprmux on host` | Logged in, could not run `hyprmux`. | Install it there, or set `binary_path` / `HYPRMUX_REMOTE_BINARY`. |
+| `ssh not installed here` | No `ssh` on this machine's `PATH`. | This machine, not the remote one. |
+| `Connection failed` | Anything else. | Run `hyprmux --remote <HOST>` from a shell for the raw ssh output. |
+
+The underlying ssh message is kept, not discarded — `hyprmux --remote <HOST>` from a shell shows it
+whenever the phrase is not enough.
 
 When the client is attached with `--remote`, both tabs are served by the session server instead of
 the local filesystem: directory listings and git status come over the session, and the widget
@@ -167,6 +204,55 @@ The tree scrolls internally and is not part of the sidebar's own scroll view. Cl
 expands or collapses it. Clicking a file runs the tab's `on_click`, which defaults to typing the
 path at the focused pane's prompt without a newline — so a click inserts the path and nothing runs
 until you press Enter. Only files run the action; activating a directory never does.
+
+### Closing from a Row
+
+Hovering a pane row (Panes) or a live session row (Sessions) reveals a `✕` at the right edge of its
+title line, taking the badge's place rather than competing with it for the narrow column. It always
+takes two clicks. The first arms the row: its title strikes through and its detail line gives way to
+a red `Click again to confirm`, the same cue the session picker and the host disconnect row use. The
+`✕` itself does not change: the confirming click has to land back on it, and red is what *hovering*
+it means — an armed `✕` painted red would answer the pointer with no change and stop reading as
+something you can click.
+
+```text
+  hyprmux                     ✕      hovered
+  ~/Work/Projects/hyprmux
+
+  h̶y̶p̶r̶m̶u̶x̶                     ✕      armed
+  Click again to confirm
+```
+
+| Tab | What `✕` does |
+| --- | --- |
+| Panes | Kills the pane, the same as [`close-pane`](keybindings.md). |
+| Sessions | Kills the session — shuts its server down, the same as the session picker's `Ctrl+K`. Killing the session on screen keeps the client alive; see [where it lands](sessions.md#where-the-client-lands). |
+
+Only live rows carry one. The last-seen rows under an offline host do not: there is nothing running
+there to kill.
+
+The confirmation is deliberately not governed by [`[confirm]`](configuration.md), which gates the
+keyboard close/kill actions. The `✕` is a small pointer target sitting on a row whose ordinary click
+merely focuses a pane or attaches a session, so it always confirms.
+
+An armed `✕` stays visible even after the pointer leaves, so a live confirmation is never invisible.
+It is abandoned by clicking anything else in the sidebar or by moving the keyboard cursor, and it
+lapses on its own after the [confirmation window](#confirmation-window). There is no keyboard
+equivalent — `Enter` runs the row's own action, and closing stays a pointer gesture.
+
+## Confirmation Window
+
+Every destructive confirmation in hyprmux stays armed for **3 seconds**, then lapses on its own. The
+window is the same everywhere:
+
+- the sidebar's `✕` on a pane or session row,
+- the sidebar's `Click to disconnect` on a remote host,
+- the session picker's `Ctrl+K` kill,
+- the profile picker's delete and its ends-the-ephemeral-session open guard,
+- the keyboard close/kill/quit actions gated by [`[confirm]`](configuration.md), whose confirm toast
+  is shown for exactly that long — the toast disappearing means the confirmation expired.
+
+Arming a second thing always releases the first, so only one confirmation is ever live.
 
 ## User Tabs
 

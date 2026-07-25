@@ -1,4 +1,5 @@
 pub(crate) mod config;
+pub(crate) mod confirm;
 pub(crate) mod control;
 pub(crate) mod exit;
 pub(crate) mod focus;

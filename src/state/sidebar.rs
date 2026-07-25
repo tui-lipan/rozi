@@ -16,6 +16,21 @@ pub struct SidebarCommandOutput {
     pub rows: Vec<SidebarCommandRow>,
 }
 
+/// What a row's ✕ destroys. Held by identity rather than by row index or by the discovered entry
+/// itself: rows are rebuilt from scratch on every session sweep and pane change, so an armed
+/// confirmation has to survive its row moving, and a `DiscoveredSession` carries live client counts
+/// that change underneath it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SidebarClose {
+    /// Kill the pane, the same as `close-pane` on it.
+    Pane(crate::state::PaneId),
+    /// Kill the session: shut its server down, the same as the picker's `Ctrl+K`.
+    Session {
+        name: String,
+        remote_target: Option<crate::session::remote::RemoteTarget>,
+    },
+}
+
 #[derive(Default)]
 pub struct SidebarState {
     pub active_tab: Option<SidebarTabId>,
@@ -69,6 +84,14 @@ pub struct SidebarState {
     /// Ignore stale pointer position after keyboard navigation changes the row cursor. The next
     /// real mouse movement clears this, matching `List`/`Tree` item-hover behavior.
     pub suppress_row_hover: bool,
+    /// Row index the pointer is currently over, which is what reveals that row's ✕. Driven by
+    /// `on_hover_change` on the row rather than by pointer position, so leaving the sidebar
+    /// entirely still clears it — there is no "pointer moved away" message to rely on.
+    pub hovered_row: Option<usize>,
+    /// A row's ✕ armed for a confirming second click. Cleared by acting on anything else or by
+    /// moving the cursor, so the confirmation never outlives the moment. An armed row keeps its ✕
+    /// visible even unhovered — an invisible armed state is worse than a lingering glyph.
+    pub pending_row_close: Option<SidebarClose>,
     /// The elapsed-time text the Agents tab last rendered. Comparing against it turns most of the
     /// once-a-second duration ticks into a bare reschedule instead of a repaint, the same way the
     /// workbar clock avoids redrawing an identical badge.

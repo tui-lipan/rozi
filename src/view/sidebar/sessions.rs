@@ -92,11 +92,21 @@ fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarR
             },
             super::super::fg_only(&ctx.state.theme.muted),
         );
-    SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone())))
+    // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
+    // the one on screen is fine; the UI hops onto a fresh ephemeral session rather than quitting.
+    SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(
+        crate::state::SidebarClose::Session {
+            name: entry.name.clone(),
+            remote_target: entry.remote_target.clone(),
+        },
+    )
 }
 
 /// A cached (last-seen) session row for an offline host: muted, activatable — selecting it connects
 /// to the host and attaches — so a host's known workplaces stay visible while it is offline.
+///
+/// Deliberately has no ✕: the host is offline, so there is nothing there to kill, and the row is a
+/// memory of a session rather than a live one.
 fn cached_session_row(
     ctx: &Context<HyprmuxApp>,
     host: &HostEntry,
@@ -128,17 +138,54 @@ fn cached_session_row(
     )
 }
 
-/// A section header (`LOCAL`, or a host alias) with an optional right-aligned status badge and an
-/// inline error line. Inert — the connect/disconnect action lives on its own row beneath it.
-fn header_row(ctx: &Context<HyprmuxApp>, label: &str, status: Option<HostStatus>) -> SidebarRow {
+/// A section header (`LOCAL`, or a host alias) with an optional right-aligned status badge.
+///
+/// A remote host is one two-line row: its connect/disconnect description is the detail line, so the
+/// row list wraps the title and description in one `MouseRegion`. `LOCAL` remains a one-line,
+/// inert header.
+fn header_row(
+    ctx: &Context<HyprmuxApp>,
+    label: &str,
+    remote: Option<(HostStatus, &RemoteTarget)>,
+) -> SidebarRow {
     let theme = &ctx.state.theme;
-    let mut row =
-        Row::new(label.to_string()).title_style(super::super::fg_only(&theme.muted).bold());
-    if let Some(status) = status {
+    let mut row = Row::new(label.to_string())
+        .group_level()
+        .title_style(super::super::fg_only(&theme.accent).bold());
+    let mut target = RowTarget::Inert;
+    if let Some((status, remote_target)) = remote {
         let (dot, text, color) = status_face(theme, status);
         row = row.badge(format!("{dot} {text}"), color);
+        let muted = super::super::fg_only(&theme.muted);
+        let (description, description_style, row_target) = match status {
+            HostStatus::Connected | HostStatus::Reachable => {
+                let armed =
+                    ctx.state.sidebar.pending_host_disconnect.as_ref() == Some(remote_target);
+                if armed {
+                    (
+                        "Click again to confirm",
+                        Style::new().fg(theme.status.error),
+                        RowTarget::HostDisconnect(remote_target.clone()),
+                    )
+                } else {
+                    (
+                        "Click to disconnect",
+                        muted,
+                        RowTarget::HostDisconnect(remote_target.clone()),
+                    )
+                }
+            }
+            HostStatus::Disconnected | HostStatus::Unreachable => (
+                "Click to connect",
+                muted,
+                RowTarget::HostConnect(remote_target.clone()),
+            ),
+            HostStatus::Connecting => ("Connecting…", muted, RowTarget::Inert),
+        };
+        row = row.detail(description, description_style);
+        target = row_target;
     }
-    SidebarRow::item(row, RowTarget::Inert)
+    SidebarRow::item(row, target)
 }
 
 /// The muted "nothing here" line for a group with no sessions to list.
@@ -149,7 +196,13 @@ fn empty_row(ctx: &Context<HyprmuxApp>, text: &str) -> SidebarRow {
     )
 }
 
-/// A muted "＋ …" action row (new session, connect a host).
+/// A child-level "＋ …" action row within a session group.
+fn session_action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> SidebarRow {
+    let style = super::super::fg_only(&ctx.state.theme.accent);
+    SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
+}
+
+/// A group-level "＋ …" action row (connect a host).
 fn action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> SidebarRow {
     let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(
@@ -157,36 +210,6 @@ fn action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> Side
             .glyph(Text::new("+").style(style))
             .title_style(style),
         target,
-    )
-}
-
-/// "Click to connect" — the connect action for an offline host.
-fn connect_row(ctx: &Context<HyprmuxApp>, host: &HostEntry) -> SidebarRow {
-    SidebarRow::item(
-        Row::new("Click to connect").title_style(super::super::fg_only(&ctx.state.theme.accent)),
-        RowTarget::HostConnect(host.target.clone()),
-    )
-}
-
-/// "Click to disconnect" — the disconnect action for an online host, with the app's click-again
-/// confirmation: the first click arms it (the row turns red and reads "Click again to confirm"),
-/// the second commits.
-fn disconnect_row(ctx: &Context<HyprmuxApp>, host: &HostEntry) -> SidebarRow {
-    let armed = ctx.state.sidebar.pending_host_disconnect.as_ref() == Some(&host.target);
-    let (label, style) = if armed {
-        (
-            "Click again to confirm",
-            Style::new().fg(ctx.state.theme.status.error),
-        )
-    } else {
-        (
-            "Click to disconnect",
-            super::super::fg_only(&ctx.state.theme.muted),
-        )
-    };
-    SidebarRow::item(
-        Row::new(label).title_style(style),
-        RowTarget::HostDisconnect(host.target.clone()),
     )
 }
 
@@ -209,7 +232,11 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     if !any_local {
         rows.push(empty_row(ctx, "No local sessions"));
     }
-    rows.push(action_row(ctx, "New session", RowTarget::NewSession(None)));
+    rows.push(session_action_row(
+        ctx,
+        "New session",
+        RowTarget::NewSession(None),
+    ));
 
     // One group per known remote host — configured, recently used, or currently attached — so a
     // host stays listed even while offline. Connecting a host lists its sessions; disconnecting
@@ -228,17 +255,19 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
             attachment_connections(ctx, &host.target).iter(),
             !sessions.is_empty(),
         );
-        rows.push(header_row(ctx, &host.alias.to_uppercase(), Some(status)));
+        rows.push(header_row(
+            ctx,
+            &host.alias.to_uppercase(),
+            Some((status, &host.target)),
+        ));
         if let Some(error) = host.probe.error() {
             rows.push(empty_row_error(ctx, error));
         }
 
         match status {
-            HostStatus::Connecting => rows.push(empty_row(ctx, "Connecting…")),
+            HostStatus::Connecting => {}
             HostStatus::Connected | HostStatus::Reachable => {
-                // Online: the disconnect action sits right under the header, then the live sessions,
-                // then the way to start another.
-                rows.push(disconnect_row(ctx, host));
+                // Online: live sessions follow the host row, then the way to start another.
                 if sessions.is_empty() {
                     rows.push(empty_row(ctx, "No sessions here yet"));
                 } else {
@@ -246,16 +275,14 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                         rows.push(session_row(ctx, entry));
                     }
                 }
-                rows.push(action_row(
+                rows.push(session_action_row(
                     ctx,
                     "New session",
                     RowTarget::NewSession(Some(host.target.clone())),
                 ));
             }
             HostStatus::Disconnected | HostStatus::Unreachable => {
-                // Offline: connect, then the host's last-seen sessions (from the cache) so its
-                // known workplaces stay visible without contacting it.
-                rows.push(connect_row(ctx, host));
+                // Offline: the host row connects it; last-seen sessions remain visible from cache.
                 if let Some(cached) = ctx
                     .state
                     .host_session_cache
@@ -277,10 +304,15 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     rows
 }
 
-/// The inline error line under a host that failed to connect.
+/// The inline reason under a host that failed to connect: a short phrase naming what to go fix, not
+/// the ssh/plumbing message behind it — see [`crate::session::discovery::probe_failure_reason`].
 fn empty_row_error(ctx: &Context<HyprmuxApp>, error: &str) -> SidebarRow {
     SidebarRow::item(
-        Row::new(error.to_string()).title_style(Style::new().fg(ctx.state.theme.status.error)),
+        Row::new(crate::session::discovery::probe_failure_reason(error))
+            // Aligned with the host row above rather than indented under it: this says something
+            // about the host itself, not about one of the sessions it would have listed.
+            .group_level()
+            .title_style(Style::new().fg(ctx.state.theme.status.error)),
         RowTarget::Inert,
     )
 }

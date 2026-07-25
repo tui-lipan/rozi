@@ -1,8 +1,8 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
 use crate::config::SidebarTabId;
 use crate::state::PaneId;
+use crate::{HyprmuxApp, Msg};
 
 /// What activating a row does. Rows are built as a pure function of `State`, so the update side can
 /// rebuild the same list and resolve an index back to one of these — which is what lets Enter and a
@@ -45,10 +45,11 @@ pub(crate) enum RowKind {
     Item(Box<Row>),
 }
 
-/// One row: how it renders, and what activating it does.
+/// One row: how it renders, what activating it does, and what its ✕ destroys if it has one.
 pub(crate) struct SidebarRow {
     pub kind: RowKind,
     pub target: RowTarget,
+    pub close: Option<crate::state::SidebarClose>,
 }
 
 impl SidebarRow {
@@ -56,6 +57,7 @@ impl SidebarRow {
         Self {
             kind: RowKind::Header(Box::new(element.into())),
             target: RowTarget::Inert,
+            close: None,
         }
     }
 
@@ -63,6 +65,7 @@ impl SidebarRow {
         Self {
             kind: RowKind::Spacer,
             target: RowTarget::Inert,
+            close: None,
         }
     }
 
@@ -70,13 +73,30 @@ impl SidebarRow {
         Self {
             kind: RowKind::Item(Box::new(row)),
             target,
+            close: None,
         }
+    }
+
+    /// Give the row a ✕: revealed on hover, destroying `close` after a confirming second click.
+    pub(super) fn closable(mut self, close: crate::state::SidebarClose) -> Self {
+        self.close = Some(close);
+        self
     }
 
     /// Rows the keyboard cursor is allowed to land on.
     pub(crate) fn selectable(&self) -> bool {
         !matches!(self.target, RowTarget::Inert)
     }
+}
+
+/// How a row's ✕ should render this frame. Absent when the row has no ✕, or has one that is
+/// neither hovered nor armed.
+#[derive(Clone, Copy)]
+pub(super) struct CloseAffordance {
+    /// Row index, so the click resolves the same way `SidebarRowActivate` does.
+    pub index: usize,
+    /// Armed for the confirming second click.
+    pub armed: bool,
 }
 
 /// The row shape shared by every sidebar tab: an accent marker gutter that fills for the current
@@ -88,6 +108,7 @@ impl SidebarRow {
 /// independent: the marker bar and the cursor highlight can both be on the same row.
 pub(crate) struct Row {
     active: bool,
+    group_level: bool,
     glyph: Option<Element>,
     title: String,
     title_style: Style,
@@ -99,6 +120,7 @@ impl Row {
     pub(super) fn new(title: impl Into<String>) -> Self {
         Self {
             active: false,
+            group_level: false,
             glyph: None,
             title: title.into(),
             title_style: Style::default(),
@@ -110,6 +132,12 @@ impl Row {
     /// Fills the gutter marker: the row is the focused pane, the current session, and so on.
     pub(super) fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Align this row with a section heading rather than its children.
+    pub(super) fn group_level(mut self) -> Self {
+        self.group_level = true;
         self
     }
 
@@ -135,8 +163,26 @@ impl Row {
         self
     }
 
-    pub(super) fn build(self, ctx: &Context<HyprmuxApp>, selected: bool) -> Element {
+    pub(super) fn build(
+        mut self,
+        ctx: &Context<HyprmuxApp>,
+        selected: bool,
+        close: Option<CloseAffordance>,
+    ) -> Element {
         let theme = &ctx.state.theme;
+
+        // An armed row spells the confirmation out the way the session picker's pending kill does:
+        // the title strikes through, because that is the thing about to go, and the detail line
+        // gives up whatever it was saying to ask for the second click. The ✕ itself stays a plain ✕
+        // — it is the target, and a target that changes shape under the pointer is one you can miss.
+        if close.is_some_and(|close| close.armed) {
+            self.title_style = self.title_style.strikethrough();
+            self.detail = vec![(
+                "Click again to confirm".to_string(),
+                Style::new().fg(theme.status.error),
+            )];
+        }
+
         let lines = if self.detail.is_empty() { 1 } else { 2 };
         let marker = if self.active { "▎" } else { " " };
         // The marker repeats down the row so a two-line entry gets a full-height bar rather than a
@@ -161,9 +207,19 @@ impl Row {
         // A badge pins itself to the right edge, with the title flexing into whatever is left. The
         // title has to be the one that gives way — a workspace number pushed off the edge is worse
         // than a truncated name, since the name is usually recoverable from the row beside it.
-        let title: Element = match self.badge {
+        //
+        // A visible ✕ takes that slot instead of the badge rather than fighting it for width. The
+        // badge is ambient (what the pane runs) and comes back the moment the pointer leaves; the ✕
+        // is the thing being aimed at, so in a column this narrow it gets the space.
+        let trailing = match close {
+            Some(close) => Some(close_affordance(ctx, close)),
+            None => self
+                .badge
+                .map(|(badge, style)| Text::new(badge).style(style).into()),
+        };
+        let title: Element = match trailing {
             None => Text::new(self.title).style(self.title_style).into(),
-            Some((badge, badge_style)) => HStack::new()
+            Some(trailing) => HStack::new()
                 .gap(1)
                 .height(Length::Px(1))
                 .child(
@@ -171,7 +227,7 @@ impl Row {
                         .style(self.title_style)
                         .width(Length::Flex(1)),
                 )
-                .child(Text::new(badge).style(badge_style))
+                .child(trailing)
                 .into(),
         };
 
@@ -186,7 +242,11 @@ impl Row {
         }
 
         HStack::new()
-            .gap(u16::from(!leading))
+            .gap(if self.group_level {
+                0
+            } else {
+                u16::from(!leading)
+            })
             .height(Length::Px(lines))
             .style(if selected {
                 super::row_highlight(theme)
@@ -199,6 +259,55 @@ impl Row {
             .child(cells.child(text))
             .into()
     }
+}
+
+/// The ✕ pinned to a row's title line: click to arm, click again to destroy.
+///
+/// It renders the same armed or not — the row says what is about to happen (struck-through title, a
+/// "Click again to confirm" detail line) while the glyph stays exactly where and what it was, since
+/// the confirming click has to land back on it. Deliberately *not* recolored while armed: red is
+/// what hovering it means, so an armed ✕ painted red would answer the pointer with no change at all
+/// and stop reading as a thing you can click.
+///
+/// The cell of padding to its right holds it off the panel edge and off the scrollbar that appears
+/// once the list scrolls; it is inside the region, so it widens the target rather than shrinking it.
+///
+/// Its own `MouseRegion` nested inside the row's is what separates "close this" from the row's
+/// ordinary click (focus the pane, attach the session): the nearest enclosing region wins a click,
+/// so the row's `on_click` never fires for it. That nesting is also why it reports hover itself —
+/// hover resolves to a single innermost node, so without this the pointer reaching the ✕ would read
+/// as leaving the row and take the ✕ away with it.
+fn close_affordance(ctx: &Context<HyprmuxApp>, close: CloseAffordance) -> Element {
+    let index = close.index;
+    let style = super::super::fg_only(&ctx.state.theme.muted);
+    let region: Element = MouseRegion::new()
+        .on_click(ctx.link().callback(move |_| Msg::SidebarRowClose(index)))
+        .on_mouse_move(ctx.link().callback(|_| Msg::SidebarPointerMoved))
+        .on_hover_change(
+            ctx.link()
+                .callback(move |hovered| Msg::SidebarRowHover { index, hovered }),
+        )
+        .hover_effect(VisualEffect::transform_fg(ColorTransform::Tint(
+            ctx.state.theme.status.error,
+            1.0,
+        )))
+        .child(
+            // `Auto` width is load-bearing: a flexing wrapper would compete with the title for the
+            // row and drag the ✕ into the middle of it instead of pinning it to the edge.
+            HStack::new()
+                .padding((0, 1, 0, 0))
+                .width(Length::Auto)
+                .height(Length::Px(1))
+                .child(Text::new("✕").style(style).height(Length::Px(1))),
+        )
+        .into();
+    region.key(close_hover_key(index))
+}
+
+/// Stable identity for the nested close region, allowing the parent row to compose its own hover
+/// effect while this child is the framework's single hover owner.
+pub(super) fn close_hover_key(index: usize) -> String {
+    format!("sidebar-row-close-{index}")
 }
 
 /// One-line section header, aligned with the glyph column so headed rows read as a tree.

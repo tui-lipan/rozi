@@ -45,6 +45,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
         Msg::SidebarPointerMoved => sidebar::pointer_moved(ctx),
         Msg::SidebarRowActivate(index) => sidebar::row_activate(ctx, index),
+        Msg::SidebarRowHover { index, hovered } => sidebar::row_hover(ctx, index, hovered),
+        Msg::SidebarRowClose(index) => sidebar::row_close(ctx, index),
+        Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
         Msg::SidebarCycleTab(forward) => sidebar::cycle_tab(ctx, forward),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
@@ -120,7 +123,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             prompts::profile_sessions_discovered(ctx, epoch, rows)
         }
         Msg::CloseSessionPicker => prompts::close_session_picker(ctx),
-        Msg::SessionsDiscovered { epoch, rows } => prompts::sessions_discovered(ctx, epoch, rows),
+        Msg::SessionsDiscovered {
+            epoch,
+            rows,
+            host_status,
+        } => prompts::sessions_discovered(ctx, epoch, rows, host_status),
         Msg::SessionPickerQueryChanged(query) => prompts::session_picker_query_changed(ctx, query),
         Msg::SessionPickerSelect(index) => prompts::session_picker_select(ctx, index),
         Msg::SessionPickerActivate(index) => prompts::session_picker_activate(ctx, index),

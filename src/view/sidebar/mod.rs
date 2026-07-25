@@ -274,15 +274,31 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
 
     for (index, row) in rows.into_iter().enumerate() {
         let selectable = row.selectable();
-        let element = match row.kind {
+        let close = close_affordance(ctx, &row, index);
+        let mut element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
-            row::RowKind::Item(item) => item.build(ctx, focused && cursor == Some(index)),
+            row::RowKind::Item(item) => item.build(ctx, focused && cursor == Some(index), close),
         };
+        let close_hovered = ctx.has_hover_within_key(row::close_hover_key(index));
+        if close_hovered && !ctx.state.sidebar.suppress_row_hover {
+            // Hover resolves to the innermost MouseRegion, so the row's native hover effect is
+            // inactive while the keyed ✕ region owns hover. Apply the same background transform
+            // through a scope around the row; the ✕ keeps its foreground-only native effect, and
+            // nested effects compose without another hover state machine.
+            element = EffectScope::new()
+                .effect(VisualEffect::transform_bg(hover_lift(&ctx.state.theme)))
+                .child(element)
+                .into();
+        }
         let element: Element = if selectable {
             let mut region = MouseRegion::new()
                 .on_mouse_move(ctx.link().callback(|_| Msg::SidebarPointerMoved))
                 .on_click(ctx.link().callback(move |_| Msg::SidebarRowActivate(index)))
+                .on_hover_change(
+                    ctx.link()
+                        .callback(move |hovered| Msg::SidebarRowHover { index, hovered }),
+                )
                 .child(element);
             if !ctx.state.sidebar.suppress_row_hover {
                 // A transform rather than a style: it lifts whatever the row already painted, so
@@ -298,6 +314,25 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
         view = view.child(element.key(row_key(index)));
     }
     view.key(super::sidebar_body_key())
+}
+
+/// Whether a row shows its ✕ this frame, and in which state.
+///
+/// Hover is what reveals it, so a resting list stays quiet and no row advertises a destructive
+/// action it is not being aimed at. An *armed* row keeps it regardless: hiding a live confirmation
+/// the moment the pointer drifts would leave the next click on that ✕ killing something with no
+/// warning on screen. `suppress_row_hover` gates the hover case the same way the row's hover lift
+/// is gated, so keyboard navigation does not leave a ✕ behind under a stale pointer.
+fn close_affordance(
+    ctx: &Context<HyprmuxApp>,
+    row: &row::SidebarRow,
+    index: usize,
+) -> Option<row::CloseAffordance> {
+    let close = row.close.as_ref()?;
+    let armed = ctx.state.sidebar.pending_row_close.as_ref() == Some(close);
+    let hovered =
+        ctx.state.sidebar.hovered_row == Some(index) && !ctx.state.sidebar.suppress_row_hover;
+    (armed || hovered).then_some(row::CloseAffordance { index, armed })
 }
 
 /// Per-row element key, used both for reconciliation and as the `scroll_to_key` target.

@@ -306,8 +306,9 @@ pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update
     if ctx.state.sidebar.cursor == cursor {
         return Update::none();
     }
-    // Moving off a row disarms any pending disconnect confirmation.
+    // Moving off a row disarms any pending confirmation.
     ctx.state.sidebar.pending_host_disconnect = None;
+    ctx.state.sidebar.pending_row_close = None;
     ctx.state.sidebar.cursor = cursor;
     ctx.state.sidebar.suppress_row_hover = true;
     Update::full()
@@ -320,6 +321,69 @@ pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
     ctx.state.sidebar.suppress_row_hover = false;
     Update::full()
+}
+
+/// The pointer entered or left a row, which is what reveals that row's ✕.
+///
+/// A leave only clears when it is still this row's: moving from a row onto the ✕ nested inside it
+/// fires leave for the row and then enter for the ✕, both naming the same index, and the queue is
+/// drained before the next paint — so ordering them this way keeps the glyph steady under the
+/// pointer instead of flickering out from under it.
+pub(crate) fn row_hover(ctx: &mut Context<HyprmuxApp>, index: usize, hovered: bool) -> Update {
+    let next = if hovered {
+        Some(index)
+    } else if ctx.state.sidebar.hovered_row == Some(index) {
+        None
+    } else {
+        return Update::none();
+    };
+    if ctx.state.sidebar.hovered_row == next {
+        return Update::none();
+    }
+    ctx.state.sidebar.hovered_row = next;
+    // A click-only region does not repaint on a hover transition by itself, and the ✕ appearing is
+    // exactly what the transition has to show.
+    Update::full()
+}
+
+/// A row's ✕ was clicked. The first click arms a confirmation (the row strikes through and its
+/// detail line asks for the second click), the second commits it — within
+/// [`crate::ops::confirm::CONFIRM_WINDOW`], after which the arming lapses on its own.
+///
+/// Deliberately confirms regardless of `[confirm]`, which gates the *keyboard* close/kill actions.
+/// This is a one-cell pointer target sitting on a row whose ordinary click merely focuses a pane or
+/// attaches a session, so a slip is both easy and expensive — the two are not the same gesture and
+/// do not share a switch.
+pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+        return Update::none();
+    };
+    let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
+    if index >= rows.len() {
+        return Update::none();
+    }
+    let row = rows.swap_remove(index);
+    let Some(close) = row.close else {
+        return Update::none();
+    };
+    // Any other pending confirmation is abandoned by acting here, as it is on an activation.
+    ctx.state.sidebar.pending_host_disconnect = None;
+    if ctx.state.sidebar.pending_row_close.take() != Some(close.clone()) {
+        ctx.state.sidebar.pending_row_close = Some(close);
+        return crate::ops::confirm::arm(ctx);
+    }
+    match close {
+        crate::state::SidebarClose::Pane(id) => {
+            crate::ops::exit::clear_pending(ctx);
+            crate::pane_lifecycle::begin_close_pane(ctx, id, ctx.state.config.animations)
+        }
+        // The row carries the live discovered entry the identity was built from, so the kill acts
+        // on what is actually on screen rather than re-looking it up and risking a stale match.
+        crate::state::SidebarClose::Session { .. } => match row.target {
+            RowTarget::Session(entry) => crate::ops::session::kill_discovered_session(ctx, *entry),
+            _ => Update::none(),
+        },
+    }
 }
 
 /// Enter: run whatever the row under the cursor does — the same path a click on it takes.
@@ -345,9 +409,10 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     if index >= rows.len() {
         return Update::none();
     }
-    // Acting on anything disarms a pending host-disconnect confirmation; capture it first so the
-    // matching disconnect row can still see its own armed state below.
+    // Acting on anything disarms a pending confirmation; capture the host one first so the matching
+    // disconnect row can still see its own armed state below.
     let armed_disconnect = ctx.state.sidebar.pending_host_disconnect.take();
+    ctx.state.sidebar.pending_row_close = None;
     match rows.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
@@ -861,26 +926,31 @@ pub(super) fn refresh_sessions(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
     }
     // The loop is now live for this epoch, so the post-update chokepoint won't kick a duplicate.
     ctx.state.sidebar.sessions_refresh_armed_epoch = Some(epoch);
-    let current_name = ctx.state.current().session_name.clone();
+    // Only a *local* current session is excluded from the local scan; see
+    // [`crate::state::State::local_current_session_name`].
+    let current_name = ctx.state.local_current_session_name().map(str::to_string);
     let attached = crate::ops::session::attached_session_rows(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
-    // On-demand: only *connected* hosts are contacted over ssh — those the user connected (probe in
-    // flight or reached) or already holds an attachment to. An offline host is never probed, so the
-    // sweep touches nothing the user has not connected.
+    // On-demand: only *connected* hosts are contacted over ssh — those the user connected, or that
+    // already hold an attachment. `Idle` is the disconnected state and is never probed, so the sweep
+    // touches nothing the user has not asked for.
+    //
+    // A failed probe keeps being retried, because connecting is an intent the user expressed and a
+    // failure is just this sweep's outcome. Dropping a failed host from the sweep meant one blip —
+    // a laptop lid, a VPN reconnect — demoted a connected host to Offline permanently, with its
+    // sessions gone until it was connected by hand again.
     let probe_targets: Vec<crate::session::remote::RemoteTarget> = ctx
         .state
         .hosts
         .iter()
         .filter(|host| {
-            matches!(
-                host.probe,
-                crate::state::HostProbe::InFlight | crate::state::HostProbe::Reached
-            ) || ctx
-                .state
-                .background
-                .values()
-                .chain(std::iter::once(ctx.state.current()))
-                .any(|attachment| attachment.remote_target.as_ref() == Some(&host.target))
+            !matches!(host.probe, crate::state::HostProbe::Idle)
+                || ctx
+                    .state
+                    .background
+                    .values()
+                    .chain(std::iter::once(ctx.state.current()))
+                    .any(|attachment| attachment.remote_target.as_ref() == Some(&host.target))
         })
         .map(|host| host.target.clone())
         .collect();
@@ -999,15 +1069,17 @@ pub(super) fn disconnect_host(
     if armed.as_ref() != Some(&target) {
         // Arm: the render turns the row red and reads "Click again to confirm".
         ctx.state.sidebar.pending_host_disconnect = Some(target);
-        return Update::full();
+        return crate::ops::confirm::arm(ctx);
     }
-    crate::ops::session::disconnect_host(ctx, &target);
-    // Drop the host back to offline; the sweep stops probing it.
-    if let Some(entry) = ctx.state.hosts.get_mut(&target) {
-        entry.probe = crate::state::HostProbe::Idle;
-    }
+    // The update is the disconnect's *result*, not a repaint hint: when the current session lived on
+    // this host it carries the command that lands the user somewhere else — an attach round-trip for
+    // a fresh ephemeral, or a reconnect for the session being switched to. Dropping it left the UI
+    // holding an attachment marked `Connecting` with a pending attach that nothing would ever
+    // complete: an empty workspace, a phantom pane, and every later session activation refused as
+    // "attach already in progress".
+    let landed = crate::ops::session::disconnect_host(ctx, &target);
     ctx.state.sidebar.sessions_epoch = ctx.state.sidebar.sessions_epoch.wrapping_add(1);
-    Update::full()
+    landed
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId) -> Update {
@@ -1407,9 +1479,8 @@ mod tests {
         });
     }
 
-    /// Connecting a host from its "Click to connect" row marks it in flight and bumps the sweep
-    /// epoch; disconnecting takes two clicks — the first arms the confirmation, the second commits it
-    /// and returns the host to offline (Idle).
+    /// The host title and description form one connect/disconnect row. Connecting marks the host in
+    /// flight; disconnecting takes two activations of that same row.
     #[test]
     fn host_connect_and_two_click_disconnect() {
         on_test_thread(|| {
@@ -1436,24 +1507,24 @@ mod tests {
             // `row_activate` rebuilds the rows from the current state before the post-update sweep
             // repopulates local sessions, so clearing them here makes the layout deterministic:
             //   0 LOCAL header · 1 "No local sessions" · 2 "+ New session" · 3 spacer
-            //   4 WINVM header · 5 "Click to connect" · 6 spacer · 7 "Connect a host…"
+            //   4 WINVM / "Click to connect" · 5 spacer · 6 "Connect a host…"
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(5))
-                .expect("connect click");
+                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .expect("connect through host row");
             assert_eq!(
                 backend.state().hosts.get(&target).unwrap().probe,
                 crate::state::HostProbe::InFlight,
                 "connecting marks the host in flight"
             );
 
-            // Now online, the same row is "Click to disconnect". Force the host reached and arm.
+            // Now online, the same row reads "Click to disconnect". Force the host reached and arm.
             backend.state_mut().hosts.get_mut(&target).unwrap().probe =
                 crate::state::HostProbe::Reached;
-            //   … 4 WINVM header · 5 "Click to disconnect" · 6 "No sessions here yet" · 7 "+ New…"
+            //   … 4 WINVM / "Click to disconnect" · 5 "No sessions here yet" · 6 "+ New…"
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(5))
+                .dispatch(crate::Msg::SidebarRowActivate(4))
                 .expect("arm disconnect");
             assert_eq!(
                 backend.state().sidebar.pending_host_disconnect.as_ref(),
@@ -1464,7 +1535,7 @@ mod tests {
                 crate::state::HostProbe::Reached;
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(5))
+                .dispatch(crate::Msg::SidebarRowActivate(4))
                 .expect("confirm disconnect");
             assert_eq!(
                 backend.state().hosts.get(&target).unwrap().probe,
@@ -1472,6 +1543,168 @@ mod tests {
                 "confirming disconnect returns the host to offline"
             );
             assert!(backend.state().sidebar.pending_host_disconnect.is_none());
+        });
+    }
+
+    /// The ✕ on a pane row takes two clicks: the first arms a confirmation, the second kills the
+    /// pane. Clicking the row body in between abandons the arming rather than carrying it, so a
+    /// confirmation can never be committed by a gesture that meant something else.
+    #[test]
+    fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+            }
+            let id = backend
+                .state()
+                .current()
+                .focused_pane
+                .expect("the default attachment has a focused pane");
+            // Row 0 is the workspace header; row 1 is the only pane.
+            let pane_row = 1;
+
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .expect("arm the close");
+            assert_eq!(
+                backend.state().sidebar.pending_row_close,
+                Some(crate::state::SidebarClose::Pane(id)),
+                "the first click arms the confirmation"
+            );
+
+            // Activating the row instead of confirming abandons the arming.
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(pane_row))
+                .expect("activate the row");
+            assert!(
+                backend.state().sidebar.pending_row_close.is_none(),
+                "acting on the row disarms the pending close"
+            );
+            assert!(
+                crate::pane_lifecycle::find_pane(backend.state(), id)
+                    .is_some_and(|pane| !pane.closing),
+                "an abandoned confirmation leaves the pane alone"
+            );
+
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .expect("re-arm the close");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .expect("confirm the close");
+            assert!(
+                backend.state().sidebar.pending_row_close.is_none(),
+                "committing consumes the arming"
+            );
+            assert!(
+                crate::pane_lifecycle::find_pane(backend.state(), id)
+                    .is_none_or(|pane| pane.closing),
+                "the confirming click closes the pane"
+            );
+        });
+    }
+
+    /// An arming lapses on its own after [`crate::ops::confirm::CONFIRM_WINDOW`]. The expiry is
+    /// matched by token rather than by wall time here: an expiry belonging to an arming that has
+    /// already been replaced must leave the replacement alone, which is the case a bare timer would
+    /// get wrong.
+    #[test]
+    fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+            }
+            let pane_row = 1;
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .expect("arm the close");
+            let armed_epoch = backend.state().confirm_epoch;
+            assert!(backend.state().sidebar.pending_row_close.is_some());
+
+            // Re-arming (here, the same row after a disarm) advances the token, so the first
+            // arming's expiry is now stale and must not clear what replaced it.
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(pane_row))
+                .expect("disarm");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .expect("re-arm");
+            assert_ne!(backend.state().confirm_epoch, armed_epoch);
+            backend
+                .dispatch(crate::Msg::ConfirmationExpired(armed_epoch))
+                .expect("stale expiry");
+            assert!(
+                backend.state().sidebar.pending_row_close.is_some(),
+                "a stale expiry leaves the current arming alone"
+            );
+
+            let current = backend.state().confirm_epoch;
+            backend
+                .dispatch(crate::Msg::ConfirmationExpired(current))
+                .expect("the window lapses");
+            assert!(
+                backend.state().sidebar.pending_row_close.is_none(),
+                "the arming lapses on its own"
+            );
+        });
+    }
+
+    /// Hover drives the ✕, and the row plus the ✕ nested inside it both report against the same
+    /// index. Moving between them fires leave-then-enter for that one index, which has to settle on
+    /// "hovered" rather than cancelling itself out.
+    #[test]
+    fn hover_survives_the_pointer_crossing_into_the_close_affordance() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend
+                .dispatch(crate::Msg::SidebarRowHover {
+                    index: 1,
+                    hovered: true,
+                })
+                .expect("enter the row");
+            assert_eq!(backend.state().sidebar.hovered_row, Some(1));
+
+            // Crossing onto the ✕: the row leaves, then the ✕ enters, both naming row 1.
+            backend
+                .dispatch(crate::Msg::SidebarRowHover {
+                    index: 1,
+                    hovered: false,
+                })
+                .expect("leave the row");
+            backend
+                .dispatch(crate::Msg::SidebarRowHover {
+                    index: 1,
+                    hovered: true,
+                })
+                .expect("enter the ✕");
+            assert_eq!(
+                backend.state().sidebar.hovered_row,
+                Some(1),
+                "the ✕ stays revealed under the pointer"
+            );
+
+            // A leave naming a row that is no longer the hovered one is stale and must not clear it.
+            backend
+                .dispatch(crate::Msg::SidebarRowHover {
+                    index: 4,
+                    hovered: false,
+                })
+                .expect("stale leave");
+            assert_eq!(backend.state().sidebar.hovered_row, Some(1));
+
+            backend
+                .dispatch(crate::Msg::SidebarRowHover {
+                    index: 1,
+                    hovered: false,
+                })
+                .expect("leave the sidebar");
+            assert_eq!(backend.state().sidebar.hovered_row, None);
         });
     }
 
@@ -1514,6 +1747,202 @@ mod tests {
                 .expect("tab left");
             assert_eq!(backend.state().sidebar.sessions_refresh_armed_epoch, None);
         });
+    }
+
+    /// Disconnecting the host the *current* session lives on has to land the client somewhere
+    /// usable. It lands on the session used before this one, whose screens are already live, rather
+    /// than minting a fresh ephemeral and paying for an attach.
+    ///
+    /// The regression underneath: the sidebar dropped the update `disconnect_host` returns, so the
+    /// hop's command never ran. The client was left on an attachment marked `Connecting` with a
+    /// pending attach nothing would complete — an empty workspace with a phantom pane, and every
+    /// later session activation refused as "attach already in progress".
+    #[test]
+    fn disconnecting_the_current_host_lands_on_the_last_used_session() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+            {
+                let state = backend.state_mut();
+                state.config.remote.hosts.insert(
+                    "winvm".to_string(),
+                    crate::config::RemoteHostConfig::default(),
+                );
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+            }
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("settle");
+
+            {
+                let state = backend.state_mut();
+                // The local session used before hopping onto the remote one: parked, still live.
+                let mut incoming = crate::state::fresh_default_attachment(&state.config);
+                incoming.session_name = Some("build".to_string());
+                incoming.session_attached = true;
+                incoming.connection = crate::state::ConnectionState::Connected;
+                incoming.remote_target = Some(target.clone());
+                incoming.remote_host = Some("winvm".to_string());
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().session_attached = true;
+                // Settled, not mid-connect: the launch attach this test never completes would
+                // otherwise leave it pending, and a pending attachment is deliberately not a
+                // landing spot — it has nothing on screen to come back to.
+                state.current_mut().pending_session_attach = None;
+                state.current_mut().connection = crate::state::ConnectionState::Connected;
+                let parked_epoch = state.runtime_epoch;
+                state.park_current(parked_epoch, incoming);
+                state.runtime_epoch = state.mint_attachment_id();
+
+                // Online, and armed, so the next activation of the host row commits the disconnect.
+                state.hosts.get_mut(&target).unwrap().probe = crate::state::HostProbe::Reached;
+                state.sidebar.pending_host_disconnect = Some(target.clone());
+                state.sidebar.sessions.clear();
+            }
+
+            // Row 4 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
+            backend
+                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .expect("confirm disconnect");
+
+            let state = backend.state();
+            assert_eq!(
+                state.current().session_name.as_deref(),
+                Some("dev"),
+                "the client lands on the session used before the disconnected one"
+            );
+            assert!(
+                state.current().remote_target.is_none(),
+                "the surviving session is the local one, not another on the dead host"
+            );
+            assert!(
+                state.current().pending_session_attach.is_none(),
+                "landing on a live parked session needs no attach, so nothing is left pending — \
+                 a pending attach nothing completes is what refused every later activation"
+            );
+        });
+    }
+
+    /// Killing the session on screen must not drop the user onto an empty new ephemeral while live
+    /// sessions sit parked behind it. The killed one is gone; the ones behind it are not.
+    #[test]
+    fn killing_the_current_session_lands_on_a_parked_one_not_a_fresh_ephemeral() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+            }
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("settle");
+            {
+                let state = backend.state_mut();
+                // `dev` is the session used before `build`: parked, settled, still live.
+                let mut incoming = crate::state::fresh_default_attachment(&state.config);
+                incoming.session_name = Some("build".to_string());
+                incoming.session_attached = true;
+                state.current_mut().session_name = Some("dev".to_string());
+                state.current_mut().session_attached = true;
+                state.current_mut().pending_session_attach = None;
+                state.current_mut().connection = crate::state::ConnectionState::Connected;
+                let parked_epoch = state.runtime_epoch;
+                state.park_current(parked_epoch, incoming);
+                state.runtime_epoch = state.mint_attachment_id();
+                //   0 LOCAL header · 1 `build` · 2 "+ New session"
+                state.sidebar.sessions = vec![discovered("build")];
+                // Hide the sidebar so the recurring sweep stops replacing this fixed row list with
+                // whatever sessions happen to be running on the machine the test runs on. Row
+                // activation reads the active tab, not visibility, so the rows still resolve.
+                state.sidebar_visible = false;
+            }
+
+            // The ✕ on the current session's row: arm, then confirm.
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(1))
+                .expect("arm the kill");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose(1))
+                .expect("confirm the kill");
+
+            assert_eq!(
+                backend.state().current().session_name.as_deref(),
+                Some("dev"),
+                "the kill lands on the parked session, not a fresh ephemeral"
+            );
+            assert!(
+                backend.state().current().pending_session_attach.is_none(),
+                "a live parked session needs no attach round-trip"
+            );
+        });
+    }
+
+    /// A host the user connected keeps being swept even after a probe fails. Connecting is an
+    /// intent; a failure is one sweep's outcome. Dropping failed hosts from the sweep meant a single
+    /// blip demoted a connected host to Offline for good, taking its sessions with it —
+    /// only `Idle`, the disconnected state, is left alone.
+    #[test]
+    fn a_connected_host_is_still_swept_after_a_probe_fails() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
+            {
+                let state = backend.state_mut();
+                state.config.remote.hosts.insert(
+                    "winvm".to_string(),
+                    crate::config::RemoteHostConfig::default(),
+                );
+                state.sidebar_visible = true;
+                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.sessions_epoch = 7;
+            }
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved)
+                .expect("settle");
+            backend
+                .dispatch(crate::Msg::SidebarSessionsDiscovered {
+                    epoch: 7,
+                    rows: Ok(Vec::new()),
+                    host_status: vec![(target.clone(), Some("connection reset".to_string()))],
+                })
+                .expect("failed probe");
+            assert!(matches!(
+                backend.state().hosts.get(&target).unwrap().probe,
+                crate::state::HostProbe::Failed(_)
+            ));
+
+            // The next sweep must still contact it, so the failure can clear on its own.
+            assert!(
+                probe_targets_for_test(backend.state()).contains(&target),
+                "a failed-but-connected host stays in the sweep"
+            );
+
+            // Disconnecting is what takes it out.
+            backend.state_mut().hosts.get_mut(&target).unwrap().probe =
+                crate::state::HostProbe::Idle;
+            assert!(!probe_targets_for_test(backend.state()).contains(&target));
+        });
+    }
+
+    /// Mirrors the `probe_targets` filter in [`refresh_sessions`].
+    fn probe_targets_for_test(
+        state: &crate::state::State,
+    ) -> Vec<crate::session::remote::RemoteTarget> {
+        state
+            .hosts
+            .iter()
+            .filter(|host| {
+                !matches!(host.probe, crate::state::HostProbe::Idle)
+                    || state
+                        .background
+                        .values()
+                        .chain(std::iter::once(state.current()))
+                        .any(|attachment| attachment.remote_target.as_ref() == Some(&host.target))
+            })
+            .map(|host| host.target.clone())
+            .collect()
     }
 
     /// A probe failure records the reason on the host's registry entry (surfaced inline on its

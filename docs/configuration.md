@@ -414,9 +414,10 @@ simply moves pane focus.
 `[confirm]` governs **one** confirmation layer: the destructive *shortcuts* - the actions that
 happen the instant you press a key, hold a modifier chord, or send a control-socket `run-action`.
 Each key below toggles whether that shortcut asks first. An armed confirmation shows a red-bordered
-toast and expires with it (3 seconds); the next press within that window fires, otherwise it arms
-again. Running the same command from the **command palette** always skips the confirmation - picking
-it from a searchable list is already a deliberate choice.
+toast and expires with it, after the shared
+[confirmation window](sidebar.md#confirmation-window) of 3 seconds; the next press within that
+window fires, otherwise it arms again. Running the same command from the **command palette** always
+skips the confirmation - picking it from a searchable list is already a deliberate choice.
 
 | Key | Default | Confirms before… |
 | --- | --- | --- |
@@ -427,12 +428,14 @@ it from a searchable list is already a deliberate choice.
 | `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
 | `load_profile` | `true` | Replacing a live disposable session by opening a profile-backed named target. |
 
-**Not covered by `[confirm]`:** the session picker and the session-naming prompt carry their own
-built-in confirmations that are **always on** and cannot be disabled here, because they read off the
-affected UI element rather than a toast (a second `Enter`/`Ctrl+K` after a visible cue). These are:
-killing a session in the picker (`Ctrl+K` twice), attaching away from an ephemeral session (`Enter`
-turns the target row amber), and creating a named session from an ephemeral one (`Enter` turns the
-name prompt's border red). See [sessions.md](sessions.md#switching-sessions-in-app-the-picker).
+**Not covered by `[confirm]`:** the session picker, the session-naming prompt, and the sidebar carry
+their own built-in confirmations that are **always on** and cannot be disabled here, because they
+read off the affected UI element rather than a toast (a second `Enter`/`Ctrl+K`/click after a visible
+cue). These are: killing a session in the picker (`Ctrl+K` twice), attaching away from an ephemeral
+session (`Enter` turns the target row amber), creating a named session from an ephemeral one (`Enter`
+turns the name prompt's border red), and the sidebar's `✕` and host disconnect rows (see
+[sidebar.md](sidebar.md#closing-from-a-row)). They run on the same 3-second window.
+See [sessions.md](sessions.md#switching-sessions-in-app-the-picker).
 
 ## `[session]`
 

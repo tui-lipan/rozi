@@ -618,7 +618,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::EditScrollback,
-        label: "Edit scrollback in $EDITOR",
+        label: "Edit scrollback",
         category: "App",
         default_keys: &[],
         palette: true,
@@ -955,6 +955,9 @@ pub(crate) fn default_shortcuts_for_action(
 /// Resolve a command's live display label, reflecting current state for toggle actions (e.g.
 /// "Disable floating" vs "Enable floating") and the active layout for `ToggleLayout`.
 fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
+    if action == Action::EditScrollback {
+        return edit_scrollback_label(&crate::ops::config::config_editor());
+    }
     if let Some(text) = toggle_command_label(action, state) {
         return text;
     }
@@ -976,6 +979,10 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         .to_string();
     }
     base_label.to_string()
+}
+
+fn edit_scrollback_label(editor: &str) -> String {
+    format!("Edit scrollback in {editor}")
 }
 
 fn toggle_command_label(action: Action, state: &State) -> Option<String> {

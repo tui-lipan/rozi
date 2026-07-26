@@ -11,8 +11,8 @@ use crate::platform::process::{LazyProcessScan, PlatformProcessInspector, Proces
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::session::protocol::{
-    PANE_STATUS_MAX_LEN, PANE_STATUS_REASON_MAX_LEN, PaneCommandPhase, PaneCwdSource,
-    PaneRuntimeState, PaneStatus,
+    DetectedAgent, PANE_STATUS_MAX_LEN, PANE_STATUS_REASON_MAX_LEN, PaneCommandPhase,
+    PaneCwdSource, PaneRuntimeState, PaneStatus,
 };
 
 const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -84,6 +84,7 @@ impl SessionServer {
             return Ok(None);
         }
 
+        let previous_runtime = pane.runtime.clone();
         let set_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -93,6 +94,11 @@ impl SessionServer {
             reason,
             set_at,
         });
+        pane.runtime.work_started_at = next_work_started_at(
+            &previous_runtime,
+            pane.runtime.status.as_ref(),
+            pane.runtime.detected_agent.as_ref(),
+        );
         pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
         Ok(Some(pane.runtime.clone()))
     }
@@ -248,6 +254,11 @@ fn compute_runtime_state(
         pane.runtime.detected_agent.clone()
     };
 
+    let work_started_at = next_work_started_at(
+        &pane.runtime,
+        pane.runtime.status.as_ref(),
+        detected_agent.as_ref(),
+    );
     let candidate = PaneRuntimeState {
         cwd,
         cwd_host,
@@ -260,6 +271,7 @@ fn compute_runtime_state(
         last_exit_status,
         status: pane.runtime.status.clone(),
         detected_agent,
+        work_started_at,
         sequence: pane.runtime.sequence,
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
@@ -272,7 +284,8 @@ fn compute_runtime_state(
         || candidate.foreground_program != pane.runtime.foreground_program
         || candidate.last_exit_status != pane.runtime.last_exit_status
         || candidate.status != pane.runtime.status
-        || candidate.detected_agent != pane.runtime.detected_agent;
+        || candidate.detected_agent != pane.runtime.detected_agent
+        || candidate.work_started_at != pane.runtime.work_started_at;
     PaneRuntimeState {
         sequence: if changed {
             pane.runtime.sequence.wrapping_add(1)
@@ -281,6 +294,63 @@ fn compute_runtime_state(
         },
         ..candidate
     }
+}
+
+/// Return the status the sidebar would see when an explicit report takes precedence over process
+/// detection. This is kept server-side so inferred agents get the same run timestamp semantics as
+/// agents using the control-socket integration.
+fn effective_agent_status<'a>(
+    status: Option<&'a PaneStatus>,
+    detected: Option<&'a DetectedAgent>,
+) -> Option<&'a str> {
+    status.map(|status| status.value.as_str()).or_else(|| {
+        detected.map(|detected| match detected.state {
+            crate::session::protocol::DetectedAgentState::Idle => {
+                crate::session::protocol::pane_status::IDLE
+            }
+            crate::session::protocol::DetectedAgentState::Working => {
+                crate::session::protocol::pane_status::WORKING
+            }
+            crate::session::protocol::DetectedAgentState::Blocked => {
+                crate::session::protocol::pane_status::BLOCKED
+            }
+        })
+    })
+}
+
+fn status_is_quiescent(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value
+            .trim()
+            .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
+            || value
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
+    })
+}
+
+/// Keep one run's wall-clock start across blocked and resumed states. The server owns this value so
+/// a client can detach and reattach without turning a still-live run into a new one.
+fn next_work_started_at(
+    previous: &PaneRuntimeState,
+    next_status: Option<&PaneStatus>,
+    next_detected: Option<&DetectedAgent>,
+) -> Option<u64> {
+    let previous_status =
+        effective_agent_status(previous.status.as_ref(), previous.detected_agent.as_ref());
+    let next_status = effective_agent_status(next_status, next_detected);
+    if next_status.is_none() || status_is_quiescent(next_status) {
+        return None;
+    }
+    if previous.work_started_at.is_some() && !status_is_quiescent(previous_status) {
+        return previous.work_started_at;
+    }
+    Some(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
 }
 
 fn detect_pane_agent(
@@ -677,5 +747,46 @@ mod tests {
         );
         assert_eq!(event_update.detected_agent, detected.detected_agent);
         assert_eq!(event_update.sequence, detected.sequence);
+    }
+
+    #[test]
+    fn inferred_agent_run_start_survives_block_and_resume() {
+        let mut pane = make_pane();
+        pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Working,
+        });
+
+        let working = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
+        let started = working
+            .work_started_at
+            .expect("inferred working state starts a run");
+        pane.runtime = working;
+        pane.runtime.detected_agent.as_mut().unwrap().state =
+            crate::session::protocol::DetectedAgentState::Blocked;
+
+        let blocked = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
+        assert_eq!(blocked.work_started_at, Some(started));
+        pane.runtime = blocked;
+        pane.runtime.detected_agent.as_mut().unwrap().state =
+            crate::session::protocol::DetectedAgentState::Working;
+
+        let resumed = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
+        assert_eq!(resumed.work_started_at, Some(started));
     }
 }

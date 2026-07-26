@@ -49,6 +49,7 @@ pub(super) fn bind_attached_pane_backends(
             pane.terminal.foreground_program = meta.runtime.foreground_program.clone();
             pane.terminal.reported_status = meta.runtime.status.clone();
             pane.terminal.detected_agent = meta.runtime.detected_agent.clone();
+            pane.terminal.work_started_at = meta.runtime.work_started_at;
             pane.terminal.command_phase = meta.runtime.command_phase;
             pane.terminal.last_exit_status = meta.runtime.last_exit_status;
             pane.terminal.runtime_sequence = meta.runtime.sequence;
@@ -119,6 +120,7 @@ pub(super) fn apply_attached_panes(
             pane.terminal.foreground_program = attached.runtime.foreground_program.clone();
             pane.terminal.reported_status = attached.runtime.status.clone();
             pane.terminal.detected_agent = attached.runtime.detected_agent.clone();
+            pane.terminal.work_started_at = attached.runtime.work_started_at;
             pane.terminal.command_phase = attached.runtime.command_phase;
             pane.terminal.last_exit_status = attached.runtime.last_exit_status;
             pane.terminal.runtime_sequence = attached.runtime.sequence;

@@ -270,6 +270,11 @@ pub struct PaneRuntimeState {
     pub status: Option<PaneStatus>,
     #[serde(default)]
     pub detected_agent: Option<DetectedAgent>,
+    /// Unix timestamp for the current active agent run. It is retained while an agent is blocked
+    /// or reports another non-quiescent status, so clients can show one continuous run age after a
+    /// block/resume transition and after detach/reattach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_started_at: Option<u64>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -1149,6 +1154,7 @@ mod tests {
         assert_eq!(decoded.display_path, None);
         assert_eq!(decoded.status, None);
         assert_eq!(decoded.detected_agent, None);
+        assert_eq!(decoded.work_started_at, None);
 
         let state = PaneRuntimeState {
             status: Some(PaneStatus {
@@ -1156,6 +1162,7 @@ mod tests {
                 reason: None,
                 set_at: 123,
             }),
+            work_started_at: Some(120),
             sequence: 5,
             ..PaneRuntimeState::default()
         };

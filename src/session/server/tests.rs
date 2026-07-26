@@ -613,6 +613,32 @@ fn pane_status_no_op_reason_change_and_clear_have_single_sequences() {
 }
 
 #[test]
+fn pane_status_run_start_survives_block_and_reattach() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    server.panes.insert(1, status_test_pane(2, None));
+
+    let set = |status: &str| ClientMessage::SetPaneStatus {
+        pane_id: 1,
+        generation: 2,
+        status: Some(status.into()),
+        reason: None,
+    };
+
+    server.handle_message(client, set("working"));
+    let started = server.panes[&1]
+        .runtime
+        .work_started_at
+        .expect("working starts a run");
+    server.handle_message(client, set("blocked"));
+    assert_eq!(server.panes[&1].runtime.work_started_at, Some(started));
+    server.handle_message(client, set("working"));
+    assert_eq!(server.panes[&1].runtime.work_started_at, Some(started));
+
+    assert_eq!(server.pane_meta()[0].runtime.work_started_at, Some(started));
+}
+
+#[test]
 fn grant_control_validates_sender_and_target() {
     let mut server = SessionServer::new_named("dev");
     let (controller, _s1) = attach_client(&mut server);

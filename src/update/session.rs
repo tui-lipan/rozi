@@ -809,16 +809,25 @@ fn status_is(value: Option<&str>, needle: &str) -> bool {
     value.is_some_and(|value| value.trim().eq_ignore_ascii_case(needle))
 }
 
+fn status_is_quiescent(value: Option<&str>) -> bool {
+    status_is(value, crate::session::protocol::pane_status::IDLE)
+        || status_is(value, crate::session::protocol::pane_status::DONE)
+}
+
+fn status_is_active_run(value: Option<&str>) -> bool {
+    value.is_some() && !status_is_quiescent(value)
+}
+
 /// React to an agent-status transition. `previous_age` is how long the outgoing status had held,
 /// sampled before it was overwritten.
 ///
-/// Stamps `status_since` so the sidebar can show how long the current state has held, banks the
-/// length of a `working` stretch as it ends so a finished run can report what it cost, and updates
-/// the "unseen finish" pulse: armed on a `working` -> quiescent edge (the run finished while you
-/// were looking elsewhere), disarmed the moment the agent resumes `working`, so a spinning agent
-/// never wears a completed-dot. A `blocked` outcome is deliberately left un-armed: it already has
-/// its own loud glyph, and arming here would let the sidebar's pulse override it. A separate focus
-/// chokepoint clears the flag once the pane is actually looked at.
+/// Stamps the local fallback, banks the length of an active run as it ends so a finished run can
+/// report what it cost, and updates the "unseen finish" pulse: armed on an active -> quiescent edge
+/// (the run finished while you were looking elsewhere), disarmed the moment the agent resumes
+/// working, so a spinning agent never wears a completed-dot. A `blocked` outcome is deliberately
+/// left un-armed: it already has its own loud glyph, and the server-owned run timestamp keeps the
+/// same timer ready for a later resume. A separate focus chokepoint clears the flag once the pane is
+/// actually looked at.
 fn update_agent_status_edge(
     pane: &mut crate::pane::TerminalPane,
     previous: Option<&str>,
@@ -827,7 +836,7 @@ fn update_agent_status_edge(
     let current = pane.agent_status();
     let current = current.as_deref();
     if current != previous {
-        if status_is(previous, crate::session::protocol::pane_status::WORKING) {
+        if status_is_active_run(previous) && status_is_quiescent(current) {
             pane.last_run = previous_age;
         }
         pane.status_since = Some(std::time::Instant::now());
@@ -873,6 +882,7 @@ pub(super) fn pane_runtime_changed(
                 pane.terminal.last_exit_status = state.last_exit_status;
                 pane.terminal.reported_status = state.status;
                 pane.terminal.detected_agent = state.detected_agent;
+                pane.terminal.work_started_at = state.work_started_at;
                 update_agent_status_edge(
                     &mut pane.terminal,
                     previous_agent_status.as_deref(),
@@ -910,6 +920,7 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.last_exit_status = state.last_exit_status;
         pane.terminal.reported_status = state.status;
         pane.terminal.detected_agent = state.detected_agent;
+        pane.terminal.work_started_at = state.work_started_at;
         update_agent_status_edge(
             &mut pane.terminal,
             previous_agent_status.as_deref(),

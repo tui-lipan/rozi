@@ -119,6 +119,7 @@ pub fn attached_message() -> ServerMessage {
                     last_exit_status: Some(0),
                     status: None,
                     detected_agent: None,
+                    work_started_at: None,
                     sequence: u64::from(pane.pane_id),
                 },
             })

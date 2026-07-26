@@ -37,9 +37,10 @@ pub struct TerminalPane {
     /// sidebar's "unseen finish" pulse so a completed run does not blend into panes that were idle
     /// all along. Never set for `blocked`, which already has its own attention glyph.
     pub finished_unseen: bool,
-    /// When this pane's effective agent status last changed, used for the sidebar's "how long has
-    /// it been like this" duration. Client-local, so it restarts at a detach/reattach; a reported
-    /// status carries the server's own `set_at` and is preferred over this where it exists.
+    /// Server timestamp for the current active agent run. It stays unchanged while an agent is
+    /// blocked and resumes working, so the sidebar can show one continuous run age.
+    pub work_started_at: Option<u64>,
+    /// Fallback for peers that do not send [`Self::work_started_at`].
     pub status_since: Option<std::time::Instant>,
     /// How long the agent's last `working` stretch lasted, captured as it ended. A finished run
     /// reports what it cost, not how long ago it stopped — the attention pulse already says the
@@ -80,6 +81,12 @@ pub struct TerminalSearchHighlight {
     pub end_col: usize,
 }
 
+fn status_is_quiescent(value: &str) -> bool {
+    let value = value.trim();
+    value.eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
+        || value.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
+}
+
 impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
@@ -103,6 +110,7 @@ impl TerminalPane {
             reported_status: None,
             detected_agent: None,
             finished_unseen: false,
+            work_started_at: None,
             status_since: None,
             last_run: None,
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
@@ -133,6 +141,7 @@ impl TerminalPane {
             self.reported_status = None;
             self.detected_agent = None;
             self.finished_unseen = false;
+            self.work_started_at = None;
             self.status_since = None;
             self.last_run = None;
         }
@@ -548,13 +557,27 @@ impl TerminalPane {
         Some(value.to_string())
     }
 
-    /// How long this pane's effective agent status has held, for the sidebar's duration column.
+    /// How long this pane's active agent run has lasted, for the sidebar's duration column.
     ///
-    /// A reported status is dated by the server's own `set_at`, which survives a client
-    /// detach/reattach; an inferred state has only the client-local `status_since` edge, which does
-    /// not. Wall-clock skew against a server on another host can only ever shorten the answer,
-    /// never invent one, because the subtraction saturates at zero.
+    /// The server-owned run timestamp survives detach/reattach and is deliberately preferred over
+    /// the current status's `set_at`, because blocking and resuming are still one run. Wall-clock
+    /// skew against a server on another host can only ever shorten the answer, never invent one,
+    /// because the subtraction saturates at zero.
     pub fn status_age(&self) -> Option<std::time::Duration> {
+        if self
+            .agent_status()
+            .as_deref()
+            .is_some_and(|status| !status_is_quiescent(status))
+            && let Some(started_at) = self.work_started_at
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            return Some(std::time::Duration::from_secs(
+                now.saturating_sub(started_at),
+            ));
+        }
         if let Some(status) = self.reported_status.as_ref() {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -863,6 +886,31 @@ mod tests {
         assert!(pane.reported_status.is_some());
         pane.bind_session(1, 3);
         assert!(pane.reported_status.is_none());
+    }
+
+    #[test]
+    fn status_age_uses_the_server_run_start_across_active_statuses() {
+        let mut pane = TerminalPane::new(100);
+        pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Working,
+        });
+        pane.work_started_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .saturating_sub(120),
+        );
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "blocked".into(),
+            reason: None,
+            set_at: 1,
+        });
+
+        assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
+        pane.reported_status.as_mut().unwrap().value = "working".into();
+        assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
     }
 
     #[test]

@@ -78,12 +78,12 @@ An agent working below its project root is badged with where it sits as well, as
 the only thing separating two rows that otherwise read identically. A deep path keeps its tail
 (`…/api`), which is the part that says which component the agent is in.
 
-The detail line reads `<elapsed> <activity>`. Elapsed time is dated from the reported status'
-server-side timestamp where there is one, so it survives a detach and reattach, and otherwise from
-the moment this client saw the state change. It coarsens as it grows (`45s`, `12m`, `3h`, `2d`). An
-idle agent shows no elapsed time: how long a state that prompts no action has lasted measures the
-reader rather than the agent. Its row still gets a second line, carrying the status word alone, so
-rows stay two lines tall whatever the state.
+The detail line reads `<elapsed> <activity>`. Elapsed time is dated from the agent run's
+server-side start timestamp, so it survives a detach and reattach. A block and later resume keep
+the same run start rather than resetting the timer; idle and done end the run. It coarsens as it
+grows (`45s`, `12m`, `3h`, `2d`). An idle agent shows no elapsed time: how long a state that
+prompts no action has lasted measures the reader rather than the agent. Its row still gets a second
+line, carrying the status word alone, so rows stay two lines tall whatever the state.
 
 A finished run is the exception: it reports how long the run *took*, measured when it ended, and
 that number never moves again. The attention pulse already says the finish is recent, so a figure

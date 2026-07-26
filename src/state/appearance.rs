@@ -1,5 +1,64 @@
 use tui_lipan::prelude::{BorderStyle, TextInput, Theme};
 
+/// Structural presentation of a visible pane title. `Bar` is the existing separate title row;
+/// the compact variants reuse the frame's top border row. Visibility is controlled independently
+/// by `pane.show_titles`, so toggling it never loses the selected layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneTitlebarMode {
+    Bar,
+    Border,
+    Integrated,
+}
+
+impl PaneTitlebarMode {
+    /// Cycle order for `Action::CycleTitlebar`.
+    pub fn all() -> &'static [PaneTitlebarMode] {
+        &[Self::Bar, Self::Border, Self::Integrated]
+    }
+
+    /// Config token and persisted value.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Border => "border",
+            Self::Integrated => "integrated",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Bar",
+            Self::Border => "Border",
+            Self::Integrated => "Integrated",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-")
+            .as_str()
+        {
+            "bar" | "titlebar" => Some(Self::Bar),
+            "border" | "frame" => Some(Self::Border),
+            "integrated" | "compact" => Some(Self::Integrated),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
+    }
+
+    /// Only the separate bar consumes a row in addition to the frame border.
+    pub fn takes_title_row(self) -> bool {
+        self == Self::Bar
+    }
+}
+
 /// The border glyphs tiled panes draw. A single app-wide setting (`Action::CycleBorderStyle`),
 /// not per-pane. Floating panes keep their own `Double` border so they stay visually distinct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,6 +214,7 @@ pub enum AppearanceAction {
     Theme,
     EditPadding,
     ToggleTitles,
+    CycleTitlebar,
     ToggleWorkbar,
     ToggleWorkbarGap,
     ToggleWorkbarPosition,
@@ -162,6 +222,7 @@ pub enum AppearanceAction {
     ToggleAnimations,
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
+    ToggleHighlightFocusedTitlebar,
     ToggleBorderMerge,
     ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
@@ -210,7 +271,11 @@ impl AppearanceAction {
     /// instead of hiding dependent rows as their parent toggles.
     pub fn disabled_reason(self, pane: &crate::config::HyprmuxPaneConfig) -> Option<&'static str> {
         match self {
+            Self::CycleTitlebar if !pane.show_titles => Some("Needs titlebar"),
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
+            Self::CycleTitleStyle if pane.titlebar == PaneTitlebarMode::Border => {
+                Some("Needs bar or integrated titlebar")
+            }
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarPowerline

@@ -302,18 +302,29 @@ pub(crate) fn pane_frame_foreground(
 }
 
 pub(crate) fn pane_title_foreground(theme: &Theme, focused: bool, background: Color) -> Color {
+    let fallback = style_fg(theme.primary).unwrap_or_else(|| fallback_text_color(background));
     let preferred = if focused {
         theme.surface.backdrop
     } else {
-        style_fg(theme.muted)
-            .or_else(|| style_fg(theme.primary))
-            .unwrap_or(Color::Gray)
+        fallback
     };
-    readable_chrome_color(
-        preferred,
-        background,
-        style_fg(theme.primary).unwrap_or_else(|| fallback_text_color(background)),
-    )
+    readable_chrome_color(preferred, background, fallback)
+}
+
+pub(crate) fn pane_border_title_foreground(
+    theme: &Theme,
+    focused: bool,
+    background: Color,
+) -> Color {
+    if focused {
+        return readable_chrome_color(
+            theme.border_active,
+            background,
+            style_fg(theme.primary).unwrap_or_else(|| fallback_text_color(background)),
+        );
+    }
+
+    pane_title_foreground(theme, false, background)
 }
 
 pub(crate) fn terminal_palette(theme: &Theme, background: Color) -> TerminalColorPalette {
@@ -630,6 +641,39 @@ mod tests {
         assert_eq!(
             pane_title_foreground(&theme, false, Color::Black),
             Color::Gray
+        );
+    }
+
+    #[test]
+    fn unfocused_title_prefers_primary_text_over_muted() {
+        let mut theme = ThemePreset::Ansi.theme();
+        theme.primary = Style::new().fg(Color::LightBlue);
+        theme.muted = Style::new().fg(Color::Yellow);
+
+        assert_eq!(
+            pane_title_foreground(&theme, false, Color::Black),
+            Color::LightBlue
+        );
+    }
+
+    #[test]
+    fn focused_border_title_prefers_active_border_color() {
+        let mut theme = ThemePreset::Ansi.theme();
+        theme.border_active = Color::rgb(220, 170, 45);
+
+        assert_eq!(
+            pane_border_title_foreground(&theme, true, Color::Black),
+            theme.border_active
+        );
+    }
+
+    #[test]
+    fn disabled_focused_titlebar_keeps_border_title_unfocused() {
+        let theme = ThemePreset::Ansi.theme();
+
+        assert_eq!(
+            pane_border_title_foreground(&theme, false, Color::Black),
+            pane_title_foreground(&theme, false, Color::Black)
         );
     }
 }

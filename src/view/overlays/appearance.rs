@@ -1,6 +1,6 @@
 pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let pane = &ctx.state.config.pane;
-    // Dependent rows (Titlebar style, Workbar gap/position) always stay in the list; when their
+    // Dependent rows (Titlebar cap style, Workbar gap/position) always stay in the list; when their
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
     // `render_item` below) rather than disappearing. Grouped so each control sits next to the
     // toggle it depends on.
@@ -17,7 +17,12 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
             AppearanceAction::ToggleTitles,
         ),
         (
-            "Titlebar style",
+            "Titlebar layout",
+            pane.titlebar.label().to_string(),
+            AppearanceAction::CycleTitlebar,
+        ),
+        (
+            "Titlebar cap style",
             pane.title_style.label().to_string(),
             AppearanceAction::CycleTitleStyle,
         ),
@@ -75,6 +80,11 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
             "Focused pane border",
             enabled_status(pane.highlight_focused_border),
             AppearanceAction::ToggleHighlightFocusedBorder,
+        ),
+        (
+            "Focused pane titlebar",
+            enabled_status(pane.highlight_focused_titlebar),
+            AppearanceAction::ToggleHighlightFocusedTitlebar,
         ),
         (
             "Border merging",
@@ -136,8 +146,8 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         );
 
     let panel: Element = Frame::new()
-        .title("Change appearance")
-        .title_style(ctx.state.theme.accent.bold())
+        .header_left("Change appearance")
+        .header_style(ctx.state.theme.accent.bold())
         .border_style(BorderStyle::Rounded)
         .padding(0)
         .style(Style::new().bg(ctx.state.theme.surface.element))

@@ -454,6 +454,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::CycleTitlebar,
+        label: "Titlebar layout",
+        category: "Appearance",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleWorkbar,
         label: "Workbar",
         category: "Appearance",
@@ -540,6 +547,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::ToggleHighlightFocusedTitlebar,
+        label: "Focused pane titlebar",
+        category: "Appearance",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleBorderMerge,
         label: "Merge pane borders",
         category: "Appearance",
@@ -562,7 +576,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::CycleTitleStyle,
-        label: "Titlebar style",
+        label: "Titlebar cap style",
         category: "Appearance",
         default_keys: &[],
         palette: false,
@@ -1017,6 +1031,10 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             "focused pane border",
             state.config.pane.highlight_focused_border,
         ),
+        Action::ToggleHighlightFocusedTitlebar => enable_disable_label(
+            "focused pane titlebar",
+            state.config.pane.highlight_focused_titlebar,
+        ),
         Action::ToggleBorderMerge => {
             enable_disable_label("border merging", state.config.pane.merge_borders)
         }
@@ -1027,8 +1045,14 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::CycleBorderStyle => {
             format!("Border style: {}", state.config.pane.border_style.label())
         }
+        Action::CycleTitlebar => {
+            format!("Titlebar layout: {}", state.config.pane.titlebar.label())
+        }
         Action::CycleTitleStyle => {
-            format!("Titlebar style: {}", state.config.pane.title_style.label())
+            format!(
+                "Titlebar cap style: {}",
+                state.config.pane.title_style.label()
+            )
         }
         Action::CycleWorkbarBadgeStyle => {
             format!(

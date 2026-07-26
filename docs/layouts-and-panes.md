@@ -72,7 +72,9 @@ tiled or floating geometry.
 - **Promote to master** (`.`, or the palette) swaps the focused pane into the first/master
   slot.
 - Clicking a pane or its titlebar focuses it. The focused pane gets an accent border and a
-  highlighted titlebar (these color changes animate when `focus_chrome` is enabled).
+  highlighted titlebar when `[pane] highlight_focused_border` and
+  `[pane] highlight_focused_titlebar` are enabled respectively (these color changes animate when
+  `focus_chrome` is enabled).
 
 A **new pane opens in the focused pane's current working directory** (when it can be
 discovered; see [Terminal features](terminal.md)), falling back to the configured `cwd`.
@@ -104,8 +106,12 @@ transitions as workspace panes.
 
 ## Titlebars
 
-Each pane shows a titlebar with an icon (tiled / floating / fullscreen) and a title. Toggle
-titlebars on/off with the *Toggle pane titlebars* palette command.
+Each pane can show its icon (tiled / floating / fullscreen) and title as a separate bar, embedded
+in the frame border, or as an integrated top-border strip. Set `[pane] titlebar` to `bar`,
+`border`, or `integrated`; the compact modes preserve the terminal row used by the separate bar.
+Set `[pane] show_titles = false` to hide the selected layout without losing it, or toggle titles
+with the *Toggle pane titlebars* palette command. Set `[pane] highlight_focused_titlebar = false`
+to keep focused and unfocused titlebars styled identically across all three layouts.
 
 The displayed title uses this precedence:
 

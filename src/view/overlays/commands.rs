@@ -78,6 +78,8 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "transitions",
             "focused border",
             "focused background",
+            "focused titlebar",
+            "titlebar focus",
         ]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
         // The live label is "Enable/Disable sidebar", so a bare "sidebar" query only matches its
@@ -105,8 +107,8 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "show titles",
         ]),
         AppearanceAction::CycleTitleStyle => alias_list(&[
-            "titlebar style",
-            "title style",
+            "titlebar cap style",
+            "title cap style",
             "titlebar caps",
             "title caps",
             "pill",
@@ -115,6 +117,14 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "half",
             "padded",
             "cap style",
+        ]),
+        AppearanceAction::CycleTitlebar => alias_list(&[
+            "titlebar layout",
+            "titlebar mode",
+            "title layout",
+            "bar",
+            "border",
+            "integrated",
         ]),
         AppearanceAction::ToggleWorkbar => {
             alias_list(&["workbar", "top bar", "status bar", "bar", "show workbar"])
@@ -168,6 +178,12 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "focus border",
             "highlight border",
             "active border",
+        ]),
+        AppearanceAction::ToggleHighlightFocusedTitlebar => alias_list(&[
+            "focused titlebar",
+            "focus titlebar",
+            "highlight titlebar",
+            "active titlebar",
         ]),
         AppearanceAction::ToggleBorderMerge => alias_list(&[
             "border merge",

@@ -4,7 +4,9 @@ use std::str::FromStr;
 use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
-use crate::state::{CapStyle, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, ThemePreset};
+use crate::state::{
+    CapStyle, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WmModifier {
@@ -280,6 +282,8 @@ pub struct HyprmuxPaneConfig {
     pub highlight_focused_background: bool,
     /// Whether the focused pane uses the theme's active border color instead of the normal border.
     pub highlight_focused_border: bool,
+    /// Whether the focused pane uses the focused titlebar colors and emphasis.
+    pub highlight_focused_titlebar: bool,
     /// Whether moving the mouse over a pane focuses it.
     pub focus_on_hover: bool,
     /// Whether the workbar (workspace tabs, mode chips, etc.) is shown.
@@ -288,8 +292,10 @@ pub struct HyprmuxPaneConfig {
     pub workbar_gap: bool,
     /// Whether the workbar is drawn on the last row (below the panes) instead of the first row.
     pub workbar_at_bottom: bool,
-    /// Whether tiled/floating panes render their titlebars.
+    /// Whether tiled/floating panes render their selected titlebar layout.
     pub show_titles: bool,
+    /// Structural presentation for tiled/floating pane titles.
+    pub titlebar: PaneTitlebarMode,
     /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
     /// instead of drawing a gap between separate boxes.
     pub merge_borders: bool,
@@ -325,11 +331,13 @@ impl Default for HyprmuxPaneConfig {
             hold_on_exit: false,
             highlight_focused_background: false,
             highlight_focused_border: true,
+            highlight_focused_titlebar: true,
             focus_on_hover: true,
             show_workbar: true,
             workbar_gap: true,
             workbar_at_bottom: false,
             show_titles: true,
+            titlebar: PaneTitlebarMode::Bar,
             merge_borders: false,
             background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
@@ -1176,6 +1184,8 @@ mod tests {
             ]
         );
         assert!(HyprmuxPaneConfig::default().workbar_powerline);
+        assert!(HyprmuxPaneConfig::default().show_titles);
+        assert!(HyprmuxPaneConfig::default().highlight_focused_titlebar);
     }
 
     #[test]
@@ -1188,6 +1198,24 @@ mod tests {
         assert_eq!(CapStyle::Padded.caps(), None);
         assert!(CapStyle::Round.caps().is_some());
         assert_eq!(CapStyle::Arrow.next(), CapStyle::Padded);
+    }
+
+    #[test]
+    fn pane_titlebar_modes_parse_and_cycle() {
+        assert_eq!(PaneTitlebarMode::parse("bar"), Some(PaneTitlebarMode::Bar));
+        assert_eq!(
+            PaneTitlebarMode::parse("frame"),
+            Some(PaneTitlebarMode::Border)
+        );
+        assert_eq!(
+            PaneTitlebarMode::parse("compact"),
+            Some(PaneTitlebarMode::Integrated)
+        );
+        assert_eq!(PaneTitlebarMode::parse("off"), None);
+        assert_eq!(PaneTitlebarMode::parse("nonsense"), None);
+        assert!(PaneTitlebarMode::Bar.takes_title_row());
+        assert!(!PaneTitlebarMode::Integrated.takes_title_row());
+        assert_eq!(PaneTitlebarMode::Integrated.next(), PaneTitlebarMode::Bar);
     }
 
     #[test]

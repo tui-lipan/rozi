@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[cfg(test)]
 use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{CapStyle, PaneBorderStyle};
+use crate::state::{CapStyle, PaneBorderStyle, PaneTitlebarMode};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
@@ -287,6 +287,7 @@ pub(super) struct PaneFileConfig {
     hold_on_exit: Option<bool>,
     highlight_focused_background: Option<bool>,
     highlight_focused_border: Option<bool>,
+    highlight_focused_titlebar: Option<bool>,
     focus_on_hover: Option<bool>,
     show_workbar: Option<bool>,
     workbar_gap: Option<bool>,
@@ -296,6 +297,7 @@ pub(super) struct PaneFileConfig {
     background_follows_terminal: Option<bool>,
     border_style: Option<String>,
     padding: Option<PaddingSpec>,
+    titlebar: Option<String>,
     title_style: Option<String>,
     pub(super) workbar_badge_style: Option<String>,
     pub(super) workbar_powerline: Option<bool>,
@@ -542,6 +544,9 @@ pub fn load_config() -> LoadedConfig {
     if let Some(highlight_focused_border) = parsed.pane.highlight_focused_border {
         config.pane.highlight_focused_border = highlight_focused_border;
     }
+    if let Some(highlight_focused_titlebar) = parsed.pane.highlight_focused_titlebar {
+        config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
+    }
     if let Some(focus_on_hover) = parsed.pane.focus_on_hover {
         config.pane.focus_on_hover = focus_on_hover;
     }
@@ -575,6 +580,14 @@ pub fn load_config() -> LoadedConfig {
         && let Some(resolved) = resolve_pane_padding(padding, &mut warnings)
     {
         config.pane.padding = resolved;
+    }
+    if let Some(titlebar) = parsed.pane.titlebar.as_deref() {
+        match PaneTitlebarMode::parse(titlebar) {
+            Some(mode) => config.pane.titlebar = mode,
+            None => warnings.push(format!(
+                "Ignored unknown pane.titlebar \"{titlebar}\" (expected one of: bar, border, integrated)"
+            )),
+        }
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {
         match CapStyle::parse(title_style) {
@@ -912,12 +925,14 @@ mod file_tests {
             hold_on_exit = true
             highlight_focused_background = true
             highlight_focused_border = true
+            highlight_focused_titlebar = false
             focus_on_hover = false
             show_workbar = false
             workbar_gap = false
             workbar_at_bottom = true
             show_titles = false
             padding = 2
+            titlebar = "integrated"
             title_style = "round"
             workbar_badge_style = "arrow"
             workbar_tab_style = "round"
@@ -928,12 +943,14 @@ mod file_tests {
         assert_eq!(parsed.pane.highlight_focused_background, Some(true));
         assert_eq!(parsed.pane.hold_on_exit, Some(true));
         assert_eq!(parsed.pane.highlight_focused_border, Some(true));
+        assert_eq!(parsed.pane.highlight_focused_titlebar, Some(false));
         assert_eq!(parsed.pane.focus_on_hover, Some(false));
         assert_eq!(parsed.pane.show_workbar, Some(false));
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
         assert_eq!(parsed.pane.padding, Some(PaddingSpec::All(2)));
+        assert_eq!(parsed.pane.titlebar.as_deref(), Some("integrated"));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));

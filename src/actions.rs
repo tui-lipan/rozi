@@ -475,6 +475,12 @@ fn execute_action_inner(
             Update::none()
         }
         Action::ToggleTitles => toggle_pane_flag!(ctx, show_titles),
+        Action::CycleTitlebar => {
+            let next = ctx.state.config.pane.titlebar.next();
+            ctx.state.config.pane.titlebar = next;
+            persist_pane_string_or_toast(ctx, "titlebar", next.id());
+            Update::full()
+        }
         Action::ToggleWorkbar => toggle_pane_flag!(ctx, show_workbar),
         Action::ToggleWorkbarGap => toggle_pane_flag!(ctx, workbar_gap),
         Action::ToggleWorkbarPosition => toggle_pane_flag!(ctx, workbar_at_bottom),
@@ -513,6 +519,9 @@ fn execute_action_inner(
         }
         Action::ToggleHighlightFocusedBorder => {
             toggle_pane_flag!(ctx, highlight_focused_border)
+        }
+        Action::ToggleHighlightFocusedTitlebar => {
+            toggle_pane_flag!(ctx, highlight_focused_titlebar)
         }
         Action::ToggleBorderMerge => toggle_pane_flag!(ctx, merge_borders),
         Action::ToggleBackgroundFollowsTerminal => {

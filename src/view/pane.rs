@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::state::{LayoutKind, Pane, PaneId, TileGap, Workspace};
+use crate::state::{CapStyle, LayoutKind, Pane, PaneId, PaneTitlebarMode, TileGap, Workspace};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
@@ -41,6 +41,36 @@ pub(crate) fn pane_title_bg(
         theme.surface.element
     };
     app.chrome_color(ctx, pane_id, "title-bg", target)
+}
+
+/// A padded integrated titlebar owns the frame's top border row: the decoration paints the
+/// corners and slack cells, while the header paints the title text across the inner span.
+fn integrated_titlebar_top_edge(bg: Color) -> EdgeDecoration {
+    EdgeDecoration::new(Edge::Top)
+        .glyph(DecorationGlyph::Custom(' '))
+        .cap_start(DecorationGlyph::Custom(' '))
+        .cap_end(DecorationGlyph::Custom(' '))
+        .style(
+            Style::new()
+                .fg(bg)
+                .bg(bg)
+                .contrast_policy(ContrastPolicy::Off),
+        )
+}
+
+/// Half-block integrated titles use their caps as the frame's corner cells rather than placing
+/// them inside rounded/plain corners. The header paints the colored span between these caps.
+fn integrated_half_titlebar_top_edge(title_bg: Color, frame_bg: Color) -> EdgeDecoration {
+    EdgeDecoration::new(Edge::Top)
+        .glyph(DecorationGlyph::Custom(' '))
+        .cap_start(DecorationGlyph::Custom('▐'))
+        .cap_end(DecorationGlyph::Custom('▌'))
+        .style(
+            Style::new()
+                .fg(title_bg)
+                .bg(frame_bg)
+                .contrast_policy(ContrastPolicy::Off),
+        )
 }
 
 pub(crate) fn pane_element(
@@ -107,37 +137,54 @@ pub(crate) fn pane_element(
     } else {
         Style::new().fg(frame_fg).bg(frame_bg)
     };
-
-    // The wrapper stack must stay unstyled: a styled stack fills its whole rect with its
-    // background, and merged panes overlap neighbors by a cell, so that fill would wipe the
-    // neighbor's border glyph before this pane's border draws and fuses with it. The title row
-    // and the body frame each paint their own background, covering the full rect anyway.
-    let mut window_stack = VStack::new().align(Align::Stretch);
-    if ctx.state.config.pane.show_titles {
-        let title_bar_bg_target = if focused {
-            theme.border_active
-        } else {
-            theme.surface.element
-        };
-        let title_bar_bg = pane_title_bg(app, ctx, pane.id, focused);
-        let title_bar_fg = app.chrome_color(
-            ctx,
-            pane.id,
-            "title-fg",
-            crate::ops::theme::pane_title_foreground(theme, focused, title_bar_bg_target),
-        );
-        let title_bar_fill_style = Style::new().bg(title_bar_bg);
-        let title_bar_text_style = if focused {
-            Style::new()
-                .fg(title_bar_fg)
-                .bold()
-                .contrast_policy(ContrastPolicy::BlackOrWhite)
-        } else {
-            Style::new()
-                .fg(title_bar_fg)
-                .contrast_policy(ContrastPolicy::BlackOrWhite)
-        };
-
+    let titlebar = ctx.state.config.pane.titlebar;
+    let show_titles = ctx.state.config.pane.show_titles;
+    let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
+    let title_bar_bg_target = if titlebar_focused {
+        theme.border_active
+    } else {
+        theme.surface.element
+    };
+    let title_bar_bg = pane_title_bg(app, ctx, pane.id, titlebar_focused);
+    let title_fg_background = if titlebar == PaneTitlebarMode::Border {
+        frame_bg
+    } else {
+        title_bar_bg_target
+    };
+    let title_fg_default = if titlebar == PaneTitlebarMode::Border {
+        crate::ops::theme::pane_border_title_foreground(
+            theme,
+            titlebar_focused,
+            title_fg_background,
+        )
+    } else {
+        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
+    };
+    let title_bar_fg = app.chrome_color(ctx, pane.id, "title-fg", title_fg_default);
+    let title_bar_fill_style = Style::new()
+        .bg(title_bar_bg)
+        .contrast_policy(ContrastPolicy::Off);
+    let title_bar_text_style = if titlebar_focused {
+        Style::new()
+            .fg(title_bar_fg)
+            .bold()
+            .contrast_policy(ContrastPolicy::Off)
+    } else {
+        Style::new()
+            .fg(title_bar_fg)
+            .contrast_policy(ContrastPolicy::Off)
+    };
+    let border_title_text_style = if titlebar_focused {
+        Style::new()
+            .fg(title_bar_fg)
+            .bold()
+            .contrast_policy(ContrastPolicy::Off)
+    } else {
+        Style::new()
+            .fg(title_bar_fg)
+            .contrast_policy(ContrastPolicy::Off)
+    };
+    let title = show_titles.then(|| {
         let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
         if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
             title.push_str(&format!(" [exited {code}]"));
@@ -145,16 +192,27 @@ pub(crate) fn pane_element(
         if pane.logging {
             title.push_str(" [log]");
         }
-        let title = match title_marker {
-            Some(marker) => format!("{icon}  {marker} · {title}"),
-            None => format!("{icon}  {title}"),
-        };
-        let title_text: Element = Text::new(title)
-            .style(title_bar_text_style)
-            .overflow(Overflow::Ellipsis)
-            .width(Length::Flex(1))
-            .height(Length::Px(1))
-            .into();
+        match title_marker {
+            Some(marker) => format!("{marker} · {title}"),
+            None => title,
+        }
+    });
+
+    // The wrapper stack must stay unstyled: a styled stack fills its whole rect with its
+    // background, and merged panes overlap neighbors by a cell, so that fill would wipe the
+    // neighbor's border glyph before this pane's border draws and fuses with it. The bar title
+    // row and the body frame each paint their own background, covering the full rect anyway.
+    let mut window_stack = VStack::new().align(Align::Stretch);
+    if show_titles && titlebar == PaneTitlebarMode::Bar {
+        let title_text: Element = Text::new(format!(
+            "{icon}  {}",
+            title.as_ref().expect("visible titlebar has a title")
+        ))
+        .style(title_bar_text_style)
+        .overflow(Overflow::Ellipsis)
+        .width(Length::Flex(1))
+        .height(Length::Px(1))
+        .into();
         let badge_text: Option<Element> = badge.map(|badge| {
             Text::new(format!(" {badge}"))
                 .style(title_bar_text_style)
@@ -318,7 +376,7 @@ pub(crate) fn pane_element(
     // occlude whatever is beneath them, not grow junctions into it). Fuzzy rather than Exact:
     // rounded corners have no arc junction glyphs, so Exact refuses to fuse them, while Fuzzy
     // merges exactly when possible and falls back to plain junctions for arcs.
-    let body: Element = Frame::new()
+    let mut body = Frame::new()
         .border(true)
         .border_style(border_style)
         .border_merge_mode(if merge.enabled {
@@ -328,9 +386,123 @@ pub(crate) fn pane_element(
         })
         .padding(ctx.state.config.pane.padding)
         .style(frame_style)
-        .focus_style(Style::default())
-        .child(terminal)
-        .into();
+        .focus_style(Style::default());
+    if show_titles {
+        match titlebar {
+            PaneTitlebarMode::Border => {
+                let title = title.as_ref().expect("visible titlebar has a title");
+                let border_title = format!("{icon}  {title}");
+                let mut labels = BorderLabels::new()
+                    .left(border_title)
+                    .style(border_title_text_style)
+                    .padding(1);
+                if let Some(badge) = badge {
+                    labels = labels.right(format!("· {badge}"));
+                }
+                body = body.header(labels);
+            }
+            PaneTitlebarMode::Integrated => {
+                let title_text: Element = Text::new(format!(
+                    "{icon}  {}",
+                    title.as_ref().expect("visible titlebar has a title")
+                ))
+                .style(title_bar_text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .into();
+                let badge_text: Option<Element> = badge.map(|badge| {
+                    Text::new(format!(" {badge}"))
+                        .style(title_bar_text_style)
+                        .height(Length::Px(1))
+                        .into()
+                });
+                let title_style = ctx.state.config.pane.title_style;
+                let caps = title_style.caps();
+                let title_row: Element = match caps {
+                    None => {
+                        let mut row = HStack::new()
+                            .style(title_bar_fill_style)
+                            .padding((0, 1))
+                            .width(Length::Flex(1))
+                            .height(Length::Px(1))
+                            .child(title_text);
+                        if let Some(badge_text) = badge_text {
+                            row = row.child(badge_text);
+                        }
+                        row.into()
+                    }
+                    Some(_) if title_style == CapStyle::Half => {
+                        let mut row = HStack::new()
+                            .style(title_bar_fill_style)
+                            .padding((0, 0, 0, 1))
+                            .width(Length::Flex(1))
+                            .height(Length::Px(1))
+                            .child(title_text);
+                        if let Some(badge_text) = badge_text {
+                            row = row.child(badge_text);
+                        }
+                        row.into()
+                    }
+                    Some((left, right)) => {
+                        let mut middle = HStack::new()
+                            .style(title_bar_fill_style)
+                            .width(Length::Flex(1))
+                            .height(Length::Px(1))
+                            .child(title_text);
+                        if let Some(badge_text) = badge_text {
+                            middle = middle.child(badge_text);
+                        }
+                        // Keep the Frame's corner glyphs visible for capped integrated headers. The
+                        // caps sit immediately inside them, using the pane background as their off
+                        // color, while the colored middle still spans the compact top border row.
+                        HStack::new()
+                            .width(Length::Flex(1))
+                            .height(Length::Px(1))
+                            .child(
+                                Text::new(left)
+                                    .style(
+                                        Style::new()
+                                            .fg(title_bar_bg)
+                                            .bg(frame_bg)
+                                            .contrast_policy(ContrastPolicy::Off),
+                                    )
+                                    .width(Length::Px(1))
+                                    .height(Length::Px(1)),
+                            )
+                            .child(middle)
+                            .child(
+                                Text::new(right)
+                                    .style(
+                                        Style::new()
+                                            .fg(title_bar_bg)
+                                            .bg(frame_bg)
+                                            .contrast_policy(ContrastPolicy::Off),
+                                    )
+                                    .width(Length::Px(1))
+                                    .height(Length::Px(1)),
+                            )
+                            .into()
+                    }
+                };
+                let header: Element = MouseRegion::new()
+                    .capture_click(true)
+                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
+                    .child(title_row)
+                    .into();
+                body = body.header_content(header);
+                body = match title_style {
+                    CapStyle::Padded => body.decoration(integrated_titlebar_top_edge(title_bar_bg)),
+                    CapStyle::Half => {
+                        body.decoration(integrated_half_titlebar_top_edge(title_bar_bg, frame_bg))
+                    }
+                    CapStyle::Round | CapStyle::Arrow => body,
+                };
+            }
+            PaneTitlebarMode::Bar => {}
+        }
+    }
+    let body: Element = body.child(terminal).into();
     let body = body.key(pane_body_key(id));
     window_stack = window_stack.child(body);
 
@@ -597,7 +769,7 @@ struct ResizeStripHitbox {
     /// The pane on the far side of the boundary (right or below).
     neighbor_id: PaneId,
     /// Leading edge of `neighbor_id` on the strip's axis, in canvas coordinates. The strip covers
-    /// pane chrome on both sides of it (borders, and the far pane's titlebar row), so a plain
+    /// pane chrome on both sides of it (borders, and the far pane's separate titlebar row), so a plain
     /// click or hover is routed to whichever pane owns the cell under the pointer.
     boundary: f32,
 }
@@ -691,14 +863,14 @@ fn resize_junction_hitboxes(
 
 /// Which pane owns the cell a pointer is over inside a resize strip. `boundary` is the far pane's
 /// first row/column on the strip's axis, so a pointer at or past it sits on the far pane's leading
-/// chrome (its titlebar row, when titles are shown); anything before it is still the near pane's
+/// chrome (its separate titlebar row, when present); anything before it is still the near pane's
 /// trailing border.
 fn strip_pointer_owner(near: PaneId, far: PaneId, boundary: u16, along: u16) -> PaneId {
     if along >= boundary { far } else { near }
 }
 
 /// A resize strip sits *above* the panes it separates, so it also swallows pointer events over the
-/// pane chrome beneath it. With titles shown a horizontal strip is two rows - the upper pane's
+/// pane chrome beneath it. With a separate bar a horizontal strip is two rows - the upper pane's
 /// bottom border and the lower pane's whole titlebar - so without this the titlebar of every pane
 /// below the first row is unclickable. Focus clicks and hover-focus are re-issued here for
 /// whichever pane owns the cell under the pointer; drags still resize the split.
@@ -883,7 +1055,7 @@ mod tests {
         assert_eq!(junctions[0].vertical_panes, vec![1, 2]);
     }
 
-    /// With titles shown, merged borders keep a zero vertical gap, so the strip between stacked
+    /// With a separate bar, merged borders keep a zero vertical gap, so the strip between stacked
     /// panes covers two rows: the upper pane's bottom border and the lower pane's titlebar. The
     /// strip draws above both panes, so it must route a pointer on the lower row to the lower
     /// pane - otherwise no pane below the first row can be focused by its title.

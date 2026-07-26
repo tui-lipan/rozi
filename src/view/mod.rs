@@ -162,9 +162,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else {
             root_rect_to_canvas(animated_rect, top_offset)
         };
-        // With merged borders, a tiled pane whose left column is a neighbor's right border must
-        // keep its title row off that column, or the title background would cover the seam.
-        let left_seam = tile_gap.horizontal < 0.0
+        // With merged borders, a bar title must keep its left edge off a neighbor's right border,
+        // or its background would cover the seam. Compact titlebars live in the frame border and
+        // do not need this spacer.
+        let left_seam = ctx.state.config.pane.show_titles
+            && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
+            && tile_gap.horizontal < 0.0
             && !pane.floating
             && !pane.fullscreen
             && placements.iter().any(|other| {
@@ -184,6 +187,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             && !pane.floating
             && !pane.fullscreen
             && ctx.state.config.pane.show_titles
+            && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
             && ctx.state.config.pane.title_style.caps().is_some()
         {
             seam_neighbor_title_bgs(app, ctx, &placements, pane.id, base_rect, focused_pane)

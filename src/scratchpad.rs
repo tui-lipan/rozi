@@ -301,12 +301,14 @@ pub(crate) fn scratch_resize_strip(
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let top_gap = ctx.state.workspace_top_gap();
     let deployed = scratch_rect(bounds, scratch_height_fraction(&ctx.state), top_gap);
-    // Title row (when shown) plus the frame's top border row.
-    let strip_h: f32 = if ctx.state.config.pane.show_titles {
-        2.0
-    } else {
-        1.0
-    };
+    // The separate bar adds a title row ahead of the frame border; compact variants use the
+    // border row itself and need no extra drag-handle height.
+    let strip_h: f32 =
+        if ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_title_row() {
+            2.0
+        } else {
+            1.0
+        };
     let strip = FloatRect {
         h: strip_h.min(deployed.h),
         ..deployed

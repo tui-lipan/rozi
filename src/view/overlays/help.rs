@@ -204,6 +204,7 @@ mod palette_alias_tests {
             AppearanceAction::Theme,
             AppearanceAction::EditPadding,
             AppearanceAction::ToggleTitles,
+            AppearanceAction::CycleTitlebar,
             AppearanceAction::CycleTitleStyle,
             AppearanceAction::ToggleWorkbar,
             AppearanceAction::ToggleWorkbarGap,
@@ -215,6 +216,7 @@ mod palette_alias_tests {
             AppearanceAction::ToggleAnimations,
             AppearanceAction::ToggleHighlightFocusedBackground,
             AppearanceAction::ToggleHighlightFocusedBorder,
+            AppearanceAction::ToggleHighlightFocusedTitlebar,
             AppearanceAction::ToggleBorderMerge,
             AppearanceAction::CycleBorderStyle,
             AppearanceAction::ToggleBackgroundFollowsTerminal,
@@ -237,6 +239,7 @@ mod palette_alias_tests {
             "workbar tab",
             "workbar style",
             "titlebar style",
+            "focused titlebar",
         ] {
             assert!(
                 aliases.iter().any(|alias| alias.as_ref() == term),

@@ -803,7 +803,8 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {
     let prefix = input.prefix.to_string();
     Frame::new()
-        .title(" Empty workspace ")
+        .header_left("Empty workspace")
+        .header_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(
@@ -848,7 +849,8 @@ pub(crate) fn connecting_workspace_panel(
         "Attaching to the session server…"
     };
     Frame::new()
-        .title(" Session ")
+        .header_left("Session")
+        .header_padding(1)
         .border(true)
         .border_style(BorderStyle::Rounded)
         .style(

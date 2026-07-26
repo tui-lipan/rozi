@@ -76,13 +76,16 @@ split_width_multiplier = 2.3  # terminal cell height / width for dwindle splits 
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
+highlight_focused_border = true       # accent the focused pane border (default: true)
+highlight_focused_titlebar = true     # accent the focused pane titlebar (default: true)
 show_workbar = true           # workbar with workspace tabs and mode chips (default: true)
 workbar_gap = true            # 1-line gap between workbar and panes (default: true)
 workbar_at_bottom = false     # draw the workbar below the panes (default: false)
-show_titles = true            # pane titlebars (default: true)
+show_titles = true            # show pane titles (default: true)
+titlebar = "bar"              # pane title layout: bar|border|integrated (default: bar)
 padding = 0                   # blank cells between border and terminal (default: 0)
-                              # scalar = all sides; [v, h]; or [top, right, bottom, left]
-title_style = "padded"        # titlebar end caps: padded|half|round|arrow (default: padded)
+                               # scalar = all sides; [v, h]; or [top, right, bottom, left]
+title_style = "padded"        # bar/integrated title caps: padded|half|round|arrow (default: padded)
 workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default: padded)
 workbar_powerline = true      # chain trailing badges into a powerline (default: true)
 workbar_tab_style = "padded" # workspace/sidebar tab caps: padded|round|arrow (default: padded)
@@ -251,13 +254,16 @@ Pane focus and chrome behavior.
 | --- | --- | --- |
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
 | `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. This governs panes with no launch command of their own (a plain shell you typed `exit` in); a pane launched with a command is governed by that command's `keep_open` instead, which replaces the dead PTY with a live shell rather than retaining a husk. |
-| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus changes only border/titlebar chrome, not the pane background. The palette toggle writes this back to config. |
+| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. The palette toggle writes this back to config. |
+| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. This controls the frame border independently from the titlebar. The palette toggle writes this back to config. |
+| `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis for `bar`, `border`, and `integrated` layouts. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
 | `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The palette/appearance toggle writes this back to config. |
-| `show_titles` | `true` | Show per-pane titlebars. The palette toggle writes this back to config. |
+| `show_titles` | `true` | Show the selected pane titlebar layout. The palette toggle writes this back to config without changing the selected `titlebar` layout. |
+| `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The appearance cycle writes this back to config. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
-| `title_style` | `padded` | Titlebar end-cap style: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
+| `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
 | `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
@@ -774,7 +780,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
-`help`, `toggle-devtools`, `toggle-titles`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
+`help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,

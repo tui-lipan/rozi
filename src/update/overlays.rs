@@ -132,6 +132,9 @@ pub(super) fn appearance_activate(
             crate::state::AppearanceAction::ToggleTitles => {
                 execute_action(ctx, Action::ToggleTitles);
             }
+            crate::state::AppearanceAction::CycleTitlebar => {
+                execute_action(ctx, Action::CycleTitlebar);
+            }
             crate::state::AppearanceAction::ToggleWorkbar => {
                 execute_action(ctx, Action::ToggleWorkbar);
             }
@@ -152,6 +155,9 @@ pub(super) fn appearance_activate(
             }
             crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
                 execute_action(ctx, Action::ToggleHighlightFocusedBorder);
+            }
+            crate::state::AppearanceAction::ToggleHighlightFocusedTitlebar => {
+                execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
             }
             crate::state::AppearanceAction::ToggleBorderMerge => {
                 execute_action(ctx, Action::ToggleBorderMerge);

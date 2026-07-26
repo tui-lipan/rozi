@@ -95,7 +95,7 @@ fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<S
         return Some(reason.to_string());
     }
     let title = pane.title()?;
-    let title = strip_title_decoration(&title);
+    let title = strip_agent_title_prefix(strip_title_decoration(&title), kind_label);
     if title.is_empty()
         || title.eq_ignore_ascii_case(kind_label)
         || is_cwd_echo(title, pane.cwd.as_deref())
@@ -114,6 +114,19 @@ fn strip_title_decoration(title: &str) -> &str {
             ch.is_whitespace() || (!ch.is_ascii() && !ch.is_alphanumeric())
         })
         .trim()
+}
+
+/// OpenCode reserves the beginning of its terminal title for its own short label. The sidebar has
+/// already named the row `OpenCode`, so keep only the useful title text there.
+fn strip_agent_title_prefix<'a>(title: &'a str, kind_label: &str) -> &'a str {
+    if kind_label.eq_ignore_ascii_case("OpenCode") {
+        title
+            .strip_prefix("OC |")
+            .map(str::trim_start)
+            .unwrap_or(title)
+    } else {
+        title
+    }
 }
 
 /// Whether a terminal title is just the working directory. A shell sets its title to `$PWD`, so an
@@ -957,6 +970,21 @@ mod tests {
         assert_eq!(
             activity_text(&pane, "Claude Code").as_deref(),
             Some("[2/7] ~/repo cleanup")
+        );
+    }
+
+    #[test]
+    fn activity_strips_opencode_title_prefix_only_for_opencode() {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.title = Some("OC | TextArea · writing tests".into());
+
+        assert_eq!(
+            activity_text(&pane, "OpenCode").as_deref(),
+            Some("TextArea · writing tests")
+        );
+        assert_eq!(
+            activity_text(&pane, "Claude Code").as_deref(),
+            Some("OC | TextArea · writing tests")
         );
     }
 

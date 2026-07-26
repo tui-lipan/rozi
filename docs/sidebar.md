@@ -96,7 +96,8 @@ agent set — agents write their current task there, which is the only activity 
 agent offers. A title is dropped when it says nothing the row does not already: the working
 directory in any spelling (`/home/you/repo`, `~/repo`, `repo`), or the agent's own name. Leading
 status glyphs agents decorate their titles with are stripped, since the row has its own glyph
-column. The text is truncated to the configured sidebar width.
+column. OpenCode's fixed `OC | ` title prefix is also omitted. The text is truncated to the
+configured sidebar width.
 
 The detail line always names a subject, so the elapsed time is never a bare number with nothing to
 modify. Where there is an activity, that is the subject and the status word is dropped — `working`,

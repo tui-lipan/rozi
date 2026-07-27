@@ -255,7 +255,12 @@ pub(crate) fn handle_pane_input(
     }
 
     let client = ctx.state.current().session_client.clone();
-    ctx.state.current_mut().engaged = true;
+    // Only a paste is the user putting something into this session. The focus notifications that
+    // also arrive here are the terminal reporting on itself — counting those would mark a session
+    // worked-in for having been looked at, which is the opposite of what engagement means.
+    if matches!(input.kind, TerminalInputKind::Paste) {
+        ctx.state.current_mut().engaged = true;
+    }
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, input.bytes.to_vec());
@@ -544,6 +549,61 @@ mod tests {
                         generation: 0,
                         bytes: vec![1],
                     }]
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    /// Engagement is what keeps a startup temporary session alive across a switch, so it has to
+    /// mean the user put something into the session. A focus report is the terminal talking about
+    /// itself — a session that was merely looked at is still untouched.
+    #[test]
+    fn focus_reports_do_not_mark_a_session_as_worked_in() {
+        use crate::Msg;
+        use crate::session::client::SessionClient;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, _rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend.state_mut().current_mut().engaged = false;
+                backend.render();
+
+                for kind in [TerminalInputKind::FocusIn, TerminalInputKind::FocusOut] {
+                    backend
+                        .dispatch(Msg::PaneInput(
+                            1,
+                            TerminalInputEvent {
+                                kind,
+                                key: None,
+                                bytes: Vec::new().into(),
+                            },
+                        ))
+                        .expect("dispatch focus report");
+                    assert!(
+                        !backend.state().current().engaged,
+                        "{kind:?} must not count as working in the session"
+                    );
+                }
+
+                backend
+                    .dispatch(Msg::PaneInput(
+                        1,
+                        TerminalInputEvent {
+                            kind: TerminalInputKind::Paste,
+                            key: None,
+                            bytes: b"work".to_vec().into(),
+                        },
+                    ))
+                    .expect("dispatch paste");
+                assert!(
+                    backend.state().current().engaged,
+                    "a paste puts the user's own content into the session"
                 );
             })
             .expect("spawn test thread")

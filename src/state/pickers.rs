@@ -39,6 +39,48 @@ pub struct ClientListState {
     pub selected: usize,
 }
 
+/// What the user can do about attaching to a session another client is actively driving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FollowChoice {
+    /// Stay attached as a follower: same panes and layout, view synchronized to the controller.
+    Follow,
+    /// Follow, and ask the controller for the layout-control lease. Asking is the whole mechanism —
+    /// control is never taken out from under a client that is using it.
+    AskForControl,
+    /// Leave the session alone and go back where we came from.
+    Cancel,
+}
+
+impl FollowChoice {
+    pub const ALL: [Self; 3] = [Self::Follow, Self::AskForControl, Self::Cancel];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Follow => "Follow",
+            Self::AskForControl => "Ask for control",
+            Self::Cancel => "Cancel",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Follow => "watch along; layout stays with the other client",
+            Self::AskForControl => "follow, and request the layout lease",
+            Self::Cancel => "leave the session and go back",
+        }
+    }
+}
+
+/// Raised when an attach lands on a session another client is actively controlling. Following is a
+/// deliberate choice, never something that happens to a client for being second — and control is
+/// never stolen, so the third option is simply to back out.
+pub struct FollowPromptState {
+    pub session: String,
+    /// How the controlling client identifies itself in the roster.
+    pub controller_label: String,
+    pub selected: usize,
+}
+
 /// The dialog a nested one was raised from, so cancelling (or finishing) the child returns there
 /// instead of dropping the user back on the terminal. A picker is rebuilt rather than un-hidden —
 /// opening a child drops the picker's state — so its origin carries the query and highlighted row

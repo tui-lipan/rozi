@@ -27,6 +27,18 @@ pub(crate) fn has_named_session() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a bare launch has anything worth picking from, which is what decides between opening the
+/// startup picker and going straight to an ephemeral session. Broader than [`has_named_session`]:
+/// a restorable snapshot or a remote host we have seen sessions on is just as pickable as a locally
+/// running one, and the picker's remote rows come from that cache before any probe completes.
+pub(crate) fn has_session_candidates() -> bool {
+    has_named_session()
+        || !super::server::list_snapshot_names_by_recency().is_empty()
+        || super::read_host_session_cache()
+            .values()
+            .any(|sessions| !sessions.is_empty())
+}
+
 pub(crate) fn attach_session_client(
     epoch: u64,
     name: String,

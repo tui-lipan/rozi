@@ -112,7 +112,10 @@ fn collaboration_status(
     if shared.read_only {
         return Some((" READ ONLY ", theme.status.warning));
     }
-    if shared.clients.len() <= 1 {
+    // Only clients actually using the session make it shared. A parked one is a background
+    // connection with no view and no claim on control, so badging CTRL/FOLLOW for it would report
+    // company that is not there.
+    if shared.active_clients() <= 1 {
         return None;
     }
     // A pending control request pulls the controller's badge to the warning color and appends a dot
@@ -825,6 +828,35 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
         .into()
 }
 
+/// Shown in the pane area when the client has no session at all: the startup picker was dismissed,
+/// or the last session was killed. Distinct from the empty-workspace hint, which talks about
+/// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the two ways
+/// out: pick a session, or start a shell.
+pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
+    let prefix = input.prefix.to_string();
+    Frame::new()
+        .header_left("No session")
+        .header_padding(1)
+        .border(true)
+        .border_style(BorderStyle::Rounded)
+        .style(
+            Style::new()
+                .fg(theme.surface.menu)
+                .bg(theme.surface.backdrop),
+        )
+        .padding(1)
+        .child(
+            VStack::new()
+                .gap(1)
+                .child(Text::new("Not attached to any session."))
+                .child(Text::new(format!(
+                    "Press {prefix} s to pick a session, or {}+Enter to start a shell.",
+                    input.modifier.label(),
+                ))),
+        )
+        .into()
+}
+
 /// Placeholder shown in the pane area while a session attach is in flight and no panes have arrived
 /// yet. A live spinner makes the wait legible — a bare "empty workspace" reads as "done, nothing
 /// here" when we are actually mid-connect. The spinner animates itself (the runtime advances
@@ -989,6 +1021,7 @@ mod tests {
             label: "one".into(),
             read_only: false,
             requesting_control: false,
+            parked: false,
         }];
         state.current_mut().shared = Some(shared);
         assert!(collaboration_status(&state, &theme).is_none());
@@ -999,6 +1032,7 @@ mod tests {
             label: "two".into(),
             read_only: false,
             requesting_control: false,
+            parked: false,
         });
         assert_eq!(collaboration_status(&state, &theme).unwrap().0, " CTRL ");
         state.current_mut().shared.as_mut().unwrap().input_locked = true;

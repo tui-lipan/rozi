@@ -80,6 +80,14 @@ pub struct Attachment {
     /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
     /// handshake completes (and while purely local, pre-attach).
     pub shared: Option<SharedSessionState>,
+    /// Whether this session was created for the user rather than by the user: the startup
+    /// ephemeral, or the one a fallback path had to invent. Only these are discarded on switch-away
+    /// when untouched — a session the user explicitly asked for is theirs to keep.
+    pub auto_created: bool,
+    /// Whether the user has actually worked in this session: typed into a pane, pasted, sent input,
+    /// or spawned a pane by hand. An ephemeral that never got this far holds nothing worth
+    /// preserving, so it is neither retained across a switch nor worth warning about on quit.
+    pub engaged: bool,
     /// When this attachment was last parked, as a monotonic counter; `0` while it has never been.
     /// Attachment ids are stable identities rather than a use order — parking one reuses its id —
     /// so recency needs its own stamp. Read when something has to land the user on the session they
@@ -114,6 +122,8 @@ impl Attachment {
             pending_background_layout: None,
             pending_background_closes: Vec::new(),
             shared: None,
+            auto_created: false,
+            engaged: false,
             parked_seq: 0,
         }
     }
@@ -200,6 +210,14 @@ impl Attachment {
         self.session_name
             .as_deref()
             .is_some_and(is_ephemeral_session_name)
+    }
+
+    /// Whether this session is disposable in the strong sense: an ephemeral the client created on
+    /// the user's behalf and that the user never worked in. Switching away from one discards it
+    /// instead of parking it, and quitting with one open is not worth a confirmation — keeping it
+    /// alive would only produce the phantom sessions that make "temporary" feel permanent.
+    pub fn is_discardable_ephemeral(&self) -> bool {
+        self.is_ephemeral_session() && self.auto_created && !self.engaged
     }
 
     pub fn any_pane_live(&self) -> bool {

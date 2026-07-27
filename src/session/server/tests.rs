@@ -152,6 +152,64 @@ fn first_attacher_is_granted_control() {
     assert_eq!(server.controller, Some(id));
 }
 
+/// The scenario the parked flag exists for: one client keeps `dev` open in the background while it
+/// works elsewhere. The next client to attach must get control of `dev` outright, not join as a
+/// follower of a connection nobody is looking at.
+#[test]
+fn a_parked_client_releases_control_so_the_next_attacher_leads() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    assert_eq!(server.controller, Some(first));
+
+    server.handle_message(first, ClientMessage::SetParked { parked: true });
+    assert_eq!(server.controller, None, "parking gives up the lease");
+
+    let (second, _second_stream) = attach_client(&mut server);
+    assert_eq!(server.controller, Some(second));
+    assert!(
+        server
+            .client_roster()
+            .iter()
+            .any(|client| client.id == first && client.parked),
+        "the roster must say which clients are only parked"
+    );
+}
+
+/// Unparking is how a client comes back to a session it left in the background. It reclaims the
+/// lease when nobody took it, and never steals it from a client that did.
+#[test]
+fn unparking_reclaims_a_free_lease_but_never_steals_one() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    server.handle_message(first, ClientMessage::SetParked { parked: true });
+    server.handle_message(first, ClientMessage::SetParked { parked: false });
+    assert_eq!(server.controller, Some(first), "nobody else held the lease");
+
+    let (second, _second_stream) = attach_client(&mut server);
+    server.handle_message(second, ClientMessage::SetParked { parked: true });
+    server.handle_message(second, ClientMessage::SetParked { parked: false });
+    assert_eq!(
+        server.controller,
+        Some(first),
+        "returning from the background must not steal an occupied session"
+    );
+}
+
+/// A leaving controller hands the lease to a client that is actually using the session; a parked
+/// one would take control of a view nobody is watching, locking out the client in front of the user.
+#[test]
+fn promotion_skips_parked_clients() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    let (third, _third_stream) = attach_client(&mut server);
+    server.handle_message(second, ClientMessage::SetParked { parked: true });
+
+    server.remove_client(first);
+
+    assert_eq!(server.controller, Some(third));
+}
+
 #[test]
 fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() {
     let mut server = SessionServer::new_named("dev");

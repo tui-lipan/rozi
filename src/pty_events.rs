@@ -119,6 +119,7 @@ fn forward_key_to_targets(
 ) -> Update {
     let mut repaint = false;
     let client = ctx.state.current().session_client.clone();
+    ctx.state.current_mut().engaged = true;
     for id in targets {
         let Some(pane) = find_pane_mut(&mut ctx.state, *id) else {
             continue;
@@ -159,6 +160,7 @@ pub(crate) fn send_pane_bytes(
         return Err(blocked.reason);
     }
     let client = ctx.state.current().session_client.clone();
+    ctx.state.current_mut().engaged = true;
     let Some(pane) = find_pane_mut(&mut ctx.state, id) else {
         return Ok(());
     };
@@ -253,6 +255,7 @@ pub(crate) fn handle_pane_input(
     }
 
     let client = ctx.state.current().session_client.clone();
+    ctx.state.current_mut().engaged = true;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         if let Some(client) = client {
             client.send_input(id, pane.pty_generation, input.bytes.to_vec());

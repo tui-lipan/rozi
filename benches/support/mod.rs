@@ -133,6 +133,7 @@ pub fn attached_message() -> ServerMessage {
                 label: format!("client-{id:02}-workstation"),
                 read_only: id % 5 == 0,
                 requesting_control: id % 7 == 0,
+                parked: id % 3 == 0,
             })
             .collect(),
         input_locked: false,

@@ -6,7 +6,7 @@ use tui_lipan::prelude::*;
 use crate::Msg;
 use crate::anim::GeometryAnimation;
 use crate::config::HyprmuxConfig;
-use crate::session::bootstrap::{SessionStart, attach_session_client, has_named_session};
+use crate::session::bootstrap::{SessionStart, attach_session_client, has_session_candidates};
 use crate::state::{Pane, PaneId, State, ThemePreset};
 use crate::{
     anim, cli, commands, config, control, events, key_routing, ops, pane_lifecycle, platform,
@@ -27,10 +27,13 @@ pub struct HyprmuxApp {
     read_only: bool,
     /// When set, attach through SSH to this remote target instead of a local endpoint.
     remote: Option<crate::session::remote::RemoteTarget>,
-    /// Whether a bare launch should open the session picker before attaching (`--pick` or
-    /// `[session] startup = "picker"`). Only honored when there is no target/`--session` and at
-    /// least one named session exists at startup.
+    /// Whether a bare launch should open the session picker instead of attaching (`--pick`, the
+    /// default `[session] startup = "picker"`, or a `last` whose session is gone). Only honored
+    /// when there is no target/`--session` and there is something to pick at startup; opening it
+    /// attaches nothing, so the client starts sessionless.
     want_startup_picker: bool,
+    /// Session name the startup picker should land on, from a `last` that could not reopen.
+    startup_picker_highlight: Option<String>,
     /// Whether to install the process-global terminal-hangup handler
     /// ([`platform::server_lifecycle::on_hangup`]) at startup. Only the real [`run`] wants this:
     /// a `TestBackend`-driven test constructs its app through [`Default`], and a test process must
@@ -65,6 +68,7 @@ impl Default for HyprmuxApp {
             read_only: false,
             remote: None,
             want_startup_picker: false,
+            startup_picker_highlight: None,
             watch_hangup: false,
             event_hub: events::EventHub::default(),
         }
@@ -87,6 +91,7 @@ impl HyprmuxApp {
         read_only: bool,
         remote: Option<crate::session::remote::RemoteTarget>,
         want_startup_picker: bool,
+        startup_picker_highlight: Option<String>,
     ) -> Self {
         Self {
             config,
@@ -102,6 +107,7 @@ impl HyprmuxApp {
             read_only,
             remote,
             want_startup_picker,
+            startup_picker_highlight,
             watch_hangup: true,
             event_hub: events::EventHub::default(),
         }
@@ -183,8 +189,17 @@ impl Component for HyprmuxApp {
         )
         .as_argv();
 
-        let start = if self.want_startup_picker && self.remote.is_none() && has_named_session() {
-            let epoch = ops::session::open_startup_session_picker(ctx);
+        let start = if self.want_startup_picker && self.remote.is_none() && has_session_candidates()
+        {
+            // Nothing is attached behind the startup picker, so the panes `create_state` prepared
+            // have no session to live in yet. Park them as the launcher seed: choosing a session
+            // discards them, while starting a shell gets exactly the layout this launch intended.
+            let seed = std::mem::take(ctx.state.current_mut());
+            ctx.state.launcher_seed = Some(seed);
+            let epoch = ops::session::open_startup_session_picker(
+                ctx,
+                self.startup_picker_highlight.take(),
+            );
             SessionStart::Picker { epoch }
         } else {
             let name = self.attach_session.clone().unwrap_or_else(|| {
@@ -225,6 +240,10 @@ impl Component for HyprmuxApp {
                     parked_epoch: None,
                 });
             ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
+            // A bare launch with nothing to pick lands on an ephemeral nobody asked for by name.
+            // Mark it so switching away discards it instead of leaving it running behind the
+            // session the user actually wanted.
+            ctx.state.current_mut().auto_created = self.attach_session.is_none();
             ctx.state.current_mut().remote_host =
                 self.remote.as_ref().map(|target| target.display_label());
             ctx.state.current_mut().remote_target = self.remote.clone();
@@ -564,12 +583,19 @@ pub fn run() -> Result<()> {
     let mut attach_session = cli.attach_session.clone();
     let mut startup_autostart = attach_session.is_none();
     let mut startup_create_only = false;
+    // The name the startup picker should land on when `last` could not reopen its session.
+    let mut startup_picker_highlight = None;
     if attach_session.is_none()
         && !cli.pick
         && loaded.config.session.startup == config::SessionStartup::Last
     {
-        attach_session = Some(resolve_last_session_target());
-        startup_autostart = true;
+        match resolve_last_session_target() {
+            LastSessionTarget::Reopen(name) => {
+                attach_session = Some(name);
+                startup_autostart = true;
+            }
+            LastSessionTarget::Pick(name) => startup_picker_highlight = name,
+        }
     }
     let mut startup_profile = None;
     if let Some(name) = attach_session.as_ref()
@@ -710,10 +736,15 @@ pub fn run() -> Result<()> {
     }
     let config = loaded.config;
     // Open the picker at startup only for a bare launch (no explicit attach target). The
-    // "any named session exists" gate is checked in `init` so it reflects live state at mount.
+    // "anything to pick" gate is checked in `init` so it reflects live state at mount. `last`
+    // reaches here only when its remembered session could not be reopened.
     let want_startup_picker = attach_session.is_none()
         && cli.remote.is_none()
-        && (cli.pick || config.session.startup == config::SessionStartup::Picker);
+        && (cli.pick
+            || matches!(
+                config.session.startup,
+                config::SessionStartup::Picker | config::SessionStartup::Last
+            ));
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
     let startup_system_theme = startup_host_colors.map(ops::theme::system_theme_from_host_colors);
@@ -800,6 +831,7 @@ pub fn run() -> Result<()> {
         cli.read_only,
         remote,
         want_startup_picker,
+        startup_picker_highlight,
     ))
     .run()
 }
@@ -821,32 +853,38 @@ fn startup_fatal(message: String) -> ! {
     std::process::exit(1);
 }
 
-fn resolve_last_session_target() -> String {
-    select_last_session_target(
-        crate::session::read_last_named_session(),
-        {
-            crate::session::server::list_snapshot_names_by_recency()
-                .into_iter()
-                .next()
-        },
-        crate::session::discovery::discover_sessions()
-            .ok()
-            .and_then(|rows| {
-                rows.into_iter()
-                    .find(|row| !row.ephemeral)
-                    .map(|row| row.name)
-            }),
-    )
+/// What `[session] startup = "last"` resolved to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LastSessionTarget {
+    /// Reopen this exact session: it is running, or restorable from a snapshot or its canonical
+    /// same-name profile.
+    Reopen(String),
+    /// Nothing reopenable. Fall through to the picker, highlighting the remembered name when there
+    /// is one, rather than silently landing on an unrelated session.
+    Pick(Option<String>),
 }
 
-fn select_last_session_target(
-    last: Option<String>,
-    snapshot: Option<String>,
-    live: Option<String>,
-) -> String {
-    last.or(snapshot)
-        .or(live)
-        .unwrap_or_else(|| "main".to_string())
+fn resolve_last_session_target() -> LastSessionTarget {
+    let Some(last) = crate::session::read_last_named_session() else {
+        return LastSessionTarget::Pick(None);
+    };
+    let running = crate::session::discovery::discover_session(&last)
+        .ok()
+        .flatten()
+        .is_some();
+    let restorable = crate::session::server::list_snapshot_names_by_recency()
+        .iter()
+        .any(|name| name == &last)
+        || config::profile_path_for_name(&last).exists();
+    select_last_session_target(last, running || restorable)
+}
+
+fn select_last_session_target(last: String, reopenable: bool) -> LastSessionTarget {
+    if reopenable {
+        LastSessionTarget::Reopen(last)
+    } else {
+        LastSessionTarget::Pick(Some(last))
+    }
 }
 
 #[cfg(test)]
@@ -899,8 +937,21 @@ mod tests {
     }
 
     #[test]
-    fn startup_last_falls_back_to_explicit_main_creation_target() {
-        assert_eq!(select_last_session_target(None, None, None), "main");
+    fn startup_last_reopens_a_reopenable_session() {
+        assert_eq!(
+            select_last_session_target("dev".to_string(), true),
+            LastSessionTarget::Reopen("dev".to_string())
+        );
+    }
+
+    /// A remembered session that is gone must not silently become some *other* session: `last`
+    /// hands the name to the picker as a highlight instead.
+    #[test]
+    fn startup_last_defers_an_unavailable_session_to_the_picker() {
+        assert_eq!(
+            select_last_session_target("dev".to_string(), false),
+            LastSessionTarget::Pick(Some("dev".to_string()))
+        );
     }
 
     #[test]

@@ -137,7 +137,7 @@ load_profile = true            # confirm replacing a live ephemeral session from
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 resurrect = true             # snapshot named sessions for restart after server loss (default: true)
-startup = "picker"           # "ephemeral" (default), "picker", or "last"
+startup = "picker"           # "picker" (default), "ephemeral", or "last"
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
 
 [scratchpad]
@@ -455,15 +455,18 @@ background session server and can be detached/reattached with live terminal stat
 | Key | Default | Notes |
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
-| `startup` | `"ephemeral"` | `"ephemeral"` starts scratch state; `"picker"` opens the picker; `"last"` opens the last named session, then the newest resurrection snapshot, any running named session, or `main`. |
+| `startup` | `"picker"` | `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted. |
 | `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 
 An explicit target takes precedence over startup configuration. `startup = "last"` takes precedence
 over `[profile] default` and autosave; those remain ephemeral-layout seeders.
 
-With `startup = "picker"` (or `--pick`), the session picker is shown at launch **only when at least
-one named session already exists**; otherwise the launch attaches to an ephemeral session as usual.
-Dismissing the picker with `Esc` attaches a fresh ephemeral session. See [Sessions](sessions.md).
+With `startup = "picker"` (the default, also reachable with `--pick`), the picker is shown at launch
+**only when there is something to pick** - a running named session, a resurrection snapshot, or a
+remote host with cached sessions; otherwise the launch attaches to an ephemeral session as usual.
+Opening the picker creates no session: nothing is attached until you choose. Dismissing it with
+`Esc` leaves the client in the launcher with no session, where `Enter` starts a shell and the
+picker can be reopened at any time. See [Sessions](sessions.md).
 
 When several clients attach to one session they share a live, server-authoritative layout with a
 single controlling client and cooperative control requests (`request-control`, default `g`, which

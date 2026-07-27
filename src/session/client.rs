@@ -151,6 +151,19 @@ impl SessionClient {
         self.effective_protocol >= crate::session::protocol::FILE_TREE_PROTOCOL
     }
 
+    /// Tell the server whether this client is parked — attached with its screens kept live, but not
+    /// displaying the session. A parked client gives up the layout-control lease, so keeping a
+    /// session open in the background never makes it look occupied to the next client to attach.
+    ///
+    /// No-op against a pre-14 server, which has no notion of parking: it keeps treating every
+    /// attached client as an occupant, which is the behavior that build already had.
+    pub fn set_parked(&self, parked: bool) {
+        if self.effective_protocol < crate::session::protocol::PARKED_PROTOCOL {
+            return;
+        }
+        self.send_control(ClientMessage::SetParked { parked });
+    }
+
     /// Ask the server to list one directory on its own host. No-op against an older server.
     pub fn list_directory(&self, path: String, show_hidden: bool) {
         if !self.supports_file_tree() {

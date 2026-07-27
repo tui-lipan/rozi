@@ -102,6 +102,13 @@ impl SharedSessionState {
         self.controller == Some(self.client_id)
     }
 
+    /// How many attached clients are actually using the session, ignoring the ones parked in the
+    /// background. This is the count that decides whether the session is shared in any sense the
+    /// user should be told about.
+    pub fn active_clients(&self) -> usize {
+        self.clients.iter().filter(|client| !client.parked).count()
+    }
+
     /// Whether any other client has an outstanding request for the control lease (badge fodder for
     /// the controller's workbar and the session-clients view).
     pub fn has_pending_control_requests(&self) -> bool {

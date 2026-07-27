@@ -5,10 +5,10 @@ pub(crate) mod sidebar;
 mod workbar;
 
 pub use keys::{
-    appearance_palette_key, client_list_key, palette_key, pane_padding_horizontal_key,
-    pane_padding_vertical_key, pane_terminal_key, pane_window_key, profile_picker_key,
-    rename_input_key, rename_session_input_key, save_profile_key, search_input_key,
-    session_picker_key, sidebar_body_key, theme_picker_key,
+    appearance_palette_key, client_list_key, follow_prompt_key, palette_key,
+    pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
+    profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
+    search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{PaneMerge, pane_element};
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
@@ -26,12 +26,12 @@ use crate::tiling::PanePlacement;
 use pane::pane_title_bg;
 
 use overlays::{
-    appearance_overlay, client_list_overlay, help_overlay, palette_overlay, pane_padding_overlay,
-    profile_picker_overlay, rename_overlay, rename_session_overlay, save_profile_overlay,
-    search_overlay, session_picker_overlay, theme_picker_overlay,
+    appearance_overlay, client_list_overlay, follow_prompt_overlay, help_overlay, palette_overlay,
+    pane_padding_overlay, profile_picker_overlay, rename_overlay, rename_session_overlay,
+    save_profile_overlay, search_overlay, session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
-use workbar::{connecting_workspace_panel, empty_workspace_panel, workbar};
+use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -75,7 +75,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.save_profile_prompt.is_some()
         || ctx.state.show_profile_picker
         || ctx.state.show_session_picker
-        || ctx.state.client_list.is_some();
+        || ctx.state.client_list.is_some()
+        || ctx.state.follow_prompt.is_some();
     let dialog_dim_progress = ctx.transition::<f32>(
         "hyprmux-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
@@ -112,6 +113,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 ctx.state.current().connection == crate::state::ConnectionState::Reconnecting,
                 theme,
             )
+        } else if ctx.state.is_launcher() {
+            launcher_panel(&ctx.state.config.input, theme)
         } else {
             empty_workspace_panel(&ctx.state.config.input, theme)
         };
@@ -345,6 +348,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.client_list.is_some() {
         root = root.child(client_list_overlay(ctx));
+    }
+    if ctx.state.follow_prompt.is_some() {
+        root = root.child(follow_prompt_overlay(ctx));
     }
 
     let content: Element = root.into();

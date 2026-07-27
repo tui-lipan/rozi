@@ -40,6 +40,10 @@ pub fn client_list_key() -> &'static str {
     "hyprmux-client-list"
 }
 
+pub fn follow_prompt_key() -> &'static str {
+    "hyprmux-follow-prompt"
+}
+
 pub fn theme_picker_key() -> &'static str {
     "hyprmux-theme-picker"
 }

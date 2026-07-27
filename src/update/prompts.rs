@@ -270,3 +270,17 @@ pub(super) fn client_list_grant(ctx: &mut Context<HyprmuxApp>, index: usize) -> 
 pub(super) fn client_list_decline(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     crate::ops::session::decline_control(ctx, index)
 }
+
+pub(super) fn follow_prompt_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    if let Some(prompt) = ctx.state.follow_prompt.as_mut() {
+        prompt.selected = index.min(crate::state::FollowChoice::ALL.len() - 1);
+    }
+    Update::full()
+}
+
+pub(super) fn follow_prompt_choose(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(choice) = crate::state::FollowChoice::ALL.get(index).copied() else {
+        return Update::full();
+    };
+    crate::ops::session::resolve_follow_prompt(ctx, choice)
+}

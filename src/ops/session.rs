@@ -58,9 +58,24 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Open the session picker at startup (nothing attached yet). Sets up the picker state and returns
 /// the watcher epoch so `init` can kick off the first discovery tick. Local rows show immediately;
 /// live remote rows arrive async, so a dead configured host never stalls startup.
-pub(crate) fn open_startup_session_picker(ctx: &mut Context<HyprmuxApp>) -> u64 {
+///
+/// `highlight` lands the selection on a specific session — what `[session] startup = "last"` uses
+/// to point at the session it remembered but could not reopen.
+pub(crate) fn open_startup_session_picker(
+    ctx: &mut Context<HyprmuxApp>,
+    highlight: Option<String>,
+) -> u64 {
     let rows = immediate_picker_rows(ctx);
-    ctx.state.session_picker = Some(SessionPickerState::new(rows));
+    let mut picker = SessionPickerState::new(rows);
+    if let Some(highlight) = highlight
+        && let Some(index) = picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == highlight)
+    {
+        picker.selected = index;
+    }
+    ctx.state.session_picker = Some(picker);
     ctx.state.show_session_picker = true;
     ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
     ctx.state.commands_dirty = true;
@@ -572,6 +587,80 @@ pub(crate) fn open_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
+/// Raise the follow prompt if this attach landed on a session another client is actively driving.
+///
+/// Following used to be what happened to whoever attached second, which is a poor way to learn that
+/// your keyboard no longer shapes the layout. It is now a decision: watch along, ask for the lease,
+/// or back out. A session with no active controller — including one whose only other client is
+/// parked — needs no prompt, because attaching there gets control outright.
+pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
+        return;
+    };
+    // A read-only attach already said it is not here to drive the layout.
+    if shared.read_only || shared.is_controller() {
+        return;
+    }
+    let Some(controller) = shared.controller else {
+        return;
+    };
+    let controller_label = shared
+        .clients
+        .iter()
+        .find(|client| client.id == controller)
+        .map(|client| client.label.clone())
+        .unwrap_or_else(|| format!("client {controller}"));
+    let Some(session) = ctx.state.current().session_name.clone() else {
+        return;
+    };
+    ctx.state.show_palette = false;
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.client_list = None;
+    ctx.state.follow_prompt = Some(crate::state::FollowPromptState {
+        session,
+        controller_label,
+        selected: 0,
+    });
+    ctx.state.commands_dirty = true;
+    ctx.request_focus(crate::view::follow_prompt_key());
+}
+
+/// Apply the user's answer to the follow prompt. Cancelling leaves the session the way switching
+/// away from it would, landing on whatever the client still has — a parked session, or the
+/// launcher.
+pub(crate) fn resolve_follow_prompt(
+    ctx: &mut Context<HyprmuxApp>,
+    choice: crate::state::FollowChoice,
+) -> Update {
+    ctx.state.follow_prompt = None;
+    ctx.state.commands_dirty = true;
+    match choice {
+        crate::state::FollowChoice::Follow => {
+            request_current_pane_focus(ctx);
+            Update::full()
+        }
+        crate::state::FollowChoice::AskForControl => {
+            request_current_pane_focus(ctx);
+            request_control(ctx)
+        }
+        crate::state::FollowChoice::Cancel => {
+            let name = ctx.state.current().session_name.clone();
+            crate::update::flush_layout_commit(ctx);
+            crate::ops::exit::mark_session_detached(ctx, None);
+            if let Some(client) = ctx.state.current().session_client.clone() {
+                client.detach();
+            }
+            let update = land_on_surviving_session(ctx);
+            if let Some(name) = name {
+                ctx.toast()
+                    .push(info_toast(&ctx.state.theme, format!("Left `{name}` alone")));
+            }
+            update
+        }
+    }
+}
+
 pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
     if nudge_if_follower(ctx) {
         return Update::full();
@@ -702,9 +791,51 @@ pub(crate) fn park_current_session(ctx: &mut Context<HyprmuxApp>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     crate::update::flush_layout_commit(ctx);
+    mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     ctx.state
         .park_current(old_epoch, crate::state::Attachment::new());
+    discard_parked_if_disposable(ctx, old_epoch);
+}
+
+/// Tell the server the current session is going into (or coming out of) the background, so the
+/// layout-control lease follows what the client is actually doing. A parked connection is not an
+/// occupant: it must not hold the lease, or the next client to attach joins as a follower of a
+/// session nobody is looking at.
+fn mark_current_parked(ctx: &mut Context<HyprmuxApp>, parked: bool) {
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
+        client.set_parked(parked);
+    }
+}
+
+/// Tear down a just-parked attachment that is not worth keeping: an ephemeral this client created
+/// on the user's behalf and that they never worked in. Without this, every launch that ends in a
+/// switch leaves its startup ephemeral running in the background, where it clutters the picker and
+/// later asks to be confirmed away on quit — a session the user never asked for and never used.
+///
+/// A session the user asked for, worked in, or shares with another client is always kept.
+fn discard_parked_if_disposable(ctx: &mut Context<HyprmuxApp>, epoch: crate::state::AttachmentId) {
+    let disposable = ctx.state.background.get(&epoch).is_some_and(|attachment| {
+        attachment.is_discardable_ephemeral() && may_shutdown_attachment(attachment)
+    });
+    if !disposable {
+        return;
+    }
+    let Some(attachment) = ctx.state.background.remove(&epoch) else {
+        return;
+    };
+    if let Some(name) = attachment.session_name.clone() {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::SessionDetached,
+                vec![("session", name)],
+            ),
+        );
+    }
+    if let Some(client) = attachment.session_client.as_ref() {
+        client.shutdown();
+    }
 }
 
 /// Switch to a session already retained in the background: park the current one and bring the parked
@@ -718,11 +849,18 @@ pub(crate) fn switch_to_parked(
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     crate::update::flush_layout_commit(ctx);
+    mark_current_parked(ctx, true);
     let old_epoch = ctx.state.runtime_epoch;
     let Some(restored_epoch) = ctx.state.unpark(parked, old_epoch) else {
+        // The switch did not take: this session is still the one on screen, so undo the parking.
+        mark_current_parked(ctx, false);
         return Update::none();
     };
+    discard_parked_if_disposable(ctx, old_epoch);
     ctx.state.runtime_epoch = restored_epoch;
+    // Back in the foreground: reclaim the lease, which the server grants outright when the session
+    // has no active controller — the usual case for a session this client left parked.
+    mark_current_parked(ctx, false);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
@@ -911,9 +1049,18 @@ pub(crate) fn park_current_and_install(
     prepare_session_install(ctx);
     crate::update::flush_layout_commit(ctx);
     let outcome = if ctx.state.current().session_attached {
+        mark_current_parked(ctx, true);
         let old_epoch = ctx.state.runtime_epoch;
         ctx.state.park_current(old_epoch, attachment);
-        (Some(old_epoch), None)
+        discard_parked_if_disposable(ctx, old_epoch);
+        // A discarded session is gone, so there is nothing for a failed attach to fall back to.
+        (
+            ctx.state
+                .background
+                .contains_key(&old_epoch)
+                .then_some(old_epoch),
+            None,
+        )
     } else {
         let left = ctx
             .state
@@ -974,9 +1121,10 @@ pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) 
 /// down.
 ///
 /// Parked sessions come first, most recently used first, because they are live: their clients and
-/// screens are still up, so the switch is instant and lands on real work. A fresh local ephemeral is
-/// the last resort, for when nothing survives — it costs an attach round-trip and lands on an empty
-/// shell, which is the wrong answer whenever a real session is still there to go back to.
+/// screens are still up, so the switch is instant and lands on real work. With nothing left to land
+/// on, the client drops into the launcher rather than minting a replacement session: the user just
+/// took a session away, and answering that by silently creating another one is what made killing an
+/// ephemeral feel like a restart instead of a kill.
 pub(crate) fn land_on_surviving_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     for parked in ctx.state.parked_by_recency() {
         let update = switch_to_parked(ctx, parked);
@@ -986,7 +1134,22 @@ pub(crate) fn land_on_surviving_session(ctx: &mut Context<HyprmuxApp>) -> Update
             return update;
         }
     }
-    swap_to_fresh_ephemeral(ctx)
+    enter_launcher(ctx)
+}
+
+/// Drop into the launcher: no foreground session at all, with the session picker raised over it so
+/// there is something to act on. The caller has already torn down or parked whatever was current.
+///
+/// This is what a client without a session looks like. Nothing is created here — the point is that
+/// killing a session, or dismissing the startup picker, must not conjure a replacement session the
+/// user never asked for. Parked sessions are untouched and still switchable.
+pub(crate) fn enter_launcher(ctx: &mut Context<HyprmuxApp>) -> Update {
+    prepare_session_install(ctx);
+    ctx.state.attachment = crate::state::Attachment::new();
+    ctx.state.runtime_epoch = ctx.state.mint_attachment_id();
+    ctx.state.current_mut().epoch = ctx.state.runtime_epoch;
+    finish_session_install(ctx);
+    open_session_picker(ctx)
 }
 
 /// Install a brand-new ephemeral session as current and spawn its attach, after the outgoing
@@ -1187,13 +1350,26 @@ pub(crate) fn activate_discovered_session(
     attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, false)
 }
 
-/// Attach the current (initial or restored-profile) state to this process's ephemeral session.
-/// Used when the startup picker's "new ephemeral" row is chosen or the picker is dismissed with no
-/// session attached, so a launch always ends with a working terminal.
+/// Attach this process's ephemeral session, seeded with the panes the launch had prepared (its
+/// initial shell, or a restored profile/autosave layout). Used when the user explicitly starts a
+/// shell from the launcher, so the layout the launch intended is still what they get.
+///
+/// A launcher reached by killing a session has no seed; it falls back to a single default pane.
 pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
+    if ctx.state.is_launcher() {
+        let seed = ctx
+            .state
+            .launcher_seed
+            .take()
+            .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config));
+        let epoch = ctx.state.runtime_epoch;
+        ctx.state.attachment = seed;
+        ctx.state.current_mut().epoch = epoch;
+        finish_session_install(ctx);
+    }
     // This is a *local* fallback; clear any remote target left over from a failed `--remote` attach
     // so panes resolve their shell/cwd locally and the sidebar does not keep probing a dead host.
     ctx.state.current_mut().remote_host = None;
@@ -1228,19 +1404,17 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     }))
 }
 
-/// Close the session picker. Normally this just returns focus to the current pane, but if it is the
-/// startup picker being dismissed with nothing attached, fall back to attaching an ephemeral session
-/// so the launch is never stranded without a terminal.
+/// Close the session picker. With a session in the foreground this just returns focus to the
+/// current pane; dismissed with nothing attached it leaves the client in the launcher, which is a
+/// state the app is allowed to sit in. Dismissing a picker is not a request for a session, so it
+/// no longer starts an ephemeral one — the launcher says how to start one.
 pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_session_arms(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
-    if !ctx.state.current().session_attached
-        && ctx.state.current().session_client.is_none()
-        && ctx.state.current().pending_session_attach.is_none()
-    {
-        return attach_startup_ephemeral(ctx);
+    if ctx.state.is_launcher() {
+        return Update::full();
     }
     request_current_pane_focus(ctx);
     Update::full()
@@ -1948,12 +2122,14 @@ mod tests {
                             label: "me".into(),
                             read_only: false,
                             requesting_control: false,
+                            parked: false,
                         },
                         ClientInfo {
                             id: 2,
                             label: "them".into(),
                             read_only: false,
                             requesting_control: false,
+                            parked: false,
                         },
                     ];
                     state.current_mut().shared = Some(shared);
@@ -2002,6 +2178,7 @@ mod tests {
                     let state = backend.state_mut();
                     state.current_mut().session_name = Some("eph-test".to_string());
                     state.current_mut().session_attached = true;
+                    state.current_mut().engaged = true;
                     state.current_mut().pending_session_attach = None;
                     state.sidebar.command_epoch = 7;
                     state.sidebar.config_epoch = 11;
@@ -2090,6 +2267,7 @@ mod tests {
                         label: format!("c{id}"),
                         read_only: false,
                         requesting_control: true,
+                        parked: false,
                     };
                     shared.clients = vec![
                         ClientInfo {
@@ -2097,6 +2275,7 @@ mod tests {
                             label: "me".into(),
                             read_only: false,
                             requesting_control: false,
+                            parked: false,
                         },
                         requester(3),
                         requester(2),
@@ -2130,6 +2309,7 @@ mod tests {
             label: format!("client-{id}"),
             read_only: false,
             requesting_control: false,
+            parked: false,
         };
         assert!(may_shutdown_ephemeral(&ephemeral_state(
             1,
@@ -2146,5 +2326,70 @@ mod tests {
             1,
             vec![client(1), client(2)]
         )));
+    }
+
+    /// Leaving a session for another one: whether the one being left is kept alive in the
+    /// background. Driven through the create-session flow, the same path a switch takes.
+    fn background_after_leaving_ephemeral(engaged: bool) -> bool {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::SessionClient;
+        use crate::state::{NamingMode, SessionRenameState};
+        use tui_lipan::TestBackend;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, _outbound) = SessionClient::test_channel();
+                let name = format!("leave-target-{}", std::process::id());
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().session_name = Some("eph-startup".to_string());
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client);
+                    // What a bare launch produces: an ephemeral the client picked the name for.
+                    state.current_mut().auto_created = true;
+                    state.current_mut().engaged = engaged;
+                    state.current_mut().pending_session_attach = None;
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(1);
+                    shared.clients = vec![ClientInfo {
+                        id: 1,
+                        label: "me".into(),
+                        read_only: false,
+                        requesting_control: false,
+                        parked: false,
+                    }];
+                    state.current_mut().shared = Some(shared);
+                    state.rename_session =
+                        Some(SessionRenameState::new(&name, NamingMode::CreateSession));
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::SubmitRenameSession)
+                    .expect("dispatch create session");
+                tx.send(!backend.state().background.is_empty())
+                    .expect("report result");
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+        rx.recv().expect("test result")
+    }
+
+    /// The startup ephemeral is the session nobody asked for. Switching away from an untouched one
+    /// must remove it, not leave it running where it later shows up as a session to confirm away.
+    #[test]
+    fn switching_away_discards_an_untouched_startup_ephemeral() {
+        assert!(!background_after_leaving_ephemeral(false));
+    }
+
+    /// The same ephemeral, once worked in, is real work: switching away parks it so it can be
+    /// switched back to.
+    #[test]
+    fn switching_away_parks_a_used_ephemeral() {
+        assert!(background_after_leaving_ephemeral(true));
     }
 }

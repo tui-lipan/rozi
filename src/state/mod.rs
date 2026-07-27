@@ -95,6 +95,9 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub client_list: Option<ClientListState>,
+    /// Raised when an attach lands on a session another client is actively controlling, so
+    /// following is something the user chooses rather than something that happens to them.
+    pub follow_prompt: Option<FollowPromptState>,
     /// Where the open nested dialog was raised from, so cancelling or finishing it returns there
     /// rather than to the focused pane. Assigned by every child-dialog opener (to `None` when the
     /// child was raised standalone, which is what keeps it from going stale) and consumed by
@@ -132,6 +135,12 @@ pub struct State {
     /// stays attached and their screens stay live (server output routes to them by epoch), so
     /// switching back is instant. Keyed by [`Attachment::epoch`]. Empty until a switch parks one.
     pub background: HashMap<AttachmentId, Attachment>,
+    /// The attachment a launcher-state client would hand to the session it starts: the panes a
+    /// launch had prepared (the initial shell, or a restored profile/autosave layout) before the
+    /// startup picker took the foreground. Taken by the first "start a shell" that follows, so
+    /// choosing it after dismissing the picker still lands on the layout the launch intended.
+    /// `None` once consumed, and for a launcher reached by killing a session rather than at launch.
+    pub launcher_seed: Option<Attachment>,
     /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
@@ -233,6 +242,7 @@ impl State {
             show_session_picker: false,
             session_picker: None,
             client_list: None,
+            follow_prompt: None,
             overlay_return: None,
             last_blocked_input_toast: None,
             replaceable_toasts: HashMap::new(),
@@ -253,6 +263,7 @@ impl State {
             event_hub: crate::events::EventHub::default(),
             attachment,
             background: HashMap::new(),
+            launcher_seed: None,
             hosts: HostRegistry::default(),
             host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
@@ -419,6 +430,22 @@ impl State {
     /// Whether the currently attached session is an auto-managed ephemeral session.
     pub fn is_ephemeral_session(&self) -> bool {
         self.current().is_ephemeral_session()
+    }
+
+    /// Whether the client currently has no session in the foreground: nothing attached, nothing
+    /// connecting, and no panes to draw. This is the launcher — a legitimate resting state, not a
+    /// failure — reached by dismissing the startup picker or by killing the last session. Parked
+    /// sessions may still be live in the background; a launcher only says the *foreground* is
+    /// empty.
+    pub fn is_launcher(&self) -> bool {
+        let current = self.current();
+        current.session_name.is_none()
+            && current.session_client.is_none()
+            && current.pending_session_attach.is_none()
+            && !current
+                .workspaces
+                .iter()
+                .any(|workspace| !workspace.panes.is_empty())
     }
 
     /// Whether a pane's contents reach the screen on the next frame.

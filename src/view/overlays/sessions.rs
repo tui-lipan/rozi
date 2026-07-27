@@ -39,6 +39,11 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             if client.read_only {
                 markers.push("read-only".to_string());
             }
+            // A parked client is connected but not here: it holds no control and is not competing
+            // for the session, which is worth saying rather than listing it like an active viewer.
+            if client.parked {
+                markers.push("parked".to_string());
+            }
             if client.requesting_control && Some(client.id) != shared.controller {
                 markers.push("wants control".to_string());
             }
@@ -101,6 +106,68 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         body = body.child(hints);
     }
     action_palette(ctx, "Session clients", key, Msg::CloseClientList, body, 64)
+}
+
+/// The choice offered when an attach lands on a session another client is driving. There is no
+/// "steal control" row on purpose: control only ever moves by the holder's consent, so the strongest
+/// thing this can do is ask.
+pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(prompt) = ctx.state.follow_prompt.as_ref() else {
+        return Text::new("").into();
+    };
+    let entries = crate::state::FollowChoice::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, choice)| {
+            SearchEntry::item(choice.label().to_string(), index)
+                .description(ItemDescription::new().right(choice.description().to_string()))
+        })
+        .collect::<Vec<_>>();
+    let selected = prompt.selected;
+    let last = crate::state::FollowChoice::ALL.len() - 1;
+    let interceptor = ctx.link().key_handler(move |key_event| {
+        if key_event.is(KeyCode::Esc) {
+            // Backing out of the prompt is itself a choice: cancel, not a silent follow.
+            Some(Msg::FollowPromptChoose(last))
+        } else if key_event.is(KeyCode::Char('j')) {
+            Some(Msg::FollowPromptSelect((selected + 1).min(last)))
+        } else if key_event.is(KeyCode::Char('k')) {
+            Some(Msg::FollowPromptSelect(selected.saturating_sub(1)))
+        } else {
+            None
+        }
+    });
+    let palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+        .width(Length::Flex(1))
+        .entries(entries)
+        .placeholder("")
+        .initial_selected_item_index(Some(selected))
+        .sync_selection(true)
+        .description_placement(DescriptionPlacement::Right)
+        .input_key_interceptor(interceptor)
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::FollowPromptSelect(event.item.value)),
+        )
+        .on_activate(
+            ctx.link()
+                .callback(|event: SearchEvent<usize>| Msg::FollowPromptChoose(event.item.value)),
+        );
+    let body = VStack::new()
+        .height(Length::Auto)
+        .child(Text::new(format!(
+            "`{}` is being driven by {}.",
+            prompt.session, prompt.controller_label
+        )))
+        .child(palette);
+    action_palette(
+        ctx,
+        "Session in use",
+        crate::view::follow_prompt_key(),
+        Msg::FollowPromptChoose(last),
+        body,
+        64,
+    )
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a

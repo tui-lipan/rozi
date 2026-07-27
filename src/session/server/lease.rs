@@ -60,7 +60,11 @@ impl SessionServer {
         &mut self,
         client_id: ClientId,
     ) -> Vec<(Target, ServerMessage)> {
-        if self.client_read_only(client_id) || !self.client_attached(client_id) {
+        // A parked client has nothing on screen to control; it takes the lease by unparking.
+        if self.client_read_only(client_id)
+            || !self.client_attached(client_id)
+            || self.client_parked(client_id)
+        {
             return Vec::new();
         }
         if self.controller == Some(client_id) {
@@ -94,12 +98,83 @@ impl SessionServer {
         responses
     }
 
+    /// A client declaring whether it is parked — attached, but keeping the session in the
+    /// background rather than using it.
+    ///
+    /// Parking releases the layout-control lease. Holding it from the background is what made a
+    /// second client attach as a follower of someone who was not even looking at the session; a
+    /// parked client has no view to keep in sync, so it has no claim on control. Unparking asks for
+    /// the lease back and gets it when nobody else holds it, which is the common case: the client
+    /// is returning to a session it left parked.
+    pub(super) fn handle_set_parked(
+        &mut self,
+        client_id: ClientId,
+        parked: bool,
+    ) -> Vec<(Target, ServerMessage)> {
+        let Some(client) = self
+            .client_mut(client_id)
+            .filter(|client| client.parked != parked)
+        else {
+            return Vec::new();
+        };
+        client.parked = parked;
+        if parked {
+            if self.controller == Some(client_id) {
+                return self.release_controller();
+            }
+        } else if self.controller.is_none() && !self.client_read_only(client_id) {
+            return self.assign_controller(client_id, ControllerChangeReason::Granted);
+        }
+        vec![(Target::Broadcast, self.clients_changed())]
+    }
+
+    /// Hand the lease to the next client entitled to it, or leave the session uncontrolled when
+    /// there is none. Used when the controller gives it up rather than leaves.
+    fn release_controller(&mut self) -> Vec<(Target, ServerMessage)> {
+        self.controller = self.promotion_candidate();
+        if let Some(promoted) = self.controller
+            && let Some(client) = self.client_mut(promoted)
+        {
+            client.requesting_control = false;
+            client.last_request_notify = None;
+        }
+        vec![
+            (
+                Target::Broadcast,
+                ServerMessage::ControllerChanged {
+                    controller: self.controller,
+                    reason: if self.controller.is_some() {
+                        ControllerChangeReason::Granted
+                    } else {
+                        ControllerChangeReason::Released
+                    },
+                },
+            ),
+            (Target::Broadcast, self.clients_changed()),
+        ]
+    }
+
+    /// The client the lease falls to when the holder gives it up or disappears: the oldest attached
+    /// writable client that is actually using the session. Parked clients are skipped — promoting
+    /// one would hand control to a background connection and lock out the client in front of the
+    /// user. Smallest id = earliest connect.
+    fn promotion_candidate(&self) -> Option<ClientId> {
+        self.clients
+            .iter()
+            .filter(|client| client.attached && !client.read_only && !client.parked)
+            .map(|client| client.id)
+            .min()
+    }
+
     pub(super) fn handle_grant_control(
         &mut self,
         client_id: ClientId,
         to: ClientId,
     ) -> Vec<(Target, ServerMessage)> {
-        if !self.is_controller(client_id) || !self.client_attached(to) || self.client_read_only(to)
+        if !self.is_controller(client_id)
+            || !self.client_attached(to)
+            || self.client_read_only(to)
+            || self.client_parked(to)
         {
             return Vec::new();
         }
@@ -167,6 +242,13 @@ impl SessionServer {
             .any(|client| client.id == id && client.attached)
     }
 
+    /// Whether `id` is keeping the session in the background rather than using it.
+    pub(super) fn client_parked(&self, id: ClientId) -> bool {
+        self.clients
+            .iter()
+            .any(|client| client.id == id && client.attached && client.parked)
+    }
+
     pub(super) fn client_read_only(&self, id: ClientId) -> bool {
         self.clients
             .iter()
@@ -189,6 +271,7 @@ impl SessionServer {
                 label: client.label.clone().unwrap_or_else(|| "client".to_string()),
                 read_only: client.read_only,
                 requesting_control: client.requesting_control,
+                parked: client.parked,
             })
             .collect()
     }
@@ -233,13 +316,7 @@ impl SessionServer {
         }
         let mut messages: Vec<ServerMessage> = Vec::new();
         if self.controller == Some(id) {
-            // Auto-promote the oldest remaining attached client (smallest id = earliest connect).
-            self.controller = self
-                .clients
-                .iter()
-                .filter(|client| client.attached && !client.read_only)
-                .map(|client| client.id)
-                .min();
+            self.controller = self.promotion_candidate();
             // A promoted client no longer needs its own pending request.
             if let Some(new_controller) = self.controller
                 && let Some(client) = self.client_mut(new_controller)

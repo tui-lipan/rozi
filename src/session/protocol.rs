@@ -26,9 +26,12 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
+/// 14 adds [`ClientMessage::SetParked`] and the `parked` flag on [`ClientInfo`], which separate a
+/// client merely holding a session open in the background from one actually using it.
+///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
@@ -36,6 +39,9 @@ pub const PROTOCOL_VERSION: u32 = 13;
 pub const MIN_SUPPORTED_PROTOCOL: u32 = 12;
 /// First version carrying the file-tree browsing messages. A client must not send them below this.
 pub const FILE_TREE_PROTOCOL: u32 = 13;
+/// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
+/// sent: that server keeps the pre-14 behavior where any attached client counts as an occupant.
+pub const PARKED_PROTOCOL: u32 = 14;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -292,6 +298,13 @@ pub struct ClientInfo {
     /// the pending request; cleared when control moves to it or the controller declines.
     #[serde(default)]
     pub requesting_control: bool,
+    /// True while this client holds the session open in the background rather than displaying it.
+    /// A parked client is still attached — its screens stay live and switching back is instant —
+    /// but it is not an occupant: it never holds the layout-control lease and is skipped when the
+    /// lease has to move, so a background connection cannot push the next client into follower
+    /// mode. Broadcast in the roster so the clients view can say which clients are only parked.
+    #[serde(default)]
+    pub parked: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -392,6 +405,14 @@ pub enum ClientMessage {
     /// no controller; otherwise it flags this client as requesting and notifies the controller (see
     /// [`ServerMessage::ControlRequested`]). Never steals from a present controller.
     RequestControl,
+    /// Declare whether this client is parked: still attached, with its screens kept live, but not
+    /// displaying or driving the session. Parking releases the layout-control lease if this client
+    /// held it and excludes it from promotion, so a client keeping several sessions open in the
+    /// background does not make each of them look occupied to the next client that attaches.
+    /// Unparking asks for the lease back, which the server auto-grants when nobody holds it.
+    SetParked {
+        parked: bool,
+    },
     /// Controller-only: grant the lease to `to`, which also clears `to`'s pending request.
     GrantControl {
         to: ClientId,
@@ -1243,7 +1264,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":13,
+                "protocol_version":14,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1271,7 +1292,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":13,
+                "protocol_version":14,
                 "min_protocol_version":12
             })
         );
@@ -1323,11 +1344,12 @@ mod tests {
                     label: "alice".into(),
                     read_only: false,
                     requesting_control: true,
+                    parked: false,
                 }],
                 input_locked: true,
             })
             .unwrap(),
-            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false,"requesting_control":true}],"input_locked":true})
+            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false,"requesting_control":true,"parked":false}],"input_locked":true})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Ping { seq: 9 }).unwrap(),
@@ -1353,7 +1375,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":13,
+                "effective_protocol":14,
                 "created_from_profile":"work"
             })
         );

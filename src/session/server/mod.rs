@@ -208,6 +208,11 @@ struct ClientConn {
     effective_protocol: u32,
     /// True while this client has an unanswered request for the control lease.
     requesting_control: bool,
+    /// True while this client keeps the session open in the background instead of using it. A
+    /// parked client stays attached and keeps receiving output, but never holds the control lease
+    /// and is skipped when the lease has to move, so it does not occupy the session (protocol 14+;
+    /// always false against an older client, which cannot say it is parked).
+    parked: bool,
     /// When the controller was last notified of this client's request, for per-requester debounce.
     last_request_notify: Option<Instant>,
 }
@@ -232,6 +237,7 @@ impl ClientConn {
             ping_seq: 0,
             effective_protocol: 0,
             requesting_control: false,
+            parked: false,
             last_request_notify: None,
         }
     }

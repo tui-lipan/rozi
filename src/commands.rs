@@ -664,6 +664,7 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && !state.show_profile_picker
         && !state.show_session_picker
         && state.client_list.is_none()
+        && state.follow_prompt.is_none()
 }
 
 /// Same as [`commands_active`], except the help overlay doesn't block: it is a static,
@@ -1425,6 +1426,7 @@ mod tests {
                 label: format!("client-{id}"),
                 read_only: read_only && id == client_id,
                 requesting_control: false,
+                parked: false,
             })
             .collect();
         state.current_mut().shared = Some(shared);

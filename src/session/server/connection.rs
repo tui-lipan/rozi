@@ -335,6 +335,7 @@ impl SessionServer {
                 responses
             }
             ClientMessage::RequestControl => self.handle_request_control(client_id),
+            ClientMessage::SetParked { parked } => self.handle_set_parked(client_id, parked),
             ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
             ClientMessage::DeclineControl { to } => self.handle_decline_control(client_id, to),
             ClientMessage::SetInputLock { locked } => {

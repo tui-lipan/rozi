@@ -149,6 +149,11 @@ pub enum Msg {
     ClientListSelect(usize),
     ClientListGrant(usize),
     ClientListDecline(usize),
+    /// Move the highlight in the follow prompt raised by attaching to a session someone else is
+    /// driving.
+    FollowPromptSelect(usize),
+    /// Commit the highlighted choice from that prompt.
+    FollowPromptChoose(usize),
     FocusPane(PaneId),
     ClosePopup,
     HoverPane(PaneId),

@@ -299,13 +299,24 @@ fn execute_action_inner(
     // Followers may not mutate the shared layout: intercept before dispatch and nudge toward
     // taking control. Focus, workspace switching, copy/search/palette, and terminal input are all
     // local and fall through.
-    if is_layout_mutating(&ctx.state, action) && crate::ops::session::nudge_if_follower(ctx) {
-        return Update::full();
+    if is_layout_mutating(&ctx.state, action) {
+        if crate::ops::session::nudge_if_follower(ctx) {
+            return Update::full();
+        }
+        // Reshaping a session by hand is the clearest form of using it: from here on it is the
+        // user's, not a disposable one the client made for them.
+        ctx.state.current_mut().engaged = true;
     }
     if !crate::commands::command_available(action, &ctx.state) {
         return Update::full();
     }
     match action {
+        // In the launcher there is no session to spawn into, and queueing the spawn against a
+        // client that will never arrive would look like a hang. Asking for a shell there is the
+        // explicit "start a new session" the launcher advertises.
+        Action::Spawn if ctx.state.is_launcher() => {
+            crate::ops::session::attach_startup_ephemeral(ctx)
+        }
         Action::Spawn => spawn_pane(ctx),
         Action::RespawnPane => crate::pane_lifecycle::respawn_focused_pane(ctx),
         Action::TogglePaneLogging => toggle_pane_logging(ctx),

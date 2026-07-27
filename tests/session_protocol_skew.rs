@@ -89,6 +89,7 @@ fn v13_client_against_a_v12_server_negotiates_12_and_sends_no_file_tree_messages
                     label: "client".into(),
                     read_only: false,
                     requesting_control: false,
+                    parked: false,
                 }],
                 input_locked: false,
                 created_from_profile: None,

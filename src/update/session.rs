@@ -89,14 +89,16 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
             ctx.state.background.remove(&failed_epoch);
             return update;
         }
-        // Nothing to restore (a bare `--remote` launch, say): an unreachable host would otherwise
-        // strand the UI with no session at all, so fall back to a fresh local ephemeral. Remote-only:
-        // a *local* ephemeral attach is itself the fallback, and retrying it here would spin forever.
+        // Nothing to restore (a bare `--remote` launch, say). The user asked for a session on a
+        // host that is not answering; inventing a *local* ephemeral in its place is not what they
+        // asked for, so drop into the launcher with the picker up and let them choose. Remote-only:
+        // a local attach failing here has already reported itself, and the launcher is where a
+        // dismissed picker leaves the client anyway.
         if was_remote
             && !ctx.state.current().session_attached
             && ctx.state.current().session_client.is_none()
         {
-            return crate::ops::session::attach_startup_ephemeral(ctx);
+            return crate::ops::session::enter_launcher(ctx);
         }
     }
     Update::full()
@@ -277,6 +279,10 @@ pub(super) fn attached(
         confirm_profile_origin(ctx, origin);
     }
     crate::update::sidebar::request_sessions_refresh(ctx);
+    // Landing on a session someone else is driving is a fork in the road, not a fait accompli: ask
+    // before this client settles in as a follower. Raised last so the attach is fully installed —
+    // cancelling from the prompt leaves the session the same way switching away from it would.
+    crate::ops::session::prompt_follow_if_occupied(ctx);
     update
 }
 
@@ -1499,6 +1505,7 @@ mod tests {
             label: label.to_string(),
             read_only: false,
             requesting_control: false,
+            parked: false,
         };
         let events = roster_diff_events(
             &[client(1, "one"), client(2, "two")],
@@ -1875,6 +1882,64 @@ mod tests {
             .expect("spawn failed-local-create test")
             .join()
             .expect("failed-local-create test completes");
+    }
+
+    /// Attaching where another client already holds the lease: the client must ask what to do
+    /// instead of quietly becoming a follower. `controller` is who the server says holds it.
+    fn attach_with_controller(controller: crate::shared_layout::ClientId) -> bool {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(move || {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let (client, _rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().pending_session_attach =
+                    Some(crate::state::PendingSessionAttach {
+                        epoch: 1,
+                        name: "dev".into(),
+                        client: Some(client),
+                        autostart: false,
+                        read_only: false,
+                        reconnect: false,
+                        remote_host: None,
+                        intent: crate::state::AttachIntent::Plain,
+                        left: None,
+                        parked_epoch: None,
+                    });
+                backend
+                    .dispatch(Msg::SessionAttached {
+                        epoch: 1,
+                        session: "dev".into(),
+                        client_id: 2,
+                        panes: Vec::new(),
+                        layout_rev: 0,
+                        layout: None,
+                        controller: Some(controller),
+                        clients: Vec::new(),
+                        input_locked: false,
+                        read_only: false,
+                        created_from_profile: None,
+                    })
+                    .expect("dispatch attach");
+                tx.send(backend.state().follow_prompt.is_some())
+                    .expect("report result");
+            })
+            .expect("spawn follow-prompt test")
+            .join()
+            .expect("follow-prompt test completes");
+        rx.recv().expect("test result")
+    }
+
+    #[test]
+    fn attaching_to_an_occupied_session_asks_before_following() {
+        assert!(attach_with_controller(1));
+    }
+
+    /// Getting the lease on attach — which is what happens when the only other client is parked —
+    /// is not a fork in the road, so nothing is asked.
+    #[test]
+    fn attaching_with_the_lease_in_hand_asks_nothing() {
+        assert!(!attach_with_controller(2));
     }
 
     #[test]

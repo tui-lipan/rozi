@@ -164,13 +164,15 @@ pub struct ProfileEntry {
 /// What a bare launch (no target/`--session`) does before opening the UI.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SessionStartup {
-    /// Silently attach to this process's ephemeral session (the historical behavior).
-    #[default]
+    /// Silently attach to this process's ephemeral session.
     Ephemeral,
-    /// Show the session picker first (when any named session exists), so the user can reattach to a
-    /// named session or start a fresh ephemeral one. Equivalent to passing `--pick`.
+    /// Show the session picker first (when any candidate exists), so the user can reattach to a
+    /// named session or start a fresh ephemeral one, without creating a session until they choose.
+    /// Equivalent to passing `--pick`. With no candidate to pick, an ephemeral starts directly.
+    #[default]
     Picker,
-    /// Attach or create the most recently used named session.
+    /// Reopen the exact most recently used named session. When it is not available, open the
+    /// picker with it highlighted rather than silently attaching an unrelated session.
     Last,
 }
 
@@ -191,7 +193,8 @@ pub struct HyprmuxSessionConfig {
     pub autosave: bool,
     /// Override the session file location; defaults to `$XDG_STATE_HOME/hyprmux/session.toml`.
     pub path: Option<PathBuf>,
-    /// Whether a bare launch attaches to an ephemeral session or opens the session picker first.
+    /// Whether a bare launch opens the session picker (the default), attaches to an ephemeral
+    /// session, or reopens the last named session.
     pub startup: SessionStartup,
     /// Persist and restart named sessions after their server disappears.
     pub resurrect: bool,
@@ -1122,8 +1125,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_startup_parses_known_values_and_defaults_to_ephemeral() {
-        assert_eq!(SessionStartup::default(), SessionStartup::Ephemeral);
+    fn session_startup_parses_known_values_and_defaults_to_picker() {
+        assert_eq!(SessionStartup::default(), SessionStartup::Picker);
         assert_eq!(
             SessionStartup::parse("ephemeral"),
             Some(SessionStartup::Ephemeral)

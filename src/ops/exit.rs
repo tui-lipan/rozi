@@ -127,11 +127,16 @@ pub(crate) fn any_pane_live(state: &State) -> bool {
     state.current().any_pane_live()
 }
 
+/// How many sessions quitting would actually destroy work in. An ephemeral the client created on
+/// the user's behalf and that they never worked in does not count: its shell is live but holds
+/// nothing, and warning about it trained the confirmation to fire on every quit.
 fn disposable_live_attachment_count(state: &State) -> usize {
     std::iter::once(state.current())
         .chain(state.background.values())
         .filter(|attachment| {
-            crate::ops::session::may_shutdown_attachment(attachment) && attachment.any_pane_live()
+            crate::ops::session::may_shutdown_attachment(attachment)
+                && attachment.any_pane_live()
+                && !attachment.is_discardable_ephemeral()
         })
         .count()
 }
@@ -333,6 +338,9 @@ mod tests {
         state.current_mut().session_name = Some("eph-confirm".to_string());
         state.current_mut().session_attached = true;
         state.current_mut().session_client = Some(client);
+        // A session the user has worked in: the one shape that is worth confirming away, and the
+        // one that survives a switch instead of being discarded as an untouched startup ephemeral.
+        state.current_mut().engaged = true;
         state.config.confirm.new_temporary_session = true;
         let mut shared = SharedSessionState::new(1);
         shared.controller = Some(1);
@@ -341,6 +349,7 @@ mod tests {
             label: "me".to_string(),
             read_only: false,
             requesting_control: false,
+            parked: false,
         }];
         state.current_mut().shared = Some(shared);
         backend
@@ -380,6 +389,7 @@ mod tests {
                 label: "me".to_string(),
                 read_only: false,
                 requesting_control: false,
+                parked: false,
             }];
             shared.last_committed_layout = None;
             state.current_mut().shared = Some(shared);
@@ -460,6 +470,7 @@ mod tests {
                     label: "me".to_string(),
                     read_only: false,
                     requesting_control: false,
+                    parked: false,
                 }];
                 state.current_mut().shared = Some(shared);
             }

@@ -23,7 +23,7 @@ movement): the running shells and their scrollback are untouched. See
 | Created by | bare `hyprmux` launch | profile launch, explicit `new`, or *Rename session* |
 | Clean quit (`prefix q` / `Alt+q`) | server shuts down | server keeps running |
 | Detach (`prefix d`) | prompts for a name first (see below) | server left running (reattachable) |
-| Switch to another session | retained in this client | retained in this client |
+| Switch to another session | retained if used, discarded if untouched | retained in this client |
 | UI crash | server left running (reattachable) | server left running |
 | Self-reap when no client is attached | after a short grace period | never (durable until killed) |
 | Session badge (workbar) | hidden | shows the name |
@@ -120,6 +120,16 @@ layout, and focus remain live, and background output continues to be parsed. Sel
 instant and does not reconnect. This applies to named and ephemeral sessions and to local and remote
 attachments; a parked remote link reconnects in place if it drops while another session is current.
 
+A **parked** session is connected, not occupied. It gives up the layout-control lease while it is in
+the background, so keeping several sessions open costs nobody else anything: another client
+attaching to a session you have merely parked gets control of it normally instead of joining as your
+follower. Returning to a parked session takes the lease back if nobody else claimed it meanwhile.
+
+The one session switching does **not** retain is an ephemeral one that hyprmux created for you and
+you never used — the startup scratch session, typically. Nothing was done in it, so it is shut down
+rather than left running behind the session you actually wanted. An ephemeral you typed in or
+reshaped is real work and is parked like anything else.
+
 Creating a named session (`Ctrl+N`) parks the current session in the background exactly like
 switching to one — it is not destructive, so a single `Enter` commits with no confirmation. The
 session you were on stays live and is one selection away.
@@ -137,7 +147,8 @@ disconnected — the client hops to the first of these that applies:
    already live, so the switch is instant and lands on real work.
 2. The next background session after that, in order of when each was last used, if the first cannot
    be switched to.
-3. A **fresh local ephemeral** session, only when none survives.
+3. The **launcher** — no session at all, with the picker up — when none survives. Killing a
+   session is not a request for a replacement, so nothing is created in its place.
 
 A background session still mid-connect is skipped: it has nothing on screen to come back to, so
 landing on one would trade an empty session for another empty session. Detaching and quitting are
@@ -145,24 +156,33 @@ unaffected — those are deliberate exits, not the current session being taken a
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
 disappear on their own), so there is no manual refresh key. A session row also reports other clients
-sharing it besides your own connection (for example, `2 panes · shared with 1 other`), making it
-clear before you attach that you will initially join that session as a follower. When available, it also shows
+sharing it besides your own connection (for example, `2 panes · shared with 1 other`), so you know
+before attaching that you may be asked whether to follow that client or ask it for control. When available, it also shows
 the creation recipe as `from <profile>`. This `created_from_profile` value survives detach,
 reattach, and resurrection snapshots; replacing the session with another profile does not rewrite
 its historical creation origin.
 
 ### Opening the picker at startup
 
-By default a bare launch attaches straight to an ephemeral session. To be asked which session to
-attach to instead, launch with `--pick` or set `[session] startup = "picker"` (see
-[configuration.md](configuration.md)). The startup picker is only shown when at least one **named**
-session already exists; otherwise the launch falls through to a normal ephemeral attach. Dismissing
-the picker with `Esc` attaches a fresh ephemeral session, so a launch is never left without a
-terminal.
+By default (`[session] startup = "picker"`, also reachable with `--pick`) a bare launch asks which
+session to attach to. **Opening the picker attaches nothing** - no session is created until you
+choose one, so launching hyprmux never leaves a stray session behind.
 
-Set `[session] startup = "last"` to reopen the most recently attached named session. Without MRU
-history, hyprmux tries the newest resurrection snapshot, any running named session, then `main`.
-Explicit targets and `--pick` take precedence.
+The picker is shown only when there is something to pick: a running named session, a resurrection
+snapshot, or a remote host with cached sessions. With nothing to choose from, the launch falls
+through to an ephemeral session, which is the only thing it could have offered anyway.
+
+Dismissing the picker with `Esc` leaves the client in the **launcher**: attached to nothing, with a
+panel saying how to start a shell (`Enter`, which starts an ephemeral session with whatever layout
+the launch had prepared) or reopen the picker. A client with no session is a normal state - the
+launcher is also where killing your last session lands you.
+
+Set `[session] startup = "ephemeral"` to skip all of this and start a scratch session immediately.
+
+Set `[session] startup = "last"` to reopen the exact most recently attached named session, whether
+it is still running or restorable from a snapshot or its canonical same-name profile. If that
+session is gone, the picker opens with its name highlighted rather than silently attaching some
+other session. Explicit targets and `--pick` take precedence.
 
 ## The Sessions sidebar (grouped view)
 
@@ -237,7 +257,13 @@ and pane identity). Purely local view state - focus, active workspace, overlays,
 
 - **Controller vs follower.** Exactly one attached client holds the layout-control **lease** (the
   *controller*); the rest are *followers*. The first client to attach is granted control; when the
-  controller leaves, the oldest remaining client is promoted automatically.
+  controller leaves, the oldest remaining client that is actually using the session is promoted
+  automatically. Clients that have the session merely **parked** in the background hold no lease and
+  are never promoted into one — a background connection is not an occupant.
+- **Following is chosen, never assigned.** Attaching to a session another client is actively
+  driving raises a prompt: **Follow**, **Ask for control**, or **Cancel** (which leaves the session
+  alone and returns you to where you were). Nothing follows automatically, and nothing takes control
+  out from under the client that has it — "ask" is as strong as it gets.
 - **Live commits.** The controller commits a new layout revision on every change (split, move,
   resize, float, workspace edit, …); the server bumps the revision and broadcasts it, and every
   follower reconciles its local state toward it without disturbing live terminal screens or
@@ -304,7 +330,8 @@ server never self-reaps from client absence: it stays alive until explicitly kil
 UI start (no target) ── spawn+attach ──▶ ATTACHED-EPHEMERAL(eph-<pid>)
 ATTACHED-EPHEMERAL: quit                 ⇒ Shutdown ⇒ server exits (panes die)
                     Rename / detach+name ⇒ ATTACHED-NAMED (same server, same panes)
-                    attach-elsewhere     ⇒ Shutdown ⇒ server exits (disposable)
+                    attach-elsewhere     ⇒ parked if used, otherwise Shutdown (disposable)
+                    kill-session         ⇒ Shutdown ⇒ client lands on a parked session or the launcher
                     UI crash             ⇒ ORPHAN-EPHEMERAL
 ORPHAN-EPHEMERAL:   reattach ⇒ ATTACHED-EPHEMERAL
                     no client for grace period ⇒ server exits (any pane state)

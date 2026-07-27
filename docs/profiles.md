@@ -81,9 +81,9 @@ hyprmux new review --profile dev
 
 `attach` and `new` are reserved CLI command words. Use `hyprmux --session attach` or
 `hyprmux --session new` when a session or canonical profile binding actually has one of those
-names. A bare `hyprmux` still starts an ephemeral scratch session unless `[session] startup =
-"last"` is configured. In ephemeral mode, `[profile] default` remains the first launch seed,
-followed by session autosave.
+names. A bare `hyprmux` opens the session picker (or starts an ephemeral scratch session when there
+is nothing to pick) unless `[session] startup = "last"` is configured. In ephemeral mode,
+`[profile] default` remains the first launch seed, followed by session autosave.
 
 Set a default profile in config:
 

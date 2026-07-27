@@ -606,12 +606,14 @@ mod reconciler_tests {
                 label: "a".into(),
                 read_only: false,
                 requesting_control: false,
+                parked: false,
             },
             crate::session::protocol::ClientInfo {
                 id: 2,
                 label: "b".into(),
                 read_only: false,
                 requesting_control: false,
+                parked: false,
             },
         ];
         state.current_mut().shared = Some(shared);
@@ -737,12 +739,14 @@ mod reconciler_tests {
                         label: "a".into(),
                         read_only: false,
                         requesting_control: false,
+                        parked: false,
                     },
                     crate::session::protocol::ClientInfo {
                         id: 2,
                         label: "b".into(),
                         read_only: false,
                         requesting_control: false,
+                        parked: false,
                     },
                 ];
                 state.current_mut().shared = Some(shared);

@@ -156,11 +156,13 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             "Open profile as".to_string(),
             "Name (empty: ephemeral)".to_string(),
         ),
-        // The same ephemeral-naming prompt serves in-place naming and detach-and-name; the latter
-        // keeps the server running for reattach, so it names the action to make that clear.
-        crate::state::NamingMode::NameEphemeralSession if rename.detach_after => (
-            "Detach session".to_string(),
-            "Name to keep it running".to_string(),
+        // The same ephemeral-naming prompt serves in-place naming and the leave prompt. The latter
+        // is the last chance to keep the session, so it says what each answer does. It never shows
+        // the generated `eph-<pid>` name: everywhere else calls these "temporary" sessions, and a
+        // name the user has never seen is no help when deciding whether to close one.
+        crate::state::NamingMode::NameEphemeralSession if rename.leave.is_some() => (
+            "Keep this session?".to_string(),
+            "Name it to keep it running (empty closes it)".to_string(),
         ),
         crate::state::NamingMode::NameEphemeralSession => {
             ("Name session".to_string(), "Session name".to_string())
@@ -177,6 +179,15 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             "host, user@host:port, or ssh:// URL".to_string(),
         ),
     };
+    // The armed line is the whole safety step for closing a temporary session, so it says how many
+    // go and stays on screen under the finger — not in a toast that may already have faded.
+    let confirm = rename
+        .leave
+        .filter(|leave| leave.armed)
+        .map(|leave| match leave.temporary {
+            1 => "Enter again closes this temporary session and quits".to_string(),
+            count => format!("Enter again closes {count} temporary sessions and quits"),
+        });
     prompt_overlay(
         ctx,
         &title,
@@ -186,7 +197,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::RenameSessionChanged,
         Msg::CloseRenameSession,
         Msg::SubmitRenameSession,
-        None,
+        confirm.as_deref(),
     )
 }
 

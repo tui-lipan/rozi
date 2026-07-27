@@ -328,6 +328,14 @@ fn run_action(
         let _ = reply.send(ControlResponse::error("scratchpad is open"));
         return Update::none();
     }
+    // Leaving is interactive: it can raise the prompt that asks whether to keep a temporary
+    // session, and there is nobody on this socket to answer it. A scripted exit takes the
+    // preserving path instead, so automation can never be what closes a session.
+    if matches!(action, Action::Quit | Action::Detach) {
+        let update = crate::ops::exit::leave_client_unattended(ctx);
+        let _ = reply.send(ControlResponse::empty());
+        return update;
+    }
     let update = execute_action(ctx, action);
     let _ = reply.send(ControlResponse::empty());
     update

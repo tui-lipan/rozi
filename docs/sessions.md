@@ -21,8 +21,8 @@ movement): the running shells and their scrollback are untouched. See
 | | Ephemeral | Named (`dev`) |
 |---|---|---|
 | Created by | bare `hyprmux` launch | profile launch, explicit `new`, or *Rename session* |
-| Clean quit (`prefix q` / `Alt+q`) | server shuts down | server keeps running |
-| Detach (`prefix d`) | prompts for a name first (see below) | server left running (reattachable) |
+| Leaving (`prefix q` / `prefix d`), untouched | server shuts down | n/a |
+| Leaving, after you worked in it | prompts: name it to keep, or close it | server keeps running |
 | Switch to another session | retained if used, discarded if untouched | retained in this client |
 | UI crash | server left running (reattachable) | server left running |
 | Self-reap when no client is attached | after a short grace period | never (durable until killed) |
@@ -213,7 +213,7 @@ vanish from the list just because its link is down.
 
 Activating a session row attaches to it with the same background-retention semantics as the picker.
 
-## Attach, detach, and quit
+## Attach and leave
 
 All panes are server-backed. The UI receives raw pane output frames and sends input, resize,
 palette, pane-status, layout-commit, rename, and kill requests back through the session protocol.
@@ -228,19 +228,24 @@ broadcasts it (see [Shared live layouts](#shared-live-layouts)).
 - **Switch session** (picking another session) retains the current attachment in the background.
   Switching back restores its already-live screens and layout immediately. Remote links remain
   attached and reconnect independently after a transport failure.
-- **Detach** (`prefix d`) leaves the TUI back to your shell, tmux-style, keeping the session server
-  running for later reattach. Detaching never tears panes down. Every current or retained anonymous
-  ephemeral session with live panes is brought forward and prompts you to **name** it before the
-  client exits:
-  - Type a name and confirm → the session is renamed in place (same server, same panes) and the UI
-    detaches, leaving the now-named server running.
-  - Cancel (`Esc`) → the prompt closes and you return to the session; nothing is shut down. To tear
-    an ephemeral session down, quit instead (which asks for confirmation).
-  - A session that is already named detaches immediately, leaving its server running.
-- **Quit** (`prefix q` / `Alt+q`) exits the client. It detaches all retained named sessions and shuts
-  down retained ephemeral sessions. Quitting while the current ephemeral session has a live pane
-  asks for a second press first (see `[confirm].quit_ephemeral`) - this is the destructive
-  counterpart to detach, which preserves the session.
+- **Leaving** (`prefix q` / `Alt+q`, or `prefix d`) exits the client. There is one way out: *detach*
+  and *quit* are the same action, because in a client that visits many sessions "how you left" says
+  nothing useful. What happens is decided per session:
+  - A **named** session is detached and its server left running, always. Same for every named
+    session retained in the background.
+  - A **temporary** session you never touched is closed silently. Nothing can reattach to it by
+    name and it holds no work, so keeping it alive would only clutter the picker.
+  - A **temporary session you worked in** is the one case leaving could destroy something, so it
+    asks. The **Keep this session?** prompt appears (bringing the session forward first if it was
+    parked, so you can see what you are deciding about):
+    - Type a name and `Enter` → renamed in place (same server, same panes), left running, client
+      exits. Any other temporary session gets its own prompt on the way out.
+    - `Enter` on an empty name → closes it. This takes a second press, and the prompt itself says
+      what that press closes (*"Enter again closes this temporary session and quits"*). Set
+      `[confirm] quit_ephemeral = false` to close on the first press.
+    - `Esc` → nothing is torn down and you return to the session.
+- Leaving over the **control socket** (`hyprmux run-action quit`) never prompts and never closes a
+  session you worked in — there is nobody to answer, and automation must not be what destroys work.
 - If the server disconnects unexpectedly while attached, hyprmux marks panes errored and attempts a
   reconnect. Ephemeral sessions autostart a replacement server; a dead named session surfaces as an
   error rather than a silent empty resurrection.
@@ -328,15 +333,16 @@ server never self-reaps from client absence: it stays alive until explicitly kil
 
 ```text
 UI start (no target) ── spawn+attach ──▶ ATTACHED-EPHEMERAL(eph-<pid>)
-ATTACHED-EPHEMERAL: quit                 ⇒ Shutdown ⇒ server exits (panes die)
-                    Rename / detach+name ⇒ ATTACHED-NAMED (same server, same panes)
+ATTACHED-EPHEMERAL: leave, unused        ⇒ Shutdown ⇒ server exits (held nothing)
+                    leave, used          ⇒ prompt: name it (keep) or empty ×2 (close)
+                    Rename / name on exit⇒ ATTACHED-NAMED (same server, same panes)
                     attach-elsewhere     ⇒ parked if used, otherwise Shutdown (disposable)
                     kill-session         ⇒ Shutdown ⇒ client lands on a parked session or the launcher
                     UI crash             ⇒ ORPHAN-EPHEMERAL
 ORPHAN-EPHEMERAL:   reattach ⇒ ATTACHED-EPHEMERAL
                     no client for grace period ⇒ server exits (any pane state)
                     picker kill / kill-session ⇒ server exits
-ATTACHED-NAMED:     quit/detach ⇒ server keeps running (never self-reaps)
+ATTACHED-NAMED:     leave       ⇒ server keeps running (never self-reaps)
 ```
 
 ## Layout persistence

@@ -444,8 +444,10 @@ pub struct HyprmuxConfirmConfig {
     pub kill_workspace: bool,
     /// Confirm before shutting down the attached session server.
     pub kill_session: bool,
-    /// Confirm before quitting an ephemeral session that still has a live pane (quitting it
-    /// shuts the server down and kills those PTYs). Named-session quits are unaffected.
+    /// Confirm before closing a temporary session at the leave prompt — the second `Enter` on an
+    /// empty name, which shuts its server down and kills its PTYs. With this off, leaving without
+    /// naming closes it on the first press. Named sessions are never closed by leaving, so they are
+    /// unaffected either way.
     pub quit_ephemeral: bool,
     /// Confirm before discarding the current ephemeral session to start a fresh one (its panes
     /// are killed). Named sessions are detached safely and do not need confirmation.

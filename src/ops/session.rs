@@ -974,15 +974,15 @@ pub(crate) fn may_shutdown_attachment(attachment: &crate::state::Attachment) -> 
             .is_none_or(|shared| !shared.read_only)
 }
 
-/// Tear down every retained background attachment when leaving the client. Ephemeral servers this
-/// client solely owns are shut down; every other parked session is detached and left running for
-/// reattach. Called on quit so parked sessions do not leak.
-pub(crate) fn release_background(ctx: &mut Context<HyprmuxApp>) {
+/// Let go of every retained background attachment when leaving the client, applying the same
+/// per-session rule the current session gets (see [`crate::ops::exit::shutdown_on_exit`]): close
+/// what nobody could come back to, detach everything else and leave its server running.
+pub(crate) fn release_background_for_exit(ctx: &mut Context<HyprmuxApp>, close_temporary: bool) {
     for (_epoch, attachment) in std::mem::take(&mut ctx.state.background) {
         let Some(client) = attachment.session_client.as_ref() else {
             continue;
         };
-        if may_shutdown_attachment(&attachment) {
+        if crate::ops::exit::shutdown_on_exit(&attachment, close_temporary) {
             client.shutdown();
         } else {
             client.detach();
@@ -1086,7 +1086,7 @@ pub(crate) fn detach_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
-    crate::ops::exit::detach(ctx)
+    crate::ops::exit::leave_client(ctx)
 }
 
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive by switching to a
@@ -1453,13 +1453,13 @@ pub(crate) fn open_create_session_on_host(
     enter_session_rename(ctx, SessionRenameState::new_create_on_host(target))
 }
 
-/// Raise the "name this session to detach" prompt for the current ephemeral session. An ephemeral
-/// session has no reattachable name, so naming it (Enter) is what makes a detach meaningful: the
-/// server is renamed, kept running, and the client leaves (see `apply_rename_session`,
-/// `NameEphemeralSession` + `detach_after`). Cancelling (`Esc`) returns to the session without
-/// tearing anything down - quitting is the destructive path.
-pub(crate) fn open_detach_rename(ctx: &mut Context<HyprmuxApp>) -> Update {
-    enter_session_rename(ctx, SessionRenameState::for_detach())
+/// Raise the leave prompt on the way out of the client, for the `temporary` temporary sessions
+/// leaving would close. A temporary session has no reattachable name, so naming it (Enter) is the
+/// only way to keep it: the server is renamed, kept running, and the client leaves. Submitting
+/// nothing closes those sessions instead, after a second press confirms it. Cancelling (`Esc`)
+/// returns to the session with nothing torn down.
+pub(crate) fn open_leave_prompt(ctx: &mut Context<HyprmuxApp>, temporary: usize) -> Update {
+    enter_session_rename(ctx, SessionRenameState::for_leave(temporary))
 }
 
 /// Open the prompt to rename the *current* session in place. Unlike the picker (which switches to a
@@ -1561,6 +1561,28 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             crate::ops::profile::open_named_target(ctx, name, intent)
         }
         NamingMode::NameEphemeralSession => {
+            let leave = rename_state.leave;
+            // At the leave prompt an empty name is not a mistake, it is the other answer: close
+            // these sessions and go. It takes a second press, and what that press closes is
+            // spelled out in the prompt itself while the finger is still over the key.
+            if name.is_empty()
+                && let Some(leave) = leave
+            {
+                let confirm = ctx.state.config.confirm.quit_ephemeral;
+                if confirm && !leave.armed {
+                    if let Some(rename) = ctx.state.rename_session.as_mut() {
+                        rename.leave = Some(crate::state::LeaveIntent {
+                            armed: true,
+                            ..leave
+                        });
+                    }
+                    request_rename_session_focus(ctx);
+                    return Update::full();
+                }
+                ctx.state.rename_session = None;
+                crate::ops::overlay_return::leave(ctx);
+                return crate::ops::exit::leave_client_now(ctx, true);
+            }
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
                 ctx.toast().push(crate::pty_events::error_toast(
                     &ctx.state.theme,
@@ -1571,10 +1593,9 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 return Update::full();
             }
 
-            let detach_after = rename_state.detach_after;
             ctx.state.rename_session = None;
 
-            if detach_after {
+            if leave.is_some() {
                 // The client is leaving the session; there is nothing to return to.
                 crate::ops::overlay_return::leave(ctx);
                 let Some(client) = ctx.state.current().session_client.clone() else {
@@ -1588,7 +1609,9 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 crate::update::flush_layout_commit(ctx);
                 client.rename(name.clone());
                 ctx.state.current_mut().session_name = Some(name);
-                return crate::ops::exit::detach(ctx);
+                // Naming kept this one; anything still temporary gets its own prompt on the way
+                // out, so no session is closed without having been offered a name.
+                return crate::ops::exit::leave_client(ctx);
             }
 
             if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {

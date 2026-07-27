@@ -62,11 +62,26 @@ pub enum NamingMode {
     ConnectRemoteHost,
 }
 
+/// The state of a leave prompt: the client is on its way out and the temporary sessions it would
+/// take with it need an answer first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeaveIntent {
+    /// How many temporary sessions leaving would close, counting the current one. Only ever the
+    /// sessions worth asking about — untouched ones are discarded without a prompt.
+    pub temporary: usize,
+    /// Whether an empty submit has already been made once and is waiting for the second press that
+    /// closes those sessions. Rendered in the prompt rather than a toast, so what the next press
+    /// destroys is on screen while the finger is still over the key.
+    pub armed: bool,
+}
+
 /// Prompt state for unified naming/renaming overlays.
 pub struct SessionRenameState {
     pub input: TextInput,
     pub mode: NamingMode,
-    pub detach_after: bool,
+    /// Set when this prompt is the last step before the client exits: naming the session keeps it
+    /// running, submitting nothing closes it. `None` for an ordinary in-place rename.
+    pub leave: Option<LeaveIntent>,
     pub profile_seed: Option<(String, std::path::PathBuf)>,
     /// When set, a [`NamingMode::CreateSession`] prompt creates the session on this remote host
     /// (parking the current session in the background) instead of locally. Only the target string
@@ -79,18 +94,22 @@ impl SessionRenameState {
         Self {
             input: TextInput::new(initial.as_ref()),
             mode,
-            detach_after: false,
+            leave: None,
             profile_seed: None,
             host_target: None,
         }
     }
 
-    /// A rename prompt raised by `prefix d` on an ephemeral session: name it, then detach.
-    pub fn for_detach() -> Self {
+    /// The prompt raised on the way out of the client when leaving would close `temporary`
+    /// temporary sessions: name this one to keep it running, or submit nothing to close them.
+    pub fn for_leave(temporary: usize) -> Self {
         Self {
             input: TextInput::new(""),
             mode: NamingMode::NameEphemeralSession,
-            detach_after: true,
+            leave: Some(LeaveIntent {
+                temporary,
+                armed: false,
+            }),
             profile_seed: None,
             host_target: None,
         }

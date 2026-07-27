@@ -104,8 +104,6 @@ pub enum PendingDestructive {
     ClosePane(PaneId),
     KillWorkspace(usize),
     KillSession,
-    /// Quit an ephemeral session that still has a live pane (shuts the server down).
-    Quit,
     NewTemporarySession,
 }
 

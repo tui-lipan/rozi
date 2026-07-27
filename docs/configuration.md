@@ -130,7 +130,7 @@ editors = ["vim", "nvim", "vi", "view", "vimdiff", "hx", "helix", "kak", "emacs"
 close_pane = false             # confirm closing a pane with a live process (default: false)
 kill_workspace = true          # confirm killing all panes on a workspace (default: true)
 kill_session = true            # confirm shutting down the attached session (default: true)
-quit_ephemeral = true          # confirm quitting an ephemeral session that still has a live pane (default: true)
+quit_ephemeral = true          # second Enter before the leave prompt closes a temporary session (default: true)
 new_temporary_session = true   # confirm discarding the current ephemeral session for a fresh one (default: true)
 load_profile = true            # confirm replacing a live ephemeral session from Profiles (default: true)
 
@@ -430,7 +430,7 @@ skips the confirmation - picking it from a searchable list is already a delibera
 | `close_pane` | `false` | Closing a pane whose process is still running. |
 | `kill_workspace` | `true` | Closing every pane on the active workspace. |
 | `kill_session` | `true` | Shutting down the attached named session. |
-| `quit_ephemeral` | `true` | Quitting while on an ephemeral session with a live pane (quitting shuts its server down and kills those PTYs). Quitting a named session, or an ephemeral one with no live pane, is unaffected. |
+| `quit_ephemeral` | `true` | Closing a temporary session from the leave prompt: `Enter` on an empty name arms, a second `Enter` closes it (the prompt says what it closes). With this off, the first press closes. Named sessions are never closed by leaving. |
 | `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
 | `load_profile` | `true` | Replacing a live disposable session by opening a profile-backed named target. |
 

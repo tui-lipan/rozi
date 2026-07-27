@@ -97,6 +97,11 @@ pub(super) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(super) fn rename_session_changed(ctx: &mut Context<HyprmuxApp>, event: InputEvent) -> Update {
     if let Some(rename) = ctx.state.rename_session.as_mut() {
         event.apply_to(&mut rename.input);
+        // Editing is a change of mind: an armed "close it" must not survive typing a name and
+        // clearing it again, or the next Enter would close without ever having said so.
+        if let Some(leave) = rename.leave.as_mut() {
+            leave.armed = false;
+        }
     }
     crate::ops::focus::request_rename_session_focus(ctx);
     Update::full()

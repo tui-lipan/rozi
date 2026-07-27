@@ -45,38 +45,98 @@ fn confirm_second_press(
     false
 }
 
-/// Leave the TUI while keeping the session server running for later reattach (tmux-style detach).
-/// The server already holds the authoritative layout from live commits; detach mirrors it to disk
-/// so a fresh launch can restore it even after the server is gone.
+/// Leave the client. There is one way out, because in a client that visits many sessions "how you
+/// left" says nothing useful — what matters is what happens to each session, and that is decided
+/// per session:
 ///
-/// Detaching an *anonymous* ephemeral session is contradictory: it has no name to reattach by, so a
-/// literal detach could only shut it down - indistinguishable from a quit, minus the confirmation.
-/// Instead an ephemeral session first prompts for a name; naming it turns the detach into a durable
-/// named detach that keeps the server running (see [`crate::ops::session::open_detach_rename`] and
-/// [`crate::ops::session::apply_rename_session`]), while cancelling returns to the session. Tearing an
-/// ephemeral session down is left to [`quit_client`], which guards it with `[confirm].quit_ephemeral`.
-/// A named session (or one with no live client to rename) detaches immediately.
-pub(crate) fn detach(ctx: &mut Context<HyprmuxApp>) -> Update {
+/// - A **named** session is detached and its server left running, always.
+/// - An **untouched** temporary session the client created for the user is closed silently; it
+///   holds nothing (see [`crate::state::Attachment::is_discardable_ephemeral`]).
+/// - A **used but unnamed** temporary session is the only one worth asking about, because leaving
+///   is the last chance to keep it. It raises the leave prompt: name it to keep it running, or
+///   submit nothing to close it.
+///
+/// Both `quit` and `detach` land here. Cancelling the prompt (`Esc`) returns to the session with
+/// nothing torn down.
+pub(crate) fn leave_client(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     clear_pending(ctx);
-    if ctx.state.is_ephemeral_session() && ctx.state.current().session_client.is_some() {
-        return crate::ops::session::open_detach_rename(ctx);
+    let temporary = keepable_temporary_count(&ctx.state);
+    if temporary > 0 {
+        // Ask about the session on screen. If the one to ask about is parked, come back to it
+        // first: a prompt about a session the user cannot see is a prompt they cannot judge.
+        if !keepable_temporary(ctx.state.current())
+            && let Some((&id, _)) = ctx
+                .state
+                .background
+                .iter()
+                .find(|(_, attachment)| keepable_temporary(attachment))
+        {
+            let _ = crate::ops::session::switch_to_parked(ctx, id);
+        }
+        return crate::ops::session::open_leave_prompt(ctx, temporary);
     }
-    if let Some((&id, _)) = ctx.state.background.iter().find(|(_, attachment)| {
-        crate::ops::session::may_shutdown_attachment(attachment) && attachment.any_pane_live()
-    }) {
-        let _ = crate::ops::session::switch_to_parked(ctx, id);
-        return crate::ops::session::open_detach_rename(ctx);
-    }
+    leave_client_now(ctx, false)
+}
+
+/// Leave for real. `close_temporary` is the user's answer to the leave prompt: with it set, the
+/// temporary sessions that prompt was about are closed; without it, everything that can keep
+/// running does. Every path out of the client ends here.
+pub(crate) fn leave_client_now(ctx: &mut Context<HyprmuxApp>, close_temporary: bool) -> Update {
+    clear_pending(ctx);
+    crate::popup::kill_if_open(ctx);
+    let shutdown_current = shutdown_on_exit(ctx.state.current(), close_temporary);
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
-        client.detach();
-        profiles::persist_session_on_detach(&ctx.state);
+        if shutdown_current {
+            client.shutdown();
+        } else {
+            client.detach();
+        }
     }
-    crate::ops::session::release_background(ctx);
+    crate::ops::session::release_background_for_exit(ctx, close_temporary);
+    // A session whose server goes down with us leaves no other copy of its layout, so mirror it to
+    // disk regardless of `[session] autosave`; anything still running is its own record.
+    if shutdown_current {
+        profiles::persist_session_on_detach(&ctx.state);
+    } else {
+        profiles::persist_session_if_enabled(&ctx.state);
+    }
     ctx.quit();
     Update::none()
+}
+
+/// Whether leaving closes this session's server rather than detaching from it.
+///
+/// A named session is never closed — it is exactly what "leave it running" means. A temporary
+/// session the user never touched is always closed, since nothing can reattach to it by name and it
+/// holds no work. One they *did* work in is closed only when they said so at the leave prompt.
+/// Anything another client is sharing is left alone regardless: it is not ours to close.
+pub(crate) fn shutdown_on_exit(
+    attachment: &crate::state::Attachment,
+    close_temporary: bool,
+) -> bool {
+    crate::ops::session::may_shutdown_attachment(attachment)
+        && (attachment.is_discardable_ephemeral()
+            || (close_temporary && attachment.is_ephemeral_session()))
+}
+
+/// Whether this session is one the leave prompt should ask about: a temporary session the user
+/// actually worked in, still unnamed, that only this client can reach. Naming it is the only way to
+/// keep it, which is exactly why leaving has to offer.
+fn keepable_temporary(attachment: &crate::state::Attachment) -> bool {
+    attachment.is_ephemeral_session()
+        && !attachment.is_discardable_ephemeral()
+        && crate::ops::session::may_shutdown_attachment(attachment)
+        && attachment.any_pane_live()
+}
+
+fn keepable_temporary_count(state: &State) -> usize {
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .filter(|attachment| keepable_temporary(attachment))
+        .count()
 }
 
 /// Mark the current session as intentionally left and emit its hook event exactly once.
@@ -104,10 +164,10 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Opti
 /// logoff, or shutdown): detach cleanly instead of letting the process be killed where it stands
 /// (cross-platform plan Phase 5b).
 ///
-/// Unlike [`detach`], this never prompts. There is nobody left to answer a prompt, and the window
-/// before the OS force-kills us is short (Windows gives a few seconds; a Unix `SIGHUP` is usually
-/// followed by the emulator exiting). So an ephemeral session skips the "name it first" flow and
-/// simply detaches: its server shuts itself down after the no-client grace period, which is the
+/// Unlike [`leave_client`], this never prompts. There is nobody left to answer a prompt, and the
+/// window before the OS force-kills us is short (Windows gives a few seconds; a Unix `SIGHUP` is
+/// usually followed by the emulator exiting). So a temporary session skips the "name it first" flow
+/// and simply detaches: its server shuts itself down after the no-client grace period, which is the
 /// right outcome for a session nobody can reattach to by name anyway.
 pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::update::flush_layout_commit(ctx);
@@ -115,7 +175,7 @@ pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.detach();
     }
-    crate::ops::session::release_background(ctx);
+    crate::ops::session::release_background_for_exit(ctx, false);
     profiles::persist_session_on_detach(&ctx.state);
     ctx.quit();
     Update::none()
@@ -127,63 +187,12 @@ pub(crate) fn any_pane_live(state: &State) -> bool {
     state.current().any_pane_live()
 }
 
-/// How many sessions quitting would actually destroy work in. An ephemeral the client created on
-/// the user's behalf and that they never worked in does not count: its shell is live but holds
-/// nothing, and warning about it trained the confirmation to fire on every quit.
-fn disposable_live_attachment_count(state: &State) -> usize {
-    std::iter::once(state.current())
-        .chain(state.background.values())
-        .filter(|attachment| {
-            crate::ops::session::may_shutdown_attachment(attachment)
-                && attachment.any_pane_live()
-                && !attachment.is_discardable_ephemeral()
-        })
-        .count()
-}
-
-/// Quit the client. An ephemeral session is shut down (its PTYs die with it); a named session is
-/// left running so it can be reattached later.
-///
-/// When `confirmations_enabled` and `[confirm].quit_ephemeral` are both set, quitting an
-/// ephemeral session that still has a live pane routes through the shared confirm flow (arm on
-/// the first press, quit on a second press within the confirm window) so an accidental `q`
-/// doesn't tear down running work. A named session, a session with no live pane, or the flag
-/// being off quits immediately as before.
-pub(crate) fn quit_client(ctx: &mut Context<HyprmuxApp>, confirmations_enabled: bool) -> Update {
+/// Leave the client without ever raising the leave prompt, preserving everything that can be
+/// preserved. Used where there is nobody to answer a question: the control socket, which is
+/// scripted, and any other non-interactive caller. A scripted exit must never destroy a session.
+pub(crate) fn leave_client_unattended(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::update::flush_layout_commit(ctx);
-    let disposable_live = disposable_live_attachment_count(&ctx.state);
-    if confirmations_enabled
-        && ctx.state.config.confirm.quit_ephemeral
-        && disposable_live > 0
-        && !confirm_second_press(
-            ctx,
-            PendingDestructive::Quit,
-            confirm_toast(
-                &ctx.state.theme,
-                if disposable_live == 1 {
-                    "Again to quit and close 1 temporary session"
-                } else {
-                    "Again to quit and close temporary sessions"
-                },
-            ),
-        )
-    {
-        return Update::full();
-    }
-
-    clear_pending(ctx);
-    crate::popup::kill_if_open(ctx);
-    let shutdown_ephemeral = crate::ops::session::may_shutdown_ephemeral(&ctx.state);
-    mark_session_detached(ctx, None);
-    if shutdown_ephemeral && let Some(client) = ctx.state.current().session_client.clone() {
-        client.shutdown();
-    }
-    // Retained background sessions leave with the client too: their ephemeral servers shut down,
-    // named ones detach and stay running for reattach.
-    crate::ops::session::release_background(ctx);
-    profiles::persist_session_if_enabled(&ctx.state);
-    ctx.quit();
-    Update::none()
+    leave_client_now(ctx, false)
 }
 
 pub(crate) fn close_focused_pane_with_confirmation(
@@ -485,7 +494,7 @@ mod tests {
                     .state()
                     .rename_session
                     .as_ref()
-                    .is_some_and(|rename| rename.detach_after)
+                    .is_some_and(|rename| rename.leave.is_some())
             );
             assert!(
                 backend
@@ -513,8 +522,10 @@ mod tests {
         });
     }
 
+    /// The leave prompt asks about every temporary session leaving would close, including the ones
+    /// parked in the background — those are just as unreachable once this client is gone.
     #[test]
-    fn quit_confirmation_counts_retained_live_ephemeral_attachments() {
+    fn the_leave_prompt_counts_retained_live_temporary_sessions() {
         on_large_stack(|| {
             let mut backend = confirming_backend();
             {
@@ -525,7 +536,113 @@ mod tests {
                 state.current_mut().session_name = Some("named".to_string());
             }
 
-            assert_eq!(disposable_live_attachment_count(backend.state()), 1);
+            assert_eq!(keepable_temporary_count(backend.state()), 1);
+        });
+    }
+
+    /// Leaving with a named session takes nothing away: it detaches and goes, no prompt, because
+    /// there is nothing about it that leaving could destroy.
+    #[test]
+    fn leaving_a_named_session_asks_nothing_and_detaches() {
+        on_large_stack(|| {
+            let (mut backend, outbound, _events) = named_attached_backend();
+            backend.render();
+
+            backend
+                .dispatch(Msg::RunAction(Action::Quit))
+                .expect("dispatch quit");
+
+            assert!(backend.state().rename_session.is_none());
+            let sent: Vec<_> = outbound.try_iter().collect();
+            assert!(
+                sent.iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Detach)
+                )),
+                "a named session must be left running, got {sent:?}"
+            );
+            assert!(
+                !sent.iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Shutdown)
+                )),
+                "leaving must never shut down a named session, got {sent:?}"
+            );
+        });
+    }
+
+    /// A temporary session the user worked in is the one case leaving could destroy something, so
+    /// it asks — and an empty answer takes a second press, with the prompt saying what it closes.
+    #[test]
+    fn leaving_a_used_temporary_session_asks_then_closes_on_the_second_empty_submit() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            backend.render();
+
+            backend
+                .dispatch(Msg::RunAction(Action::Quit))
+                .expect("dispatch quit");
+            let armed = backend
+                .state()
+                .rename_session
+                .as_ref()
+                .and_then(|rename| rename.leave)
+                .expect("leaving raises the leave prompt");
+            assert!(!armed.armed, "the prompt opens unarmed");
+            assert_eq!(armed.temporary, 1);
+
+            // First empty submit only arms; nothing is torn down yet.
+            backend
+                .dispatch(Msg::SubmitRenameSession)
+                .expect("first empty submit");
+            assert!(
+                backend
+                    .state()
+                    .rename_session
+                    .as_ref()
+                    .and_then(|rename| rename.leave)
+                    .is_some_and(|leave| leave.armed),
+                "an empty submit arms the close instead of doing it"
+            );
+
+            backend
+                .dispatch(Msg::SubmitRenameSession)
+                .expect("second empty submit");
+            assert!(backend.state().rename_session.is_none());
+        });
+    }
+
+    /// Typing after arming is a change of mind. The armed close must not survive it, or clearing
+    /// the field again would close on a press that never warned.
+    #[test]
+    fn editing_the_name_disarms_a_pending_close() {
+        on_large_stack(|| {
+            let mut backend = confirming_backend();
+            backend.render();
+            backend
+                .dispatch(Msg::RunAction(Action::Quit))
+                .expect("dispatch quit");
+            backend
+                .dispatch(Msg::SubmitRenameSession)
+                .expect("arm the close");
+
+            backend
+                .dispatch(Msg::RenameSessionChanged(InputEvent {
+                    value: "d".into(),
+                    cursor: 1,
+                    anchor: None,
+                }))
+                .expect("type a name");
+
+            assert!(
+                backend
+                    .state()
+                    .rename_session
+                    .as_ref()
+                    .and_then(|rename| rename.leave)
+                    .is_some_and(|leave| !leave.armed),
+                "editing must disarm the pending close"
+            );
         });
     }
 

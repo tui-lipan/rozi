@@ -403,9 +403,12 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         default_keys: &[],
         palette: true,
     },
+    // `detach` and `quit` are one action with two bindings: both leave the client and leave every
+    // session that can keep running. They stay separate entries so both spellings keep working and
+    // stay findable in the palette.
     BuiltinCommand {
         action: Action::Detach,
-        label: "Detach",
+        label: "Detach (leave sessions running)",
         category: "Session",
         default_keys: &["d", "shift-d"],
         palette: true,

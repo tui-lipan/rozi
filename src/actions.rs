@@ -443,8 +443,10 @@ fn execute_action_inner(
         Action::RequestControl => crate::ops::session::request_control(ctx),
         Action::GrantControl => crate::ops::session::grant_control_to_requester(ctx),
         Action::ToggleInputLock => crate::ops::session::toggle_input_lock(ctx),
-        Action::Detach => crate::ops::session::detach_current_session(ctx),
-        Action::Quit => crate::ops::exit::quit_client(ctx, confirmations_enabled),
+        // One way out. `detach` and `quit` differed only in what they did to sessions as a side
+        // effect, which stopped being a property of *how* you leave once a client could hold
+        // several sessions: it is decided per session now, by `leave_client`.
+        Action::Detach | Action::Quit => crate::ops::exit::leave_client(ctx),
         Action::KillWorkspace => {
             crate::ops::exit::kill_workspace_with_confirmation(ctx, confirmations_enabled)
         }

@@ -255,6 +255,13 @@ pub(super) fn pane_key(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent)
     update
 }
 
+pub(super) fn forward_prefix(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Update {
+    let Some(id) = ctx.state.current().focused_pane else {
+        return Update::none();
+    };
+    crate::pty_events::forward_key_to_pane(ctx, id, key)
+}
+
 pub(super) fn pane_mouse(ctx: &mut Context<HyprmuxApp>, id: PaneId, bytes: Vec<u8>) -> Update {
     handle_pane_mouse(ctx, id, bytes)
 }

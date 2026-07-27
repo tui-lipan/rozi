@@ -178,6 +178,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PaneInput(id, input) => panes::pane_input(ctx, id, input),
         Msg::CopyFlashExpired(id, flash_id) => panes::copy_flash_expired(ctx, id, flash_id),
         Msg::PaneKey(id, key) => panes::pane_key(ctx, id, key),
+        Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
         Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),

@@ -498,6 +498,57 @@ mod tests {
     }
 
     #[test]
+    fn double_prefix_forwards_one_prefix_key() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let app = App::new()
+                    .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+                    .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal);
+                let mut backend = TestBackend::new_with_app(app, HyprmuxApp::default(), ());
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().session_client = Some(client);
+                    let pane = &mut state.current_mut().workspaces[0].panes[0];
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                }
+                backend.render();
+                backend.focus_next();
+                while rx.try_recv().is_ok() {}
+
+                let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
+                backend.send_key(prefix).expect("first prefix enters chord");
+                backend
+                    .send_key(prefix)
+                    .expect("second prefix forwards the first");
+
+                let inputs: Vec<_> = rx
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::PaneInput { .. } => Some(message),
+                        ClientOutbound::Control(_) => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    inputs,
+                    vec![ClientOutbound::PaneInput {
+                        pane_id: 1,
+                        generation: 0,
+                        bytes: vec![1],
+                    }]
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
     fn terminal_keyboard_and_paste_input_return_scrolled_pane_to_live_view() {
         use crate::Msg;
         use crate::session::client::SessionClient;

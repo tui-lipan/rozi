@@ -72,14 +72,17 @@ The live cwd is also what *Capture session as profile* records (see [Project pro
 
 ## Mouse support
 
-With the configured WM modifier **not** held, mouse events go to the program in the pane -
-so mouse-aware TUIs (vim, htop, tmux-in-a-pane, etc.) work normally. Mouse event bytes are
-forwarded to the PTY.
+With neither the configured WM modifier held nor a prefix active, mouse events go to the program in
+the pane - so mouse-aware TUIs (vim, htop, tmux-in-a-pane, etc.) work normally. Mouse event bytes
+are forwarded to the PTY.
 
-Hold the WM modifier to address the window manager instead:
+Hold the WM modifier, or press the prefix first, to address the window manager instead. A prefix
+stays active for the mouse gesture and is cleared when the button is released:
 
 - `modifier` + left-drag moves the pane.
 - `modifier` + right-drag resizes it from the nearest corner.
+- `prefix` + left-drag moves the pane.
+- `prefix` + right-drag resizes it from the nearest corner.
 
 The mouse scroll wheel over a pane scrolls its terminal scrollback.
 

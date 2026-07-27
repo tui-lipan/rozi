@@ -338,13 +338,14 @@ workspace or steal focus behind it. Press the scratchpad binding again to dismis
 
 ## Mouse
 
-Mouse gestures require the configured WM modifier held down (so they don't conflict with the
-shell's own mouse usage):
+Mouse gestures require either the configured WM modifier held down or an active prefix listener
+(so they don't conflict with the shell's own mouse usage). After pressing the prefix, it remains
+active for the gesture and finishes when the mouse button is released:
 
 | Gesture | Action |
 | --- | --- |
-| `modifier` + left-drag | Move the pane (tiled panes lift into a float-like drag; floats move freely) |
-| `modifier` + right-drag | Resize the pane from the nearest corner |
+| `modifier` or active `prefix` + left-drag | Move the pane (tiled panes lift into a float-like drag; floats move freely) |
+| `modifier` or active `prefix` + right-drag | Resize the pane from the nearest corner |
 | Drag the gap between two tiled panes | Adjust that split's ratio (dwindle and master) |
 | Click a pane / its titlebar | Focus that pane |
 | Scroll wheel over a pane | Scroll the terminal's scrollback |

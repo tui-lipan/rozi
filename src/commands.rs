@@ -41,6 +41,8 @@ pub(crate) struct BuiltinCommand {
     palette: bool,
 }
 
+pub(crate) const FORWARD_PREFIX_COMMAND_ID: &str = "hyprmux.forward-prefix";
+
 pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::Spawn,
@@ -728,8 +730,38 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
         );
     }
 
+    register_forward_prefix_command(ctx, config, active);
     register_workspace_commands(ctx, config, active);
     register_user_commands(ctx, config, active);
+}
+
+fn register_forward_prefix_command(
+    ctx: &Context<HyprmuxApp>,
+    config: &HyprmuxConfig,
+    active: bool,
+) {
+    let (shortcuts, prefix_key) = prefix_forward_binding(config)
+        .map(|(binding, key)| (KeyBindings::from_bindings([binding]), Some(key)))
+        .unwrap_or_else(|| (KeyBindings::from_bindings([]), None));
+    let link = ctx.link().clone();
+    ctx.register_command(
+        CommandEntry::builder(FORWARD_PREFIX_COMMAND_ID)
+            .shortcuts(shortcuts)
+            .enabled(active)
+            .handler(Callback::new(move |_| {
+                if let Some(key) = prefix_key {
+                    link.send(Msg::ForwardPrefix(key));
+                }
+            }))
+            .build(),
+    );
+}
+
+fn prefix_forward_binding(config: &HyprmuxConfig) -> Option<(KeyBinding, KeyEvent)> {
+    let prefix = config.input.prefix.canonical_lowercase();
+    let binding = KeyBinding::from_str(&format!("{prefix} {prefix}")).ok()?;
+    let mut events = config.input.prefix.key_events().ok()?;
+    (events.len() == 1).then(|| (binding, events.remove(0)))
 }
 
 fn register_workspace_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig, active: bool) {
@@ -823,6 +855,9 @@ fn register_user_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig, act
 /// interactive command palette (workspace digits get a generic "1-9" row in the help overlay
 /// instead of 27 individual entries; see `view::overlays::help_overlay`).
 pub(crate) fn is_palette_eligible(id: &str) -> bool {
+    if id == FORWARD_PREFIX_COMMAND_ID {
+        return false;
+    }
     if id.starts_with("workspace.") {
         return false;
     }

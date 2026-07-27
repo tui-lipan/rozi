@@ -10,6 +10,9 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // user-defined commands (registered under category "Custom").
     let mut groups: Vec<(String, Vec<(String, String)>)> = Vec::new();
     for entry in ctx.command_registry().entries() {
+        if entry.id.as_str() == crate::commands::FORWARD_PREFIX_COMMAND_ID {
+            continue;
+        }
         // tui-lipan registers its own `app.*` commands even when their bindings are disabled.
         // Hyprmux owns these behaviors, so only show its corresponding commands here.
         if entry.id.as_str().starts_with("app.") {
@@ -47,9 +50,12 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     groups.push((
         "Mouse".to_string(),
         vec![
-            ("mod-drag".to_string(), "Move pane (left-drag)".to_string()),
             (
-                "mod-right-drag".to_string(),
+                "mod/prefix-drag".to_string(),
+                "Move pane (left-drag)".to_string(),
+            ),
+            (
+                "mod/prefix-right-drag".to_string(),
                 "Resize pane from corner".to_string(),
             ),
             ("drag gap".to_string(), "Resize a tiled split".to_string()),

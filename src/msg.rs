@@ -176,6 +176,8 @@ pub enum Msg {
     PruneClosed(u64, PaneId, u64),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
+    /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
+    ForwardPrefix(KeyEvent),
     PaneMouse(PaneId, Vec<u8>),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),

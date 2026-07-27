@@ -506,10 +506,19 @@ pub(crate) fn pane_element(
     let body = body.key(pane_body_key(id));
     window_stack = window_stack.child(body);
 
+    // A pending prefix chord temporarily takes the same ownership of mouse gestures as the held
+    // WM modifier. The framework clears the pending chord on button release, so a re-render after
+    // the gesture restores ordinary terminal mouse handling.
+    let prefix_active = ctx.command_chord_pending();
+    let mouse_gesture_mods = if prefix_active {
+        KeyMods::NONE
+    } else {
+        ctx.state.config.input.modifier.key_mods()
+    };
     let mut window_region = MouseRegion::new()
-        .capture_requires_mods(ctx.state.config.input.modifier.key_mods())
-        .drag_requires_mods(ctx.state.config.input.modifier.key_mods())
-        .right_drag_requires_mods(ctx.state.config.input.modifier.key_mods())
+        .capture_requires_mods(mouse_gesture_mods)
+        .drag_requires_mods(mouse_gesture_mods)
+        .right_drag_requires_mods(mouse_gesture_mods)
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::BeginMove(
                 id,
@@ -518,7 +527,7 @@ pub(crate) fn pane_element(
                 event.from_local_y,
                 event.target_w,
                 event.target_h,
-                event.mods.alt || event.mods.super_key,
+                prefix_active || event.mods.alt || event.mods.super_key,
             )
         }))
         .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
@@ -526,7 +535,7 @@ pub(crate) fn pane_element(
                 id,
                 event.delta_x,
                 event.delta_y,
-                event.mods.alt || event.mods.super_key,
+                prefix_active || event.mods.alt || event.mods.super_key,
             )
         }))
         .on_drag_end(
@@ -539,7 +548,7 @@ pub(crate) fn pane_element(
                 crate::geometry::nearest_resize_corner(event),
                 event.from_x,
                 event.from_y,
-                event.mods.alt || event.mods.super_key,
+                prefix_active || event.mods.alt || event.mods.super_key,
             )
         }))
         .on_right_drag(ctx.link().callback(move |event: MouseDragEvent| {
@@ -550,7 +559,7 @@ pub(crate) fn pane_element(
                 event.from_y,
                 event.x,
                 event.y,
-                event.mods.alt || event.mods.super_key,
+                prefix_active || event.mods.alt || event.mods.super_key,
             )
         }))
         .on_right_drag_end(ctx.link().callback(move |_| Msg::EndResize(id)));

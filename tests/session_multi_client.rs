@@ -225,6 +225,140 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     });
 }
 
+/// The scenario parking exists for, end to end over the real protocol: one client keeps a session
+/// open in the background while it works elsewhere, and the next client to attach must get control
+/// of it outright rather than joining as a follower of a connection nobody is watching.
+#[test]
+fn a_parked_client_hands_the_session_to_the_next_attacher() {
+    let server = spawn_listener(ServerSettings::default());
+    let (mut background, background_attached) =
+        attach_client(server.endpoint(), server.session(), "background");
+    let background_id = attached_client_id(&background_attached);
+    assert_eq!(
+        controller_of(&background_attached),
+        Some(background_id),
+        "the first attacher leads"
+    );
+
+    background.write_control(&ClientMessage::SetParked { parked: true });
+    read_until(&mut background, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ControllerChanged {
+                controller: None,
+                reason: ControllerChangeReason::Released,
+            })
+        )
+    });
+
+    let (_arriving, arriving_attached) =
+        attach_client(server.endpoint(), server.session(), "arriving");
+    let arriving_id = attached_client_id(&arriving_attached);
+    assert_eq!(
+        controller_of(&arriving_attached),
+        Some(arriving_id),
+        "attaching to a session that is only parked elsewhere must not make a follower"
+    );
+
+    // And the roster says which clients are merely parked, so a UI can tell them apart.
+    read_until(&mut background, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ClientsChanged { clients, .. })
+                if clients.iter().any(|client| client.id == background_id && client.parked)
+                    && clients.iter().any(|client| client.id == arriving_id && !client.parked)
+        )
+    });
+}
+
+/// Coming back to a session left parked reclaims the lease only if it is free. Someone who took it
+/// meanwhile keeps it — returning from the background is not a claim on a session in use.
+#[test]
+fn unparking_never_steals_a_session_someone_else_took() {
+    let server = spawn_listener(ServerSettings::default());
+    let (mut background, _) = attach_client(server.endpoint(), server.session(), "background");
+    let (mut arriving, arriving_attached) =
+        attach_client(server.endpoint(), server.session(), "arriving");
+    let arriving_id = attached_client_id(&arriving_attached);
+
+    background.write_control(&ClientMessage::SetParked { parked: true });
+    read_until(&mut arriving, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ControllerChanged {
+                controller: Some(id),
+                ..
+            }) if *id == arriving_id
+        )
+    });
+
+    background.write_control(&ClientMessage::SetParked { parked: false });
+    // Absence of a steal is proven positively: both clients commit, and the only commit the server
+    // accepts is the one from the client that actually holds the lease.
+    background.write_control(&ClientMessage::CommitLayout {
+        base_rev: 0,
+        layout: empty_layout(111),
+    });
+    let held = empty_layout(222);
+    arriving.write_control(&ClientMessage::CommitLayout {
+        base_rev: 0,
+        layout: held.clone(),
+    });
+    read_until(&mut arriving, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::LayoutCommitted {
+                rev: 1,
+                author,
+                layout,
+            }) if *author == arriving_id && layout == &held
+        )
+    });
+}
+
+/// When the controller leaves, the lease has to land on a client that is actually using the
+/// session. Handing it to a parked one would put control in a window nobody is looking at and lock
+/// out the client in front of the user.
+#[test]
+fn a_leaving_controller_skips_parked_clients_when_the_lease_moves() {
+    let server = spawn_listener(ServerSettings::default());
+    let (controller, _) = attach_client(server.endpoint(), server.session(), "controller");
+    let (mut parked, parked_attached) =
+        attach_client(server.endpoint(), server.session(), "parked");
+    let (mut active, active_attached) =
+        attach_client(server.endpoint(), server.session(), "active");
+    let parked_id = attached_client_id(&parked_attached);
+    let active_id = attached_client_id(&active_attached);
+
+    parked.write_control(&ClientMessage::SetParked { parked: true });
+    read_until(&mut parked, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ClientsChanged { clients, .. })
+                if clients.iter().any(|client| client.id == parked_id && client.parked)
+        )
+    });
+
+    drop(controller);
+
+    read_until(&mut active, |frame| {
+        matches!(
+            frame,
+            Frame::Control(ServerMessage::ControllerChanged {
+                controller: Some(id),
+                ..
+            }) if *id == active_id
+        )
+    });
+}
+
+fn controller_of(message: &ServerMessage) -> Option<u64> {
+    let ServerMessage::Attached { controller, .. } = message else {
+        panic!("expected attached response, got {message:?}");
+    };
+    *controller
+}
+
 fn attached_client_id(message: &ServerMessage) -> u64 {
     let ServerMessage::Attached { client_id, .. } = message else {
         panic!("expected attached response, got {message:?}");

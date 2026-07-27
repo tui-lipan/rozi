@@ -403,15 +403,17 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         default_keys: &[],
         palette: true,
     },
-    // `detach` and `quit` are one action with two bindings: both leave the client and leave every
-    // session that can keep running. They stay separate entries so both spellings keep working and
-    // stay findable in the palette.
+    // `detach` runs the same thing `quit` does — one way out of the client. It keeps its own entry
+    // so `prefix d` (the key every tmux user reaches for), `[keys] detach`, and `run-action detach`
+    // all keep working, but stays out of the palette: two rows that do the same thing only invite
+    // the question of how they differ. The help overlay still lists the key, which is where a
+    // reader is looking for keys rather than for things to do.
     BuiltinCommand {
         action: Action::Detach,
-        label: "Detach (leave sessions running)",
+        label: "Detach",
         category: "Session",
         default_keys: &["d", "shift-d"],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::Quit,
@@ -1359,6 +1361,21 @@ mod tests {
         assert!(!is_palette_eligible("spawn"));
         assert!(is_palette_eligible("rename-pane"));
         assert!(is_palette_eligible("save-profile"));
+    }
+
+    /// `detach` and `quit` run the same thing. Both keys stay bound and both ids stay valid for
+    /// `[keys]` and the control socket, but the palette offers one of them: listing two rows that
+    /// do the same thing only asks the reader to work out how they differ.
+    #[test]
+    fn leaving_the_client_is_one_palette_entry_with_both_keys_bound() {
+        assert!(is_palette_eligible("quit"));
+        assert!(!is_palette_eligible("detach"));
+        let detach = BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.action == Action::Detach)
+            .expect("detach stays registered so its key and id keep working");
+        assert!(detach.default_keys.contains(&"d"));
+        assert_eq!(Action::from_id("detach"), Some(Action::Detach));
     }
 
     #[test]

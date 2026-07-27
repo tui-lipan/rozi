@@ -218,7 +218,7 @@ name. Names are saved with profiles and session autosave.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Detach | `d` | Leave the client. Identical to *Quit client* — both leave every session that can keep running, so the way you leave never decides what survives. |
+| Detach | `d` | Runs *Quit client* — one way out, so the key you press never decides what survives. Kept as its own key and action id (`[keys] detach`, `hyprmux run-action detach`) for the tmux reflex, but not listed separately in the command palette. |
 | Quit client | `q` | Leave the client. Named sessions are detached and their servers keep running; a temporary session you never touched is closed silently. A temporary session you *worked in* raises **Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name (twice — the prompt says what the second press closes) to close it, or `Esc` to stay. Disable the second press via `[confirm] quit_ephemeral = false`. |
 | Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound - reach it via the command palette or bind `kill-workspace` under `[keys]`. |
 | Kill session | *(palette only)* | Shut down the attached session and switch the UI to a fresh ephemeral session. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |

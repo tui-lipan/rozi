@@ -270,7 +270,16 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let body = body.child(
         hint_row()
             .child(hint_pill(theme, "next / apply", "enter"))
-            .child(hint_pill(theme, "cancel", "esc")),
+            // Both keys land back in Appearance whenever it is the dialog behind this one.
+            .child(hint_pill(
+                theme,
+                if ctx.state.show_appearance {
+                    "back"
+                } else {
+                    "cancel"
+                },
+                "esc",
+            )),
     );
     action_palette_modal(ctx, "Terminal padding")
         .width(Length::Auto)
@@ -355,12 +364,24 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .callback(|event: SearchEvent<usize>| Msg::SelectTheme(event.item.value)),
         );
 
+    // Opened from Appearance, the picker leads back there - say so. Opened standalone it just
+    // closes, which needs no footer.
+    let content: Element = if ctx.state.overlay_return.is_some() {
+        VStack::new()
+            .height(Length::Auto)
+            .child(palette)
+            .child(hint_row().child(hint_pill(&ctx.state.theme, "back", "esc")))
+            .into()
+    } else {
+        palette.into()
+    };
+
     action_palette(
         ctx,
         "Change theme",
         theme_picker_key(),
         Msg::CloseThemePicker,
-        palette,
+        content,
         60,
     )
 }

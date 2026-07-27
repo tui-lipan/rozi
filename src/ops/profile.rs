@@ -25,6 +25,9 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update 
         })
         .unwrap_or("");
     ctx.state.save_profile_prompt = Some(SaveProfileState::new(initial));
+    // Raised by the picker's `new`, cancelling or saving returns to the picker (the list just
+    // changed); raised standalone it leads back to the pane.
+    ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;
@@ -38,7 +41,7 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update 
 pub(crate) fn close_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.save_profile_prompt = None;
     ctx.state.commands_dirty = true;
-    Update::full()
+    crate::ops::overlay_return::finish(ctx)
 }
 
 pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -101,7 +104,8 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
 
     ctx.state.save_profile_prompt = None;
     ctx.state.commands_dirty = true;
-    Update::full()
+    // Saved from the picker: return to it, rebuilt so the new profile is in the list.
+    crate::ops::overlay_return::finish(ctx)
 }
 
 fn normalize_profile_name(name: &str) -> Option<String> {
@@ -669,6 +673,8 @@ pub(crate) fn open_selected_profile_as(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.rename_session = Some(crate::state::SessionRenameState::new_open_profile_as(
         entry.name, entry.path,
     ));
+    // Cancelling the name prompt goes back to the picker; submitting attaches, which retires it.
+    ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     ctx.state.mode = Mode::Normal;

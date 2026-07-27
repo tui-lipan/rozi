@@ -95,6 +95,11 @@ pub struct State {
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
     pub client_list: Option<ClientListState>,
+    /// Where the open nested dialog was raised from, so cancelling or finishing it returns there
+    /// rather than to the focused pane. Assigned by every child-dialog opener (to `None` when the
+    /// child was raised standalone, which is what keeps it from going stale) and consumed by
+    /// [`crate::ops::overlay_return::restore`].
+    pub overlay_return: Option<OverlayOrigin>,
     pub last_blocked_input_toast: Option<Instant>,
     pub(crate) replaceable_toasts: HashMap<ToastChannel, OverlayId>,
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
@@ -228,6 +233,7 @@ impl State {
             show_session_picker: false,
             session_picker: None,
             client_list: None,
+            overlay_return: None,
             last_blocked_input_toast: None,
             replaceable_toasts: HashMap::new(),
             session_picker_epoch: 0,

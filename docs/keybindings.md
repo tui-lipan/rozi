@@ -357,6 +357,13 @@ Workspace tabs in the workbar are also clickable to switch workspaces.
 While an overlay is open (command palette, help, theme picker, search, rename):
 
 - `Esc` closes the overlay.
+- A dialog opened *from* another one goes **back** to it instead of to the pane, and its hint bar
+  says `back esc` rather than `cancel esc`. The theme picker and the terminal-padding editor return
+  to **Appearance**; a naming prompt raised from a picker (`Ctrl+N` / `Ctrl+O` in **Profiles**,
+  `Ctrl+N` / `Ctrl+R` / `Ctrl+S` in **Sessions**) returns to that picker, rebuilt with the query and
+  highlighted row it had. Submitting returns the same way whenever the parent survives - capturing a
+  profile or naming the current session lands back in the picker - while anything that attaches,
+  creates, or detaches a session leaves the overlays for that session.
 - `Enter` activates the selection (run command, pick theme, jump to next match, submit rename).
 - In **search**, `Enter` jumps to the next match and `Shift+Enter` jumps to the previous one.
   `Tab` cycles the search **scope** (focused pane → workspace → all panes); jumping to a match

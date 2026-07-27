@@ -1251,6 +1251,9 @@ pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// way.
 fn enter_session_rename(ctx: &mut Context<HyprmuxApp>, rename: SessionRenameState) -> Update {
     ctx.state.rename_session = Some(rename);
+    // Raised from the session picker, cancelling returns to it rather than to the pane; the
+    // branches of `apply_rename_session` that attach or detach drop the origin instead.
+    ctx.state.overlay_return = crate::ops::overlay_return::picker_origin(&ctx.state);
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;
@@ -1320,8 +1323,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             }
             ctx.state.rename_session = None;
             ctx.state.commands_dirty = true;
-            request_current_pane_focus(ctx);
-            Update::full()
+            crate::ops::overlay_return::finish(ctx)
         }
         NamingMode::CreateSession | NamingMode::OpenProfileAs => {
             let open_ephemeral = rename_state.mode == NamingMode::OpenProfileAs && name.is_empty();
@@ -1345,6 +1347,9 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 .and_then(|rename| rename.host_target.clone());
             if let Some(target) = host_target {
                 ctx.state.rename_session = None;
+                // Attaching retires the picker this was raised from: its rows are about to be
+                // stale, so land on the new session rather than back in a list.
+                crate::ops::overlay_return::leave(ctx);
                 let alias = target.display_label();
                 return attach_session_by_name(ctx, name, Some(alias), Some(target), true);
             }
@@ -1358,6 +1363,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 .as_ref()
                 .and_then(|rename| rename.profile_seed.clone());
             ctx.state.rename_session = None;
+            crate::ops::overlay_return::leave(ctx);
             let intent = match profile_seed {
                 Some((profile, path)) => {
                     crate::ops::profile::OpenNamedIntent::CreateFromProfile { profile, path }
@@ -1395,6 +1401,8 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             ctx.state.rename_session = None;
 
             if detach_after {
+                // The client is leaving the session; there is nothing to return to.
+                crate::ops::overlay_return::leave(ctx);
                 let Some(client) = ctx.state.current().session_client.clone() else {
                     ctx.toast().push(crate::pty_events::error_toast(
                         &ctx.state.theme,
@@ -1410,15 +1418,15 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             }
 
             if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
-                request_current_pane_focus(ctx);
-                return Update::full();
+                return crate::ops::overlay_return::finish(ctx);
             }
 
             if let Some(client) = ctx.state.current().session_client.clone() {
                 client.rename(name);
             }
-            request_current_pane_focus(ctx);
-            Update::full()
+            // Naming in place attaches nothing, so the picker it was raised from ("name current")
+            // is still valid - reopen it showing the new name.
+            crate::ops::overlay_return::finish(ctx)
         }
         NamingMode::RenameSession => {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
@@ -1434,22 +1442,20 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             ctx.state.rename_session = None;
 
             if ctx.state.current().session_name.as_deref() == Some(name.as_str()) {
-                request_current_pane_focus(ctx);
-                return Update::full();
+                return crate::ops::overlay_return::finish(ctx);
             }
 
             if let Some(client) = ctx.state.current().session_client.clone() {
                 client.rename(name);
             }
-            request_current_pane_focus(ctx);
-            Update::full()
+            crate::ops::overlay_return::finish(ctx)
         }
         NamingMode::ConnectRemoteHost => {
             let host = name;
             if host.is_empty() {
+                // An empty target is a cancel by another name.
                 ctx.state.rename_session = None;
-                request_current_pane_focus(ctx);
-                return Update::full();
+                return crate::ops::overlay_return::finish(ctx);
             }
             // Validate the SSH target before tearing anything down; a bad host must not strand the
             // current session.
@@ -1463,6 +1469,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 return Update::full();
             }
             ctx.state.rename_session = None;
+            crate::ops::overlay_return::leave(ctx);
             crate::session::record_recent_remote(&host);
             // Attach a fresh ephemeral session on the remote host (as `--remote <host>` does with no
             // session named). The current session is retained in the background per the usual switch.
@@ -1483,8 +1490,7 @@ pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     // path that shuts an ephemeral server down.
     ctx.state.rename_session = None;
     ctx.state.commands_dirty = true;
-    request_current_pane_focus(ctx);
-    Update::full()
+    crate::ops::overlay_return::finish(ctx)
 }
 
 pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {

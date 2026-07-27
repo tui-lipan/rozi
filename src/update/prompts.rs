@@ -107,9 +107,7 @@ pub(super) fn submit_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn close_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let update = close_save_profile_prompt(ctx);
-    request_current_pane_focus(ctx);
-    update
+    close_save_profile_prompt(ctx)
 }
 
 pub(super) fn save_profile_name_changed(
@@ -125,9 +123,7 @@ pub(super) fn save_profile_name_changed(
 }
 
 pub(super) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let update = save_profile(ctx);
-    request_current_pane_focus(ctx);
-    update
+    save_profile(ctx)
 }
 
 pub(super) fn close_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {

@@ -62,6 +62,8 @@ pub(crate) fn open_rename_workspace(ctx: &mut Context<HyprmuxApp>) -> Update {
         .unwrap_or_default();
 
     ctx.state.rename_session = Some(SessionRenameState::new_rename_workspace(target, initial));
+    // Never raised from another dialog; assign so an earlier child's origin cannot leak into it.
+    ctx.state.overlay_return = None;
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;

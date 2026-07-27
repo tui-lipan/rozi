@@ -27,9 +27,15 @@ fn hint_row() -> Flow {
 /// profile) so they read like the command palette instead of a bare dialog.
 fn prompt_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
+    // A prompt raised from a picker returns to it, so name the key for what it does here.
+    let cancel = if ctx.state.overlay_return.is_some() {
+        "back"
+    } else {
+        "cancel"
+    };
     hint_row()
         .child(hint_pill(theme, "submit", "enter"))
-        .child(hint_pill(theme, "cancel", "esc"))
+        .child(hint_pill(theme, cancel, "esc"))
         .into()
 }
 

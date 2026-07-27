@@ -272,8 +272,7 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(super) fn close_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     cancel_theme_picker(ctx);
-    request_current_pane_focus(ctx);
-    Update::full()
+    crate::ops::overlay_return::finish(ctx)
 }
 pub(super) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     preview(ctx, index)

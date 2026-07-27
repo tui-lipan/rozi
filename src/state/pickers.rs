@@ -39,6 +39,24 @@ pub struct ClientListState {
     pub selected: usize,
 }
 
+/// The dialog a nested one was raised from, so cancelling (or finishing) the child returns there
+/// instead of dropping the user back on the terminal. A picker is rebuilt rather than un-hidden —
+/// opening a child drops the picker's state — so its origin carries the query and highlighted row
+/// the rebuild has to restore. See [`crate::ops::overlay_return`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OverlayOrigin {
+    Appearance,
+    ProfilePicker {
+        query: String,
+        selected: usize,
+        apply_mode: bool,
+    },
+    SessionPicker {
+        query: String,
+        selected: usize,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingDestructive {
     ClosePane(PaneId),

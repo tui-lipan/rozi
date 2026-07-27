@@ -929,6 +929,60 @@ mod tests {
     }
 
     #[test]
+    fn selecting_theme_restores_focus_to_the_focused_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let config_path = std::env::temp_dir()
+                    .join(format!("hyprmux-theme-focus-{}.toml", std::process::id()));
+                let _ = std::fs::remove_file(&config_path);
+                unsafe {
+                    std::env::set_var("HYPRMUX_CONFIG", &config_path);
+                }
+
+                let result = (|| {
+                    let mut backend = TestBackend::new(HyprmuxApp::default());
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 30,
+                    });
+                    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    backend.render();
+                    backend.focus_next();
+
+                    let pane_key = crate::view::pane_terminal_key(1);
+                    assert_eq!(
+                        backend.focused_key().map(|key| key.as_ref()),
+                        Some(pane_key.as_str())
+                    );
+
+                    backend
+                        .dispatch(Msg::RunAction(crate::input::Action::OpenThemePicker))
+                        .expect("open theme picker");
+                    backend.dispatch(Msg::SelectTheme(0)).expect("select theme");
+
+                    assert_eq!(
+                        backend.focused_key().map(|key| key.as_ref()),
+                        Some(pane_key.as_str())
+                    );
+                })();
+
+                unsafe {
+                    std::env::remove_var("HYPRMUX_CONFIG");
+                }
+                let _ = std::fs::remove_file(config_path);
+                result
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    #[test]
     fn command_palette_modal_is_capped_to_sixty_five_percent_of_viewport() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)

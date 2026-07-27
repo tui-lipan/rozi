@@ -1,4 +1,5 @@
 use tui_lipan::prelude::*;
+use tui_lipan::style::ThemeRole;
 
 use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{Mode, State, ThemePickerPreview, ThemePreset};
@@ -17,6 +18,19 @@ pub(crate) fn host_background(state: &State) -> Option<Color> {
         .as_ref()
         .and_then(|theme| theme.extension::<HostTerminalColors>())
         .map(|colors| colors.bg)
+}
+
+/// Set hyprmux's subdued caret default while leaving explicit theme `[caret]` colors intact.
+pub(crate) fn apply_default_caret_palette(theme: Theme) -> Theme {
+    let accent_color = style_fg(theme.role(ThemeRole::Accent));
+    if theme.caret.color != accent_color {
+        return theme;
+    }
+
+    let caret_color = style_fg(theme.role(ThemeRole::Base))
+        .map(|text| accent_color.map_or(text, |accent| text.blend_toward(accent, 0.40)))
+        .or(accent_color);
+    theme.caret_color(caret_color)
 }
 
 /// Resolve a transparency-sentinel `surface.backdrop` to a concrete color.
@@ -62,7 +76,7 @@ pub(crate) fn apply_backdrop_policy(
     if follow_terminal {
         theme.surface.backdrop = Color::Backdrop;
     }
-    concretize_backdrop(theme, host_bg)
+    concretize_backdrop(apply_default_caret_palette(theme), host_bg)
 }
 
 /// Re-resolve the active theme from `config.theme.name` and reapply the current backdrop
@@ -445,6 +459,29 @@ mod tests {
             fg: Color::rgb(230, 231, 232),
             bg: Color::rgb(10, 11, 12),
         }
+    }
+
+    #[test]
+    fn default_caret_palette_blends_text_toward_accent() {
+        let theme = Theme::custom(
+            Color::rgb(100, 100, 100),
+            Color::Black,
+            Color::rgb(200, 50, 0),
+        );
+
+        let resolved = apply_default_caret_palette(theme);
+
+        assert_eq!(resolved.caret.color, Some(Color::rgb(140, 80, 60)));
+    }
+
+    #[test]
+    fn explicit_caret_color_is_preserved() {
+        let explicit = Color::rgb(12, 34, 56);
+        let theme = Theme::custom(Color::White, Color::Black, Color::Cyan).caret_color(explicit);
+
+        let resolved = apply_default_caret_palette(theme);
+
+        assert_eq!(resolved.caret.color, Some(explicit));
     }
 
     #[test]

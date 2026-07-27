@@ -348,6 +348,9 @@ pub(crate) fn pane_element(
             ctx.link()
                 .callback(move |offset| Msg::PaneScroll(id, offset)),
         );
+    if let Some(caret_color) = theme.caret.color {
+        terminal_widget = terminal_widget.caret_color(caret_color);
+    }
     if terminal_ready {
         terminal_widget = terminal_widget
             .on_input(ctx.link().callback(move |input| Msg::PaneInput(id, input)))

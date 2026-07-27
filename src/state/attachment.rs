@@ -11,6 +11,20 @@ use super::{
 /// the current attachment keeps [`super::State::runtime_epoch`].
 pub type AttachmentId = u64;
 
+/// What leaving a session behind should do with it. Produced by [`Attachment::disposition`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionDisposition {
+    /// Leave it running. Named sessions, sessions shared with another client, and anything this
+    /// client does not solely own all land here — none of them are ours to close.
+    Keep,
+    /// Close it without asking. A temporary session the client created for the user and that they
+    /// never worked in holds nothing, and nothing can reattach to it by name.
+    Discard,
+    /// Ours and temporary, but the user worked in it and something is still running. Closing it
+    /// would lose real work, and naming it is the only way to keep it, so the user decides.
+    AskBeforeClosing,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConnectionState {
     #[default]
@@ -212,12 +226,42 @@ impl Attachment {
             .is_some_and(is_ephemeral_session_name)
     }
 
-    /// Whether this session is disposable in the strong sense: an ephemeral the client created on
-    /// the user's behalf and that the user never worked in. Switching away from one discards it
-    /// instead of parking it, and quitting with one open is not worth a confirmation — keeping it
-    /// alive would only produce the phantom sessions that make "temporary" feel permanent.
-    pub fn is_discardable_ephemeral(&self) -> bool {
-        self.is_ephemeral_session() && self.auto_created && !self.engaged
+    /// What should happen to this session when the client stops showing it — switching away, or
+    /// leaving altogether.
+    ///
+    /// This is the single answer to "is this session disposable", asked once so the switch path,
+    /// the exit path, and the leave prompt cannot drift apart on it. Each of them reads the same
+    /// verdict and only decides what to *do* about it.
+    pub fn disposition(&self) -> SessionDisposition {
+        // Anything we do not solely own is somebody else's to close: a named session, one another
+        // client is sharing, one we do not lead, or a read-only attachment.
+        if !self.solely_owns_temporary_server() {
+            return SessionDisposition::Keep;
+        }
+        if self.auto_created && !self.engaged {
+            // Created for the user, never used: closing it loses nothing, and keeping it is what
+            // made "temporary" sessions accumulate.
+            return SessionDisposition::Discard;
+        }
+        if self.any_pane_live() {
+            SessionDisposition::AskBeforeClosing
+        } else {
+            // Worked in once, but nothing is running any more. There is no work to lose and no
+            // name to come back by, so it needs no ceremony — but nothing is gained by closing it
+            // either, and its server self-reaps once no client is attached.
+            SessionDisposition::Keep
+        }
+    }
+
+    /// Whether this client alone owns this session's disposable server: a temporary session it
+    /// leads, that nobody else is attached to, and that it may write to. Only then is closing the
+    /// server this client's call at all — the question of *whether* it should is
+    /// [`Self::disposition`].
+    pub fn solely_owns_temporary_server(&self) -> bool {
+        self.is_ephemeral_session()
+            && self.is_controller()
+            && self.attached_client_count() == 1
+            && self.shared.as_ref().is_none_or(|shared| !shared.read_only)
     }
 
     pub fn any_pane_live(&self) -> bool {
@@ -268,5 +312,83 @@ impl Attachment {
 impl Default for Attachment {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A temporary session this client solely owns, in whatever state the test needs.
+    fn temporary(auto_created: bool, engaged: bool) -> Attachment {
+        let mut attachment = Attachment::new();
+        attachment.session_name = Some("eph-1".to_string());
+        attachment.auto_created = auto_created;
+        attachment.engaged = engaged;
+        attachment
+    }
+
+    /// The three call sites that used to ask their own version of "is this disposable" now read one
+    /// verdict, so these cases pin the whole model rather than one path through it.
+    #[test]
+    fn a_named_session_is_never_ours_to_close() {
+        let mut named = temporary(true, false);
+        named.session_name = Some("dev".to_string());
+        assert_eq!(named.disposition(), SessionDisposition::Keep);
+    }
+
+    #[test]
+    fn an_untouched_startup_session_is_discarded_without_asking() {
+        assert_eq!(
+            temporary(true, false).disposition(),
+            SessionDisposition::Discard
+        );
+    }
+
+    /// Worked in, but nothing is running: there is no work to lose, so it needs no prompt — and
+    /// nothing is gained by closing it either.
+    #[test]
+    fn a_used_session_with_nothing_running_is_left_alone() {
+        assert_eq!(
+            temporary(true, true).disposition(),
+            SessionDisposition::Keep
+        );
+    }
+
+    /// A session the user explicitly asked for is theirs even before they touch it: it was never
+    /// the client's to invent, so it is never the client's to quietly discard.
+    #[test]
+    fn a_user_created_temporary_session_is_not_discarded_untouched() {
+        assert_ne!(
+            temporary(false, false).disposition(),
+            SessionDisposition::Discard
+        );
+    }
+
+    /// Sharing changes the answer regardless of everything else: another client is attached, so
+    /// closing the server would take the session out from under them.
+    #[test]
+    fn a_shared_session_is_never_closed_by_this_client() {
+        let mut shared_session = temporary(true, false);
+        let mut shared = SharedSessionState::new(1);
+        shared.controller = Some(1);
+        shared.clients = vec![
+            crate::session::protocol::ClientInfo {
+                id: 1,
+                label: "me".to_string(),
+                read_only: false,
+                requesting_control: false,
+                parked: false,
+            },
+            crate::session::protocol::ClientInfo {
+                id: 2,
+                label: "them".to_string(),
+                read_only: false,
+                requesting_control: false,
+                parked: false,
+            },
+        ];
+        shared_session.shared = Some(shared);
+        assert_eq!(shared_session.disposition(), SessionDisposition::Keep);
     }
 }

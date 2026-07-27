@@ -7,7 +7,7 @@ use crate::anim;
 use crate::pane_lifecycle::{begin_close_pane, close_pane_state, prune_closed_batch_command};
 use crate::profiles;
 use crate::pty_events::{confirm_toast, info_toast};
-use crate::state::{PendingDestructive, PendingDestructiveConfirmation, State};
+use crate::state::{PendingDestructive, PendingDestructiveConfirmation, SessionDisposition, State};
 
 pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
     if let Some(pending) = ctx.state.pending_destructive.take() {
@@ -51,7 +51,7 @@ fn confirm_second_press(
 ///
 /// - A **named** session is detached and its server left running, always.
 /// - An **untouched** temporary session the client created for the user is closed silently; it
-///   holds nothing (see [`crate::state::Attachment::is_discardable_ephemeral`]).
+///   holds nothing (see [`crate::state::Attachment::disposition`]).
 /// - A **used but unnamed** temporary session is the only one worth asking about, because leaving
 ///   is the last chance to keep it. It raises the leave prompt: name it to keep it running, or
 ///   submit nothing to close it.
@@ -107,29 +107,25 @@ pub(crate) fn leave_client_now(ctx: &mut Context<HyprmuxApp>, close_temporary: b
     Update::none()
 }
 
-/// Whether leaving closes this session's server rather than detaching from it.
-///
-/// A named session is never closed — it is exactly what "leave it running" means. A temporary
-/// session the user never touched is always closed, since nothing can reattach to it by name and it
-/// holds no work. One they *did* work in is closed only when they said so at the leave prompt.
-/// Anything another client is sharing is left alone regardless: it is not ours to close.
+/// Whether leaving closes this session's server rather than detaching from it: what the session's
+/// own [disposition](crate::state::Attachment::disposition) says, plus the user's answer for the
+/// sessions the leave prompt asked about.
 pub(crate) fn shutdown_on_exit(
     attachment: &crate::state::Attachment,
     close_temporary: bool,
 ) -> bool {
-    crate::ops::session::may_shutdown_attachment(attachment)
-        && (attachment.is_discardable_ephemeral()
-            || (close_temporary && attachment.is_ephemeral_session()))
+    match attachment.disposition() {
+        SessionDisposition::Keep => false,
+        SessionDisposition::Discard => true,
+        SessionDisposition::AskBeforeClosing => close_temporary,
+    }
 }
 
-/// Whether this session is one the leave prompt should ask about: a temporary session the user
-/// actually worked in, still unnamed, that only this client can reach. Naming it is the only way to
-/// keep it, which is exactly why leaving has to offer.
+/// Whether the leave prompt should ask about this session. Exactly the sessions
+/// [`SessionDisposition::AskBeforeClosing`] names, so the count in the prompt and the set the
+/// answer closes can never disagree.
 fn keepable_temporary(attachment: &crate::state::Attachment) -> bool {
-    attachment.is_ephemeral_session()
-        && !attachment.is_discardable_ephemeral()
-        && crate::ops::session::may_shutdown_attachment(attachment)
-        && attachment.any_pane_live()
+    attachment.disposition() == SessionDisposition::AskBeforeClosing
 }
 
 fn keepable_temporary_count(state: &State) -> usize {

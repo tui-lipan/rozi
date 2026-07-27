@@ -816,7 +816,7 @@ fn mark_current_parked(ctx: &mut Context<HyprmuxApp>, parked: bool) {
 /// A session the user asked for, worked in, or shares with another client is always kept.
 fn discard_parked_if_disposable(ctx: &mut Context<HyprmuxApp>, epoch: crate::state::AttachmentId) {
     let disposable = ctx.state.background.get(&epoch).is_some_and(|attachment| {
-        attachment.is_discardable_ephemeral() && may_shutdown_attachment(attachment)
+        attachment.disposition() == crate::state::SessionDisposition::Discard
     });
     if !disposable {
         return;
@@ -962,16 +962,12 @@ pub(crate) fn may_shutdown_ephemeral(state: &crate::state::State) -> bool {
     may_shutdown_attachment(state.current())
 }
 
-/// Whether an attachment's server should be shut down (rather than detached) when it is released: a
-/// solely-attached ephemeral controller owns a disposable server nobody else can reattach to.
+/// Whether this client alone owns the attachment's disposable server, which is what makes closing
+/// it this client's call at all. Whether it *should* be closed is
+/// [`crate::state::Attachment::disposition`] — prefer that wherever the question is "what happens
+/// to this session now", so the switch and exit paths keep answering it the same way.
 pub(crate) fn may_shutdown_attachment(attachment: &crate::state::Attachment) -> bool {
-    attachment.is_ephemeral_session()
-        && attachment.is_controller()
-        && attachment.attached_client_count() == 1
-        && attachment
-            .shared
-            .as_ref()
-            .is_none_or(|shared| !shared.read_only)
+    attachment.solely_owns_temporary_server()
 }
 
 /// Let go of every retained background attachment when leaving the client, applying the same

@@ -704,7 +704,7 @@ pub(crate) fn tiled_resize_strips(
     for junction in resize_junction_hitboxes(&vertical_strips, &horizontal_strips) {
         strips.push((
             junction.rect,
-            resize_junction_element(ctx, junction.horizontal_panes, junction.vertical_panes),
+            resize_junction_element(ctx, junction, top_offset),
         ));
     }
     strips
@@ -772,8 +772,8 @@ fn resize_strip_hitboxes(
 #[derive(Clone, Copy)]
 struct ResizeStripHitbox {
     rect: FloatRect,
-    /// The pane on the near side of the boundary (left or above); its tree split is the one a
-    /// drag on this strip resizes.
+    /// The pane on the near side of the boundary (left or above); its trailing edge identifies the
+    /// tree split that a drag on this strip resizes.
     pane_id: PaneId,
     /// The pane on the far side of the boundary (right or below).
     neighbor_id: PaneId,
@@ -786,10 +786,18 @@ struct ResizeStripHitbox {
 #[derive(Clone)]
 struct ResizeJunctionHitbox {
     rect: FloatRect,
-    /// Pane representatives on vertical boundaries, used to find horizontal tree splits.
-    horizontal_panes: Vec<PaneId>,
-    /// Pane representatives on horizontal boundaries, used to find vertical tree splits.
-    vertical_panes: Vec<PaneId>,
+    /// Pane representatives and segment starts on vertical boundaries. The drag origin chooses
+    /// one segment, which identifies one horizontal tree split.
+    horizontal_targets: Vec<ResizeJunctionTarget>,
+    /// Pane representatives and segment starts on horizontal boundaries. The drag origin chooses
+    /// one segment, which identifies one vertical tree split.
+    vertical_targets: Vec<ResizeJunctionTarget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ResizeJunctionTarget {
+    pane_id: PaneId,
+    start: f32,
 }
 
 impl ResizeStripHitbox {
@@ -852,17 +860,31 @@ fn resize_junction_hitboxes(
                     w: x1 - x0,
                     h: y1 - y0,
                 };
-                if !junction.horizontal_panes.contains(&vertical.pane_id) {
-                    junction.horizontal_panes.push(vertical.pane_id);
+                let horizontal_target = ResizeJunctionTarget {
+                    pane_id: vertical.pane_id,
+                    start: vertical.rect.y,
+                };
+                if !junction.horizontal_targets.contains(&horizontal_target) {
+                    junction.horizontal_targets.push(horizontal_target);
                 }
-                if !junction.vertical_panes.contains(&horizontal.pane_id) {
-                    junction.vertical_panes.push(horizontal.pane_id);
+                let vertical_target = ResizeJunctionTarget {
+                    pane_id: horizontal.pane_id,
+                    start: horizontal.rect.x,
+                };
+                if !junction.vertical_targets.contains(&vertical_target) {
+                    junction.vertical_targets.push(vertical_target);
                 }
             } else {
                 junctions.push(ResizeJunctionHitbox {
                     rect,
-                    horizontal_panes: vec![vertical.pane_id],
-                    vertical_panes: vec![horizontal.pane_id],
+                    horizontal_targets: vec![ResizeJunctionTarget {
+                        pane_id: vertical.pane_id,
+                        start: vertical.rect.y,
+                    }],
+                    vertical_targets: vec![ResizeJunctionTarget {
+                        pane_id: horizontal.pane_id,
+                        start: horizontal.rect.x,
+                    }],
                 });
             }
         }
@@ -933,17 +955,34 @@ fn resize_strip_element(
 
 fn resize_junction_element(
     ctx: &Context<HyprmuxApp>,
-    horizontal_panes: Vec<PaneId>,
-    vertical_panes: Vec<PaneId>,
+    junction: ResizeJunctionHitbox,
+    top_offset: f32,
 ) -> Element {
+    let start_targets = (
+        junction.horizontal_targets.clone(),
+        junction.vertical_targets.clone(),
+    );
+    let horizontal_targets = junction.horizontal_targets;
+    let vertical_targets = junction.vertical_targets;
+    // Segments are picked from the drag origin, so the pair a gesture grabs is fixed for its whole
+    // lifetime; the drag session keeps it even if a later event is routed from another strip.
     MouseRegion::new()
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
-            Msg::BeginResizeSplitJunction(event.from_x, event.from_y)
+            let (horizontal_panes, vertical_panes) =
+                junction_targets_at(&start_targets.0, &start_targets.1, &event, top_offset);
+            Msg::BeginResizeSplitJunction(
+                horizontal_panes,
+                vertical_panes,
+                event.from_x,
+                event.from_y,
+            )
         }))
         .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
+            let (horizontal_panes, vertical_panes) =
+                junction_targets_at(&horizontal_targets, &vertical_targets, &event, top_offset);
             Msg::ResizeSplitJunction(
-                horizontal_panes.clone(),
-                vertical_panes.clone(),
+                horizontal_panes,
+                vertical_panes,
                 event.from_x,
                 event.from_y,
                 event.x,
@@ -953,6 +992,35 @@ fn resize_junction_element(
         .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
+}
+
+/// Pane representatives for the horizontal and vertical splits a junction drag moves, chosen from
+/// the drag origin. Strip rects are canvas-space; event coordinates are root-space.
+fn junction_targets_at(
+    horizontal: &[ResizeJunctionTarget],
+    vertical: &[ResizeJunctionTarget],
+    event: &MouseDragEvent,
+    top_offset: f32,
+) -> (Vec<PaneId>, Vec<PaneId>) {
+    (
+        junction_target_at(horizontal, f32::from(event.from_y) - top_offset)
+            .into_iter()
+            .collect(),
+        junction_target_at(vertical, f32::from(event.from_x))
+            .into_iter()
+            .collect(),
+    )
+}
+
+/// Select the segment under the drag origin. Merged borders can overlap by one cell, so the
+/// segment with the latest start at or before the pointer owns that shared cell.
+fn junction_target_at(targets: &[ResizeJunctionTarget], along: f32) -> Option<PaneId> {
+    targets
+        .iter()
+        .filter(|target| target.start <= along)
+        .max_by(|a, b| a.start.total_cmp(&b.start))
+        .or_else(|| targets.iter().min_by(|a, b| a.start.total_cmp(&b.start)))
+        .map(|target| target.pane_id)
 }
 
 /// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
@@ -1060,8 +1128,48 @@ mod tests {
 
         assert_eq!(junctions.len(), 1, "coincident intersections must merge");
         assert_eq!(junctions[0].rect, rect(9.0, 9.0, 3.0, 2.0));
-        assert_eq!(junctions[0].horizontal_panes, vec![1, 3]);
-        assert_eq!(junctions[0].vertical_panes, vec![1, 2]);
+        assert_eq!(
+            junctions[0].horizontal_targets,
+            vec![
+                ResizeJunctionTarget {
+                    pane_id: 1,
+                    start: 0.0
+                },
+                ResizeJunctionTarget {
+                    pane_id: 3,
+                    start: 10.0
+                }
+            ]
+        );
+        assert_eq!(
+            junctions[0].vertical_targets,
+            vec![
+                ResizeJunctionTarget {
+                    pane_id: 1,
+                    start: 0.0
+                },
+                ResizeJunctionTarget {
+                    pane_id: 2,
+                    start: 11.0
+                }
+            ]
+        );
+        assert_eq!(
+            junction_target_at(&junctions[0].horizontal_targets, 9.0),
+            Some(1)
+        );
+        assert_eq!(
+            junction_target_at(&junctions[0].horizontal_targets, 10.0),
+            Some(3)
+        );
+        assert_eq!(
+            junction_target_at(&junctions[0].vertical_targets, 10.0),
+            Some(1)
+        );
+        assert_eq!(
+            junction_target_at(&junctions[0].vertical_targets, 11.0),
+            Some(2)
+        );
     }
 
     /// With a separate bar, merged borders keep a zero vertical gap, so the strip between stacked

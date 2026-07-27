@@ -752,10 +752,31 @@ pub fn nearest_axis_split_path(
     focused: PaneId,
     target_axis: SplitAxis,
 ) -> Option<Vec<bool>> {
+    axis_split_path(tree, focused, target_axis, None)
+}
+
+/// Tree path to the nearest split on `target_axis` that faces the requested pane edge.
+/// Equal paths identify the same grabbed divider at a geometric junction.
+pub fn axis_split_path_for_edge(
+    tree: &DwindleTree,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: SplitEdge,
+) -> Option<Vec<bool>> {
+    axis_split_path(tree, focused, target_axis, Some(edge))
+}
+
+fn axis_split_path(
+    tree: &DwindleTree,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: Option<SplitEdge>,
+) -> Option<Vec<bool>> {
     fn visit(
         tree: &DwindleTree,
         focused: PaneId,
         target_axis: SplitAxis,
+        edge: Option<SplitEdge>,
         path: &mut Vec<bool>,
     ) -> Option<Vec<bool>> {
         let DwindleTree::Split {
@@ -776,39 +797,63 @@ pub fn nearest_axis_split_path(
         };
 
         path.push(second_side);
-        if let Some(deeper) = visit(child, focused, target_axis, path) {
+        if let Some(deeper) = visit(child, focused, target_axis, edge, path) {
             return Some(deeper);
         }
         path.pop();
-        (*axis == target_axis).then(|| path.clone())
+        (*axis == target_axis
+            && edge.is_none_or(|edge| split_edge_matches_focused_side(edge, !second_side)))
+        .then(|| path.clone())
     }
 
-    visit(tree, focused, target_axis, &mut Vec::new())
+    visit(tree, focused, target_axis, edge, &mut Vec::new())
 }
 
+/// Move the divider between `focused`'s split neighbours by `pixels` along `target_axis`.
+///
+/// `rect` is the tile area the tree is laid out in. `pixels` is signed toward the *first* side of
+/// the split, so a caller that grabs a boundary from its trailing side passes the raw pointer
+/// delta while one working from the leading side flips it.
 pub fn resize_tiled_split(
     workspace: &mut Workspace,
+    rect: FloatRect,
+    gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
-    available: f32,
     pixels: f32,
 ) -> bool {
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
-    }
-    let Some(tree) = workspace.tile_tree.as_mut() else {
-        return false;
-    };
-    let ratio_delta = pixels / available.max(1.0);
-    adjust_nearest_axis_split(tree, focused, target_axis, ratio_delta)
+    resize_workspace_split(workspace, rect, gap, focused, target_axis, None, pixels)
 }
 
+/// As `resize_tiled_split`, but only the split facing the requested pane edge qualifies, so a pane
+/// with splits on both sides of the same axis resizes the one that was actually grabbed.
 pub fn resize_tiled_split_for_edge(
     workspace: &mut Workspace,
+    rect: FloatRect,
+    gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
     edge: SplitEdge,
-    available: f32,
+    pixels: f32,
+) -> bool {
+    resize_workspace_split(
+        workspace,
+        rect,
+        gap,
+        focused,
+        target_axis,
+        Some(edge),
+        pixels,
+    )
+}
+
+fn resize_workspace_split(
+    workspace: &mut Workspace,
+    rect: FloatRect,
+    gap: TileGap,
+    focused: PaneId,
+    target_axis: SplitAxis,
+    edge: Option<SplitEdge>,
     pixels: f32,
 ) -> bool {
     if workspace.tile_tree.is_none() {
@@ -817,15 +862,17 @@ pub fn resize_tiled_split_for_edge(
     let Some(tree) = workspace.tile_tree.as_mut() else {
         return false;
     };
-    let ratio_delta = pixels / available.max(1.0);
-    adjust_nearest_axis_split_for_edge(tree, focused, target_axis, edge, ratio_delta)
+    resize_split_in_tree(tree, rect, gap, focused, target_axis, edge, pixels)
 }
 
-fn adjust_nearest_axis_split(
+fn resize_split_in_tree(
     tree: &mut DwindleTree,
+    rect: FloatRect,
+    gap: TileGap,
     focused: PaneId,
     target_axis: SplitAxis,
-    delta: f32,
+    edge: Option<SplitEdge>,
+    pixels: f32,
 ) -> bool {
     let DwindleTree::Split {
         axis,
@@ -836,68 +883,145 @@ fn adjust_nearest_axis_split(
     else {
         return false;
     };
-
-    if tree_contains(first, focused) {
-        if adjust_nearest_axis_split(first, focused, target_axis, delta) {
-            return true;
-        }
-        if *axis == target_axis {
-            *ratio = adjust_ratio_value(*ratio, delta);
-            return true;
-        }
-        false
+    let axis = *axis;
+    let (first_rect, second_rect) = split_float_rect(rect, axis, *ratio, gap);
+    let focused_is_first = if tree_contains(first, focused) {
+        true
     } else if tree_contains(second, focused) {
-        if adjust_nearest_axis_split(second, focused, target_axis, delta) {
-            return true;
-        }
-        if *axis == target_axis {
-            *ratio = adjust_ratio_value(*ratio, -delta);
-            return true;
-        }
         false
     } else {
-        false
+        return false;
+    };
+
+    let (child, child_rect) = if focused_is_first {
+        (first.as_mut(), first_rect)
+    } else {
+        (second.as_mut(), second_rect)
+    };
+    if resize_split_in_tree(child, child_rect, gap, focused, target_axis, edge, pixels) {
+        return true;
+    }
+    if axis != target_axis
+        || !edge.is_none_or(|edge| split_edge_matches_focused_side(edge, focused_is_first))
+    {
+        return false;
+    }
+
+    let usable = usable_axis_extent(axis_extent(rect, axis), axis, gap);
+    let before = axis_extent(first_rect, axis);
+    let signed = if focused_is_first { pixels } else { -pixels };
+    *ratio = adjust_ratio_value(*ratio, signed / usable.max(1.0));
+    let (moved_first, moved_second) = split_float_rect(rect, axis, *ratio, gap);
+    // Ratios are proportional, so the regions on either side of this divider would carry their own
+    // nested dividers along as they grow and shrink - dragging one boundary would visibly move
+    // several. Rewrite those nested ratios to pin each nested divider where it already is, leaving
+    // the two panes that actually touch this boundary to absorb the whole change.
+    let moved = axis_extent(moved_first, axis) - before;
+    hold_trailing_dividers(first, moved_first, gap, axis, moved);
+    hold_leading_dividers(second, moved_second, gap, axis, -moved);
+    true
+}
+
+fn axis_extent(rect: FloatRect, axis: SplitAxis) -> f32 {
+    match axis {
+        SplitAxis::Horizontal => rect.w,
+        SplitAxis::Vertical => rect.h,
     }
 }
 
-fn adjust_nearest_axis_split_for_edge(
+/// The part of `extent` that a split actually divides: the gap between the two sides is taken off
+/// the top, exactly as `split_float_rect` does.
+fn usable_axis_extent(extent: f32, axis: SplitAxis, gap: TileGap) -> f32 {
+    let gap = gap.for_axis(axis);
+    let usable_gap = if extent > gap { gap } else { 0.0 };
+    (extent - usable_gap).max(0.0)
+}
+
+/// `rect` is a region whose extent along `axis` just changed by `delta` at its *trailing* edge; its
+/// leading edge did not move. Rewrite the ratios of the splits touching that edge so their own
+/// dividers keep their absolute position.
+fn hold_trailing_dividers(
     tree: &mut DwindleTree,
-    focused: PaneId,
-    target_axis: SplitAxis,
-    edge: SplitEdge,
+    rect: FloatRect,
+    gap: TileGap,
+    axis: SplitAxis,
     delta: f32,
-) -> bool {
+) {
+    if delta == 0.0 {
+        return;
+    }
     let DwindleTree::Split {
-        axis,
+        axis: split_axis,
         ratio,
         first,
         second,
     } = tree
     else {
-        return false;
+        return;
     };
-
-    if tree_contains(first, focused) {
-        if adjust_nearest_axis_split_for_edge(first, focused, target_axis, edge, delta) {
-            return true;
-        }
-        if *axis == target_axis && split_edge_matches_focused_side(edge, true) {
-            *ratio = adjust_ratio_value(*ratio, delta);
-            return true;
-        }
-        false
-    } else if tree_contains(second, focused) {
-        if adjust_nearest_axis_split_for_edge(second, focused, target_axis, edge, delta) {
-            return true;
-        }
-        if *axis == target_axis && split_edge_matches_focused_side(edge, false) {
-            *ratio = adjust_ratio_value(*ratio, -delta);
-            return true;
-        }
-        false
-    } else {
-        false
+    let split_axis = *split_axis;
+    let (first_rect, second_rect) = split_float_rect(rect, split_axis, *ratio, gap);
+    if split_axis != axis {
+        // A perpendicular split does not divide `axis`: both children span the whole extent, so
+        // the edge that moved belongs to both of them.
+        hold_trailing_dividers(first, first_rect, gap, axis, delta);
+        hold_trailing_dividers(second, second_rect, gap, axis, delta);
+        return;
     }
+
+    let extent = axis_extent(rect, axis);
+    let usable = usable_axis_extent(extent, axis, gap);
+    let before =
+        (usable_axis_extent(extent - delta, axis, gap) * clamp_split_ratio(*ratio)).round();
+    *ratio = clamp_split_ratio(before / usable.max(1.0));
+    let (first_rect, second_rect) = split_float_rect(rect, split_axis, *ratio, gap);
+    // Non-zero only when the rewritten ratio hit its clamp and the first side had to move after
+    // all; whatever it could not hold is passed on to the side beyond it.
+    let held = axis_extent(first_rect, axis) - before;
+    hold_trailing_dividers(first, first_rect, gap, axis, held);
+    hold_trailing_dividers(second, second_rect, gap, axis, delta - held);
+}
+
+/// Mirror of `hold_trailing_dividers` for a region whose *leading* edge moved while its trailing
+/// edge stayed put. `delta` is the change in extent, so the region's start moved by `-delta`.
+fn hold_leading_dividers(
+    tree: &mut DwindleTree,
+    rect: FloatRect,
+    gap: TileGap,
+    axis: SplitAxis,
+    delta: f32,
+) {
+    if delta == 0.0 {
+        return;
+    }
+    let DwindleTree::Split {
+        axis: split_axis,
+        ratio,
+        first,
+        second,
+    } = tree
+    else {
+        return;
+    };
+    let split_axis = *split_axis;
+    let (first_rect, second_rect) = split_float_rect(rect, split_axis, *ratio, gap);
+    if split_axis != axis {
+        hold_leading_dividers(first, first_rect, gap, axis, delta);
+        hold_leading_dividers(second, second_rect, gap, axis, delta);
+        return;
+    }
+
+    let extent = axis_extent(rect, axis);
+    let usable = usable_axis_extent(extent, axis, gap);
+    let before =
+        (usable_axis_extent(extent - delta, axis, gap) * clamp_split_ratio(*ratio)).round();
+    // The start moved by `-delta`, so the first side has to take `delta` more to leave this
+    // divider where it was.
+    *ratio = clamp_split_ratio((before + delta) / usable.max(1.0));
+    let (first_rect, second_rect) = split_float_rect(rect, split_axis, *ratio, gap);
+    let held = axis_extent(first_rect, axis) - (before + delta);
+    hold_leading_dividers(first, first_rect, gap, axis, delta + held);
+    hold_leading_dividers(second, second_rect, gap, axis, -held);
 }
 
 fn split_edge_matches_focused_side(edge: SplitEdge, focused_is_first: bool) -> bool {
@@ -1152,16 +1276,24 @@ mod tests {
         assert_close(available, 99.0);
         assert!(resize_tiled_split_for_edge(
             &mut workspace,
+            rect,
+            TileGap::DEFAULT,
             3,
             SplitAxis::Horizontal,
             SplitEdge::Leading,
-            available,
             2.475,
         ));
 
-        let (root_ratio, inner_ratio) = four_pane_horizontal_ratios(&workspace);
-        assert_close(root_ratio, 0.225);
-        assert_close(inner_ratio, 0.5);
+        // Only the grabbed root boundary moves: the nested 3|4 divider keeps its column.
+        assert_eq!(
+            dwindle_columns(&workspace, rect),
+            vec![
+                (1, 0.0, 22.0),
+                (2, 23.0, 100.0),
+                (3, 23.0, 63.0),
+                (4, 64.0, 100.0)
+            ]
+        );
     }
 
     #[test]
@@ -1188,36 +1320,37 @@ mod tests {
         assert_close(available, 73.0);
         assert!(resize_tiled_split_for_edge(
             &mut workspace,
+            rect,
+            TileGap::DEFAULT,
             3,
             SplitAxis::Horizontal,
             SplitEdge::Trailing,
-            available,
             7.3,
         ));
 
-        let (root_ratio, inner_ratio) = four_pane_horizontal_ratios(&workspace);
-        assert_close(root_ratio, 0.25);
-        assert_close(inner_ratio, 0.6);
+        // The deepest boundary on the grabbed side moves; the root boundary stays put.
+        assert_eq!(
+            dwindle_columns(&workspace, rect),
+            vec![
+                (1, 0.0, 25.0),
+                (2, 26.0, 100.0),
+                (3, 26.0, 70.0),
+                (4, 71.0, 100.0)
+            ]
+        );
     }
 
-    fn four_pane_horizontal_ratios(workspace: &Workspace) -> (f32, f32) {
-        let Some(DwindleTree::Split {
-            ratio: root_ratio,
-            second,
-            ..
-        }) = workspace.tile_tree.as_ref()
-        else {
-            panic!("missing root split");
-        };
-        let DwindleTree::Split { second, .. } = second.as_ref() else {
-            panic!("missing vertical split");
-        };
-        let DwindleTree::Split {
-            ratio: inner_ratio, ..
-        } = second.as_ref()
-        else {
-            panic!("missing inner horizontal split");
-        };
-        (*root_ratio, *inner_ratio)
+    fn dwindle_columns(workspace: &Workspace, rect: FloatRect) -> Vec<(PaneId, f32, f32)> {
+        let mut placements = Vec::new();
+        allocate_dwindle(
+            workspace.tile_tree.as_ref().unwrap(),
+            rect,
+            TileGap::DEFAULT,
+            &mut placements,
+        );
+        placements
+            .iter()
+            .map(|p| (p.id, p.rect.x, p.rect.x + p.rect.w))
+            .collect()
     }
 }

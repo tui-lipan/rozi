@@ -17,7 +17,6 @@ use crate::state::{
 };
 use crate::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
-    split_available_for_edge,
 };
 
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
@@ -427,18 +426,16 @@ fn resize_pane_state(
             continue;
         }
         let edge = split_edge_for_corner(axis, corner);
-        if let Some(available) =
-            split_available_for_edge(&tree, tile_bounds, TileGap::DEFAULT, id, axis, edge)
-        {
-            resize_tiled_split_for_edge(
-                state.active_workspace_mut(),
-                id,
-                axis,
-                edge,
-                available,
-                pixels,
-            );
-        }
+        let tile_gap = state.tile_gap();
+        resize_tiled_split_for_edge(
+            state.active_workspace_mut(),
+            tile_bounds,
+            tile_gap,
+            id,
+            axis,
+            edge,
+            pixels,
+        );
     }
 
     state.animation = GeometryAnimation::None;

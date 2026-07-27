@@ -4,7 +4,7 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::active_pane_is_fullscreen;
-use crate::state::{self, Direction, LayoutKind, RATIO_STEP, TileGap};
+use crate::state::{self, Direction, LayoutKind, RATIO_STEP};
 use crate::tiling::{
     focused_is_first_in_nearest_axis_split, nearest_split_available, resize_tiled_split,
 };
@@ -28,6 +28,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    let tile_gap = ctx.state.tile_gap();
     let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
@@ -60,8 +61,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
     };
 
     let axis = crate::ops::focus::split_axis_for_direction(direction);
-    let Some(available) =
-        nearest_split_available(tree, tile_bounds, TileGap::DEFAULT, focused, axis)
+    let Some(available) = nearest_split_available(tree, tile_bounds, tile_gap, focused, axis)
     else {
         return;
     };
@@ -69,7 +69,7 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         return;
     };
     let pixels = keyboard_resize_pixels(direction, focused_is_first, available);
-    if resize_tiled_split(workspace, focused, axis, available, pixels) {
+    if resize_tiled_split(workspace, tile_bounds, tile_gap, focused, axis, pixels) {
         ctx.state.animation = GeometryAnimation::None;
     }
 }

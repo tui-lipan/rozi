@@ -162,7 +162,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ResizeSplit(id, horizontal, from_x, from_y, x, y) => {
             panes::resize_split(ctx, id, horizontal, from_x, from_y, x, y)
         }
-        Msg::BeginResizeSplitJunction(x, y) => panes::begin_resize_split_junction(ctx, x, y),
+        Msg::BeginResizeSplitJunction(horizontal, vertical, x, y) => {
+            panes::begin_resize_split_junction(ctx, horizontal, vertical, x, y)
+        }
         Msg::ResizeSplitJunction(horizontal, vertical, from_x, from_y, x, y) => {
             panes::resize_split_junction(ctx, horizontal, vertical, from_x, from_y, x, y)
         }

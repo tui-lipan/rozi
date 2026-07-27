@@ -161,7 +161,9 @@ pub enum Msg {
     BeginResizeSplit(PaneId, bool, u16, u16),
     /// Drag a tiled split boundary: (left/top pane, horizontal_split, from_x, from_y, x, y).
     ResizeSplit(PaneId, bool, u16, u16, u16, u16),
-    BeginResizeSplitJunction(u16, u16),
+    /// Grab a tiled split junction: pane representatives for horizontal/vertical tree splits,
+    /// followed by the drag origin (x, y).
+    BeginResizeSplitJunction(Vec<PaneId>, Vec<PaneId>, u16, u16),
     /// Drag a tiled split junction: pane representatives for horizontal/vertical tree splits,
     /// followed by (from_x, from_y, x, y).
     ResizeSplitJunction(Vec<PaneId>, Vec<PaneId>, u16, u16, u16, u16),

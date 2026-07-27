@@ -4,8 +4,8 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::active_pane_is_fullscreen;
-use crate::state::{self, LayoutKind, PaneId, SplitDragKind, SplitDragSession, TileGap, Workspace};
-use crate::tiling::{nearest_axis_split_path, nearest_split_available, resize_tiled_split};
+use crate::state::{self, LayoutKind, PaneId, SplitDragKind, SplitDragSession, Workspace};
+use crate::tiling::{SplitEdge, axis_split_path_for_edge, resize_tiled_split_for_edge};
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits};
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
@@ -30,10 +30,20 @@ pub(crate) fn begin_resize_split_drag(
 
 pub(crate) fn begin_resize_split_junction_drag(
     ctx: &mut Context<HyprmuxApp>,
+    horizontal_panes: Vec<PaneId>,
+    vertical_panes: Vec<PaneId>,
     x: u16,
     y: u16,
 ) -> Update {
-    begin_split_drag(ctx, SplitDragKind::Junction, x, y)
+    begin_split_drag(
+        ctx,
+        SplitDragKind::Junction {
+            horizontal_panes,
+            vertical_panes,
+        },
+        x,
+        y,
+    )
 }
 
 fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
@@ -54,42 +64,50 @@ fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, 
     Update::none()
 }
 
-fn ensure_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, from_x: u16, from_y: u16) {
+/// Resolve which boundary a drag event belongs to, and rewind the layout to the drag's starting
+/// ratios so the pointer delta can be applied absolutely.
+///
+/// The live session - not the event payload - decides the target. Drag events are routed by the
+/// position a mouse region occupied when the pointer went down, and a resize strip moves as soon as
+/// the split it describes moves, so a mid-gesture event routinely arrives from a *neighbouring*
+/// strip's region carrying that strip's pane id. The drag origin is fixed for the whole gesture, so
+/// matching on it keeps every event applied to the boundary the pointer actually grabbed. Only a
+/// gesture with no session yet (the drag-start event) adopts `requested`.
+fn resolve_split_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    requested: SplitDragKind,
+    from_x: u16,
+    from_y: u16,
+) -> Option<SplitDragKind> {
     // Followers are nudged once at drag start; do not re-nudge (via `begin_split_drag`) on every
     // subsequent drag event, which would stack a toast per pointer move. A follower never has a
-    // session, so `restore_split_drag` bails the resize regardless.
+    // session, so the resize bails regardless.
     if !ctx.state.is_controller() {
-        return;
+        return None;
     }
-    let workspace = ctx.state.current().active_workspace;
+    let workspace_index = ctx.state.current().active_workspace;
     let matches = ctx.state.split_drag.as_ref().is_some_and(|session| {
-        session.kind == kind
-            && session.workspace == workspace
+        session.workspace == workspace_index
             && session.start_x == from_x
             && session.start_y == from_y
     });
     if !matches {
-        begin_split_drag(ctx, kind, from_x, from_y);
+        begin_split_drag(ctx, requested, from_x, from_y);
     }
-}
 
-fn restore_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind) -> bool {
-    let Some(session) = ctx.state.split_drag.as_ref().filter(|session| {
-        session.kind == kind && session.workspace == ctx.state.current().active_workspace
-    }) else {
-        return false;
-    };
-    let ws_index = session.workspace;
+    let session = ctx.state.split_drag.as_ref()?;
+    let kind = session.kind.clone();
     let start_tile_tree = session.start_tile_tree.clone();
     let start_split_ratios = session.start_split_ratios.clone();
-    let workspace = &mut ctx.state.current_mut().workspaces[ws_index];
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     workspace.tile_tree = start_tile_tree;
     workspace.split_ratios = start_split_ratios;
-    true
+    Some(kind)
 }
 
 /// Adjust the split on a tiled boundary by a mouse drag. `pane_id` is the pane on the
-/// left/top side of the dragged gap; `horizontal_split` is true for a vertical gap (a
+/// left/top side of the dragged gap, so its trailing edge identifies the exact divider even when
+/// the pane has a deeper split on the same axis. `horizontal_split` is true for a vertical gap (a
 /// left|right split). Used by the draggable gap strips in the view. Dwindle and master only.
 pub(crate) fn resize_split_by_drag(
     ctx: &mut Context<HyprmuxApp>,
@@ -100,20 +118,57 @@ pub(crate) fn resize_split_by_drag(
     x: u16,
     y: u16,
 ) -> Update {
-    let kind = SplitDragKind::Single {
+    let requested = SplitDragKind::Single {
         pane_id,
         horizontal_split,
     };
-    ensure_split_drag(ctx, kind, from_x, from_y);
-    if !restore_split_drag(ctx, kind) {
+    let Some(kind) = resolve_split_drag(ctx, requested, from_x, from_y) else {
         return Update::none();
+    };
+    apply_split_drag(ctx, kind, from_x, from_y, x, y)
+}
+
+fn apply_split_drag(
+    ctx: &mut Context<HyprmuxApp>,
+    kind: SplitDragKind,
+    from_x: u16,
+    from_y: u16,
+    x: u16,
+    y: u16,
+) -> Update {
+    let dx = (x as i32 - from_x as i32) as f32;
+    let dy = (y as i32 - from_y as i32) as f32;
+    match kind {
+        SplitDragKind::Single {
+            pane_id,
+            horizontal_split,
+        } => {
+            let pixels = if horizontal_split { dx } else { dy };
+            apply_resize_split_pixels(ctx, pane_id, horizontal_split, pixels);
+        }
+        SplitDragKind::Junction {
+            horizontal_panes,
+            vertical_panes,
+        } => {
+            let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
+            let horizontal_panes = distinct_split_representatives(
+                workspace,
+                &horizontal_panes,
+                state::SplitAxis::Horizontal,
+            );
+            let vertical_panes = distinct_split_representatives(
+                workspace,
+                &vertical_panes,
+                state::SplitAxis::Vertical,
+            );
+            for pane_id in horizontal_panes {
+                apply_resize_split_pixels(ctx, pane_id, true, dx);
+            }
+            for pane_id in vertical_panes {
+                apply_resize_split_pixels(ctx, pane_id, false, dy);
+            }
+        }
     }
-    let pixels = if horizontal_split {
-        x as i32 - from_x as i32
-    } else {
-        y as i32 - from_y as i32
-    } as f32;
-    apply_resize_split_pixels(ctx, pane_id, horizontal_split, pixels);
     Update::full()
 }
 
@@ -137,6 +192,7 @@ fn apply_resize_split_pixels(
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    let tile_gap = ctx.state.tile_gap();
     let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     if !workspace
         .active_tiled_ids_by_pane_order()
@@ -161,15 +217,15 @@ fn apply_resize_split_pixels(
     }
 
     ensure_tile_tree(workspace);
-    let Some(tree) = workspace.tile_tree.as_ref() else {
-        return false;
-    };
-    let Some(available) =
-        nearest_split_available(tree, tile_bounds, TileGap::DEFAULT, pane_id, axis)
-    else {
-        return false;
-    };
-    if resize_tiled_split(workspace, pane_id, axis, available, pixels) {
+    if resize_tiled_split_for_edge(
+        workspace,
+        tile_bounds,
+        tile_gap,
+        pane_id,
+        axis,
+        SplitEdge::Trailing,
+        pixels,
+    ) {
         ctx.state.animation = GeometryAnimation::None;
         return true;
     }
@@ -178,37 +234,21 @@ fn apply_resize_split_pixels(
 
 pub(crate) fn resize_split_junction_by_drag(
     ctx: &mut Context<HyprmuxApp>,
-    horizontal_panes: &[PaneId],
-    vertical_panes: &[PaneId],
+    horizontal_panes: Vec<PaneId>,
+    vertical_panes: Vec<PaneId>,
     from_x: u16,
     from_y: u16,
     x: u16,
     y: u16,
 ) -> Update {
-    let kind = SplitDragKind::Junction;
-    ensure_split_drag(ctx, kind, from_x, from_y);
-    if !restore_split_drag(ctx, kind) {
-        return Update::none();
-    }
-    let dx = (x as i32 - from_x as i32) as f32;
-    let dy = (y as i32 - from_y as i32) as f32;
-    let horizontal_panes = distinct_split_representatives(
-        &ctx.state.current().workspaces[ctx.state.current().active_workspace],
+    let requested = SplitDragKind::Junction {
         horizontal_panes,
-        state::SplitAxis::Horizontal,
-    );
-    let vertical_panes = distinct_split_representatives(
-        &ctx.state.current().workspaces[ctx.state.current().active_workspace],
         vertical_panes,
-        state::SplitAxis::Vertical,
-    );
-    for pane_id in horizontal_panes {
-        apply_resize_split_pixels(ctx, pane_id, true, dx);
-    }
-    for pane_id in vertical_panes {
-        apply_resize_split_pixels(ctx, pane_id, false, dy);
-    }
-    Update::full()
+    };
+    let Some(kind) = resolve_split_drag(ctx, requested, from_x, from_y) else {
+        return Update::none();
+    };
+    apply_split_drag(ctx, kind, from_x, from_y, x, y)
 }
 
 fn distinct_split_representatives(
@@ -224,7 +264,8 @@ fn distinct_split_representatives(
         .iter()
         .copied()
         .filter(|pane_id| {
-            nearest_axis_split_path(tree, *pane_id, axis).is_some_and(|path| paths.insert(path))
+            axis_split_path_for_edge(tree, *pane_id, axis, SplitEdge::Trailing)
+                .is_some_and(|path| paths.insert(path))
         })
         .collect()
 }
@@ -236,8 +277,8 @@ mod tests {
         TEST_VIEWPORT, assert_ratio_close, balanced_grid_ratios, balanced_grid_tree, in_test_stack,
         root_ratio,
     };
-    use crate::state::{Pane, SplitAxis, Workspace};
-    use crate::tiling::{DwindleTree, resize_tiled_split};
+    use crate::state::{Pane, SplitAxis, TileGap, Workspace};
+    use crate::tiling::{DwindleTree, nearest_split_available, resize_tiled_split};
     use crate::{HyprmuxApp, Msg};
     use tui_lipan::TestBackend;
 
@@ -258,7 +299,22 @@ mod tests {
                 .panes
                 .push(Pane::new(2, 100, FloatRect::default()));
             workspace.tile_tree = Some(start_tree.clone());
-            resize_tiled_split(&mut workspace, 1, SplitAxis::Horizontal, 100.0, pixels);
+            resize_tiled_split(
+                &mut workspace,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 40.0,
+                },
+                TileGap {
+                    horizontal: 0.0,
+                    vertical: 0.0,
+                },
+                1,
+                SplitAxis::Horizontal,
+                pixels,
+            );
             workspace
         };
 
@@ -267,12 +323,15 @@ mod tests {
         assert_eq!(root_ratio(&workspace_for_delta(20.0)), 0.7);
     }
 
+    /// The junction targets are fixed when the drag starts, and each successive event re-applies
+    /// the pointer's absolute offset from the origin. Representatives that resolve to the same
+    /// split (panes 1 and 2 both sit left of the root divider) must move it once, not twice.
     #[test]
     fn four_pane_junction_tracks_absolute_pointer_once_per_split() {
         in_test_stack(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             backend.set_viewport(TEST_VIEWPORT);
-            let (root_available, left_available, right_available) = {
+            let (root_available, left_available) = {
                 let state = backend.state_mut();
                 let workspace = state.active_workspace_mut();
                 workspace.panes.clear();
@@ -306,19 +365,11 @@ mod tests {
                         SplitAxis::Vertical,
                     )
                     .unwrap(),
-                    nearest_split_available(
-                        tree,
-                        tile_bounds,
-                        TileGap::DEFAULT,
-                        3,
-                        SplitAxis::Vertical,
-                    )
-                    .unwrap(),
                 )
             };
             backend.render();
             backend
-                .dispatch(Msg::BeginResizeSplitJunction(50, 15))
+                .dispatch(Msg::BeginResizeSplitJunction(vec![1, 2], vec![1], 50, 15))
                 .expect("begin junction drag");
             backend
                 .dispatch(Msg::ResizeSplitJunction(
@@ -339,7 +390,7 @@ mod tests {
             );
             assert_ratio_close(ratios.0, 0.5 + 10.0 / root_available);
             assert_ratio_close(ratios.1, 0.5 + 3.0 / left_available);
-            assert_ratio_close(ratios.2, 0.5 + 3.0 / right_available);
+            assert_ratio_close(ratios.2, 0.5);
 
             backend
                 .dispatch(Msg::ResizeSplitJunction(
@@ -359,7 +410,303 @@ mod tests {
             );
             assert_ratio_close(ratios.0, 0.5 + 11.0 / root_available);
             assert_ratio_close(ratios.1, 0.5 + 4.0 / left_available);
-            assert_ratio_close(ratios.2, 0.5 + 4.0 / right_available);
+            assert_ratio_close(ratios.2, 0.5);
         });
+    }
+
+    /// Drags driven by real pointer events, so they exercise how the framework routes a gesture
+    /// after the first move: by the position the grabbed mouse region held when the pointer went
+    /// down. A resize strip moves with the split it describes, so mid-drag events arrive from a
+    /// neighbouring strip's region - the drag session, not the event payload, has to decide which
+    /// boundary moves.
+    mod pointer_drags {
+        use super::*;
+        use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
+
+        fn axis(vertical_divider: bool) -> SplitAxis {
+            if vertical_divider {
+                SplitAxis::Horizontal
+            } else {
+                SplitAxis::Vertical
+            }
+        }
+
+        fn leaf(id: PaneId) -> Box<DwindleTree> {
+            Box::new(DwindleTree::Leaf(id))
+        }
+
+        fn split(
+            axis: SplitAxis,
+            first: Box<DwindleTree>,
+            second: Box<DwindleTree>,
+        ) -> Box<DwindleTree> {
+            Box::new(DwindleTree::Split {
+                axis,
+                ratio: 0.5,
+                first,
+                second,
+            })
+        }
+
+        fn leaf_ids(tree: &DwindleTree, out: &mut Vec<PaneId>) {
+            match tree {
+                DwindleTree::Leaf(id) => out.push(*id),
+                DwindleTree::Split { first, second, .. } => {
+                    leaf_ids(first, out);
+                    leaf_ids(second, out);
+                }
+            }
+        }
+
+        /// Every split ratio in leaf order, keyed by its tree path (`false` = first child).
+        fn ratios(backend: &mut TestBackend<HyprmuxApp>) -> Vec<(Vec<bool>, f32)> {
+            fn visit(tree: &DwindleTree, path: &mut Vec<bool>, out: &mut Vec<(Vec<bool>, f32)>) {
+                let DwindleTree::Split {
+                    ratio,
+                    first,
+                    second,
+                    ..
+                } = tree
+                else {
+                    return;
+                };
+                out.push((path.clone(), *ratio));
+                path.push(false);
+                visit(first, path, out);
+                path.pop();
+                path.push(true);
+                visit(second, path, out);
+                path.pop();
+            }
+            let mut out = Vec::new();
+            visit(
+                backend
+                    .state_mut()
+                    .active_workspace_mut()
+                    .tile_tree
+                    .as_ref()
+                    .expect("tile tree"),
+                &mut Vec::new(),
+                &mut out,
+            );
+            out
+        }
+
+        fn backend_with(tree: &DwindleTree) -> TestBackend<HyprmuxApp> {
+            let mut ids = Vec::new();
+            leaf_ids(tree, &mut ids);
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            {
+                let workspace = backend.state_mut().active_workspace_mut();
+                workspace.panes.clear();
+                for id in ids {
+                    workspace
+                        .panes
+                        .push(Pane::new(id, 100, FloatRect::default()));
+                }
+                workspace.tile_tree = Some(tree.clone());
+            }
+            backend.render();
+            backend
+        }
+
+        fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
+            MouseEvent {
+                x,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            }
+        }
+
+        /// Press at `(x, y)`, move to the target in several steps (each one re-renders the shifted
+        /// layout), then release.
+        fn drag(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16, dx: i32, dy: i32) {
+            let at = |step: i32, total: i32| {
+                (
+                    (x as i32 + dx * step / total).max(0) as u16,
+                    (y as i32 + dy * step / total).max(0) as u16,
+                )
+            };
+            backend
+                .send_mouse(mouse(x, y, MouseKind::Down(MouseButton::Left)))
+                .expect("press");
+            for step in 1..=4 {
+                let (nx, ny) = at(step, 4);
+                backend
+                    .send_mouse(mouse(nx, ny, MouseKind::Drag(MouseButton::Left)))
+                    .expect("drag");
+            }
+            let (nx, ny) = at(1, 1);
+            backend
+                .send_mouse(mouse(nx, ny, MouseKind::Up(MouseButton::Left)))
+                .expect("release");
+        }
+
+        /// A pane's extent along one axis, as `(pane, start, end)` in canvas coordinates.
+        type Span = (PaneId, f32, f32);
+
+        /// Pane spans along `axis`, as `(pane, start, end)` in canvas coordinates. Ratios are
+        /// proportional, so only absolute spans show whether a drag moved a divider it should not
+        /// have touched.
+        fn spans(backend: &mut TestBackend<HyprmuxApp>, axis: SplitAxis) -> Vec<Span> {
+            let state = backend.state_mut();
+            let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
+            let top_gap = state.workspace_top_gap();
+            let gap = state.tile_gap();
+            let index = state.current().active_workspace;
+            let mut spans: Vec<Span> = crate::layout::workspace_target_rects(
+                &state.current().workspaces[index],
+                bounds,
+                top_gap,
+                gap,
+            )
+            .iter()
+            .map(|placement| match axis {
+                SplitAxis::Horizontal => (
+                    placement.id,
+                    placement.rect.x,
+                    placement.rect.x + placement.rect.w,
+                ),
+                SplitAxis::Vertical => (
+                    placement.id,
+                    placement.rect.y,
+                    placement.rect.y + placement.rect.h,
+                ),
+            })
+            .collect();
+            spans.sort_by_key(|(id, ..)| *id);
+            spans
+        }
+
+        /// Drag one divider and report the pane spans along `axis` before and after.
+        fn drag_divider(
+            tree: &DwindleTree,
+            (x, y): (u16, u16),
+            (dx, dy): (i32, i32),
+            axis: SplitAxis,
+        ) -> (Vec<Span>, Vec<Span>) {
+            let mut backend = backend_with(tree);
+            let before = spans(&mut backend, axis);
+            drag(&mut backend, x, y, dx, dy);
+            (before, spans(&mut backend, axis))
+        }
+
+        /// Panes whose span along the drag axis changed, and by how much at each edge.
+        fn shifted(before: &[Span], after: &[Span]) -> Vec<Span> {
+            before
+                .iter()
+                .zip(after.iter())
+                .map(|(a, b)| (a.0, b.1 - a.1, b.2 - a.2))
+                .filter(|(_, start, end)| *start != 0.0 || *end != 0.0)
+                .collect()
+        }
+
+        /// Two stacked pairs side by side. Dragging the divider inside one column must leave the
+        /// other column's divider and the main divider alone, and must follow the pointer for the
+        /// whole gesture rather than stalling when the strip shifts underneath it.
+        #[test]
+        fn a_column_divider_ignores_the_other_column() {
+            in_test_stack(|| {
+                let tree = *split(
+                    SplitAxis::Horizontal,
+                    split(SplitAxis::Vertical, leaf(1), leaf(2)),
+                    split(SplitAxis::Vertical, leaf(3), leaf(4)),
+                );
+                // Tile rows 1..29, so the mid-height divider sits at row 15.
+                let (before, after) = drag_divider(&tree, (70, 15), (0, 4), SplitAxis::Vertical);
+                assert_eq!(shifted(&before, &after), vec![(3, 0.0, 4.0), (4, 4.0, 0.0)]);
+
+                let (before, after) = drag_divider(&tree, (20, 15), (0, -4), SplitAxis::Vertical);
+                assert_eq!(
+                    shifted(&before, &after),
+                    vec![(1, 0.0, -4.0), (2, -4.0, 0.0)]
+                );
+            });
+        }
+
+        /// A nested pair beside a single pane: dragging the divider between the two areas must
+        /// move only that divider. The nested divider sits inside the area that grows, so without
+        /// compensation its proportional ratio would carry it along.
+        #[test]
+        fn the_main_divider_leaves_a_nested_divider_where_it_is() {
+            in_test_stack(|| {
+                for vertical_divider in [true, false] {
+                    let nested = axis(!vertical_divider);
+                    let tree = *split(
+                        axis(vertical_divider),
+                        split(nested, leaf(1), leaf(2)),
+                        leaf(3),
+                    );
+                    let (grab, delta, moved) = if vertical_divider {
+                        ((50, 5), (6, 0), 6.0)
+                    } else {
+                        ((20, 15), (0, 4), 4.0)
+                    };
+                    let (before, after) = drag_divider(&tree, grab, delta, axis(vertical_divider));
+                    // Panes 1 and 2 straddle the *nested* divider, which is perpendicular here, so
+                    // both grow by the whole amount; pane 3 gives the room up.
+                    assert_eq!(
+                        shifted(&before, &after),
+                        vec![(1, 0.0, moved), (2, 0.0, moved), (3, moved, 0.0)]
+                    );
+                }
+            });
+        }
+
+        /// Three panes in a row, `|1|2| 3 |`. The two dividers lie on the same axis, so only the
+        /// pane edge the strip was built from tells them apart - and moving the outer one must not
+        /// drag the inner one along with it.
+        #[test]
+        fn same_axis_dividers_stay_independent() {
+            in_test_stack(|| {
+                for vertical_dividers in [true, false] {
+                    let axis = axis(vertical_dividers);
+                    let tree = *split(axis, split(axis, leaf(1), leaf(2)), leaf(3));
+                    let (inner_grab, main_grab, delta, moved) = if vertical_dividers {
+                        ((25, 10), (50, 10), (6, 0), 6.0)
+                    } else {
+                        ((50, 8), (50, 15), (0, 3), 3.0)
+                    };
+
+                    let (before, after) = drag_divider(&tree, inner_grab, delta, axis);
+                    assert_eq!(
+                        shifted(&before, &after),
+                        vec![(1, 0.0, moved), (2, moved, 0.0)]
+                    );
+
+                    // Only pane 2 - the one against the grabbed divider - takes up the change.
+                    let (before, after) = drag_divider(&tree, main_grab, delta, axis);
+                    assert_eq!(
+                        shifted(&before, &after),
+                        vec![(2, 0.0, moved), (3, moved, 0.0)]
+                    );
+                }
+            });
+        }
+
+        /// A junction moves exactly one divider per axis - the segment under the drag origin -
+        /// and keeps that pair for the whole gesture.
+        #[test]
+        fn a_junction_drag_moves_one_divider_per_axis() {
+            in_test_stack(|| {
+                let tree = balanced_grid_tree();
+                let mut backend = backend_with(&tree);
+                drag(&mut backend, 50, 15, 6, 4);
+
+                let after = ratios(&mut backend);
+                let ratio = |path: &[bool]| {
+                    after
+                        .iter()
+                        .find(|(other, _)| other == path)
+                        .expect("split")
+                        .1
+                };
+                assert_ratio_close(ratio(&[]), 0.5 + 6.0 / 99.0);
+                assert_ratio_close(ratio(&[false]), 0.5 + 4.0 / 28.0);
+                assert_ratio_close(ratio(&[true]), 0.5);
+            });
+        }
     }
 }

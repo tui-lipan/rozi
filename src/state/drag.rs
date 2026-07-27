@@ -35,6 +35,8 @@ pub struct MoveSession {
     pub pointer_y: i32,
 }
 
+/// A split-boundary drag in flight. The session is the authority for the whole gesture: it records
+/// which boundary was grabbed at drag start and the ratios to measure the pointer delta against.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SplitDragSession {
     pub kind: SplitDragKind,
@@ -45,13 +47,19 @@ pub struct SplitDragSession {
     pub start_split_ratios: Vec<f32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which tree split(s) a drag adjusts. Resolved once, from the strip the pointer grabbed.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SplitDragKind {
     Single {
         pane_id: PaneId,
         horizontal_split: bool,
     },
-    Junction,
+    /// A crossing of two boundaries. Each list holds the pane representatives whose trailing edge
+    /// identifies the tree split to move on that axis.
+    Junction {
+        horizontal_panes: Vec<PaneId>,
+        vertical_panes: Vec<PaneId>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

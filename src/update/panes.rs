@@ -130,8 +130,20 @@ pub(super) fn resize_split(
     crate::ops::resize_move::resize_split_by_drag(ctx, id, horizontal_split, from_x, from_y, x, y)
 }
 
-pub(super) fn begin_resize_split_junction(ctx: &mut Context<HyprmuxApp>, x: u16, y: u16) -> Update {
-    crate::ops::resize_move::begin_resize_split_junction_drag(ctx, x, y)
+pub(super) fn begin_resize_split_junction(
+    ctx: &mut Context<HyprmuxApp>,
+    horizontal_panes: Vec<PaneId>,
+    vertical_panes: Vec<PaneId>,
+    x: u16,
+    y: u16,
+) -> Update {
+    crate::ops::resize_move::begin_resize_split_junction_drag(
+        ctx,
+        horizontal_panes,
+        vertical_panes,
+        x,
+        y,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -146,8 +158,8 @@ pub(super) fn resize_split_junction(
 ) -> Update {
     crate::ops::resize_move::resize_split_junction_by_drag(
         ctx,
-        &horizontal_panes,
-        &vertical_panes,
+        horizontal_panes,
+        vertical_panes,
         from_x,
         from_y,
         x,

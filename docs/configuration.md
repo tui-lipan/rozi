@@ -147,7 +147,7 @@ height = 0.4                 # fraction of the viewport height, 0.1–0.9 (defau
 
 [workbar]
 left = ["title", "workspaces"]              # default
-right = ["location", "layout", "session"]    # default
+right = ["location", "session"]             # default
 # A segment can be a table to override its badge color by theme role:
 # right = [{ segment = "clock", color = "info" }, "session"]
 clock_format = "%H:%M"                       # strftime, only used by a clock segment
@@ -422,9 +422,9 @@ inside its own window. There is no verbosity setting, because it aims not to nee
 appears only when something happened that you cannot already see:
 
 - **State you can read off the screen is never toasted.** Attaching, switching, renaming, taking or
-  losing layout control, locking input, and changing layout mode all show in the workbar badges
-  (`󰛤 name`, `CTRL`/`FOLLOW`/`READ ONLY`, the `layout` segment, `SYNC`). Deleting a profile or
-  killing a session from a list removes the row you acted on. Applying a profile rebuilds the panes.
+  losing layout control, and locking input all show in the workbar badges (`󰛤 name`,
+  `CTRL`/`FOLLOW`/`READ ONLY`, `SYNC`). Deleting a profile or killing a session from a list removes
+  the row you acted on. Applying a profile rebuilds the panes.
 - **Off-screen results are toasted.** Where a profile was written, what log file a pane is recording
   to, what a copy put on the clipboard, what a detach left running, and every failure.
 - **Rejections say why.** An action that cannot run (not attached, read-only, nothing to copy, no
@@ -433,7 +433,7 @@ appears only when something happened that you cannot already see:
   place: it does not blink, move, or pile up a column of copies. Holding a key against a read-only
   pane keeps one toast alive instead of drawing a new one per repeat.
 - **Progress is superseded, not buried.** `Reconnecting to X…` is replaced by its outcome in the
-  same slot.
+  same slot, and cycling the layout replaces the mode name rather than stacking one per press.
 
 Validation errors from a prompt render *inside* the prompt, under the field they are about, and
 clear as soon as you edit it.
@@ -676,7 +676,7 @@ constructed from command output.
 ## `[workbar]`
 
 Customize the workbar. By default the `hyprmux` badge and workspace tabs are on the left, while the
-remote `location`, active `layout`, and named `session` badges are on the right. Every configured segment renders as
+remote `location` and named `session` badges are on the right. Every configured segment renders as
 a colored badge; each kind has a curated default color that you can override by theme role (see
 below). The `PREFIX`/`RESIZE`/`COPY`/`HINT`/`SIDEBAR`/`SYNC` mode chips render only while `show_workbar` is
 enabled, and sit to the left of the right-region segments so a `session` badge stays pinned to the
@@ -690,7 +690,7 @@ workspace and sidebar tab caps are controlled separately with `workbar_tab_style
 | Key | Default | Notes |
 | --- | --- | --- |
 | `left` | `["title", "workspaces"]` | Ordered left-region segments. |
-| `right` | `["location", "layout", "session"]` | Ordered right-region segments. |
+| `right` | `["location", "session"]` | Ordered right-region segments. |
 | `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
 
 Segment kinds: `title` (the badge), `workspaces` (the tabs), `location` (the active remote host, or

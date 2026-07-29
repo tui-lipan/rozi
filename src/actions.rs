@@ -399,7 +399,9 @@ fn execute_action_inner(
             Update::full()
         }
         Action::ToggleLayout => {
-            toggle_layout(ctx);
+            // The palette's own entry already renders the active layout, so a toast beside it would
+            // be the duplicate this whole pass is about removing.
+            toggle_layout(ctx, !ctx.state.show_palette);
             Update::full()
         }
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),
@@ -888,6 +890,42 @@ mod tests {
     // handler at all here, since no shared session exists to enable it.
     const NOT_ATTACHED_NAMED: &str = "Not attached to a named session";
     const FRESH_TEMPORARY: &str = "Started a fresh temporary session";
+
+    #[test]
+    fn a_channel_replaces_its_own_toast_when_the_state_behind_it_changes() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            let layout_slot = crate::pty_events::ToastKey::Channel(ToastChannel::LayoutMode);
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch first layout cycle");
+            let first = backend
+                .state()
+                .replaceable_toasts
+                .get(&layout_slot)
+                .expect("the layout toast is tracked")
+                .id();
+
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleLayout))
+                .expect("dispatch second layout cycle");
+            let second = backend
+                .state()
+                .replaceable_toasts
+                .get(&layout_slot)
+                .expect("the replacement layout toast is tracked")
+                .id();
+
+            // A new overlay id, unlike the renew case: the layout name changed, so the channel's
+            // previous message is superseded rather than kept alive.
+            assert_ne!(
+                first, second,
+                "changed text in a channel must replace, not renew",
+            );
+        });
+    }
 
     #[test]
     fn an_identical_toast_renews_the_one_already_on_screen() {

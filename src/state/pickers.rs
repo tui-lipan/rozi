@@ -120,6 +120,9 @@ pub struct PendingDestructiveConfirmation {
 pub(crate) enum ToastChannel {
     InputState,
     LayoutControl,
+    /// The active workspace layout, so cycling through the modes reports the newest one in place
+    /// rather than leaving a column of superseded names.
+    LayoutMode,
     PreferenceSave,
     /// Attach/reconnect progress and its outcome, so `Reconnecting to X…` is replaced by whatever
     /// happened rather than being buried under it.

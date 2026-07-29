@@ -153,17 +153,31 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
     }
 }
 
-/// Cycle the active workspace's layout. The new mode needs no toast: the tiles visibly re-flow,
-/// and the workbar `layout` segment names the mode for the case where they cannot (a single pane
-/// looks the same under every layout).
-pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>) {
+/// Cycle the active workspace's layout, naming the new mode unless `show_toast` is false.
+///
+/// The tiles re-flow visibly, but that does not say *which* layout took over — and a lone pane
+/// looks identical under all of them — so the name is worth a toast. It rides
+/// [`ToastChannel::LayoutMode`], so cycling several steps replaces one message instead of stacking
+/// a name per press.
+pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
     finish_pointer_layout_interaction(ctx);
     let workspace_index = ctx.state.current().active_workspace;
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-    workspace.layout_kind = workspace.layout_kind.toggled();
-    workspace.last_move_swap = None;
-    workspace.last_directional_focus = None;
+    let layout_label = {
+        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        workspace.layout_kind = workspace.layout_kind.toggled();
+        workspace.last_move_swap = None;
+        workspace.last_directional_focus = None;
+        workspace.layout_kind.label()
+    };
     ctx.state.animation = GeometryAnimation::AxisChange;
+    if show_toast {
+        crate::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::LayoutMode,
+            None,
+            layout_label,
+        );
+    }
 }
 
 fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {

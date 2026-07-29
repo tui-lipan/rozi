@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 
 use tui_lipan::prelude::*;
+use tui_lipan::utils::{GridPos, GridSelection};
 
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
@@ -69,6 +70,7 @@ pub enum PaneEventOutcome {
 pub struct TerminalSearchMatch {
     pub offset: usize,
     pub line: usize,
+    /// Display-column range in the visible terminal grid.
     pub start_col: usize,
     pub end_col: usize,
     pub text: String,
@@ -77,6 +79,7 @@ pub struct TerminalSearchMatch {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalSearchHighlight {
     pub line: usize,
+    /// Display-column range in the visible terminal grid.
     pub start_col: usize,
     pub end_col: usize,
 }
@@ -257,124 +260,38 @@ impl TerminalPane {
             else {
                 continue;
             };
-            for (start_col, end_col) in search_match_ranges(&text, query) {
-                matches.push(TerminalSearchMatch {
-                    offset,
-                    line,
-                    start_col,
-                    end_col,
-                    text: text.clone(),
-                });
+            let needle = query.to_ascii_lowercase();
+            let haystack = text.to_ascii_lowercase();
+            let mut search_from = 0usize;
+            while search_from < haystack.len() {
+                let Some(relative_start) = haystack[search_from..].find(&needle) else {
+                    break;
+                };
+                let start = search_from + relative_start;
+                let end = start + needle.len();
+                let line_spans = [Span::new(text.as_str())];
+                let start_col = tui_lipan::utils::spans::char_col_to_display_col(
+                    &line_spans,
+                    text[..start].chars().count(),
+                );
+                let end_col = tui_lipan::utils::spans::char_col_to_display_col(
+                    &line_spans,
+                    text[..end].chars().count(),
+                );
+                if start_col < end_col {
+                    matches.push(TerminalSearchMatch {
+                        offset,
+                        line,
+                        start_col,
+                        end_col,
+                        text: text.clone(),
+                    });
+                }
+                search_from = end;
             }
         }
         matches
     }
-
-    pub fn search_highlighted_snapshot(
-        &self,
-        query: &str,
-        highlight_style: Style,
-        active_highlight_style: Style,
-        active_highlight: Option<TerminalSearchHighlight>,
-    ) -> TerminalRenderSnapshot {
-        search_highlighted_snapshot(
-            self.snapshot(),
-            query,
-            highlight_style,
-            active_highlight_style,
-            active_highlight,
-        )
-    }
-
-    pub fn hint_snapshot(
-        &self,
-        matches: &[crate::hints::HintMatch],
-        labels: &[String],
-        input: &str,
-        match_style: Style,
-        label_style: Style,
-    ) -> TerminalRenderSnapshot {
-        hint_snapshot(
-            self.snapshot(),
-            matches,
-            labels,
-            input,
-            match_style,
-            label_style,
-        )
-    }
-}
-
-/// Overlay search highlights onto a snapshot. Split out from [`TerminalPane`] so it can be tested
-/// against a synthetic snapshot; see [`extract_snapshot_text`].
-fn search_highlighted_snapshot(
-    mut snapshot: TerminalRenderSnapshot,
-    query: &str,
-    highlight_style: Style,
-    active_highlight_style: Style,
-    active_highlight: Option<TerminalSearchHighlight>,
-) -> TerminalRenderSnapshot {
-    let query = query.trim();
-    if query.is_empty() {
-        return snapshot;
-    }
-
-    let plain_lines: Vec<&str> = snapshot.text.lines().collect();
-    let mut color_lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
-    let mut changed = false;
-
-    for (row, spans) in color_lines.iter_mut().enumerate() {
-        let Some(line) = plain_lines.get(row) else {
-            continue;
-        };
-        let ranges = search_match_ranges(line, query);
-        if ranges.is_empty() {
-            continue;
-        }
-        *spans = highlight_span_ranges(
-            row,
-            spans,
-            &ranges,
-            highlight_style,
-            active_highlight_style,
-            active_highlight,
-        );
-        changed = true;
-    }
-
-    if changed {
-        snapshot.color_lines = color_lines.into();
-    }
-    snapshot
-}
-
-/// Overlay hint labels onto a snapshot. Split out from [`TerminalPane`] for testability; see
-/// [`extract_snapshot_text`].
-fn hint_snapshot(
-    mut snapshot: TerminalRenderSnapshot,
-    matches: &[crate::hints::HintMatch],
-    labels: &[String],
-    input: &str,
-    match_style: Style,
-    label_style: Style,
-) -> TerminalRenderSnapshot {
-    let mut lines: Vec<Vec<Span>> = snapshot.color_lines.iter().cloned().collect();
-    for (index, matched) in matches.iter().enumerate().rev() {
-        let Some(label) = labels.get(index) else {
-            continue;
-        };
-        if !label.starts_with(input) {
-            continue;
-        }
-        let Some(spans) = lines.get_mut(matched.row) else {
-            continue;
-        };
-        let range = [(matched.start_col, matched.end_col)];
-        *spans = highlight_span_ranges(matched.row, spans, &range, match_style, match_style, None);
-        insert_styled_span(spans, matched.end_col, label, label_style);
-    }
-    snapshot.color_lines = lines.into();
-    snapshot
 }
 
 impl TerminalPane {
@@ -443,55 +360,27 @@ impl TerminalPane {
     }
 
     /// Extract the text covered by a selection from the current snapshot grid. `anchor` and
-    /// `cursor` are `(row, col)` in visible-viewport coordinates; ordering is normalized.
+    /// `cursor` are `(row, display_col)` in visible-viewport coordinates; ordering is normalized.
     /// Trailing whitespace is trimmed per line and lines are joined with `\n`.
     pub fn extract_text(&self, anchor: (usize, usize), cursor: (usize, usize)) -> String {
-        extract_snapshot_text(&self.snapshot(), anchor, cursor)
-    }
-}
-
-/// Extract the text covered by a selection from a snapshot grid.
-///
-/// Split out from [`TerminalPane`] so it can be exercised against a synthetic snapshot: the pane's
-/// own snapshot is now derived from its live screen and cannot be injected.
-fn extract_snapshot_text(
-    snapshot: &TerminalRenderSnapshot,
-    anchor: (usize, usize),
-    cursor: (usize, usize),
-) -> String {
-    let (start, end) = if anchor <= cursor {
-        (anchor, cursor)
-    } else {
-        (cursor, anchor)
-    };
-    let lines: Vec<&str> = snapshot.text.lines().collect();
-    let mut out = String::new();
-    for row in start.0..=end.0 {
-        let Some(line) = lines.get(row) else {
-            continue;
+        let selection = GridSelection {
+            anchor: GridPos {
+                row: anchor.0,
+                col: anchor.1,
+            },
+            cursor: GridPos {
+                row: cursor.0,
+                col: cursor.1,
+            },
         };
-        let chars: Vec<char> = line.chars().collect();
-        let col_start = if row == start.0 { start.1 } else { 0 };
-        let col_end = if row == end.0 {
-            (end.1 + 1).min(chars.len())
-        } else {
-            chars.len()
-        };
-        let segment: String = chars
-            .get(col_start..col_end.max(col_start))
-            .map(|slice| slice.iter().collect())
-            .unwrap_or_default();
-        out.push_str(segment.trim_end());
-        if row < end.0 {
-            out.push('\n');
-        }
+        self.snapshot()
+            .selection_text(&selection, SelectionEnd::Inclusive, true)
     }
-    out
 }
 
 impl TerminalPane {
     /// Mark the pane as exited locally. The server owns the PTY and is asked to kill it via a
-    /// separate `Kill` RPC (see `close_pane_state`).
+    /// separate `Kill` RPC (see `close_pane`).
     pub fn kill(&mut self) {
         self.status = ManagedTerminalStatus::Exited(0);
     }
@@ -647,135 +536,6 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
     Some(title.chars().filter(|ch| !ch.is_control()).collect())
 }
 
-fn search_match_ranges(line: &str, query: &str) -> Vec<(usize, usize)> {
-    let needle = query.to_ascii_lowercase();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-
-    let haystack = line.to_ascii_lowercase();
-    let mut ranges = Vec::new();
-    let mut search_from = 0usize;
-    while search_from < haystack.len() {
-        let Some(relative_start) = haystack[search_from..].find(&needle) else {
-            break;
-        };
-        let start = search_from + relative_start;
-        let end = start + needle.len();
-        let start_col = haystack[..start].chars().count();
-        let end_col = haystack[..end].chars().count();
-        if start_col < end_col {
-            ranges.push((start_col, end_col));
-        }
-        search_from = end;
-    }
-    ranges
-}
-
-fn highlight_span_ranges(
-    row: usize,
-    spans: &[Span],
-    ranges: &[(usize, usize)],
-    highlight_style: Style,
-    active_highlight_style: Style,
-    active_highlight: Option<TerminalSearchHighlight>,
-) -> Vec<Span> {
-    let mut out = Vec::new();
-    let mut col = 0usize;
-
-    for span in spans {
-        let chars: Vec<char> = span.content.chars().collect();
-        let span_start = col;
-        let span_end = span_start + chars.len();
-        let mut local_start = 0usize;
-
-        for &(range_start, range_end) in ranges {
-            if range_end <= span_start {
-                continue;
-            }
-            if range_start >= span_end {
-                break;
-            }
-
-            let highlight_start = range_start.max(span_start) - span_start;
-            let highlight_end = range_end.min(span_end) - span_start;
-            let style = if active_highlight.is_some_and(|active| {
-                active.line == row && active.start_col == range_start && active.end_col == range_end
-            }) {
-                active_highlight_style
-            } else {
-                highlight_style
-            };
-            push_span_segment(&mut out, span, &chars, local_start, highlight_start, None);
-            push_span_segment(
-                &mut out,
-                span,
-                &chars,
-                highlight_start,
-                highlight_end,
-                Some(style),
-            );
-            local_start = highlight_end;
-        }
-
-        push_span_segment(&mut out, span, &chars, local_start, chars.len(), None);
-        col = span_end;
-    }
-
-    out
-}
-
-fn push_span_segment(
-    out: &mut Vec<Span>,
-    source: &Span,
-    chars: &[char],
-    start: usize,
-    end: usize,
-    style_patch: Option<Style>,
-) {
-    if start >= end {
-        return;
-    }
-    let mut span = source.clone();
-    span.content = chars[start..end].iter().collect::<String>().into();
-    if let Some(style_patch) = style_patch {
-        span.style = span.style.patch(style_patch);
-    }
-    out.push(span);
-}
-
-fn insert_styled_span(spans: &mut Vec<Span>, col: usize, content: &str, style: Style) {
-    let inserted = Span::new(content).style(style);
-    let mut span_start = 0usize;
-
-    for index in 0..spans.len() {
-        let chars: Vec<char> = spans[index].content.chars().collect();
-        let span_end = span_start + chars.len();
-        if col > span_end {
-            span_start = span_end;
-            continue;
-        }
-        if col == span_start {
-            spans.insert(index, inserted);
-            return;
-        }
-        if col == span_end {
-            spans.insert(index + 1, inserted);
-            return;
-        }
-
-        let split = col - span_start;
-        let mut right = spans[index].clone();
-        spans[index].content = chars[..split].iter().collect::<String>().into();
-        right.content = chars[split..].iter().collect::<String>().into();
-        spans.insert(index + 1, inserted);
-        spans.insert(index + 2, right);
-        return;
-    }
-
-    spans.push(inserted);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,28 +674,48 @@ mod tests {
     }
 
     #[test]
-    fn extract_text_trims_and_joins_selected_rows() {
+    fn selection_text_uses_display_columns_and_trims_rows() {
         let snapshot = TerminalRenderSnapshot {
-            text: std::sync::Arc::from("hello world   \nfoo bar\nbaz"),
+            color_lines: std::sync::Arc::from([
+                vec![Span::new("hello world   ")],
+                vec![Span::new("foo bar")],
+                vec![Span::new("baz")],
+            ]),
             ..TerminalRenderSnapshot::default()
+        };
+        let selection = GridSelection {
+            anchor: GridPos { row: 0, col: 0 },
+            cursor: GridPos { row: 2, col: 2 },
         };
 
         // Single-line span is inclusive of the cursor cell and trims trailing space.
-        assert_eq!(extract_snapshot_text(&snapshot, (0, 0), (0, 4)), "hello");
+        assert_eq!(
+            snapshot.selection_text(
+                &GridSelection {
+                    anchor: GridPos { row: 0, col: 0 },
+                    cursor: GridPos { row: 0, col: 4 },
+                },
+                SelectionEnd::Inclusive,
+                true,
+            ),
+            "hello"
+        );
         // Multi-line span joins rows with newlines, trimming each line's trailing space.
         assert_eq!(
-            extract_snapshot_text(&snapshot, (0, 0), (2, 2)),
+            snapshot.selection_text(&selection, SelectionEnd::Inclusive, true),
             "hello world\nfoo bar\nbaz"
         );
         // Anchor/cursor order is normalized.
-        assert_eq!(extract_snapshot_text(&snapshot, (0, 4), (0, 0)), "hello");
-    }
-
-    #[test]
-    fn search_match_ranges_returns_each_case_insensitive_occurrence() {
         assert_eq!(
-            search_match_ranges("Alpha beta alpha", "alpha"),
-            vec![(0, 5), (11, 16)]
+            snapshot.selection_text(
+                &GridSelection {
+                    anchor: GridPos { row: 0, col: 4 },
+                    cursor: GridPos { row: 0, col: 0 },
+                },
+                SelectionEnd::Inclusive,
+                true,
+            ),
+            "hello"
         );
     }
 
@@ -958,118 +738,23 @@ mod tests {
         assert!(full.contains("line-11"));
         let last_two = pane.capture_scrollback_text(Some(2));
         assert!(last_two.lines().count() <= 2);
+
+        let mut wide = TerminalPane::new(20);
+        wide.apply_server_resize(20, 2);
+        wide.process_server_output("你 alpha\r\n".as_bytes());
+        assert!(
+            wide.search_scrollback("alpha")
+                .iter()
+                .any(|matched| matched.start_col == 3 && matched.end_col == 8)
+        );
     }
 
     #[test]
-    fn search_highlighted_snapshot_marks_all_visible_matches() {
-        let base_style = Style::new().fg(Color::Green);
-        let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
-        let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        let base = TerminalRenderSnapshot {
-            text: std::sync::Arc::from("Alpha beta alpha"),
-            color_lines: std::sync::Arc::from([vec![
-                Span::new("Alpha beta alpha").style(base_style),
-            ]]),
-            ..TerminalRenderSnapshot::default()
-        };
+    fn extract_text_uses_display_columns_for_wide_cells() {
+        let mut pane = TerminalPane::new(20);
+        pane.apply_server_resize(20, 1);
+        pane.process_server_output("a你b".as_bytes());
 
-        let snapshot = search_highlighted_snapshot(
-            base.clone(),
-            "alpha",
-            highlight_style,
-            active_highlight_style,
-            None,
-        );
-        let line = &snapshot.color_lines[0];
-        assert_eq!(line.len(), 3);
-        assert_eq!(line[0].content.as_ref(), "Alpha");
-        assert_eq!(line[1].content.as_ref(), " beta ");
-        assert_eq!(line[2].content.as_ref(), "alpha");
-        assert_eq!(line[0].style, base_style.patch(highlight_style));
-        assert_eq!(line[1].style, base_style);
-        assert_eq!(line[2].style, base_style.patch(highlight_style));
-    }
-
-    #[test]
-    fn search_highlighted_snapshot_marks_active_match_differently() {
-        let base_style = Style::new().fg(Color::Green);
-        let highlight_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
-        let active_highlight_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        let base = TerminalRenderSnapshot {
-            text: std::sync::Arc::from("Alpha beta alpha"),
-            color_lines: std::sync::Arc::from([vec![
-                Span::new("Alpha beta alpha").style(base_style),
-            ]]),
-            ..TerminalRenderSnapshot::default()
-        };
-
-        let snapshot = search_highlighted_snapshot(
-            base.clone(),
-            "alpha",
-            highlight_style,
-            active_highlight_style,
-            Some(TerminalSearchHighlight {
-                line: 0,
-                start_col: 11,
-                end_col: 16,
-            }),
-        );
-        let line = &snapshot.color_lines[0];
-        assert_eq!(line[0].style, base_style.patch(highlight_style));
-        assert_eq!(line[2].style, base_style.patch(active_highlight_style));
-    }
-
-    #[test]
-    fn hint_snapshot_appends_distinct_labels_without_replacing_match_text() {
-        let base_style = Style::new().fg(Color::Green);
-        let match_style = Style::new().fg(Color::White).bg(Color::rgb(92, 64, 8));
-        let label_style = Style::new().fg(Color::Black).bg(Color::Yellow).bold();
-        let base = TerminalRenderSnapshot {
-            text: std::sync::Arc::from("go https://x.test then ./src/main.rs"),
-            color_lines: std::sync::Arc::from([vec![
-                Span::new("go https://x.test then ./src/main.rs").style(base_style),
-            ]]),
-            ..TerminalRenderSnapshot::default()
-        };
-        let matches = [
-            crate::hints::HintMatch {
-                row: 0,
-                start_col: 3,
-                end_col: 17,
-                text: "https://x.test".to_string(),
-                kind: crate::hints::HintKind::Url,
-            },
-            crate::hints::HintMatch {
-                row: 0,
-                start_col: 23,
-                end_col: 36,
-                text: "./src/main.rs".to_string(),
-                kind: crate::hints::HintKind::Path,
-            },
-        ];
-
-        let snapshot = hint_snapshot(
-            base.clone(),
-            &matches,
-            &["a".to_string(), "s".to_string()],
-            "",
-            match_style,
-            label_style,
-        );
-        let line = &snapshot.color_lines[0];
-        assert_eq!(
-            line.iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>(),
-            "go https://x.testa then ./src/main.rss"
-        );
-        assert_eq!(line[1].content.as_ref(), "https://x.test");
-        assert_eq!(line[1].style, base_style.patch(match_style));
-        assert_eq!(line[2].content.as_ref(), "a");
-        assert_eq!(line[2].style, label_style);
-        assert_eq!(line[4].content.as_ref(), "./src/main.rs");
-        assert_eq!(line[4].style, base_style.patch(match_style));
-        assert_eq!(line[5].content.as_ref(), "s");
-        assert_eq!(line[5].style, label_style);
+        assert_eq!(pane.extract_text((0, 0), (0, 2)), "a你");
     }
 }

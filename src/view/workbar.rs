@@ -90,9 +90,9 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     if let Some(last) = trailing.last() {
         right_cap_color = last.edge_color(panel_bg);
     }
-    let badge_caps = ctx.state.config.pane.workbar_badge_style.caps();
+    let badge_style = ctx.state.config.pane.workbar_badge_style;
     let powerline = ctx.state.config.pane.workbar_powerline;
-    if let Some(cluster) = trailing_cluster(ctx, trailing, badge_caps, powerline, panel_bg) {
+    if let Some(cluster) = trailing_cluster(ctx, trailing, badge_style, powerline, panel_bg) {
         row = row.child(cluster);
     }
 
@@ -203,13 +203,13 @@ fn trailing_chip(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option<Traili
 /// Assemble the trailing cluster. `powerline` controls chaining independently of the cap shape:
 /// when off, chips stand apart with a 1-cell gap and each cap (if any) is drawn over the panel bar;
 /// when on, the gap collapses to zero and each badge's cap is drawn over its left neighbor's color,
-/// so the chips interlock into a powerline that flows out of the panel bar. `caps` still decides the
-/// pill shape (rounded/pointed vs flush). Returns `None` when there is nothing trailing. Sizes to
-/// `Auto` so the cluster only occupies its own width and stays pinned to the trailing edge.
+/// so the chips interlock into a powerline that flows out of the panel bar. Returns `None` when there
+/// is nothing trailing. Sizes to `Auto` so the cluster only occupies its own width and stays pinned
+/// to the trailing edge.
 fn trailing_cluster(
     ctx: &Context<HyprmuxApp>,
     chips: Vec<TrailingChip>,
-    caps: Option<(&'static str, &'static str)>,
+    cap_style: CapStyle,
     powerline: bool,
     panel_bg: Color,
 ) -> Option<Element> {
@@ -233,14 +233,16 @@ fn trailing_cluster(
                 bg,
                 opens_sessions,
             } => {
-                let side = if powerline && prev_was_badge && prev_bg == bg {
-                    BadgeCap::LeftSameColor
+                let (cap_sides, same_color) = if powerline && prev_was_badge && prev_bg == bg {
+                    (CapSides::Left, true)
                 } else if powerline {
-                    BadgeCap::Left
+                    (CapSides::Left, false)
                 } else {
-                    BadgeCap::Both
+                    (CapSides::Both, false)
                 };
-                let badge = workbar_badge(&label, text_fg, bg, prev_bg, panel_bg, caps, side);
+                let badge = workbar_badge(
+                    &label, text_fg, bg, prev_bg, cap_style, cap_sides, same_color,
+                );
                 let badge = if opens_sessions {
                     MouseRegion::new()
                         .on_click(
@@ -362,7 +364,7 @@ fn workbar_with_caps(
     left_color: Color,
     right_color: Color,
 ) -> Element {
-    let Some((left, right)) = ctx.state.config.pane.workbar_style.caps() else {
+    let Some((left, right)) = ctx.state.config.pane.workbar_style.glyphs() else {
         return row.into();
     };
     let backdrop = ctx.state.theme.surface.backdrop;
@@ -400,122 +402,41 @@ fn workbar_with_caps(
         .into()
 }
 
-/// Which end(s) a workbar badge caps. The title chip caps on the right (it starts flush at the
-/// leading edge); powerline mode chips cap on the left (they end flush at the trailing edge); with
-/// powerline off each trailing badge is a standalone pill capped on both sides.
-#[derive(Clone, Copy)]
-enum BadgeCap {
-    Left,
-    LeftSameColor,
-    Right,
-    Both,
-}
-
-/// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with an optional powerline
-/// end cap. The cap is drawn in the badge color over the panel background so the chip reads as a
-/// rounded/pointed pill; without a cap the chip is the plain flush block. Every element sizes to
-/// content (`Length::Auto`) so a chip only ever occupies its own width - stacks default to
-/// `Flex(1)`, which would otherwise let a capped chip swallow the whole workbar and break
-/// placement.
+/// A colored workbar chip (`label` in `text_fg` on `badge_bg`, bold) with optional caps owned by the
+/// framework's `Badge` primitive. The cap replaces the label's side padding, preserving the chip's
+/// footprint while allowing powerline seams to paint over the preceding background.
 fn workbar_badge(
     label: &str,
     text_fg: Color,
     badge_bg: Color,
-    left_neighbor_bg: Color,
-    right_neighbor_bg: Color,
-    caps: Option<(&'static str, &'static str)>,
-    side: BadgeCap,
+    cap_behind: Color,
+    cap_style: CapStyle,
+    cap_sides: CapSides,
+    same_color: bool,
 ) -> Element {
-    let body_style = Style::new().fg(text_fg).bg(badge_bg).bold();
-    let Some((left_glyph, right_glyph)) = caps else {
-        if matches!(side, BadgeCap::LeftSameColor) {
-            let label = label.strip_prefix(' ').unwrap_or(label);
-            return HStack::new()
-                .width(Length::Auto)
-                .height(Length::Px(1))
-                .child(
-                    Text::new("▏")
-                        .style(
-                            Style::new()
-                                .fg(badge_bg)
-                                .bg(left_neighbor_bg)
-                                .contrast_policy(ContrastPolicy::BlackOrWhite),
-                        )
-                        .width(Length::Px(1))
-                        .height(Length::Px(1)),
-                )
-                .child(
-                    Text::new(label.to_string())
-                        .style(body_style)
-                        .width(Length::Auto)
-                        .height(Length::Px(1)),
-                )
-                .into();
-        }
-        // Padded: a plain flush block that keeps the label's blank side padding.
-        return Text::new(label.to_string())
-            .style(body_style)
-            .width(Length::Auto)
-            .height(Length::Px(1))
-            .into();
-    };
-    // Capped: each cap stands in for the padding on its side, so drop that padding space.
-    let label = match side {
-        BadgeCap::Left | BadgeCap::LeftSameColor => label.strip_prefix(' ').unwrap_or(label),
-        BadgeCap::Right => label.strip_suffix(' ').unwrap_or(label),
-        BadgeCap::Both => label
-            .strip_prefix(' ')
-            .unwrap_or(label)
-            .strip_suffix(' ')
-            .unwrap_or(label),
-    };
-    let body = Text::new(label.to_string())
-        .style(body_style)
+    let footprint = RichText::from(label.to_string()).width() as u16;
+    let badge = Badge::new(label.to_string())
+        .child(
+            Spacer::new()
+                .width(Length::Px(footprint))
+                .height(Length::Px(1)),
+        )
+        .position(BadgePosition::TopStart)
+        .style(Style::new().bg(badge_bg))
+        .text_style(Style::new().fg(text_fg).bold())
         .width(Length::Auto)
-        .height(Length::Px(1));
-    let cap_el = |glyph: &'static str, under_bg: Color, same_color: bool| {
-        let (glyph, policy) = if same_color {
-            (same_color_separator(glyph), ContrastPolicy::BlackOrWhite)
-        } else {
-            (glyph, ContrastPolicy::Off)
-        };
-        Text::new(glyph)
-            .style(
-                Style::new()
-                    .fg(badge_bg)
-                    .bg(under_bg)
-                    .contrast_policy(policy),
-            )
-            .width(Length::Px(1))
-            .height(Length::Px(1))
-    };
-    let row = HStack::new().width(Length::Auto).height(Length::Px(1));
-    match side {
-        BadgeCap::Left | BadgeCap::LeftSameColor => row
-            .child(cap_el(
-                left_glyph,
-                left_neighbor_bg,
-                matches!(side, BadgeCap::LeftSameColor),
-            ))
-            .child(body),
-        BadgeCap::Right => row
-            .child(body)
-            .child(cap_el(right_glyph, right_neighbor_bg, false)),
-        BadgeCap::Both => row
-            .child(cap_el(left_glyph, left_neighbor_bg, false))
-            .child(body)
-            .child(cap_el(right_glyph, right_neighbor_bg, false)),
-    }
-    .into()
-}
-
-/// Keep adjacent equal-color powerline badges distinct without changing their width.
-fn same_color_separator(left_cap: &'static str) -> &'static str {
-    if left_cap == "\u{e0b2}" {
-        "\u{e0b3}"
-    } else {
-        "▏"
-    }
+        .height(Length::Px(1))
+        .cap(cap_style)
+        .cap_sides(cap_sides)
+        .cap_behind(cap_behind)
+        .cap_same_color(same_color);
+    Frame::new()
+        .border(false)
+        .padding(0)
+        .width(Length::Px(footprint))
+        .height(Length::Px(1))
+        .child(badge)
+        .into()
 }
 
 /// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
@@ -551,29 +472,34 @@ fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
                 .label()
         )),
         WorkbarSegment::Activity => {
-            let unseen = |panes: &mut dyn Iterator<Item = &crate::state::Pane>| {
-                panes
-                    .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
-                    .count()
-            };
-            let current = unseen(
-                &mut ctx
-                    .state
-                    .current()
-                    .workspaces
-                    .iter()
-                    .flat_map(|ws| ws.panes.iter()),
-            );
+            let current = ctx
+                .state
+                .current()
+                .workspaces
+                .iter()
+                .map(|workspace| {
+                    workspace
+                        .panes
+                        .iter()
+                        .filter(|pane| !pane.closing && pane.activity.has_unseen_output)
+                        .count()
+                })
+                .sum();
             // Retained background sessions keep processing output; surface their unread separately so
             // it never looks like activity in the visible view.
-            let background = unseen(
-                &mut ctx
-                    .state
-                    .background
-                    .values()
-                    .flat_map(|attachment| attachment.workspaces.iter())
-                    .flat_map(|ws| ws.panes.iter()),
-            );
+            let background = ctx
+                .state
+                .background
+                .values()
+                .flat_map(|attachment| attachment.workspaces.iter())
+                .map(|workspace| {
+                    workspace
+                        .panes
+                        .iter()
+                        .filter(|pane| pane.activity.has_unseen_output)
+                        .count()
+                })
+                .sum();
             match (current, background) {
                 (0, 0) => None,
                 (c, 0) => Some(format!(" ●{c} ")),
@@ -643,9 +569,9 @@ fn left_segment_element(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option
         fg,
         bg,
         ctx.state.theme.surface.panel,
-        ctx.state.theme.surface.panel,
-        ctx.state.config.pane.workbar_badge_style.caps(),
-        BadgeCap::Right,
+        ctx.state.config.pane.workbar_badge_style,
+        CapSides::Right,
+        false,
     );
     if matches!(
         item.segment,
@@ -709,7 +635,8 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
     let tabs: Vec<Tab> = (0..shown)
         .map(|idx| {
             let count = state.current().workspaces[idx].visible_count();
-            let urgent = state.current().workspaces[idx]
+            let workspace = &state.current().workspaces[idx];
+            let urgent = workspace
                 .panes
                 .iter()
                 .any(|pane| !pane.closing && pane.activity.bell);
@@ -730,7 +657,7 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         .config
         .pane
         .workbar_tab_style
-        .caps()
+        .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
 
     Tabs::new()
@@ -910,7 +837,7 @@ pub(crate) fn connecting_workspace_panel(
 mod tests {
     use super::{
         collaboration_status, curated_color, location_label, resolve_badge_color,
-        same_color_separator, workspace_placeholder_label, workspace_tab_label,
+        workspace_placeholder_label, workspace_tab_label,
     };
     use crate::config::{BadgeColor, WorkbarSegment};
     use tui_lipan::prelude::Theme;
@@ -947,12 +874,6 @@ mod tests {
         state.park_current(1, crate::state::Attachment::new());
         state.current_mut().connection = crate::state::ConnectionState::Connected;
         assert_eq!(location_label(&state).as_deref(), Some(" 󰒍 1 "));
-    }
-
-    #[test]
-    fn equal_color_powerline_separators_follow_the_cap_shape() {
-        assert_eq!(same_color_separator("\u{e0b2}"), "\u{e0b3}");
-        assert_eq!(same_color_separator("\u{e0b6}"), "▏");
     }
 
     #[test]

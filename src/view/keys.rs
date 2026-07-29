@@ -1,7 +1,7 @@
 use crate::state::PaneId;
 
-pub fn pane_window_key(id: PaneId) -> String {
-    format!("hyprmux-pane-{id}")
+pub fn pane_window_key(id: PaneId, generation: u64) -> String {
+    format!("hyprmux-pane-{id}-{generation}")
 }
 
 pub fn pane_body_key(id: PaneId) -> String {

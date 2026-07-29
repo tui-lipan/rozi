@@ -781,15 +781,6 @@ pub(crate) fn request_session_picker_focus(ctx: &mut Context<HyprmuxApp>) {
     focus_key(ctx, view::session_picker_key());
 }
 
-pub(crate) fn total_visible_panes(state: &State) -> usize {
-    state
-        .current()
-        .workspaces
-        .iter()
-        .map(|workspace| workspace.panes.iter().filter(|pane| !pane.closing).count())
-        .sum()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

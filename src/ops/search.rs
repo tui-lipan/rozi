@@ -50,12 +50,15 @@ pub(crate) fn cycle_search_scope(ctx: &mut Context<HyprmuxApp>) -> Update {
 fn panes_in_scope(state: &State, target: PaneId, scope: SearchScope) -> Vec<PaneId> {
     match scope {
         SearchScope::FocusedPane => vec![target],
-        SearchScope::Workspace => state.current().workspaces[state.current().active_workspace]
-            .panes
-            .iter()
-            .filter(|pane| !pane.closing)
-            .map(|pane| pane.id)
-            .collect(),
+        SearchScope::Workspace => {
+            let workspace = &state.current().workspaces[state.current().active_workspace];
+            workspace
+                .panes
+                .iter()
+                .filter(|pane| !pane.closing)
+                .map(|pane| pane.id)
+                .collect()
+        }
         SearchScope::All => state
             .current()
             .workspaces
@@ -198,9 +201,8 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
         && let Some(copy) = ctx.state.copy_mode.as_mut()
         && copy.target == matched.pane
     {
-        copy.offset = matched.offset;
-        copy.cursor_row = matched.line;
-        copy.cursor_col = matched.start_col;
+        copy.navigation
+            .goto(matched.line, matched.start_col, matched.offset);
     }
 }
 
@@ -236,9 +238,8 @@ pub(crate) fn finish_copy_mode_search(ctx: &mut Context<HyprmuxApp>, apply_curre
         .flatten();
     if let Some(copy) = ctx.state.copy_mode.as_mut() {
         if let Some(matched) = apply.as_ref() {
-            copy.offset = matched.offset;
-            copy.cursor_row = matched.line;
-            copy.cursor_col = matched.start_col;
+            copy.navigation
+                .goto(matched.line, matched.start_col, matched.offset);
         }
         copy.search_matches = matches;
         copy.search_current = current;

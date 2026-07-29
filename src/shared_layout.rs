@@ -81,7 +81,7 @@ pub type SharedLayoutKind = SerializedLayoutKind;
 pub type SharedSplitAxis = SerializedSplitAxis;
 
 /// Build the shared document from the client's live `State` for the given canonical canvas size
-/// (in cells, excluding the workbar). Closing panes and the scratchpad are excluded - they are
+/// (in cells, excluding the workbar). The scratchpad is excluded because it is
 /// local-only lifecycle, never shared.
 pub fn shared_layout_from_state(state: &State, canvas: (u16, u16)) -> SharedLayout {
     let canvas_cols = canvas.0.max(1);
@@ -110,8 +110,8 @@ fn shared_workspace_from_state(
 ) -> SharedWorkspace {
     let cols = f32::from(canvas_cols.max(1));
     let rows = f32::from(canvas_rows.max(1));
-    // The effective tree already prunes to active (non-closing, tiled) panes and appends any
-    // stragglers, so it matches exactly what the layout engine renders.
+    // The effective tree prunes to live tiled panes and appends any stragglers, so it matches the
+    // layout engine's live pane set.
     let tree = crate::layout::effective_tile_tree(workspace, None)
         .as_ref()
         .and_then(|tree| from_dwindle(tree, &|id| Some(id)));
@@ -173,14 +173,13 @@ pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: 
 /// reorders `Pane` structs and rewrites workspace metadata, but never touches a surviving pane's
 /// terminal screen, scrollback, or snapshot - only brand-new panes get a fresh backend, and only
 /// their buffered orphan output is replayed. Local-only state (focus, active workspace, overlays,
-/// mode, theme) is preserved. Returns an `Update` carrying the batched prune command for any panes
-/// the commit removed.
+/// mode, theme) is preserved. Removed panes are dropped from application state immediately; the
+/// stable keyed Canvas retains their already-described visual subtree for its exit animation.
 pub(crate) fn apply_shared_layout(
     ctx: &mut Context<crate::HyprmuxApp>,
     layout: &SharedLayout,
     rev: u64,
 ) -> Update {
-    use crate::pane_lifecycle::{close_pane_remote, prune_closed_batch_command};
     use crate::state::{Pane, WORKSPACE_COUNT};
 
     // A foreign commit can only land mid-drag right after this client lost the lease; cancel any
@@ -188,7 +187,6 @@ pub(crate) fn apply_shared_layout(
     ctx.state.moving_pane = None;
     ctx.state.resizing_pane = None;
     ctx.state.split_drag = None;
-
     let canvas_cols = layout.canvas_cols.max(1);
     let canvas_rows = layout.canvas_rows.max(1);
     let bounds = ctx
@@ -198,6 +196,7 @@ pub(crate) fn apply_shared_layout(
     // Index the incoming panes: id -> (workspace index, order within workspace, pane).
     let mut incoming: std::collections::HashMap<PaneId, (usize, usize, &SharedPane)> =
         std::collections::HashMap::new();
+    let mut seen_ids = std::collections::HashSet::new();
     for shared_ws in &layout.workspaces {
         if shared_ws.index >= WORKSPACE_COUNT {
             continue;
@@ -206,35 +205,47 @@ pub(crate) fn apply_shared_layout(
             incoming.insert(pane.pane_id, (shared_ws.index, order, pane));
         }
     }
-
-    // Removals: live local panes absent from the incoming set close out (no `client.kill`).
-    let removed_ids: Vec<PaneId> = ctx
+    let moved_between_workspaces = ctx
         .state
         .current()
         .workspaces
         .iter()
-        .flat_map(|ws| ws.panes.iter())
-        .filter(|pane| !pane.closing && !incoming.contains_key(&pane.id))
-        .map(|pane| pane.id)
-        .collect();
-    let mut pruned: Vec<(PaneId, u64)> = Vec::new();
-    for id in removed_ids {
-        if let Some(generation) = close_pane_remote(ctx, id) {
-            pruned.push((id, generation));
-        }
+        .enumerate()
+        .flat_map(|(workspace, state)| state.panes.iter().map(move |pane| (pane.id, workspace)))
+        .any(|(id, workspace)| {
+            incoming
+                .get(&id)
+                .is_some_and(|(target, _, _)| *target != workspace)
+        });
+    if moved_between_workspaces {
+        ctx.state.pane_canvas_epoch = ctx.state.pane_canvas_epoch.wrapping_add(1);
     }
 
-    // Drain every surviving (non-closing) pane into a pool keyed by id; closing panes stay in place
-    // so their exit animation is undisturbed.
-    let mut pool: std::collections::HashMap<PaneId, Pane> = std::collections::HashMap::new();
+    // Drain every current pane into a pool. A pane absent from the authoritative document is not
+    // dropped on the spot: it is marked closing and stays in its workspace so it scales out the
+    // same way a locally closed pane does, and `Msg::PruneClosed` retires it afterwards. Panes
+    // already closing keep going, undisturbed by the commit.
+    let mut pool = std::collections::HashMap::new();
     let mut closing_by_ws: Vec<Vec<Pane>> = Vec::with_capacity(WORKSPACE_COUNT);
+    let mut pruned: Vec<(PaneId, u64)> = Vec::new();
     for ws in &mut ctx.state.current_mut().workspaces {
         let mut closing = Vec::new();
-        for pane in ws.panes.drain(..) {
-            if pane.closing {
+        for mut pane in ws.panes.drain(..) {
+            if incoming.contains_key(&pane.id) {
+                // A commit that re-adds a pane mid-close cancels the close and hands the live
+                // pane back with its terminal screen and scrollback intact.
+                pane.closing = false;
+                pool.insert(pane.id, pane);
+            } else if pane.closing {
                 closing.push(pane);
             } else {
-                pool.insert(pane.id, pane);
+                // No `client.kill`: the server already dropped this pane at the controller's
+                // request, so re-killing would race a reused id.
+                pane.opening = false;
+                pane.closing = true;
+                pane.terminal.kill();
+                pruned.push((pane.id, pane.pty_generation));
+                closing.push(pane);
             }
         }
         closing_by_ws.push(closing);
@@ -252,6 +263,9 @@ pub(crate) fn apply_shared_layout(
         }
         let mut rebuilt: Vec<Pane> = Vec::with_capacity(shared_ws.panes.len());
         for shared_pane in &shared_ws.panes {
+            if !seen_ids.insert(shared_pane.pane_id) {
+                continue;
+            }
             max_pane_id = max_pane_id.max(shared_pane.pane_id.saturating_add(1));
             max_generation = max_generation.max(shared_pane.generation.saturating_add(1));
 
@@ -262,7 +276,12 @@ pub(crate) fn apply_shared_layout(
                     crate::geometry::default_floating_rect(bounds, shared_pane.pane_id)
                 });
 
-            let mut pane = match pool.remove(&shared_pane.pane_id) {
+            let existing = pool.remove(&shared_pane.pane_id).or_else(|| {
+                ctx.state
+                    .current_mut()
+                    .take_retired_pane(shared_pane.pane_id, shared_pane.generation)
+            });
+            let mut pane = match existing {
                 Some(mut existing) => {
                     // Surviving pane (possibly moved workspace): keep its terminal untouched unless
                     // the generation changed (a respawn), which requires a fresh backend.
@@ -273,8 +292,10 @@ pub(crate) fn apply_shared_layout(
                             .terminal
                             .bind_server_backend(shared_pane.pane_id, shared_pane.generation);
                         existing.pty_generation = shared_pane.generation;
-                        drain_orphan_output(ctx_shared_mut(ctx), &mut existing, shared_pane);
                     }
+                    // Output can race an authoritative removal and re-addition. The shared-session
+                    // buffer is drained only for this newly described live pane.
+                    drain_orphan_output(ctx_shared_mut(ctx), &mut existing, shared_pane);
                     existing
                 }
                 None => {
@@ -321,21 +342,23 @@ pub(crate) fn apply_shared_layout(
         ws.last_move_swap = None;
         ws.last_directional_focus = None;
 
-        // Reattach the workspace's still-closing panes after the rebuilt live set.
-        let mut panes = rebuilt;
-        panes.extend(std::mem::take(&mut closing_by_ws[shared_ws.index]));
-        ws.panes = panes;
+        // Closing panes rejoin their workspace so they keep rendering while they scale out.
+        // They are already excluded from tiling, focus, and counts, so nothing else sees them.
+        rebuilt.extend(std::mem::take(&mut closing_by_ws[shared_ws.index]));
+        ws.panes = rebuilt;
     }
 
-    // Any workspace the layout did not mention keeps only its closing panes.
-    for (index, closing) in closing_by_ws.into_iter().enumerate() {
-        if layout
+    // A partial document still clears the live panes of omitted workspaces.
+    for index in 0..WORKSPACE_COUNT {
+        if !layout
             .workspaces
             .iter()
             .any(|ws| ws.index == index && ws.index < WORKSPACE_COUNT)
         {
-            continue;
+            ctx.state.current_mut().workspaces[index].panes.clear();
         }
+    }
+    for (index, closing) in closing_by_ws.into_iter().enumerate() {
         if !closing.is_empty() {
             ctx.state.current_mut().workspaces[index]
                 .panes
@@ -376,17 +399,17 @@ pub(crate) fn apply_shared_layout(
         shared.canonical_canvas = Some((canvas_cols, canvas_rows));
         shared.last_committed_layout = Some(layout.clone());
     }
-    ctx.state.animation = crate::anim::GeometryAnimation::TileFloat;
-
-    if pruned.is_empty() {
-        Update::full()
-    } else {
-        Update::with_command(prune_closed_batch_command(
+    if !pruned.is_empty() {
+        ctx.state.animation = crate::anim::GeometryAnimation::Close;
+        return Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
             ctx.state.runtime_epoch,
             pruned,
-            crate::anim::close_delay(ctx.state.config.animations),
-        ))
+            crate::anim::retained_pane_timeout(ctx.state.config.animations),
+        ));
     }
+    ctx.state.animation = crate::anim::GeometryAnimation::TileFloat;
+
+    Update::full()
 }
 
 /// Reborrow the shared-session bookkeeping mutably; used by the reconciler's orphan drain so it can
@@ -537,7 +560,7 @@ mod reconciler_tests {
     use super::*;
     use crate::HyprmuxApp;
     use crate::Msg;
-    use crate::pane_lifecycle::find_pane;
+    use crate::pane_lifecycle::{find_pane, find_pane_mut};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
     use crate::state::SharedSessionState;
@@ -620,7 +643,7 @@ mod reconciler_tests {
     }
 
     #[test]
-    fn remote_removal_closes_pane_without_sending_kill() {
+    fn remote_removal_drops_pane_without_sending_kill() {
         in_stack(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             backend.set_viewport(VIEWPORT);
@@ -643,6 +666,87 @@ mod reconciler_tests {
                 .filter(|msg| matches!(msg, ClientOutbound::Control(ClientMessage::Kill { .. })))
                 .count();
             assert_eq!(kills, 0, "reconciler removal must not emit a Kill frame");
+            // The pane animates out rather than vanishing, exactly as a local close does.
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(workspace.panes.iter().all(|pane| pane.closing));
+            assert_eq!(workspace.visible_count(), 0);
+
+            let epoch = backend.state().runtime_epoch;
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(Msg::PruneClosed(epoch, 1, generation))
+                .expect("prune");
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(workspace.panes.is_empty());
+        });
+    }
+
+    #[test]
+    fn same_generation_readd_restores_the_retired_terminal_screen() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            let output = (0..48)
+                .map(|row| format!("retained {row}\r\n"))
+                .collect::<String>();
+            let pane = find_pane_mut(backend.state_mut(), 1).expect("seed pane");
+            pane.terminal.process_server_output(output.as_bytes());
+            assert!(pane.terminal.set_scrollback(2));
+            let before = pane.terminal.capture_text();
+            assert!(!before.trim().is_empty());
+            backend.render();
+
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout_with_panes(&[]),
+                })
+                .expect("remove pane");
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 2,
+                    author: 2,
+                    layout: layout_with_panes(&[(1, 0)]),
+                })
+                .expect("restore pane");
+
+            let pane = find_pane(backend.state_mut(), 1).expect("restored pane");
+            assert_eq!(pane.terminal.capture_text(), before);
+            assert_eq!(pane.terminal.scrollback_offset(), 2);
+        });
+    }
+
+    #[test]
+    fn shared_layout_readd_does_not_duplicate_a_pane_id() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let mut layout = layout_with_panes(&[(1, 0)]);
+            let duplicate = layout.workspaces[0].panes[0].clone();
+            layout.workspaces[0].panes.push(duplicate);
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout,
+                })
+                .expect("dispatch duplicate-id commit");
+
+            assert_eq!(
+                backend.state().current().workspaces[0].panes.len(),
+                1,
+                "a repeated shared id must rebuild one live pane"
+            );
         });
     }
 

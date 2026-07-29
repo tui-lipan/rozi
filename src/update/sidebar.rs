@@ -375,7 +375,7 @@ pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     match close {
         crate::state::SidebarClose::Pane(id) => {
             crate::ops::exit::clear_pending(ctx);
-            crate::pane_lifecycle::begin_close_pane(ctx, id, ctx.state.config.animations)
+            crate::pane_lifecycle::close_pane(ctx, id)
         }
         // The row carries the live discovered entry the identity was built from, so the kill acts
         // on what is actually on screen rather than re-looking it up and risking a stale match.
@@ -885,7 +885,10 @@ fn text_rows(bytes: &[u8], error: bool) -> Vec<SidebarCommandRow> {
         .take(COMMAND_MAX_ROWS)
         .filter_map(|line| {
             let bounded = &line[..line.len().min(COMMAND_RAW_ROW_CHARS * 4)];
-            let sanitized = crate::plain_text::sanitize(&String::from_utf8_lossy(bounded));
+            let sanitized =
+                tui_lipan::utils::sanitize_display_text(&String::from_utf8_lossy(bounded))
+                    .trim()
+                    .to_string();
             if sanitized.is_empty() {
                 None
             } else if error {

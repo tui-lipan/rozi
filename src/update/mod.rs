@@ -175,12 +175,16 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ScratchResize(from_y, y) => panes::scratch_resize(ctx, from_y, y),
         Msg::EndScratchResize => panes::end_scratch_resize(ctx),
         Msg::FinishOpen(epoch, id, generation) => panes::finish_open(ctx, epoch, id, generation),
+        Msg::PruneClosed(epoch, id, generation) => {
+            crate::pane_lifecycle::prune_closed_pane(ctx, epoch, id, generation)
+        }
         Msg::ActivatePane(epoch, id, generation) => {
             panes::activate_pane(ctx, epoch, id, generation)
         }
-        Msg::PruneClosed(epoch, id, generation) => panes::prune_closed(ctx, epoch, id, generation),
+        Msg::CopyFeedbackExpired(attachment, id, epoch) => {
+            panes::copy_feedback_expired(ctx, attachment, id, epoch)
+        }
         Msg::PaneInput(id, input) => panes::pane_input(ctx, id, input),
-        Msg::CopyFlashExpired(id, flash_id) => panes::copy_flash_expired(ctx, id, flash_id),
         Msg::PaneKey(id, key) => panes::pane_key(ctx, id, key),
         Msg::ForwardPrefix(key) => panes::forward_prefix(ctx, key),
         Msg::PaneMouse(id, bytes) => panes::pane_mouse(ctx, id, bytes),
@@ -305,6 +309,21 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         } => session::renamed(ctx, epoch, name),
     };
 
+    ctx.state.current_mut().retired_panes.expire();
+    for attachment in ctx.state.background.values_mut() {
+        attachment.retired_panes.expire();
+    }
+    let stale_search = ctx.state.search.as_ref().is_some_and(|search| {
+        crate::pane_lifecycle::find_pane(&ctx.state, search.target).is_none()
+    });
+    if stale_search {
+        ctx.state.search = None;
+        ctx.state.commands_dirty = true;
+    }
+    if stale_search {
+        let command = update.command.take();
+        update = Update::with_command(command);
+    }
     clear_finished_unseen_on_focus(ctx);
     sidebar::sync_tree_roots(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,

@@ -328,8 +328,8 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     crate::popup::kill_if_open(ctx);
     crate::ops::exit::clear_pending(ctx);
     ctx.state.copy_mode = None;
+    crate::copy_mode::clear_copy_feedback(ctx);
     ctx.state.hint_mode = None;
-    ctx.state.copy_flash = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
     let Some(client) = ctx.state.current().session_client.clone() else {

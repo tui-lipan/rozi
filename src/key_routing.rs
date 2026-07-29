@@ -128,13 +128,14 @@ fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
         .panes
         .iter()
         .filter(|pane| !pane.closing)
-        .find(|pane| ctx.has_focus_within_key(view::pane_window_key(pane.id)))
+        .find(|pane| ctx.has_focus_within_key(view::pane_window_key(pane.id, pane.pty_generation)))
         .map(|pane| pane.id)
 }
 
 pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
+    let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
     if let Some(id) = ctx.state.current().focused_pane
-        && ctx.state.current().workspaces[ctx.state.current().active_workspace]
+        && workspace
             .panes
             .iter()
             .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)

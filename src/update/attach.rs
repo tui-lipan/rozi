@@ -153,7 +153,7 @@ pub(super) fn apply_attached_panes(
     }
 }
 
-/// Spawn every non-closing pane the client holds in state on a freshly attached (empty) session.
+/// Spawn every live pane the client holds in state on a freshly attached (empty) session.
 /// Used on initial attach and after detach when the new ephemeral server owns no panes yet.
 /// Spawn the panes the client already holds in state onto the freshly attached session, returning
 /// their `(pane_id, generation)` so the caller can schedule the open/activate reveal timers (these
@@ -166,7 +166,7 @@ pub(crate) fn spawn_state_panes_on_session(
     };
     // Fallback palette for any pane whose screen never cached one, so the server seeds a theme
     // palette before the PTY spawns and the child's startup color queries are answered correctly.
-    let fallback_palette = crate::ops::theme::terminal_palette(
+    let fallback_palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         crate::ops::theme::pane_frame_background(
             &ctx.state.theme,
@@ -203,56 +203,51 @@ pub(crate) fn spawn_state_panes_on_session(
     let control_socket = ctx.state.control_socket_path.clone();
     let mut next_generation = ctx.state.current().next_pty_generation;
     let mut replay_inserts: Vec<((crate::state::PaneId, u64), String)> = Vec::new();
-    for pane in ctx
-        .state
-        .current_mut()
-        .workspaces
-        .iter_mut()
-        .flat_map(|workspace| workspace.panes.iter_mut())
-        .filter(|pane| !pane.closing)
-    {
-        let generation = next_generation;
-        next_generation = next_generation.saturating_add(1);
-        pane.pty_generation = generation;
-        pane.terminal.bind_server_backend(pane.id, generation);
-        // The initial pane's launch cwd is the *local* directory hyprmux was started in
-        // (`config.cwd`), which is meaningless on a remote server: it would be sent as a spawn cwd
-        // the server cannot use, and — because remote panes get no OSC 7 cwd report — displayed as
-        // the pane's location indefinitely. Drop it so the pane shows/uses the server's own cwd.
-        if is_remote {
-            pane.identity.cwd = None;
-        }
-        let env = integration_env
-            .iter()
-            .cloned()
-            .chain(pane_env(control_socket.as_deref(), pane, is_remote))
-            .collect::<Vec<_>>();
-        // A replay command is not sent as the spawn command: the pane starts as a plain
-        // interactive shell and the command is injected as type-ahead input once the spawn
-        // succeeds (see `Attachment::pending_replay_inputs`).
-        let command = if pane.identity.replay {
-            if let Some(command) = pane.identity.command.clone() {
-                replay_inserts.push(((pane.id, generation), command));
+    for workspace in &mut ctx.state.current_mut().workspaces {
+        for pane in workspace.panes.iter_mut().filter(|pane| !pane.closing) {
+            let generation = next_generation;
+            next_generation = next_generation.saturating_add(1);
+            pane.pty_generation = generation;
+            pane.terminal.bind_server_backend(pane.id, generation);
+            // The initial pane's launch cwd is the *local* directory hyprmux was started in
+            // (`config.cwd`), which is meaningless on a remote server: it would be sent as a spawn cwd
+            // the server cannot use, and — because remote panes get no OSC 7 cwd report — displayed as
+            // the pane's location indefinitely. Drop it so the pane shows/uses the server's own cwd.
+            if is_remote {
+                pane.identity.cwd = None;
             }
-            None
-        } else {
-            pane.identity.command.clone()
-        };
-        client.spawn_pane(
-            pane.id,
-            generation,
-            command,
-            pane.identity.cwd.clone(),
-            pane.terminal.cols,
-            pane.terminal.rows,
-            pane.identity.keep_open,
-            env,
-            pane.identity.custom_title.clone(),
-            pane.terminal.last_palette.unwrap_or(fallback_palette),
-            shell.clone(),
-            command_shell.clone(),
-        );
-        targets.push((pane.id, generation));
+            let env = integration_env
+                .iter()
+                .cloned()
+                .chain(pane_env(control_socket.as_deref(), pane, is_remote))
+                .collect::<Vec<_>>();
+            // A replay command is not sent as the spawn command: the pane starts as a plain
+            // interactive shell and the command is injected as type-ahead input once the spawn
+            // succeeds (see `Attachment::pending_replay_inputs`).
+            let command = if pane.identity.replay {
+                if let Some(command) = pane.identity.command.clone() {
+                    replay_inserts.push(((pane.id, generation), command));
+                }
+                None
+            } else {
+                pane.identity.command.clone()
+            };
+            client.spawn_pane(
+                pane.id,
+                generation,
+                command,
+                pane.identity.cwd.clone(),
+                pane.terminal.cols,
+                pane.terminal.rows,
+                pane.identity.keep_open,
+                env,
+                pane.identity.custom_title.clone(),
+                pane.terminal.last_palette.unwrap_or(fallback_palette),
+                shell.clone(),
+                command_shell.clone(),
+            );
+            targets.push((pane.id, generation));
+        }
     }
     ctx.state.current_mut().next_pty_generation = next_generation;
     for (key, command) in replay_inserts {

@@ -1,6 +1,7 @@
 use tui_lipan::prelude::*;
+use tui_lipan::utils::GridSelection;
 
-use crate::state::{CapStyle, LayoutKind, Pane, PaneId, PaneTitlebarMode, TileGap, Workspace};
+use crate::state::{LayoutKind, Pane, PaneId, PaneTitlebarMode, TileGap, Workspace};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
@@ -73,6 +74,7 @@ fn integrated_half_titlebar_top_edge(title_bg: Color, frame_bg: Color) -> EdgeDe
         )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn pane_element(
     app: &HyprmuxApp,
     ctx: &Context<HyprmuxApp>,
@@ -92,9 +94,7 @@ pub(crate) fn pane_element(
     } else {
         "󰖲"
     };
-    let badge = if pane.closing {
-        Some("closing")
-    } else if pane.fullscreen {
+    let badge = if pane.fullscreen {
         Some("fullscreen")
     } else if pane.floating {
         Some("floating")
@@ -223,7 +223,7 @@ pub(crate) fn pane_element(
         // `Padded` keeps the title flush with the frame below, with blank side padding. The cap
         // styles instead draw the titlebar color as end caps over the backdrop, so the row reads
         // as a rounded/pointed pill: the fill (and text) live in a Flex middle between the caps.
-        let title_row: Element = match ctx.state.config.pane.title_style.caps() {
+        let title_row: Element = match ctx.state.config.pane.title_style.glyphs() {
             None => {
                 let mut row = HStack::new()
                     .style(title_bar_fill_style)
@@ -293,7 +293,7 @@ pub(crate) fn pane_element(
             .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
             .child(title_row)
             .into();
-        if merge.left_seam && ctx.state.config.pane.title_style.caps().is_none() {
+        if merge.left_seam && ctx.state.config.pane.title_style.glyphs().is_none() {
             // A `Padded` title has no cap to sit on the seam, so keep its row off the shared
             // border column: the spacer is an empty Text that leaves the seam cell untouched for
             // the neighbor's border glyph. (Capped titles instead draw their left cap there, so
@@ -315,21 +315,13 @@ pub(crate) fn pane_element(
         id,
         exited,
     );
-    let mut selection_style = theme.text_selection;
-    if ctx
-        .state
-        .copy_flash
-        .is_some_and(|flash| flash.target == id && !flash.clearing)
-    {
-        selection_style = selection_style.patch(ClipboardConfig::default().copy_feedback_style);
-    }
 
     let mut terminal_widget = Terminal::new()
         .snapshot(snapshot)
         .paste_shortcut_behavior(TerminalPasteShortcutBehavior::Performable)
         .show_cursor(show_cursor)
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
-        .selection_style(selection_style)
+        .selection_style(theme.text_selection)
         .focus_style(Style::default())
         .focusable(terminal_ready)
         .width(Length::Flex(1))
@@ -360,15 +352,8 @@ pub(crate) fn pane_element(
             )
             .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
     }
-    let controlled_selection =
-        copy_mode_selection(ctx, id).or_else(|| copy_flash_selection(ctx, id));
-    if controlled_selection.is_some()
-        || ctx
-            .state
-            .copy_flash
-            .is_some_and(|flash| flash.target == id && flash.clearing)
-    {
-        terminal_widget = terminal_widget.selection(controlled_selection);
+    if let Some(selection) = copy_mode_selection(ctx, id) {
+        terminal_widget = terminal_widget.selection(Some(selection));
     }
     let terminal: Element = terminal_widget.into();
     let terminal = terminal.key(pane_terminal_key(id));
@@ -421,7 +406,7 @@ pub(crate) fn pane_element(
                         .into()
                 });
                 let title_style = ctx.state.config.pane.title_style;
-                let caps = title_style.caps();
+                let caps = title_style.glyphs();
                 let title_row: Element = match caps {
                     None => {
                         let mut row = HStack::new()
@@ -584,38 +569,100 @@ pub(crate) fn pane_element(
     let pane_tree: Element = ThemeProvider::new(ctx.state.theme.clone().focus(Style::default()))
         .child(window_region.child(window_stack))
         .into();
-    let element: Element = Animated::new(pane_tree)
+    let animated = Animated::new(pane_tree)
+        .height(Length::Flex(1))
         .opacity(opacity)
-        .transition(app.window_opacity_config(ctx, pane))
-        .into();
+        .transition(app.window_opacity_config(ctx, pane));
+    // No `Animated::auto_exit` here. Framework retention freezes the already reconciled subtree
+    // and can only clip it, so a pane would be sliced rather than scaled. The close animation is
+    // the spawn animation in reverse: `pane.closing` keeps the pane described at a rectangle that
+    // shrinks toward its centre, which re-lays the whole subtree out every frame so the border
+    // scales with it. `prune_closed_pane` drops the state once it finishes.
+    let element: Element = animated.into();
 
-    element.key(pane_window_key(id))
+    element.key(pane_window_key(id, pane.pty_generation))
 }
 
 fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> TerminalRenderSnapshot {
+    let snapshot = pane.terminal.snapshot();
     if let Some(hints) = ctx
         .state
         .hint_mode
         .as_ref()
         .filter(|hints| hints.target == pane.id)
     {
-        return pane.terminal.hint_snapshot(
-            &hints.matches,
-            &hints.labels,
-            &hints.input,
-            ctx.state.theme.text_selection,
-            active_search_match_style(),
-        );
+        let decorations = hints
+            .matches
+            .iter()
+            .enumerate()
+            .filter_map(|(index, matched)| {
+                let label = hints.labels.get(index)?;
+                if !label.starts_with(&hints.input) {
+                    return None;
+                }
+                Some([
+                    TerminalDecoration::highlight(
+                        matched.row,
+                        matched.start_col..matched.end_col,
+                        ctx.state.theme.text_selection,
+                    ),
+                    TerminalDecoration::label(
+                        matched.row,
+                        matched.end_col,
+                        Span::new(label.as_str()).style(active_search_match_style()),
+                    ),
+                ])
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        return snapshot.decorated(&decorations);
     }
     let Some(query) = search_highlight_query(ctx, pane.id) else {
-        return pane.terminal.snapshot();
+        return snapshot;
     };
-    pane.terminal.search_highlighted_snapshot(
-        query,
-        search_match_style(),
-        active_search_match_style(),
-        active_search_highlight(ctx, pane),
-    )
+    let needle = query.to_ascii_lowercase();
+    if needle.is_empty() {
+        return snapshot;
+    }
+
+    let active = active_search_highlight(ctx, pane);
+    let mut decorations = Vec::new();
+    for (row, line) in snapshot.text.lines().enumerate() {
+        let haystack = line.to_ascii_lowercase();
+        let mut search_from = 0usize;
+        while search_from < haystack.len() {
+            let Some(relative_start) = haystack[search_from..].find(&needle) else {
+                break;
+            };
+            let start = search_from + relative_start;
+            let end = start + needle.len();
+            let line_spans = [Span::new(line)];
+            let start_col = tui_lipan::utils::spans::char_col_to_display_col(
+                &line_spans,
+                line[..start].chars().count(),
+            );
+            let end_col = tui_lipan::utils::spans::char_col_to_display_col(
+                &line_spans,
+                line[..end].chars().count(),
+            );
+            if start_col < end_col {
+                let style = if active.is_some_and(|active| {
+                    active.line == row && active.start_col == start_col && active.end_col == end_col
+                }) {
+                    active_search_match_style()
+                } else {
+                    search_match_style()
+                };
+                decorations.push(TerminalDecoration::highlight(
+                    row,
+                    start_col..end_col,
+                    style,
+                ));
+            }
+            search_from = end;
+        }
+    }
+    snapshot.decorated(&decorations)
 }
 
 fn search_highlight_query(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<&str> {
@@ -1027,40 +1074,28 @@ fn junction_target_at(targets: &[ResizeJunctionTarget], along: f32) -> Option<Pa
 }
 
 /// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
-/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching `extract_text`).
+/// cursor cell; with an anchor it spans anchor→cursor inclusive (matching copy extraction).
 fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
     let copy = ctx
         .state
         .copy_mode
         .as_ref()
         .filter(|copy| copy.target == id)?;
-    let cursor = (copy.cursor_row, copy.cursor_col);
-    let (a, b) = copy
-        .anchor
-        .map(|anchor| (anchor, cursor))
-        .unwrap_or((cursor, cursor));
-    Some(selection_from_points(a, b))
+    let selection = copy.navigation.selection().unwrap_or_else(|| {
+        let (row, col) = copy.navigation.cursor();
+        GridSelection::new(tui_lipan::utils::GridPos { row, col })
+    });
+    Some(selection_for_render(&selection))
 }
 
-fn copy_flash_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
-    let flash = ctx
-        .state
-        .copy_flash
-        .filter(|flash| flash.target == id && !flash.clearing)?;
-    Some(selection_from_points(flash.selection.0, flash.selection.1))
-}
-
-fn selection_from_points(a: (usize, usize), b: (usize, usize)) -> TerminalSelection {
-    let (start, end) = if a <= b { (a, b) } else { (b, a) };
+fn selection_for_render(selection: &GridSelection) -> TerminalSelection {
+    let (start, end) = selection.normalized();
     TerminalSelection {
-        anchor: tui_lipan::utils::GridPos {
-            row: start.0,
-            col: start.1,
-        },
+        anchor: start,
         // Exclusive end column so the cursor/anchor cell is included in the highlight.
         cursor: tui_lipan::utils::GridPos {
-            row: end.0,
-            col: end.1 + 1,
+            row: end.row,
+            col: end.col.saturating_add(1),
         },
     }
 }

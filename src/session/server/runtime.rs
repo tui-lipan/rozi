@@ -60,12 +60,20 @@ impl SessionServer {
         }
 
         let value = status
-            .map(|value| crate::plain_text::sanitize(&value))
+            .map(|value| {
+                tui_lipan::utils::sanitize_display_text(&value)
+                    .trim()
+                    .to_string()
+            })
             .map(|value| value.chars().take(PANE_STATUS_MAX_LEN).collect::<String>())
             .filter(|value| !value.is_empty());
         let reason = value.as_ref().and_then(|_| {
             reason
-                .map(|reason| crate::plain_text::sanitize(&reason))
+                .map(|reason| {
+                    tui_lipan::utils::sanitize_display_text(&reason)
+                        .trim()
+                        .to_string()
+                })
                 .map(|reason| {
                     reason
                         .chars()

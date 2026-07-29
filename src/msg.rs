@@ -181,6 +181,7 @@ pub enum Msg {
     FinishOpen(u64, PaneId, u64),
     ActivatePane(u64, PaneId, u64),
     PruneClosed(u64, PaneId, u64),
+    CopyFeedbackExpired(u64, PaneId, u64),
     PaneInput(PaneId, TerminalInputEvent),
     PaneKey(PaneId, KeyEvent),
     /// Forward one configured prefix key after the hidden `<prefix> <prefix>` chord matches.
@@ -188,7 +189,6 @@ pub enum Msg {
     PaneMouse(PaneId, Vec<u8>),
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
-    CopyFlashExpired(PaneId, u64),
     ControlRequest(control::ControlEnvelope),
     SessionConnected {
         epoch: u64,

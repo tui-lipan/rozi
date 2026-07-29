@@ -2,10 +2,10 @@
 //! `HyprmuxApp` render. Only `Bar` may add a row before the frame.
 
 use hyprmux::HyprmuxApp;
-use hyprmux::state::{CapStyle, Pane, PaneId, PaneTitlebarMode};
+use hyprmux::state::{Pane, PaneId, PaneTitlebarMode};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
-use tui_lipan::prelude::{FloatRect, Rect};
+use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 
 const TITLE: &str = "nvim src/pane.rs";
 

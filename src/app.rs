@@ -267,7 +267,7 @@ impl Component for HyprmuxApp {
                 if let Err(err) = platform::server_lifecycle::on_hangup(move || {
                     hangup_link.send(Msg::Hangup);
                 }) {
-                    // Not fatal: without it, a closing terminal kills the client outright, which
+                    // Not fatal: without it, an exiting terminal kills the client outright, which
                     // loses the detach-time layout mirror but leaves a named session's server (and
                     // its PTYs) running exactly as before.
                     eprintln!("hyprmux: could not watch for terminal hangup: {err}");
@@ -416,12 +416,13 @@ impl HyprmuxApp {
             return anim::instant_transition();
         }
 
-        let duration = if pane.closing {
-            animations.close_duration
-        } else {
-            animations.geometry_duration
-        };
-        anim::geometry_transition(duration)
+        // The close scale has to finish inside the close animation's own window. Running it at
+        // `geometry_duration` (which is longer) means the pane is pruned part-way through, so the
+        // slow start of the easing is all that is ever seen.
+        if pane.closing {
+            return anim::close_geometry_transition(animations.close_duration);
+        }
+        anim::geometry_transition(animations.geometry_duration)
     }
 
     pub(crate) fn window_opacity_config(
@@ -434,6 +435,7 @@ impl HyprmuxApp {
             return anim::instant_transition();
         }
         if pane.closing {
+            // The fade rides the close scale, so it has to share its duration.
             return if animations.close {
                 TransitionConfig {
                     duration: animations.close_duration,
@@ -443,7 +445,7 @@ impl HyprmuxApp {
                 anim::instant_transition()
             };
         }
-        if animations.spawn {
+        if pane.opening && animations.spawn {
             TransitionConfig {
                 duration: animations.geometry_duration,
                 easing: Easing::EaseOutQuad,
@@ -535,6 +537,10 @@ fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
         enable_osc52: config.clipboard.enable_osc52,
         ..ClipboardConfig::default()
     }
+}
+
+pub(crate) fn clipboard_copy_feedback_duration(config: &HyprmuxConfig) -> Duration {
+    Duration::from_millis(clipboard_config(config).copy_feedback_duration_ms as u64)
 }
 
 pub fn run() -> Result<()> {

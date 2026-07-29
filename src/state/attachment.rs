@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+
+use tui_lipan::prelude::ExitQueue;
 
 use super::{
     Pane, PaneId, PendingPaneSpawn, PendingSessionAttach, SharedSessionState, WORKSPACE_COUNT,
@@ -87,9 +90,12 @@ pub struct Attachment {
     /// Latest authoritative layout received while this attachment was in the background. Applied
     /// when it becomes current so background protocol traffic never mutates the visible session.
     pub pending_background_layout: Option<(u64, crate::shared_layout::SharedLayout)>,
-    /// Structural closes deferred while this attachment is not current. Applied on switch-back,
-    /// when layout mutation and focus repair can safely target this attachment.
+    /// Structural closes deferred while this attachment is parked. Applied after it returns to the
+    /// foreground and regains layout control.
     pub pending_background_closes: Vec<(PaneId, u64)>,
+    /// Recently removed authoritative panes retained only so a same-generation layout correction
+    /// can restore the client-side terminal screen while Canvas owns the visual exit subtree.
+    pub retired_panes: ExitQueue<(PaneId, u64), Pane>,
     /// Shared-session bookkeeping for the attached named/ephemeral session: the layout lease,
     /// revision counters, canonical canvas, and reconciliation buffers. `None` until the session
     /// handshake completes (and while purely local, pre-attach).
@@ -135,11 +141,40 @@ impl Attachment {
             pending_replay_inputs: HashMap::new(),
             pending_background_layout: None,
             pending_background_closes: Vec::new(),
+            retired_panes: ExitQueue::with_exit_timeout(crate::anim::retained_pane_timeout(
+                crate::anim::WindowAnimationConfig::default(),
+            )),
             shared: None,
             auto_created: false,
             engaged: false,
             parked_seq: 0,
         }
+    }
+
+    pub fn retire_pane(&mut self, pane: Pane, timeout: Duration) {
+        let key = (pane.id, pane.pty_generation);
+        let keys = self
+            .retired_panes
+            .iter()
+            .map(|(key, _, _)| *key)
+            .collect::<Vec<_>>();
+        let mut replacement = ExitQueue::with_exit_timeout(timeout);
+        for key in keys {
+            if let Some(transfer) = self.retired_panes.transfer_out(&key) {
+                replacement.adopt(transfer);
+            }
+        }
+        self.retired_panes = replacement;
+        self.retired_panes.sync([(key, pane)]);
+        self.retired_panes
+            .sync(std::iter::empty::<((PaneId, u64), Pane)>());
+    }
+
+    pub fn take_retired_pane(&mut self, id: PaneId, generation: u64) -> Option<Pane> {
+        self.retired_panes.expire();
+        self.retired_panes
+            .transfer_out(&(id, generation))
+            .map(|transfer| transfer.into_parts().1)
     }
 
     /// Drop queued replay inputs whose spawn can no longer complete. Called when the session

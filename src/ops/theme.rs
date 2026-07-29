@@ -6,7 +6,7 @@ use crate::state::{Mode, State, ThemePickerPreview, ThemePreset};
 use crate::{HyprmuxApp, Msg, schedule_theme_tick};
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
-    Theme::from_host_colors(colors).with_extension(colors)
+    Theme::from_host_colors(colors)
 }
 
 /// The host terminal's probed default background, if hyprmux queried it at startup. Carried on the
@@ -22,61 +22,42 @@ pub(crate) fn host_background(state: &State) -> Option<Color> {
 
 /// Set hyprmux's subdued caret default while leaving explicit theme `[caret]` colors intact.
 pub(crate) fn apply_default_caret_palette(theme: Theme) -> Theme {
-    let accent_color = style_fg(theme.role(ThemeRole::Accent));
+    let accent_color = theme
+        .role(ThemeRole::Accent)
+        .resolved_fg()
+        .filter(|color| !color.is_sentinel());
     if theme.caret.color != accent_color {
         return theme;
     }
 
-    let caret_color = style_fg(theme.role(ThemeRole::Base))
+    let caret_color = theme
+        .role(ThemeRole::Base)
+        .resolved_fg()
+        .filter(|color| !color.is_sentinel())
         .map(|text| accent_color.map_or(text, |accent| text.blend_toward(accent, 0.40)))
         .or(accent_color);
     theme.caret_color(caret_color)
 }
 
-/// Resolve a transparency-sentinel `surface.backdrop` to a concrete color.
-///
-/// A custom theme that extends a preset with `backdrop = "backdrop"` (or `"transparent"`/`"reset"`)
-/// lands a sentinel [`Color`] with no RGB. That leaks into every consumer that needs a real color -
-/// the terminal default background reported to OSC 11 background queries, embedded-pane default-bg
-/// cells, workbar badge text and end caps - each of which then falls back to pitch black. Pin the
-/// backdrop to the host terminal's own background so those surfaces track the real terminal bg
-/// instead of collapsing to black; fall back to the theme's panel surface when the host bg is
-/// unknown (e.g. the startup color query failed).
-///
-/// This deliberately snapshots the sentinel to a *concrete* color rather than preserving literal
-/// pass-through transparency: a queried color keeps every consumer (including OSC 11 replies and
-/// contrast math, which cannot be transparent) on the terminal's background, and leaves no unset
-/// channel that a future consumer could accidentally leak black through again. The cost is that a
-/// live wallpaper/blur behind the terminal is matched by color, not shown through the panes. If
-/// real pass-through is ever wanted, add it as a *separate* token (e.g. `backdrop = "transparent"`)
-/// that this resolver skips - keep `"backdrop"` meaning "the terminal's background color". Do not
-/// "fix" this back into leaving the channel unset; that reintroduces the black-surface bug.
-pub(crate) fn concretize_backdrop(mut theme: Theme, host_bg: Option<Color>) -> Theme {
-    if theme.surface.backdrop.to_rgb().is_none() {
-        theme.surface.backdrop = host_bg
-            .filter(|color| color.to_rgb().is_some())
-            .unwrap_or(theme.surface.panel);
-    }
-    theme
-}
-
 /// Apply the `pane.background_follows_terminal` preference on top of a freshly resolved theme,
-/// then run it through [`concretize_backdrop`].
+/// then concretize its backdrop through the framework theme helper.
 ///
 /// When `follow_terminal` is set, `surface.backdrop` is pinned to the transparency sentinel
 /// regardless of what the active theme authored - including a preset or custom file that already
 /// set a concrete color - so it always resolves to the host terminal's background. When unset,
 /// the theme's own `backdrop` is left as authored (concrete, or a sentinel from a custom file);
-/// `concretize_backdrop` still resolves any sentinel so nothing collapses to black.
+/// `Theme::concretize_backdrop` still resolves any sentinel so nothing collapses to black.
 pub(crate) fn apply_backdrop_policy(
-    mut theme: Theme,
+    theme: Theme,
     host_bg: Option<Color>,
     follow_terminal: bool,
 ) -> Theme {
+    let mut theme = apply_default_caret_palette(theme);
     if follow_terminal {
         theme.surface.backdrop = Color::Backdrop;
     }
-    concretize_backdrop(apply_default_caret_palette(theme), host_bg)
+    theme.surface.backdrop = theme.concretize_backdrop(host_bg);
+    theme
 }
 
 /// Re-resolve the active theme from `config.theme.name` and reapply the current backdrop
@@ -276,7 +257,7 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
                 focused_pane == Some(pane.id),
                 highlight_focused_background,
             );
-            let palette = terminal_palette(theme, background);
+            let palette = TerminalColorPalette::from_theme(theme, background);
             let pane_changed = pane.terminal.set_palette(palette);
             changed |= pane_changed;
             if pane_changed && let Some(client) = &client {
@@ -285,10 +266,12 @@ pub(crate) fn apply_terminal_palette_to_state(state: &mut State) -> bool {
         }
     }
     if let Some(scratch) = state.scratch.as_mut() {
-        changed |= scratch.terminal.set_palette(terminal_palette(
-            theme,
-            pane_frame_background(theme, true, highlight_focused_background),
-        ));
+        changed |= scratch
+            .terminal
+            .set_palette(TerminalColorPalette::from_theme(
+                theme,
+                pane_frame_background(theme, true, highlight_focused_background),
+            ));
     }
     changed
 }
@@ -315,18 +298,38 @@ pub(crate) fn pane_frame_foreground(
     }
 
     readable_chrome_color(
-        style_fg(theme.border)
-            .or_else(|| style_fg(theme.muted))
+        theme
+            .border
+            .resolved_fg()
+            .filter(|color| !color.is_sentinel())
+            .or_else(|| {
+                theme
+                    .muted
+                    .resolved_fg()
+                    .filter(|color| !color.is_sentinel())
+            })
             .unwrap_or(theme.surface.menu),
         pane_frame_background(theme, false, false),
-        style_fg(theme.primary)
-            .or_else(|| style_fg(theme.muted))
+        theme
+            .primary
+            .resolved_fg()
+            .filter(|color| !color.is_sentinel())
+            .or_else(|| {
+                theme
+                    .muted
+                    .resolved_fg()
+                    .filter(|color| !color.is_sentinel())
+            })
             .unwrap_or(Color::Gray),
     )
 }
 
 pub(crate) fn pane_title_foreground(theme: &Theme, focused: bool, background: Color) -> Color {
-    let fallback = style_fg(theme.primary).unwrap_or_else(|| fallback_text_color(background));
+    let fallback = theme
+        .primary
+        .resolved_fg()
+        .filter(|color| !color.is_sentinel())
+        .unwrap_or_else(|| fallback_text_color(background));
     let preferred = if focused {
         theme.surface.backdrop
     } else {
@@ -344,63 +347,24 @@ pub(crate) fn pane_border_title_foreground(
         return readable_chrome_color(
             theme.border_active,
             background,
-            style_fg(theme.primary).unwrap_or_else(|| fallback_text_color(background)),
+            theme
+                .primary
+                .resolved_fg()
+                .filter(|color| !color.is_sentinel())
+                .unwrap_or_else(|| fallback_text_color(background)),
         );
     }
 
     pane_title_foreground(theme, false, background)
 }
 
-pub(crate) fn terminal_palette(theme: &Theme, background: Color) -> TerminalColorPalette {
-    let foreground = style_fg(theme.primary).unwrap_or(Color::White);
-    let background = clean_terminal_color(background, Color::Black);
-    if let Some(host_colors) = theme.extension::<HostTerminalColors>() {
-        return TerminalColorPalette::from_host_colors(*host_colors, background);
-    }
-
-    let muted = style_fg(theme.muted).unwrap_or(theme.surface.menu);
-    let accent = style_fg(theme.accent).unwrap_or(theme.border_active);
-    let purple = theme.file_icons.purple;
-    let cyan = theme.file_icons.cyan;
-
-    TerminalColorPalette::new(
-        foreground,
-        background,
-        [
-            background,
-            theme.status.error,
-            theme.status.success,
-            theme.status.warning,
-            theme.status.info,
-            purple,
-            cyan,
-            foreground,
-            muted,
-            theme.status.error.lighten_by(0.18),
-            theme.status.success.lighten_by(0.18),
-            theme.status.warning.lighten_by(0.18),
-            accent.lighten_by(0.12),
-            purple.lighten_by(0.18),
-            cyan.lighten_by(0.18),
-            foreground.lighten_by(0.12),
-        ],
-    )
-}
-
-pub(crate) fn style_fg(style: Style) -> Option<Color> {
-    style
-        .fg
-        .map(|paint| clean_terminal_color(paint.color(), Color::Reset))
-        .filter(|color| *color != Color::Reset)
-}
-
 fn readable_chrome_color(preferred: Color, background: Color, fallback: Color) -> Color {
-    let preferred = clean_terminal_color(preferred, Color::Reset);
+    let preferred = preferred.resolve(Color::Reset);
     if is_readable_chrome_pair(preferred, background) {
         return preferred;
     }
 
-    let fallback = clean_terminal_color(fallback, Color::Reset);
+    let fallback = fallback.resolve(Color::Reset);
     if is_readable_chrome_pair(fallback, background) {
         return fallback;
     }
@@ -423,13 +387,6 @@ fn fallback_text_color(background: Color) -> Color {
         Color::White
     } else {
         Color::Black
-    }
-}
-
-fn clean_terminal_color(color: Color, fallback: Color) -> Color {
-    match color {
-        Color::Reset | Color::Backdrop | Color::Transparent => fallback,
-        _ => color,
     }
 }
 
@@ -542,7 +499,7 @@ mod tests {
         let theme = system_theme_from_host_colors(colors);
         let pane_background = Color::rgb(1, 2, 3);
 
-        let palette = terminal_palette(&theme, pane_background);
+        let palette = TerminalColorPalette::from_theme(&theme, pane_background);
 
         assert_eq!(palette.foreground, Some(colors.fg));
         assert_eq!(palette.background, Some(pane_background));
@@ -596,7 +553,7 @@ mod tests {
         let host_bg = Color::rgb(10, 11, 12);
         let mut theme = ThemePreset::Nord.theme();
         theme.surface.backdrop = Color::Backdrop;
-        let theme = concretize_backdrop(theme, Some(host_bg));
+        theme.surface.backdrop = theme.concretize_backdrop(Some(host_bg));
 
         let mut state = State::new(HyprmuxConfig::default(), theme.clone());
         state.current_mut().focused_pane = Some(1);
@@ -616,10 +573,10 @@ mod tests {
         theme.surface.backdrop = Color::Backdrop;
         let host_bg = Color::rgb(10, 11, 12);
 
-        let resolved = concretize_backdrop(theme, Some(host_bg));
+        let resolved = theme.concretize_backdrop(Some(host_bg));
 
-        assert_eq!(resolved.surface.backdrop, host_bg);
-        assert!(resolved.surface.backdrop.to_rgb().is_some());
+        assert_eq!(resolved, host_bg);
+        assert!(resolved.to_rgb().is_some());
     }
 
     #[test]
@@ -628,9 +585,9 @@ mod tests {
         theme.surface.backdrop = Color::Transparent;
         let panel = theme.surface.panel;
 
-        let resolved = concretize_backdrop(theme, None);
+        let resolved = theme.concretize_backdrop(None);
 
-        assert_eq!(resolved.surface.backdrop, panel);
+        assert_eq!(resolved, panel);
     }
 
     #[test]
@@ -638,9 +595,9 @@ mod tests {
         let theme = ThemePreset::Nord.theme();
         let original = theme.surface.backdrop;
 
-        let resolved = concretize_backdrop(theme, Some(Color::rgb(1, 2, 3)));
+        let resolved = theme.concretize_backdrop(Some(Color::rgb(1, 2, 3)));
 
-        assert_eq!(resolved.surface.backdrop, original);
+        assert_eq!(resolved, original);
     }
 
     #[test]

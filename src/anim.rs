@@ -59,6 +59,17 @@ pub fn geometry_transition(duration: Duration) -> TransitionConfig {
     }
 }
 
+/// Geometry for a pane that is closing. `EaseInOutCubic` ramps in slowly, which is right for a
+/// pane settling into a new tile but wrong here: the fade riding on top of the scale is
+/// `EaseOutQuad`, so a slow-starting scale is still near full size when the pane has already gone
+/// transparent, and the shrink is never actually seen. Match the fade instead.
+pub fn close_geometry_transition(duration: Duration) -> TransitionConfig {
+    TransitionConfig {
+        duration,
+        easing: Easing::EaseOutQuad,
+    }
+}
+
 pub fn instant_transition() -> TransitionConfig {
     TransitionConfig {
         duration: Duration::ZERO,
@@ -82,19 +93,9 @@ pub fn activation_delay(animations: WindowAnimationConfig) -> Duration {
     }
 }
 
-pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
-    (geometry_duration / SCRATCH_DURATION_DENOMINATOR) * SCRATCH_DURATION_NUMERATOR
-}
-
-/// How long to keep a closed pane in state before pruning it, so its own exit
-/// animation (shrink toward [`close_rect`] + opacity fade, both run for
-/// `close_duration`) can finish first. Panes surviving the close expand into the
-/// freed space on their own `geometry_duration` transition, independently of
-/// whether the closed pane is still present, so this does not need to wait for
-/// them.
-///
-/// [`close_rect`]: crate::geometry::close_rect
-pub fn close_delay(animations: WindowAnimationConfig) -> Duration {
+/// How long a closing pane stays described before `Msg::PruneClosed` drops it. The margin
+/// covers the frame the animation finishes on.
+pub fn retained_pane_timeout(animations: WindowAnimationConfig) -> Duration {
     if animations.enabled && animations.close {
         animations.close_duration + Duration::from_millis(20)
     } else {
@@ -102,38 +103,41 @@ pub fn close_delay(animations: WindowAnimationConfig) -> Duration {
     }
 }
 
+pub fn scratch_transition_duration(geometry_duration: Duration) -> Duration {
+    (geometry_duration / SCRATCH_DURATION_DENOMINATOR) * SCRATCH_DURATION_NUMERATOR
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn close_delay_covers_the_closing_panes_exit_animation() {
-        let animations = WindowAnimationConfig {
-            close_duration: Duration::from_millis(80),
-            // A longer survivor-expansion duration must not extend the prune delay;
-            // survivors animate independently of the closed pane's lifetime.
-            geometry_duration: Duration::from_millis(240),
-            ..WindowAnimationConfig::default()
-        };
-
-        assert_eq!(close_delay(animations), Duration::from_millis(100));
-    }
-
-    #[test]
-    fn close_delay_is_zero_when_close_animation_disabled() {
-        let animations = WindowAnimationConfig {
-            close: false,
-            ..WindowAnimationConfig::default()
-        };
-
-        assert_eq!(close_delay(animations), Duration::ZERO);
-    }
 
     #[test]
     fn scratch_transition_duration_is_two_thirds_of_geometry_duration() {
         assert_eq!(
             scratch_transition_duration(Duration::from_millis(300)),
             Duration::from_millis(200)
+        );
+    }
+
+    #[test]
+    fn retained_pane_timeout_covers_the_close_animation() {
+        let animations = WindowAnimationConfig {
+            close_duration: Duration::from_millis(80),
+            // A longer survivor-expansion duration must not extend how long the closed pane is
+            // kept: survivors animate independently of its lifetime.
+            geometry_duration: Duration::from_millis(240),
+            ..WindowAnimationConfig::default()
+        };
+        assert_eq!(
+            retained_pane_timeout(animations),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retained_pane_timeout(WindowAnimationConfig {
+                close: false,
+                ..animations
+            }),
+            Duration::ZERO
         );
     }
 }

@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[cfg(test)]
 use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{CapStyle, PaneBorderStyle, PaneTitlebarMode};
+use crate::state::{PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
@@ -590,7 +590,7 @@ pub fn load_config() -> LoadedConfig {
         }
     }
     if let Some(title_style) = parsed.pane.title_style.as_deref() {
-        match CapStyle::parse(title_style) {
+        match parse_cap_style(title_style) {
             Some(style) => config.pane.title_style = style,
             None => warnings.push(format!(
                 "Ignored unknown pane.title_style \"{title_style}\" (expected one of: padded, half, round, arrow)"

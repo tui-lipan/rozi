@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use tui_lipan::prelude::*;
+use tui_lipan::prelude::{FloatRect, OverlayId, Rect, Theme, ThemeWatcher};
 
 use crate::anim::GeometryAnimation;
 use crate::config::HyprmuxConfig;
@@ -66,6 +66,9 @@ pub struct State {
     pub resizing_pane: Option<ResizeSession>,
     pub split_drag: Option<SplitDragSession>,
     pub animation: GeometryAnimation,
+    /// Invalidates the framework-owned workspace Canvas when a pane relocates between workspace
+    /// collections without a local workspace switch, so relocation is never mistaken for exit.
+    pub pane_canvas_epoch: u64,
     /// Last terminal/root viewport, used by geometry helpers outside a render context.
     pub last_viewport: Cell<Option<Rect>>,
     /// Last app-content viewport, used to snap geometry when sidebar reservation changes.
@@ -110,9 +113,10 @@ pub struct State {
     pub session_picker_epoch: u64,
     pub profile_picker_epoch: u64,
     pub copy_mode: Option<CopyModeState>,
+    /// Pane whose historical viewport is retained until range-based copy feedback finishes.
+    pub copy_feedback_target: Option<(AttachmentId, PaneId)>,
+    pub copy_feedback_epoch: u64,
     pub hint_mode: Option<HintModeState>,
-    pub copy_flash: Option<CopyFlashState>,
-    pub next_copy_flash_id: u64,
     pub scratch: Option<Pane>,
     pub scratch_visible: bool,
     /// Focus to restore when the scratchpad is hidden again.
@@ -219,6 +223,7 @@ impl State {
             resizing_pane: None,
             split_drag: None,
             animation: GeometryAnimation::None,
+            pane_canvas_epoch: 0,
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
             last_clock_text: RefCell::new(None),
@@ -249,9 +254,9 @@ impl State {
             session_picker_epoch: 0,
             profile_picker_epoch: 0,
             copy_mode: None,
+            copy_feedback_target: None,
+            copy_feedback_epoch: 0,
             hint_mode: None,
-            copy_flash: None,
-            next_copy_flash_id: 1,
             scratch: None,
             scratch_visible: false,
             scratch_return_focus: None,
@@ -306,6 +311,10 @@ impl State {
     /// Mutable access to the [current attachment](Self::current).
     pub fn current_mut(&mut self) -> &mut Attachment {
         &mut self.attachment
+    }
+
+    pub fn popup_is_present(&self) -> bool {
+        self.popup.is_some()
     }
 
     /// The live attachment a server frame at `epoch` belongs to: the current attachment when the

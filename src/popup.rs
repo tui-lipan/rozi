@@ -4,10 +4,9 @@ use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
-use crate::ops::theme::{pane_frame_background, terminal_palette};
+use crate::ops::theme::pane_frame_background;
 use crate::pane_lifecycle::{
-    PaneSpawnRequest, focused_spawn_cwd, open_timers_command, pane_env, prune_closed_command,
-    request_pane_spawn,
+    PaneSpawnRequest, focused_spawn_cwd, open_timers_command, pane_env, request_pane_spawn,
 };
 use crate::state::{POPUP_PANE_ID, Pane, PaneIdentity};
 
@@ -36,7 +35,7 @@ pub(crate) fn open(
     keep_open: bool,
     env: Vec<(String, String)>,
 ) -> std::result::Result<Update, String> {
-    if ctx.state.popup.is_some() {
+    if ctx.state.popup_is_present() {
         return Err("a popup is already open".to_string());
     }
     if command.trim().is_empty() {
@@ -64,7 +63,7 @@ pub(crate) fn open(
         ..PaneIdentity::default()
     };
     pane.terminal.bind_server_backend(POPUP_PANE_ID, generation);
-    let palette = terminal_palette(
+    let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         pane_frame_background(
             &ctx.state.theme,
@@ -117,15 +116,16 @@ pub(crate) fn close(ctx: &mut Context<HyprmuxApp>) -> Update {
         client.kill(POPUP_PANE_ID, generation);
     }
     pane.opening = false;
+    // Stay described so the popup scales out the way it scaled in; `prune_closed_pane` drops it.
     pane.closing = true;
     pane.terminal.kill();
-    ctx.state.animation = GeometryAnimation::Close;
+    ctx.state.animation = crate::anim::GeometryAnimation::Close;
     restore_focus(ctx);
-    Update::with_command(prune_closed_command(
+    Update::with_command(crate::pane_lifecycle::prune_closed_command(
         ctx.state.runtime_epoch,
         POPUP_PANE_ID,
         generation,
-        crate::anim::close_delay(ctx.state.config.animations),
+        crate::anim::retained_pane_timeout(ctx.state.config.animations),
     ))
 }
 

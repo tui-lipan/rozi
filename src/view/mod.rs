@@ -20,7 +20,7 @@ use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
-use crate::state::PaneId;
+use crate::state::{PaneId, WORKBAR_HEIGHT};
 use crate::tiling::PanePlacement;
 
 use pane::pane_title_bg;
@@ -88,17 +88,16 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut canvas = Canvas::new()
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
-    let mut fullscreen_layer = Canvas::new().height(Length::Flex(1));
-    let mut has_fullscreen_layer = false;
     // With merged borders, tiles whose rects are still animating (and the dragged tile) are
     // lifted above the settled merged layer: they draw in Replace mode, so on top they cleanly
     // occlude the seams they sweep across instead of settled panes Exact-merging with their
-    // transient border positions. Each vec keeps `ordered_panes` relative order (closing tiles
-    // stay under the panes expanding into their space; the focused pane stays last).
+    // transient border positions. Each vec keeps `ordered_panes` relative order while the focused
+    // pane stays last.
     let merge_layering = ctx.state.config.pane.merge_borders;
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
+    let mut fullscreen_panes: Vec<(FloatRect, Element)> = Vec::new();
 
     if workspace.panes.iter().all(|pane| pane.closing) {
         // Mid-attach with no panes yet: show a live "connecting" spinner rather than the idle
@@ -118,7 +117,29 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else {
             empty_workspace_panel(&ctx.state.config.input, theme)
         };
-        canvas = canvas.child_at(empty_workspace_rect(bounds).to_rect(), panel);
+        canvas = canvas.child_at(
+            canvas_rect_to_root(empty_workspace_rect(bounds), top_offset).to_rect(),
+            panel,
+        );
+    }
+
+    if ctx.state.config.pane.show_workbar {
+        let workbar_rect = if ctx.state.config.pane.workbar_at_bottom {
+            FloatRect {
+                x: 0.0,
+                y: f32::from(content_viewport.h.saturating_sub(WORKBAR_HEIGHT)),
+                w: f32::from(content_viewport.w),
+                h: f32::from(WORKBAR_HEIGHT),
+            }
+        } else {
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: f32::from(content_viewport.w),
+                h: f32::from(WORKBAR_HEIGHT),
+            }
+        };
+        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
     }
 
     for pane in ordered_panes(workspace, focused_pane) {
@@ -137,6 +158,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .moving_pane
             .filter(|session| session.id == pane.id);
         let canvas_target_rect = if pane.closing {
+            // The reverse of the spawn animation: shrink toward the centre of the rectangle the
+            // pane held when it was closed, which `close_pane_inner` froze into `floating_rect`
+            // before dropping it from the tiling layout.
             close_rect(floating_rect)
         } else if pane.opening {
             close_rect(base_rect)
@@ -159,12 +183,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             config,
         );
 
-        let render_in_fullscreen_layer = !pane.closing && pane.fullscreen;
-        let render_rect = if render_in_fullscreen_layer {
-            animated_rect
-        } else {
-            root_rect_to_canvas(animated_rect, top_offset)
-        };
+        let render_rect = animated_rect;
         // With merged borders, a bar title must keep its left edge off a neighbor's right border,
         // or its background would cover the seam. Compact titlebars live in the frame border and
         // do not need this spacer.
@@ -191,7 +210,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             && !pane.fullscreen
             && ctx.state.config.pane.show_titles
             && ctx.state.config.pane.titlebar == crate::state::PaneTitlebarMode::Bar
-            && ctx.state.config.pane.title_style.caps().is_some()
+            && ctx.state.config.pane.title_style.glyphs().is_some()
         {
             seam_neighbor_title_bgs(app, ctx, &placements, pane.id, base_rect, focused_pane)
         } else {
@@ -208,9 +227,8 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             seam_right_bg,
         };
         let element = pane_element(app, ctx, pane, render_rect, focused_pane, None, merge);
-        if render_in_fullscreen_layer {
-            has_fullscreen_layer = true;
-            fullscreen_layer = fullscreen_layer.child_at(render_rect.to_rect(), element);
+        if pane.fullscreen {
+            fullscreen_panes.push((render_rect, element));
         } else if pane.floating {
             floating_panes.push((render_rect, element));
         } else if merge_layering && moving.is_some() {
@@ -222,31 +240,19 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         }
     }
 
-    // Draggable strips sit above tiled panes but below floating/fullscreen panes, so a floating
-    // pane occludes split handles underneath it instead of passing drag events through.
+    for (rect, element) in animating_tiles.into_iter().chain(dragged_tiles) {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
+    // Draggable strips sit above every tiled pane but below floating/fullscreen panes, so a
+    // floating pane occludes split handles underneath it instead of passing drag events through.
     for (rect, element) in tiled_resize_strips(ctx, &placements, workspace) {
+        canvas = canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
+    }
+    for (rect, element) in floating_panes {
         canvas = canvas.child_at(rect.to_rect(), element);
     }
-
-    for (rect, element) in animating_tiles
-        .into_iter()
-        .chain(dragged_tiles)
-        .chain(floating_panes)
-    {
+    for (rect, element) in fullscreen_panes {
         canvas = canvas.child_at(rect.to_rect(), element);
-    }
-
-    let mut app_root =
-        VStack::new().style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)));
-    if ctx.state.config.pane.show_workbar {
-        let workbar = workbar(ctx);
-        if ctx.state.config.pane.workbar_at_bottom {
-            app_root = app_root.child(canvas).child(workbar);
-        } else {
-            app_root = app_root.child(workbar).child(canvas);
-        }
-    } else {
-        app_root = app_root.child(canvas);
     }
 
     // The whole workspace layer (workbar, tiled/floating panes, fullscreen panes) dims as one
@@ -254,19 +260,24 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     // text and borders toward the backdrop rather than hiding them. instant_transition: the
     // dim is already smoothed by the underlying progress transitions, so this just applies it
     // without re-easing.
-    let mut workspace_stack = ZStack::new().child(app_root);
-    if has_fullscreen_layer {
-        workspace_stack = workspace_stack.child(fullscreen_layer);
-    }
-    let mut workspace_layer: Element = workspace_stack.into();
-    if workspace_dim < 1.0 {
-        workspace_layer = Animated::new(workspace_layer)
-            .opacity(workspace_dim)
-            .opacity_target(theme.surface.backdrop)
-            .transition(crate::anim::instant_transition())
-            .into();
-    }
+    // Keep the dimming wrapper mounted so the keyed workspace Canvas remains under the same
+    // parent while panes are removed and retained for their automatic exit animation.
+    let workspace_host_key = format!(
+        "hyprmux-workspace-canvas-{}-{}-{}",
+        ctx.state.runtime_epoch,
+        ctx.state.current().active_workspace,
+        ctx.state.pane_canvas_epoch
+    );
+    let workspace_layer: Element = Animated::new(canvas.key(workspace_host_key))
+        .height(Length::Flex(1))
+        .opacity(workspace_dim)
+        .opacity_target(theme.surface.backdrop)
+        .transition(crate::anim::instant_transition())
+        .into();
     let mut root = ZStack::new()
+        // The always-mounted popup host is intentionally empty while no popup is open. Let an
+        // empty host miss fall through to the workspace instead of making it a pointer shield.
+        .passthrough(!ctx.state.popup_is_present())
         .style(theme.primary.patch(Style::new().bg(theme.surface.backdrop)))
         .child(workspace_layer);
 
@@ -300,16 +311,19 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         root = root.child(scratch_layer);
     }
 
-    if ctx.state.popup.is_some() {
-        let mut popup_canvas = Canvas::new().height(Length::Flex(1));
-        for (rect, element) in crate::popup::backdrop(ctx)
-            .into_iter()
-            .chain(crate::popup::placement(app, ctx))
-        {
+    {
+        let mut popup_canvas = Canvas::new().height(Length::Flex(1)).passthrough(true);
+        if let Some((rect, element)) = crate::popup::backdrop(ctx) {
             popup_canvas =
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
-        root = root.child(popup_canvas);
+        if let Some((rect, element)) = crate::popup::placement(app, ctx) {
+            popup_canvas =
+                popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
+        }
+        let popup_host: Element =
+            popup_canvas.key(format!("hyprmux-popup-host-{}", ctx.state.runtime_epoch));
+        root = root.child(popup_host);
     }
 
     // Overlays portal to the root regardless of where they are attached.
@@ -569,13 +583,6 @@ fn rect_settled(animated: FloatRect, target: FloatRect) -> bool {
 fn canvas_rect_to_root(rect: FloatRect, top_chrome: u16) -> FloatRect {
     FloatRect {
         y: rect.y + f32::from(top_chrome),
-        ..rect
-    }
-}
-
-fn root_rect_to_canvas(rect: FloatRect, top_chrome: u16) -> FloatRect {
-    FloatRect {
-        y: rect.y - f32::from(top_chrome),
         ..rect
     }
 }

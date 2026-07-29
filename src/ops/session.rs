@@ -891,15 +891,15 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<HyprmuxApp>) {
     if !ctx.state.is_controller() {
         return;
     }
-    let pending_closes = std::mem::take(&mut ctx.state.current_mut().pending_background_closes);
-    for (pane_id, generation) in pending_closes {
+    let pending = std::mem::take(&mut ctx.state.current_mut().pending_background_closes);
+    for (pane_id, generation) in pending {
         if ctx
             .state
             .current_mut()
             .find_pane_mut(pane_id)
             .is_some_and(|pane| pane.pty_generation == generation)
         {
-            crate::pane_lifecycle::remove_pane(&mut ctx.state, pane_id);
+            crate::pane_lifecycle::remove_pane_after_exit(ctx, pane_id);
         }
     }
 }

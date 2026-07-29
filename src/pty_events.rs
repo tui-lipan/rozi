@@ -97,7 +97,11 @@ fn toast_frame_style(accent: Color) -> Style {
 }
 
 fn toast_text_style(theme: &Theme) -> Style {
-    crate::ops::theme::style_fg(theme.primary).map_or_else(Style::new, |text| Style::new().fg(text))
+    theme
+        .primary
+        .resolved_fg()
+        .filter(|color| !color.is_sentinel())
+        .map_or_else(Style::new, |text| Style::new().fg(text))
 }
 
 pub(crate) fn forward_key_to_pane(
@@ -783,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn synchronized_targets_exclude_floating_closing_and_scratch() {
+    fn synchronized_targets_exclude_floating_and_scratch() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         state.current_mut().workspaces[0].synchronized = true;
         state.current_mut().workspaces[0]
@@ -792,12 +796,12 @@ mod tests {
         let mut floating = Pane::new(3, 100, rect());
         floating.floating = true;
         state.current_mut().workspaces[0].panes.push(floating);
-        let mut closing = Pane::new(4, 100, rect());
-        closing.closing = true;
-        state.current_mut().workspaces[0].panes.push(closing);
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(4, 100, rect()));
         state.scratch = Some(Pane::new(crate::state::SCRATCH_PANE_ID, 100, rect()));
 
-        assert_eq!(synchronized_key_targets(&state, 1), vec![1, 2]);
+        assert_eq!(synchronized_key_targets(&state, 1), vec![1, 2, 4]);
         assert_eq!(synchronized_key_targets(&state, 3), vec![3]);
     }
 }

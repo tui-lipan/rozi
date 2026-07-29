@@ -23,7 +23,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         ),
         (
             "Titlebar cap style",
-            pane.title_style.label().to_string(),
+            cap_style_label(pane.title_style).to_string(),
             AppearanceAction::CycleTitleStyle,
         ),
         (
@@ -48,12 +48,12 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         ),
         (
             "Workbar style",
-            pane.workbar_style.label().to_string(),
+            cap_style_label(pane.workbar_style).to_string(),
             AppearanceAction::CycleWorkbarStyle,
         ),
         (
             "Workbar badge style",
-            pane.workbar_badge_style.label().to_string(),
+            cap_style_label(pane.workbar_badge_style).to_string(),
             AppearanceAction::CycleWorkbarBadgeStyle,
         ),
         (
@@ -63,7 +63,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         ),
         (
             "Workbar tab style",
-            pane.workbar_tab_style.label().to_string(),
+            cap_style_label(pane.workbar_tab_style).to_string(),
             AppearanceAction::CycleWorkbarTabStyle,
         ),
         (

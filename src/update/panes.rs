@@ -3,7 +3,7 @@ use tui_lipan::prelude::*;
 use crate::anim::GeometryAnimation;
 use crate::key_routing::handle_key_routing;
 use crate::ops::focus::{focus_pane as focus, request_pane_focus};
-use crate::pane_lifecycle::{find_pane_mut, handle_prune_closed};
+use crate::pane_lifecycle::find_pane_mut;
 use crate::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
 };
@@ -15,13 +15,6 @@ pub(super) fn close_popup(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
-    if ctx
-        .state
-        .copy_flash
-        .is_some_and(|flash| flash.target == id && flash.clearing)
-    {
-        ctx.state.copy_flash = None;
-    }
     focus(&mut ctx.state, id);
     if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
         pane.activity.has_unseen_output = false;
@@ -197,8 +190,8 @@ pub(super) fn finish_open(
         if pane.pty_generation != generation {
             return Update::none();
         }
-        pane.opening = false;
         if !pane.closing {
+            pane.opening = false;
             ctx.state.animation = GeometryAnimation::Spawn;
         }
     }
@@ -220,24 +213,23 @@ pub(super) fn activate_pane(
         if pane.pty_generation != generation {
             return Update::none();
         }
-        pane.terminal_active = true;
-        if !pane.closing && focused {
-            request_pane_focus(ctx, id);
+        if !pane.closing {
+            pane.terminal_active = true;
+            if focused {
+                request_pane_focus(ctx, id);
+            }
         }
     }
     Update::full()
 }
 
-pub(super) fn prune_closed(
+pub(super) fn copy_feedback_expired(
     ctx: &mut Context<HyprmuxApp>,
-    epoch: u64,
+    attachment: u64,
     id: PaneId,
-    generation: u64,
+    epoch: u64,
 ) -> Update {
-    if epoch != ctx.state.runtime_epoch {
-        return Update::none();
-    }
-    handle_prune_closed(ctx, id, generation)
+    crate::copy_mode::expire_copy_feedback(ctx, attachment, id, epoch)
 }
 
 pub(super) fn pane_input(
@@ -246,14 +238,6 @@ pub(super) fn pane_input(
     input: TerminalInputEvent,
 ) -> Update {
     handle_pane_input(ctx, id, input)
-}
-
-pub(super) fn copy_flash_expired(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    flash_id: u64,
-) -> Update {
-    crate::copy_mode::expire_flash(ctx, id, flash_id)
 }
 
 pub(super) fn pane_key(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent) -> Update {
@@ -300,7 +284,8 @@ pub(super) fn control_request(
 
 fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
     let id = state.current().focused_pane?;
-    state.current().workspaces[state.current().active_workspace]
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    workspace
         .panes
         .iter()
         .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)

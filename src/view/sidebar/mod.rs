@@ -27,7 +27,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
         .config
         .pane
         .workbar_tab_style
-        .caps()
+        .glyphs()
         .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
     let tab_bar = tabs.iter().fold(Tabs::new(), |bar, tab| {
         bar.tab(Tab::new(tab.label().to_string()))

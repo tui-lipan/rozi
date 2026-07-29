@@ -16,6 +16,7 @@ pub struct Pane {
     pub floating_rect: FloatRect,
     pub opening: bool,
     pub terminal_active: bool,
+    /// Removed from the layout but still described, so its close animation can run.
     pub closing: bool,
     pub logging: bool,
     pub activity: PaneActivity,

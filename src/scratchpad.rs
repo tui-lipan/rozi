@@ -5,7 +5,7 @@ use crate::anim::GeometryAnimation;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
-use crate::ops::theme::{pane_frame_background, terminal_palette};
+use crate::ops::theme::pane_frame_background;
 use crate::pane_lifecycle::{PaneSpawnRequest, pane_env, request_pane_spawn};
 use crate::state::{Pane, SCRATCH_PANE_ID};
 use crate::view;
@@ -97,7 +97,7 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
         pane.identity.cwd = ctx.state.config.scratchpad.cwd.clone();
         pane.terminal
             .bind_server_backend(SCRATCH_PANE_ID, generation);
-        let palette = terminal_palette(
+        let palette = TerminalColorPalette::from_theme(
             &ctx.state.theme,
             pane_frame_background(
                 &ctx.state.theme,

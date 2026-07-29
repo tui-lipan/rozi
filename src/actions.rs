@@ -17,7 +17,9 @@ use crate::ops::resize_move::{
 use crate::ops::search::open_search;
 use crate::ops::theme::{apply_terminal_palette_to_state, open_theme_picker};
 use crate::pane_lifecycle::{find_pane, spawn_pane};
-use crate::state::{Direction, Mode, PaneIdentity, ToastChannel};
+use crate::state::{
+    Direction, Mode, PaneIdentity, ToastChannel, cap_style_id, next_badge_cap_style, next_cap_style,
+};
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
@@ -548,27 +550,27 @@ fn execute_action_inner(
             Update::full()
         }
         Action::CycleTitleStyle => {
-            let next = ctx.state.config.pane.title_style.next();
+            let next = next_cap_style(ctx.state.config.pane.title_style);
             ctx.state.config.pane.title_style = next;
-            persist_pane_string_or_toast(ctx, "title_style", next.id());
+            persist_pane_string_or_toast(ctx, "title_style", cap_style_id(next));
             Update::full()
         }
         Action::CycleWorkbarBadgeStyle => {
-            let next = ctx.state.config.pane.workbar_badge_style.next_badge();
+            let next = next_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
             ctx.state.config.pane.workbar_badge_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_badge_style", next.id());
+            persist_pane_string_or_toast(ctx, "workbar_badge_style", cap_style_id(next));
             Update::full()
         }
         Action::CycleWorkbarTabStyle => {
-            let next = ctx.state.config.pane.workbar_tab_style.next_badge();
+            let next = next_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
             ctx.state.config.pane.workbar_tab_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_tab_style", next.id());
+            persist_pane_string_or_toast(ctx, "workbar_tab_style", cap_style_id(next));
             Update::full()
         }
         Action::CycleWorkbarStyle => {
-            let next = ctx.state.config.pane.workbar_style.next();
+            let next = next_cap_style(ctx.state.config.pane.workbar_style);
             ctx.state.config.pane.workbar_style = next;
-            persist_pane_string_or_toast(ctx, "workbar_style", next.id());
+            persist_pane_string_or_toast(ctx, "workbar_style", cap_style_id(next));
             Update::full()
         }
         Action::RunUserCommand(index) => run_user_command(ctx, index),

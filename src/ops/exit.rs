@@ -3,8 +3,7 @@ use std::time::Instant;
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
-use crate::anim;
-use crate::pane_lifecycle::{begin_close_pane, close_pane_state, prune_closed_batch_command};
+use crate::pane_lifecycle::close_pane;
 use crate::profiles;
 use crate::pty_events::{confirm_toast, info_toast};
 use crate::state::{PendingDestructive, PendingDestructiveConfirmation, SessionDisposition, State};
@@ -214,7 +213,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
     }
 
     clear_pending(ctx);
-    begin_close_pane(ctx, id, ctx.state.config.animations)
+    close_pane(ctx, id)
 }
 
 pub(crate) fn kill_workspace_with_confirmation(
@@ -222,11 +221,8 @@ pub(crate) fn kill_workspace_with_confirmation(
     confirmations_enabled: bool,
 ) -> Update {
     let workspace_index = ctx.state.current().active_workspace;
-    let pane_count = ctx.state.current().workspaces[workspace_index]
-        .panes
-        .iter()
-        .filter(|pane| !pane.closing)
-        .count();
+    let workspace = &ctx.state.current().workspaces[workspace_index];
+    let pane_count = workspace.panes.iter().filter(|pane| !pane.closing).count();
     if pane_count == 0 {
         ctx.toast()
             .push(info_toast(&ctx.state.theme, "Workspace is already empty"));
@@ -251,7 +247,6 @@ pub(crate) fn kill_workspace_with_confirmation(
     }
 
     clear_pending(ctx);
-    let animations = ctx.state.config.animations;
     let pane_ids: Vec<_> = ctx.state.current().workspaces[workspace_index]
         .panes
         .iter()
@@ -259,19 +254,23 @@ pub(crate) fn kill_workspace_with_confirmation(
         .map(|pane| pane.id)
         .collect();
 
-    let targets: Vec<_> = pane_ids
+    // One Update carries one Command, so the whole batch shares a single delayed prune.
+    let targets: Vec<(crate::state::PaneId, u64)> = pane_ids
         .into_iter()
-        .filter_map(|id| close_pane_state(ctx, id).map(|generation| (id, generation)))
+        .filter_map(|id| {
+            crate::pane_lifecycle::close_pane_inner(ctx, id, true)
+                .map(|generation| (id, generation))
+        })
         .collect();
 
     if targets.is_empty() {
         return Update::full();
     }
 
-    Update::with_command(prune_closed_batch_command(
+    Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
         ctx.state.runtime_epoch,
         targets,
-        anim::close_delay(animations),
+        crate::anim::retained_pane_timeout(ctx.state.config.animations),
     ))
 }
 

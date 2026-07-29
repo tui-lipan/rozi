@@ -770,9 +770,9 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_excludes_closing_panes() {
+    fn snapshot_includes_only_live_panes() {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        let mut closing = Pane::new(
+        let mut exiting = Pane::new(
             2,
             state.config.scrollback,
             FloatRect {
@@ -782,16 +782,14 @@ mod tests {
                 h: 24.0,
             },
         );
-        closing.closing = true;
-        closing.identity.custom_title = Some("closing".to_string());
-        state.current_mut().workspaces[0].panes.push(closing);
-
+        exiting.identity.custom_title = Some("exiting".to_string());
+        state.current_mut().workspaces[0].panes.push(exiting);
         let profile = profile_from_state(&state);
 
-        assert_eq!(profile.workspaces[0].panes.len(), 1);
-        assert_ne!(
-            profile.workspaces[0].panes[0].name.as_deref(),
-            Some("closing")
+        assert_eq!(profile.workspaces[0].panes.len(), 2);
+        assert_eq!(
+            profile.workspaces[0].panes[1].name.as_deref(),
+            Some("exiting")
         );
     }
 

@@ -6,7 +6,7 @@ use super::attach::{
 };
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::pane_lifecycle::{begin_close_pane, find_pane, find_pane_mut};
+use crate::pane_lifecycle::{find_pane, find_pane_mut, remove_pane_after_exit};
 use crate::pty_events::{error_toast, maybe_notify_pane_exit, maybe_notify_pane_status};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason, PaneMeta, PaneRuntimeState};
@@ -702,23 +702,20 @@ pub(super) fn exited(
     code: i32,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
-        // Mark the pane exited on a retained background attachment so switching back shows the exit.
-        // The structural close (a layout commit) is deferred until the attachment is current again.
-        if let Some(pane) = ctx
-            .state
-            .background
-            .get_mut(&epoch)
-            .and_then(|attachment| attachment.find_pane_mut(pane_id))
-            && pane.pty_generation == generation
-        {
-            pane.terminal.status = ManagedTerminalStatus::Exited(code);
-            if !should_hold_on_exit(ctx.state.config.pane.hold_on_exit, pane_id, pane.closing)
-                && ctx
-                    .state
-                    .background
-                    .get(&epoch)
-                    .is_some_and(crate::state::Attachment::is_controller)
-                && let Some(attachment) = ctx.state.background.get_mut(&epoch)
+        let hold_on_exit = ctx.state.config.pane.hold_on_exit;
+        if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
+            let should_defer = attachment
+                .find_pane_mut(pane_id)
+                .filter(|pane| pane.pty_generation == generation)
+                .map(|pane| {
+                    pane.terminal.status = ManagedTerminalStatus::Exited(code);
+                    !should_hold_on_exit(hold_on_exit, pane_id, pane.closing)
+                })
+                .unwrap_or(false);
+            if should_defer
+                && !attachment
+                    .pending_background_closes
+                    .contains(&(pane_id, generation))
             {
                 attachment
                     .pending_background_closes
@@ -727,6 +724,17 @@ pub(super) fn exited(
         }
         return Update::none();
     }
+    let hold_on_exit = ctx.state.config.pane.hold_on_exit;
+    let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) else {
+        // A pane closed by the app has already been removed; its later server exit frame is stale.
+        return Update::none();
+    };
+    if pane.pty_generation != generation {
+        return Update::none();
+    }
+    pane.terminal.status = ManagedTerminalStatus::Exited(code);
+    let already_closing = pane.closing;
+    let should_close = !should_hold_on_exit(hold_on_exit, pane_id, already_closing);
     crate::events::emit(
         &ctx.state,
         crate::events::Event::new(
@@ -734,17 +742,6 @@ pub(super) fn exited(
             vec![("pane", pane_id.to_string()), ("code", code.to_string())],
         ),
     );
-    let mut should_close = false;
-    let mut already_closing = false;
-    let hold_on_exit = ctx.state.config.pane.hold_on_exit;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id) {
-        if pane.pty_generation != generation {
-            return Update::none();
-        }
-        pane.terminal.status = ManagedTerminalStatus::Exited(code);
-        already_closing = pane.closing;
-        should_close = !should_hold_on_exit(hold_on_exit, pane_id, pane.closing);
-    }
     ctx.state.commands_dirty = true;
     // A user-initiated close already tore this pane down; the exit is expected, so skip the exit
     // notification/toast and the redundant close call.
@@ -775,7 +772,7 @@ pub(super) fn exited(
             format!("Pane {pane_id} exited ({code})"),
         ));
     }
-    begin_close_pane(ctx, pane_id, ctx.state.config.animations)
+    remove_pane_after_exit(ctx, pane_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1048,9 +1045,7 @@ fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation
     else {
         return;
     };
-    if !find_pane(&ctx.state, pane_id)
-        .is_some_and(|pane| pane.pty_generation == generation && !pane.closing)
-    {
+    if find_pane(&ctx.state, pane_id).is_none_or(|pane| pane.pty_generation != generation) {
         return;
     }
     if let Some(client) = ctx.state.current().session_client.clone() {
@@ -1071,9 +1066,9 @@ fn flush_attachment_replay_input(
     else {
         return;
     };
-    if !attachment
+    if attachment
         .find_pane_mut(pane_id)
-        .is_some_and(|pane| pane.pty_generation == generation && !pane.closing)
+        .is_none_or(|pane| pane.pty_generation != generation)
     {
         return;
     }
@@ -1104,7 +1099,7 @@ pub(super) fn spawn_result(
             if pane.pty_generation != generation {
                 return Update::none();
             }
-            spawned_live = ok && !pane.closing;
+            spawned_live = ok;
             if !pane.terminal.is_ready() {
                 pane.terminal.bind_server_backend(pane_id, generation);
             }
@@ -1114,10 +1109,8 @@ pub(super) fn spawn_result(
             } else {
                 let message = error.unwrap_or_else(|| "session spawn failed".to_string());
                 pane.terminal.status = ManagedTerminalStatus::Error(message.into());
-                if !pane.closing && is_controller {
-                    attachment
-                        .pending_background_closes
-                        .push((pane_id, generation));
+                if is_controller {
+                    attachment.pending_background_layout = None;
                 }
             }
         }
@@ -1144,7 +1137,7 @@ pub(super) fn spawn_result(
         if pane.pty_generation != generation {
             return Update::none();
         }
-        spawned_live = ok && !pane.closing;
+        spawned_live = ok;
         // A follower may already hold this pane (bound and Ready) from the reconciler; only (re)bind
         // a fresh backend for a pane still waiting on its own spawn to complete, so we never destroy
         // a live screen that is already replaying server output.
@@ -1162,7 +1155,7 @@ pub(super) fn spawn_result(
             toast_error = Some(message);
             // Only the controller structurally removes the failed pane; followers wait for the
             // resulting layout commit.
-            should_close = !pane.closing && is_controller;
+            should_close = is_controller;
         }
     } else if let Some(error) = error {
         toast_error = Some(error);
@@ -1194,7 +1187,7 @@ pub(super) fn spawn_result(
             .push(error_toast(&ctx.state.theme, "Spawn failed", error));
     }
     if should_close {
-        begin_close_pane(ctx, pane_id, ctx.state.config.animations)
+        remove_pane_after_exit(ctx, pane_id)
     } else if let Some(command) = replay_deadline {
         Update::with_command(command)
     } else {
@@ -1245,6 +1238,8 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
     Update::full()
 }
 
+/// A pane the user already closed is expected to exit, so `hold_on_exit` must not keep its shell
+/// around and the exit must not be surfaced.
 fn should_hold_on_exit(hold_on_exit: bool, pane_id: PaneId, closing: bool) -> bool {
     hold_on_exit && !crate::scratchpad::is_scratch(pane_id) && !closing
 }
@@ -1487,7 +1482,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_on_exit_excludes_disabled_scratch_and_closing_panes() {
+    fn hold_on_exit_excludes_disabled_and_scratch_panes() {
         assert!(should_hold_on_exit(true, 1, false));
         assert!(!should_hold_on_exit(false, 1, false));
         assert!(!should_hold_on_exit(
@@ -1495,7 +1490,46 @@ mod tests {
             crate::state::SCRATCH_PANE_ID,
             false
         ));
-        assert!(!should_hold_on_exit(true, 1, true));
+        assert!(
+            !should_hold_on_exit(true, 1, true),
+            "a pane the user closed must not hold, or its own close would keep it alive"
+        );
+    }
+
+    #[test]
+    fn parked_non_controller_defers_exit_until_control_returns() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut attachment = crate::state::Attachment::new();
+                attachment.epoch = 9;
+                let mut pane =
+                    crate::state::Pane::new(4, 100, tui_lipan::prelude::FloatRect::default());
+                pane.pty_generation = 7;
+                attachment.workspaces[0].panes.push(pane);
+                let mut shared = crate::state::SharedSessionState::new(1);
+                shared.controller = Some(2);
+                attachment.shared = Some(shared);
+                backend.state_mut().background.insert(9, attachment);
+
+                backend
+                    .dispatch(Msg::SessionExited {
+                        epoch: 9,
+                        pane_id: 4,
+                        generation: 7,
+                        code: 0,
+                    })
+                    .expect("parked exit");
+
+                assert_eq!(
+                    backend.state().background[&9].pending_background_closes,
+                    vec![(4, 7)]
+                );
+            })
+            .expect("spawn test")
+            .join()
+            .expect("join test");
     }
 
     #[test]

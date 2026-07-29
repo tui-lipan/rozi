@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::state::{
-    CapStyle, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
+    DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1125,6 +1125,7 @@ impl WorkbarConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::{next_cap_style, parse_cap_style};
 
     #[test]
     fn session_startup_parses_known_values_and_defaults_to_picker() {
@@ -1195,14 +1196,14 @@ mod tests {
 
     #[test]
     fn pane_title_style_parses_aliases_and_cycles() {
-        assert_eq!(CapStyle::parse("padded"), Some(CapStyle::Padded));
-        assert_eq!(CapStyle::parse("Half Block"), Some(CapStyle::Half));
-        assert_eq!(CapStyle::parse("pill"), Some(CapStyle::Round));
-        assert_eq!(CapStyle::parse("powerline"), Some(CapStyle::Arrow));
-        assert_eq!(CapStyle::parse("nonsense"), None);
-        assert_eq!(CapStyle::Padded.caps(), None);
-        assert!(CapStyle::Round.caps().is_some());
-        assert_eq!(CapStyle::Arrow.next(), CapStyle::Padded);
+        assert_eq!(parse_cap_style("padded"), Some(CapStyle::Padded));
+        assert_eq!(parse_cap_style("Half Block"), Some(CapStyle::Half));
+        assert_eq!(parse_cap_style("pill"), Some(CapStyle::Round));
+        assert_eq!(parse_cap_style("powerline"), Some(CapStyle::Arrow));
+        assert_eq!(parse_cap_style("nonsense"), None);
+        assert_eq!(CapStyle::Padded.glyphs(), None);
+        assert!(CapStyle::Round.glyphs().is_some());
+        assert_eq!(next_cap_style(CapStyle::Arrow), CapStyle::Padded);
     }
 
     #[test]

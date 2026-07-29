@@ -26,7 +26,7 @@ use crate::config::HyprmuxConfig;
 use crate::input::Action;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
-    Mode, Pane, RATIO_STEP, SCRATCH_PANE_ID, State,
+    Mode, Pane, RATIO_STEP, SCRATCH_PANE_ID, State, cap_style_label,
 };
 use crate::{HyprmuxApp, Msg};
 
@@ -1099,23 +1099,26 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::CycleTitleStyle => {
             format!(
                 "Titlebar cap style: {}",
-                state.config.pane.title_style.label()
+                cap_style_label(state.config.pane.title_style)
             )
         }
         Action::CycleWorkbarBadgeStyle => {
             format!(
                 "Workbar badge style: {}",
-                state.config.pane.workbar_badge_style.label()
+                cap_style_label(state.config.pane.workbar_badge_style)
             )
         }
         Action::CycleWorkbarTabStyle => {
             format!(
                 "Workbar tab style: {}",
-                state.config.pane.workbar_tab_style.label()
+                cap_style_label(state.config.pane.workbar_tab_style)
             )
         }
         Action::CycleWorkbarStyle => {
-            format!("Workbar style: {}", state.config.pane.workbar_style.label())
+            format!(
+                "Workbar style: {}",
+                cap_style_label(state.config.pane.workbar_style)
+            )
         }
         Action::ToggleScratchpad => enable_disable_label("scratchpad", state.scratch_visible),
         Action::ToggleHelp => return None,
@@ -1137,7 +1140,8 @@ fn focused_pane(state: &State) -> Option<&Pane> {
     if id == SCRATCH_PANE_ID {
         return state.scratch.as_ref();
     }
-    state.current().workspaces[state.current().active_workspace]
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    workspace
         .panes
         .iter()
         .find(|pane| pane.id == id && !pane.closing)

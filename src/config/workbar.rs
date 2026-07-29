@@ -1,7 +1,8 @@
-use crate::state::CapStyle;
+use tui_lipan::prelude::CapStyle as TuiCapStyle;
 
 use super::file::{PaneFileConfig, WorkbarFileConfig, WorkbarSegmentSpec};
 use super::schema::{BadgeColor, HyprmuxPaneConfig, WorkbarConfig, WorkbarItem, WorkbarSegment};
+use crate::state::parse_cap_style;
 
 pub(super) fn apply_workbar_config(
     workbar: &mut WorkbarConfig,
@@ -72,8 +73,8 @@ pub(super) fn apply_workbar_style_config(
     warnings: &mut Vec<String>,
 ) {
     if let Some(workbar_badge_style) = parsed.workbar_badge_style.as_deref() {
-        match CapStyle::parse(workbar_badge_style) {
-            Some(CapStyle::Half) => warnings.push(format!(
+        match parse_cap_style(workbar_badge_style) {
+            Some(TuiCapStyle::Half) => warnings.push(format!(
                 "Ignored pane.workbar_badge_style \"{workbar_badge_style}\" (half block is not available for workbar badges)"
             )),
             Some(style) => {
@@ -88,8 +89,8 @@ pub(super) fn apply_workbar_style_config(
         }
     }
     if let Some(workbar_tab_style) = parsed.workbar_tab_style.as_deref() {
-        match CapStyle::parse(workbar_tab_style) {
-            Some(CapStyle::Half) => warnings.push(format!(
+        match parse_cap_style(workbar_tab_style) {
+            Some(TuiCapStyle::Half) => warnings.push(format!(
                 "Ignored pane.workbar_tab_style \"{workbar_tab_style}\" (half block is not available for tab bars)"
             )),
             Some(style) => config.workbar_tab_style = style,
@@ -99,7 +100,7 @@ pub(super) fn apply_workbar_style_config(
         }
     }
     if let Some(workbar_style) = parsed.workbar_style.as_deref() {
-        match CapStyle::parse(workbar_style) {
+        match parse_cap_style(workbar_style) {
             Some(style) => config.workbar_style = style,
             None => warnings.push(format!(
                 "Ignored unknown pane.workbar_style \"{workbar_style}\" (expected one of: padded, half, round, arrow)"
@@ -114,6 +115,7 @@ pub(super) fn apply_workbar_style_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::prelude::CapStyle as TuiCapStyle;
 
     #[test]
     fn workbar_segment_table_form_overrides_color() {
@@ -178,8 +180,8 @@ mod tests {
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
 
         assert!(warnings.is_empty());
-        assert_eq!(pane.workbar_badge_style, CapStyle::Arrow);
-        assert_eq!(pane.workbar_tab_style, CapStyle::Arrow);
+        assert_eq!(pane.workbar_badge_style, TuiCapStyle::Arrow);
+        assert_eq!(pane.workbar_tab_style, TuiCapStyle::Arrow);
     }
 
     #[test]
@@ -197,7 +199,7 @@ mod tests {
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
 
         assert!(warnings.is_empty());
-        assert_eq!(pane.workbar_badge_style, CapStyle::Arrow);
-        assert_eq!(pane.workbar_tab_style, CapStyle::Round);
+        assert_eq!(pane.workbar_badge_style, TuiCapStyle::Arrow);
+        assert_eq!(pane.workbar_tab_style, TuiCapStyle::Round);
     }
 }

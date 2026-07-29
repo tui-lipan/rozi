@@ -2,14 +2,14 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
-use crate::anim::{self, GeometryAnimation, WindowAnimationConfig};
+use crate::anim::{self, GeometryAnimation};
 use crate::geometry::{clamp_float_rect, default_floating_rect};
-use crate::layout::{place_spawned_pane, placement_for, workspace_target_rects};
+use crate::layout::place_spawned_pane;
 use crate::ops::focus::{
     choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
-    request_current_pane_focus, total_visible_panes,
+    request_current_pane_focus,
 };
-use crate::ops::theme::{pane_frame_background, terminal_palette};
+use crate::ops::theme::pane_frame_background;
 use crate::state::{Pane, PaneId, PaneIdentity, State};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
@@ -178,7 +178,7 @@ pub(crate) fn spawn_pane_in_workspace(
             bounds,
         );
     }
-    let palette = terminal_palette(
+    let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         pane_frame_background(
             &ctx.state.theme,
@@ -279,7 +279,7 @@ pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.current_mut().next_pty_generation = generation.saturating_add(1);
     let control_socket = ctx.state.control_socket_path.clone();
     let remote_attached = ctx.state.current().remote_host.is_some();
-    let palette = terminal_palette(
+    let palette = TerminalColorPalette::from_theme(
         &ctx.state.theme,
         pane_frame_background(
             &ctx.state.theme,
@@ -439,29 +439,50 @@ fn resolved_launch_argv(
     (shell.as_argv(), command_shell.as_argv(), extra_env)
 }
 
-pub(crate) fn begin_close_pane(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    animations: WindowAnimationConfig,
-) -> Update {
-    match close_pane_state(ctx, id) {
+/// Kill a live workspace pane and start its close animation.
+///
+/// The pane leaves the tiling layout immediately, so its neighbours begin expanding at once, but
+/// stays in `panes` marked [`Pane::closing`] until [`Msg::PruneClosed`] drops it. It has to stay
+/// described for the close animation to exist at all: the pane scales toward its centre, which
+/// means the whole subtree is re-laid out every frame at a shrinking rectangle. Framework-side
+/// retention (`Animated::auto_exit`) cannot do this, because it freezes the already reconciled
+/// subtree and only clips it.
+pub(crate) fn close_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+    match close_pane_inner(ctx, id, true) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
             id,
             generation,
-            anim::close_delay(animations),
+            anim::retained_pane_timeout(ctx.state.config.animations),
         )),
         None => Update::full(),
     }
 }
 
-/// Mark a pane closing, kill its terminal/PTY, and update fallback focus + the close animation,
-/// without scheduling the delayed prune. Callers that close a single pane wrap the returned
-/// generation in one [`prune_closed_command`]; callers that close several panes at once (e.g.
-/// [`crate::ops::exit::kill_workspace`]) collect generations across multiple calls and schedule
-/// one combined [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
-/// Returns `None` (no state change) if the pane was already closing.
-pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
+/// Start the close animation for a pane whose server-side process has already exited.
+pub(crate) fn remove_pane_after_exit(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+    match close_pane_inner(ctx, id, false) {
+        Some(generation) => Update::with_command(prune_closed_command(
+            ctx.state.runtime_epoch,
+            id,
+            generation,
+            anim::retained_pane_timeout(ctx.state.config.animations),
+        )),
+        None => Update::full(),
+    }
+}
+
+/// Mark a pane closing without scheduling its prune. Callers closing one pane wrap the returned
+/// generation in [`prune_closed_command`]; callers closing several at once collect generations and
+/// schedule one [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
+/// Returns `None` when the pane is unknown or already closing.
+pub(crate) fn close_pane_inner(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    kill_server_pane: bool,
+) -> Option<u64> {
+    // Freeze the pane where it currently sits. Once it is excluded from tiling its placement is
+    // gone, so the close animation needs the rectangle it occupied captured up front.
     let bounds = ctx
         .state
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
@@ -469,18 +490,20 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
     let tile_gap = ctx.state.tile_gap();
     let placements = {
         let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
-        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+        crate::layout::workspace_target_rects(workspace, bounds, top_gap, tile_gap)
     };
-    let mut generation = None;
+
     let client = ctx.state.current().session_client.clone();
+    let mut generation = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && !pane.closing
     {
         generation = Some(pane.pty_generation);
-        if let Some(client) = client {
+        if kill_server_pane && let Some(client) = client {
             client.kill(id, pane.pty_generation);
         }
-        pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
+        pane.floating_rect =
+            crate::layout::placement_for(&placements, id).unwrap_or(pane.floating_rect);
         pane.opening = false;
         pane.closing = true;
         pane.terminal.kill();
@@ -494,37 +517,72 @@ pub(crate) fn close_pane_state(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Opt
     generation
 }
 
-/// Mark a pane closing in response to a foreign layout commit that removed it. Mirrors
-/// [`close_pane_state`] but **never** sends `client.kill` - the server already dropped the pane at
-/// the controller's request, so re-killing would race a reused id and there is no kill-echo loop.
-/// Returns the pane's generation so the caller can schedule its delayed prune, or `None` when the
-/// pane is unknown or already closing.
-pub(crate) fn close_pane_remote(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Option<u64> {
-    let bounds = ctx
-        .state
-        .canvas_bounds_from_terminal_viewport(ctx.viewport());
-    let top_gap = ctx.state.workspace_top_gap();
-    let tile_gap = ctx.state.tile_gap();
-    let placements = {
-        let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
-        workspace_target_rects(workspace, bounds, top_gap, tile_gap)
-    };
-    let mut generation = None;
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id)
-        && !pane.closing
-    {
-        generation = Some(pane.pty_generation);
-        pane.floating_rect = placement_for(&placements, id).unwrap_or(pane.floating_rect);
-        pane.opening = false;
-        pane.closing = true;
-        pane.terminal.kill();
+/// Drop a pane once its close animation has run, if it is still the same closing pane.
+pub(crate) fn prune_closed_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    id: PaneId,
+    generation: u64,
+) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        return Update::none();
     }
-    if generation.is_some() {
-        ctx.state.animation = GeometryAnimation::Close;
-        choose_fallback_focus(&mut ctx.state);
-        request_current_pane_focus(ctx);
+    let still_closing = find_pane(&ctx.state, id)
+        .is_some_and(|pane| pane.pty_generation == generation && pane.closing);
+    if !still_closing {
+        return Update::none();
     }
-    generation
+    if ctx.state.popup.as_ref().is_some_and(|pane| pane.id == id) {
+        ctx.state.popup = None;
+    } else if ctx.state.scratch.as_ref().is_some_and(|pane| pane.id == id) {
+        ctx.state.scratch = None;
+    } else {
+        let timeout = crate::anim::retained_pane_timeout(ctx.state.config.animations);
+        // Take the pane out first so its terminal screen can be retired: a same-generation
+        // reintroduction (a layout correction) restores its scrollback instead of starting blank.
+        let removed = ctx
+            .state
+            .current_mut()
+            .workspaces
+            .iter_mut()
+            .find_map(|ws| {
+                ws.panes
+                    .iter()
+                    .position(|pane| pane.id == id)
+                    .map(|index| ws.panes.remove(index))
+            });
+        remove_pane(&mut ctx.state, id);
+        if let Some(pane) = removed {
+            clear_pane_local_state(&mut ctx.state, id);
+            ctx.state.current_mut().retire_pane(pane, timeout);
+        }
+    }
+    Update::full()
+}
+
+pub(crate) fn prune_closed_command(
+    epoch: u64,
+    id: PaneId,
+    generation: u64,
+    delay: Duration,
+) -> Command {
+    Command::after(delay, move |link: CommandLink<Msg>| {
+        link.send(Msg::PruneClosed(epoch, id, generation));
+    })
+}
+
+/// Prune several panes closed in the same batch (e.g. [`crate::ops::exit::kill_workspace`]) after
+/// one shared delay, since an [`Update`] can only carry a single [`Command`].
+pub(crate) fn prune_closed_batch_command(
+    epoch: u64,
+    targets: Vec<(PaneId, u64)>,
+    delay: Duration,
+) -> Command {
+    Command::after(delay, move |link: CommandLink<Msg>| {
+        for (id, generation) in targets {
+            link.send(Msg::PruneClosed(epoch, id, generation));
+        }
+    })
 }
 
 pub(crate) fn find_pane(state: &State, id: PaneId) -> Option<&Pane> {
@@ -560,6 +618,20 @@ pub(crate) fn find_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane> 
 }
 
 pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
+    let removed_rect = reference_pane_rect(
+        state,
+        &state.current().workspaces[state.current().active_workspace],
+        id,
+        None,
+    );
+    remove_pane_with_reference(state, id, removed_rect);
+}
+
+fn remove_pane_with_reference(
+    state: &mut State,
+    id: PaneId,
+    removed_rect: Option<tui_lipan::prelude::FloatRect>,
+) {
     if state.moving_pane.is_some_and(|session| session.id == id) {
         state.moving_pane = None;
     }
@@ -571,12 +643,6 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
         state.resizing_pane = None;
     }
 
-    let removed_rect = reference_pane_rect(
-        state,
-        &state.current().workspaces[state.current().active_workspace],
-        id,
-        None,
-    );
     let focus_updates: Vec<(usize, Option<PaneId>)> = state
         .current()
         .workspaces
@@ -598,6 +664,7 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
         remove_tiled_window(workspace, id);
         workspace.panes.retain(|pane| pane.id != id);
     }
+    clear_pane_local_state(state, id);
 
     for (workspace_index, focus) in focus_updates {
         state.current_mut().workspaces[workspace_index].focused_pane = focus;
@@ -607,50 +674,47 @@ pub(crate) fn remove_pane(state: &mut State, id: PaneId) {
     }
 }
 
-pub(crate) fn handle_prune_closed(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    generation: u64,
-) -> Update {
-    if !should_prune_closed(&ctx.state, id, generation) {
-        return Update::none();
-    }
-    if id == crate::state::POPUP_PANE_ID {
-        ctx.state.popup = None;
-        return Update::full();
-    }
-    remove_pane(&mut ctx.state, id);
-    if ctx
-        .state
+pub(crate) fn clear_pane_local_state(state: &mut State, id: PaneId) {
+    if state
         .search
         .as_ref()
         .is_some_and(|search| search.target == id)
     {
-        ctx.state.search = None;
-        ctx.state.commands_dirty = true;
+        state.search = None;
+        state.commands_dirty = true;
     }
-    if total_visible_panes(&ctx.state) == 0 {
-        request_current_pane_focus(ctx);
-        return Update::full();
-    }
-    request_current_pane_focus(ctx);
-    Update::full()
-}
-
-fn should_prune_closed(state: &State, id: PaneId, generation: u64) -> bool {
     if state
-        .popup
+        .copy_mode
         .as_ref()
-        .is_some_and(|pane| pane.id == id && pane.pty_generation == generation && pane.closing)
+        .is_some_and(|copy| copy.target == id)
     {
-        return true;
+        state.copy_mode = None;
+        state.mode = crate::state::Mode::Normal;
+        state.commands_dirty = true;
     }
-    state
-        .current()
-        .workspaces
-        .iter()
-        .flat_map(|workspace| workspace.panes.iter())
-        .any(|pane| pane.id == id && pane.pty_generation == generation && pane.closing)
+    if state
+        .hint_mode
+        .as_ref()
+        .is_some_and(|hints| hints.target == id)
+    {
+        state.hint_mode = None;
+        state.mode = crate::state::Mode::Normal;
+        state.commands_dirty = true;
+    }
+    if state
+        .rename
+        .as_ref()
+        .is_some_and(|rename| rename.target == id)
+    {
+        state.rename = None;
+    }
+    if state
+        .copy_feedback_target
+        .is_some_and(|(epoch, target)| epoch == state.runtime_epoch && target == id)
+    {
+        state.copy_feedback_target = None;
+        state.copy_feedback_epoch = state.copy_feedback_epoch.wrapping_add(1);
+    }
 }
 
 /// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
@@ -780,31 +844,6 @@ pub(crate) fn open_timers_batch_command(
     })
 }
 
-pub(crate) fn prune_closed_command(
-    epoch: u64,
-    id: PaneId,
-    generation: u64,
-    delay: Duration,
-) -> Command {
-    Command::after(delay, move |link: CommandLink<Msg>| {
-        link.send(Msg::PruneClosed(epoch, id, generation));
-    })
-}
-
-/// Prune several panes closed in the same batch (e.g. [`crate::ops::exit::kill_workspace`])
-/// after one shared delay, since an [`Update`] can only carry a single [`Command`].
-pub(crate) fn prune_closed_batch_command(
-    epoch: u64,
-    targets: Vec<(PaneId, u64)>,
-    delay: Duration,
-) -> Command {
-    Command::after(delay, move |link: CommandLink<Msg>| {
-        for (id, generation) in targets {
-            link.send(Msg::PruneClosed(epoch, id, generation));
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -832,6 +871,15 @@ mod tests {
             env: Vec::new(),
             palette: TerminalColorPalette::default(),
         }
+    }
+
+    pub(crate) fn in_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(body)
+            .expect("spawn test thread")
+            .join()
+            .expect("join test thread")
     }
 
     #[test]
@@ -938,37 +986,226 @@ mod tests {
     }
 
     #[test]
-    fn stale_prune_token_does_not_match_reused_pane_id() {
-        use crate::config::HyprmuxConfig;
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
-        state.current_mut().workspaces[0].panes[0].pty_generation = 42;
-        state.current_mut().workspaces[0].panes[0].closing = true;
-        assert!(should_prune_closed(&state, 1, 42));
-        assert!(!should_prune_closed(&state, 1, 41));
+    fn close_keeps_the_pane_described_while_it_animates_out() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.confirm.close_pane = false;
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+            }
+            backend.render();
 
-        state.current_mut().workspaces[0].panes[0].closing = false;
-        assert!(!should_prune_closed(&state, 1, 42));
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close pane");
+            // The pane has to stay described for the close scale to have anything to lay out.
+            // It leaves the tiling layout at once so neighbours expand, but is still rendered.
+            let pane = &backend.state().current().workspaces[0].panes[0];
+            assert!(pane.closing, "the pane should be animating out, not gone");
+            assert_eq!(backend.state().current().workspaces[0].visible_count(), 0);
+            assert_eq!(backend.state().current().focused_pane, None);
+            assert!(
+                backend
+                    .capture_ui_snapshot()
+                    .widgets
+                    .iter()
+                    .any(|widget| widget
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| key.as_ref() == "hyprmux-pane-1-0")),
+                "the closing pane still renders while it scales down"
+            );
+
+            // Prune drops it once the animation has run.
+            backend
+                .dispatch(crate::Msg::PruneClosed(
+                    backend.state().runtime_epoch,
+                    1,
+                    backend.state().current().workspaces[0].panes[0].pty_generation,
+                ))
+                .expect("prune closed pane");
+            assert!(backend.state().current().workspaces[0].panes.is_empty());
+        });
     }
 
     #[test]
-    fn popup_prune_waits_for_matching_closing_generation() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
-        let mut popup = Pane::new(
-            crate::state::POPUP_PANE_ID,
-            100,
-            FloatRect {
-                x: 10.0,
-                y: 5.0,
-                w: 40.0,
-                h: 12.0,
-            },
-        );
-        popup.pty_generation = 7;
-        popup.closing = true;
-        state.popup = Some(popup);
+    fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                let mut popup = Pane::new(
+                    crate::state::POPUP_PANE_ID,
+                    state.config.scrollback,
+                    FloatRect {
+                        x: 10.0,
+                        y: 5.0,
+                        w: 40.0,
+                        h: 12.0,
+                    },
+                );
+                popup.opening = false;
+                popup.terminal_active = true;
+                state.popup = Some(popup);
+            }
+            backend.render();
 
-        assert!(should_prune_closed(&state, crate::state::POPUP_PANE_ID, 7));
-        assert!(!should_prune_closed(&state, crate::state::POPUP_PANE_ID, 6));
+            backend
+                .dispatch(crate::Msg::ClosePopup)
+                .expect("close popup");
+            let popup = backend
+                .state()
+                .popup
+                .as_ref()
+                .expect("popup still described");
+            assert!(popup.closing);
+            let generation = popup.pty_generation;
+            assert!(
+                backend
+                    .capture_ui_snapshot()
+                    .widgets
+                    .iter()
+                    .any(|widget| widget
+                        .key
+                        .as_ref()
+                        .is_some_and(|key| { key.as_ref() == "hyprmux-pane-4294967295-0" })),
+                "the closing popup still renders while it scales down"
+            );
+
+            backend
+                .dispatch(crate::Msg::PruneClosed(
+                    backend.state().runtime_epoch,
+                    crate::state::POPUP_PANE_ID,
+                    generation,
+                ))
+                .expect("prune closed popup");
+            assert!(backend.state().popup.is_none());
+        });
+    }
+
+    #[test]
+    fn disabled_close_animation_still_prunes_the_pane() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.confirm.close_pane = false;
+                state.config.animations.enabled = false;
+                state.current_mut().workspaces[0].panes[0].opening = false;
+            }
+            backend.render();
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close pane");
+
+            // With animations off the prune delay is zero, but the message still drives removal.
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            backend
+                .dispatch(crate::Msg::PruneClosed(
+                    backend.state().runtime_epoch,
+                    1,
+                    generation,
+                ))
+                .expect("prune closed pane");
+            assert!(backend.state().current().workspaces[0].panes.is_empty());
+            assert!(backend.capture_ui_snapshot().widgets.iter().all(|widget| {
+                widget
+                    .key
+                    .as_ref()
+                    .is_none_or(|key| key.as_ref() != "hyprmux-pane-1-0")
+            }));
+        });
+    }
+
+    #[test]
+    fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            let mut pane = Pane::new(2, 100, FloatRect::default());
+            pane.opening = false;
+            backend.state_mut().current_mut().workspaces[1]
+                .panes
+                .push(pane);
+            crate::tiling::append_tiled_window(
+                &mut backend.state_mut().current_mut().workspaces[1],
+                2,
+            );
+            backend.render();
+
+            backend
+                .dispatch(crate::Msg::RunAction(
+                    crate::input::Action::SwitchWorkspace(1),
+                ))
+                .expect("switch workspace");
+            let snapshot = backend.capture_ui_snapshot();
+            assert!(snapshot.widgets.iter().any(|widget| {
+                widget
+                    .key
+                    .as_ref()
+                    .is_some_and(|key| key.as_ref() == "hyprmux-pane-2-0")
+            }));
+            assert!(snapshot.widgets.iter().all(|widget| {
+                widget
+                    .key
+                    .as_ref()
+                    .is_none_or(|key| key.as_ref() != "hyprmux-pane-1-0")
+            }));
+        });
+    }
+
+    #[test]
+    fn removing_a_pane_clears_modes_that_target_it() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.copy_mode = Some(crate::state::CopyModeState {
+            target: 1,
+            navigation: TerminalCopyMode::new(0, 0, 0),
+            search_matches: Vec::new(),
+            search_current: 0,
+        });
+        state.hint_mode = Some(crate::state::HintModeState {
+            target: 1,
+            matches: Vec::new(),
+            labels: Vec::new(),
+            input: String::new(),
+            offset: 0,
+        });
+        state.rename = Some(crate::state::PaneRenameState::new(1, "pane"));
+        state.copy_feedback_target = Some((state.runtime_epoch, 1));
+
+        remove_pane(&mut state, 1);
+
+        assert!(state.copy_mode.is_none());
+        assert!(state.hint_mode.is_none());
+        assert!(state.rename.is_none());
+        assert!(state.copy_feedback_target.is_none());
+        assert_eq!(state.mode, crate::state::Mode::Normal);
     }
 
     #[test]
@@ -1054,5 +1291,128 @@ mod tests {
         );
         assert!(remote.iter().any(|(k, _)| k == "HYPRMUX"));
         assert!(remote.iter().any(|(k, _)| k == "HYPRMUX_PANE"));
+    }
+}
+
+#[cfg(test)]
+mod close_animation {
+    use super::tests::in_stack;
+    use std::time::Duration;
+
+    fn pane_rect(
+        backend: &tui_lipan::TestBackend<crate::HyprmuxApp>,
+    ) -> Option<(i16, i16, u16, u16)> {
+        backend
+            .capture_ui_snapshot()
+            .widgets
+            .iter()
+            .find(|w| {
+                w.key
+                    .as_ref()
+                    .is_some_and(|k| k.as_ref() == "hyprmux-pane-1-0")
+            })
+            .map(|w| (w.rect.x, w.rect.y, w.rect.w, w.rect.h))
+    }
+
+    /// The close animation is the spawn animation in reverse: the pane scales toward its centre on
+    /// **both** axes, so its border shrinks with it. A height-only collapse would clip the bottom
+    /// border away instead. Floating panes animate exactly like tiled ones.
+    #[test]
+    fn a_closing_pane_scales_down_on_both_axes() {
+        for floating in [false, true] {
+            in_stack(move || {
+                let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+                backend.set_viewport(tui_lipan::prelude::Rect {
+                    x: 0,
+                    y: 0,
+                    w: 80,
+                    h: 24,
+                });
+                {
+                    let state = backend.state_mut();
+                    state.config.confirm.close_pane = false;
+                    let pane = &mut state.current_mut().workspaces[0].panes[0];
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    pane.floating = floating;
+                }
+                backend.render();
+                let (_, _, w0, h0) = pane_rect(&backend).expect("pane renders");
+
+                backend
+                    .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                    .expect("close");
+
+                // Front-loaded: the shrink has to be visible before the fade hides it, so the very
+                // first tick must already move. An EaseInOutCubic ramp would still be at full size.
+                backend.advance(Duration::from_millis(25));
+                let (x1, y1, w1, h1) = pane_rect(&backend).expect("closing pane still renders");
+                assert!(
+                    w1 < w0 && h1 < h0,
+                    "closing={floating}: both axes should shrink on the first tick, \
+                     got {w1}x{h1} from {w0}x{h0}"
+                );
+                assert!(
+                    x1 > 0 && y1 > 0,
+                    "the pane should pull in toward its centre"
+                );
+
+                // And it keeps shrinking rather than snapping.
+                backend.advance(Duration::from_millis(25));
+                let (_, _, w2, h2) = pane_rect(&backend).expect("still closing");
+                assert!(w2 < w1 && h2 <= h1, "the scale should continue: {w2}x{h2}");
+            });
+        }
+    }
+
+    /// A pane the user closed exits by definition. Reporting that exit is noise, and worse, the
+    /// `[exited]` title and failure toast appear over the pane while it is still animating out.
+    #[test]
+    fn a_user_closed_pane_does_not_report_its_own_exit() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            let generation = {
+                let state = backend.state_mut();
+                state.config.confirm.close_pane = false;
+                state.config.pane.hold_on_exit = true;
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.pty_generation
+            };
+            backend.render();
+
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close");
+            let epoch = backend.state().runtime_epoch;
+
+            // The server reports the kill we asked for.
+            backend
+                .dispatch(crate::Msg::SessionExited {
+                    epoch,
+                    pane_id: 1,
+                    generation,
+                    code: 1,
+                })
+                .expect("exit frame");
+
+            let text = backend.capture_frame().plain_text();
+            assert!(
+                !text.contains("exited (1)"),
+                "closing our own pane must not toast its exit: {text}"
+            );
+            // `hold_on_exit` must not keep a pane the user explicitly closed.
+            assert!(
+                backend.state().current().workspaces[0].panes[0].closing,
+                "the pane should still be closing, not held open"
+            );
+        });
     }
 }

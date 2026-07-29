@@ -1,4 +1,4 @@
-use tui_lipan::prelude::{BorderStyle, TextInput, Theme};
+use tui_lipan::prelude::{BorderStyle, CapStyle, TextInput, Theme};
 
 /// Structural presentation of a visible pane title. `Bar` is the existing separate title row;
 /// the compact variants reuse the frame's top border row. Visibility is controlled independently
@@ -125,88 +125,61 @@ impl PaneBorderStyle {
     }
 }
 
-/// End-cap glyphs for a colored chip drawn over a background (pane titlebars via
-/// `Action::CycleTitleStyle`, workbar badges via `Action::CycleWorkbarBadgeStyle`, workspace tabs
-/// via `Action::CycleWorkbarTabStyle`). `Padded`
-/// keeps a flush bar with blank side padding; the others draw the chip's ends in the chip color
-/// over whatever is behind it, so it reads as a rounded/pointed pill. The cap glyphs (except
-/// `Half`) are powerline separators and need a patched/Nerd font, like the titlebar's mode icons.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapStyle {
-    Padded,
-    Half,
-    Round,
-    Arrow,
+const BADGE_CAP_STYLES: &[CapStyle] = &[CapStyle::Padded, CapStyle::Round, CapStyle::Arrow];
+
+/// Parse hyprmux's historical cap-style aliases into tui-lipan's shared cap primitive.
+pub(crate) fn parse_cap_style(value: &str) -> Option<CapStyle> {
+    match value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', ' '], "-")
+        .as_str()
+    {
+        "padded" | "pad" | "plain" | "none" => Some(CapStyle::Padded),
+        "half" | "half-block" | "block" => Some(CapStyle::Half),
+        "round" | "rounded" | "pill" => Some(CapStyle::Round),
+        "arrow" | "pointed" | "slant" | "powerline" => Some(CapStyle::Arrow),
+        _ => None,
+    }
 }
 
-impl CapStyle {
-    /// Cycle order for `Action::CycleTitleStyle`.
-    pub fn all() -> &'static [CapStyle] {
-        &[Self::Padded, Self::Half, Self::Round, Self::Arrow]
+/// Config token and persisted value for a cap style.
+pub(crate) const fn cap_style_id(style: CapStyle) -> &'static str {
+    match style {
+        CapStyle::Padded => "padded",
+        CapStyle::Half => "half",
+        CapStyle::Round => "round",
+        CapStyle::Arrow => "arrow",
     }
+}
 
-    /// Config token and persisted value.
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::Padded => "padded",
-            Self::Half => "half",
-            Self::Round => "round",
-            Self::Arrow => "arrow",
-        }
+/// Human-facing label for a cap style.
+pub(crate) const fn cap_style_label(style: CapStyle) -> &'static str {
+    match style {
+        CapStyle::Padded => "Padded",
+        CapStyle::Half => "Half block",
+        CapStyle::Round => "Round",
+        CapStyle::Arrow => "Arrow",
     }
+}
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Padded => "Padded",
-            Self::Half => "Half block",
-            Self::Round => "Round",
-            Self::Arrow => "Arrow",
-        }
-    }
+/// Cycle all title/workbar styles in the app's established order.
+pub(crate) fn next_cap_style(style: CapStyle) -> CapStyle {
+    let all = CapStyle::all();
+    let index = all
+        .iter()
+        .position(|candidate| *candidate == style)
+        .unwrap_or(0);
+    all[(index + 1) % all.len()]
+}
 
-    pub fn parse(value: &str) -> Option<Self> {
-        match value
-            .trim()
-            .to_ascii_lowercase()
-            .replace(['_', ' '], "-")
-            .as_str()
-        {
-            "padded" | "pad" | "plain" | "none" => Some(Self::Padded),
-            "half" | "half-block" | "block" => Some(Self::Half),
-            "round" | "rounded" | "pill" => Some(Self::Round),
-            "arrow" | "pointed" | "slant" | "powerline" => Some(Self::Arrow),
-            _ => None,
-        }
-    }
-
-    pub fn next(self) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|style| *style == self).unwrap_or(0);
-        all[(index + 1) % all.len()]
-    }
-
-    /// Cycle order for workbar badge/tab style actions-same as [`all`] except `Half` is excluded.
-    pub fn badge_styles() -> &'static [CapStyle] {
-        &[Self::Padded, Self::Round, Self::Arrow]
-    }
-
-    pub fn next_badge(self) -> Self {
-        let all = Self::badge_styles();
-        let index = all.iter().position(|style| *style == self).unwrap_or(0);
-        all[(index + 1) % all.len()]
-    }
-
-    /// The (left, right) cap glyphs, or `None` for `Padded` (blank side padding, no glyphs). The
-    /// caps paint in the titlebar color over the backdrop, so a left cap fills toward its right
-    /// and a right cap toward its left.
-    pub fn caps(self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Self::Padded => None,
-            Self::Half => Some(("\u{2590}", "\u{258c}")),
-            Self::Round => Some(("\u{e0b6}", "\u{e0b4}")),
-            Self::Arrow => Some(("\u{e0b2}", "\u{e0b0}")),
-        }
-    }
+/// Cycle workbar badges and tabs without exposing the unsupported half-block option.
+pub(crate) fn next_badge_cap_style(style: CapStyle) -> CapStyle {
+    let index = BADGE_CAP_STYLES
+        .iter()
+        .position(|candidate| *candidate == style)
+        .unwrap_or(0);
+    BADGE_CAP_STYLES[(index + 1) % BADGE_CAP_STYLES.len()]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

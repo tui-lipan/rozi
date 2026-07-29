@@ -1,118 +1,46 @@
-use std::sync::OnceLock;
+use std::ops::Range;
 
-use regex_lite::Regex;
 use tui_lipan::prelude::*;
+use tui_lipan::utils::hints::{
+    HOME_ROW_HINT_KEYS, HintFilter, HintScan, assign_labels, filter_labels,
+};
+
+pub use tui_lipan::utils::hints::{HintKind, HintMatch};
 
 use crate::HyprmuxApp;
 use crate::ops::focus::request_current_pane_focus;
 use crate::pane_lifecycle::find_pane;
 use crate::state::{HintModeState, Mode};
 
-const LABEL_KEYS: &[u8] = b"asdfghjkl;";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HintKind {
-    Url,
-    Path,
-    GitSha,
-    /// User-configured `[[hints]]` pattern. `open` mirrors URL behavior for uppercase activate.
-    Custom {
-        open: bool,
-    },
-}
-
-impl HintKind {
-    fn can_open(self) -> bool {
-        matches!(self, Self::Url | Self::Custom { open: true })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HintMatch {
-    pub row: usize,
-    pub start_col: usize,
-    pub end_col: usize,
-    pub text: String,
-    pub kind: HintKind,
-}
-
 pub fn scan_snapshot_with_custom(
     text: &str,
     custom: &[crate::config::HyprmuxHintConfig],
 ) -> Vec<HintMatch> {
-    static URL: OnceLock<Regex> = OnceLock::new();
-    static PATH: OnceLock<Regex> = OnceLock::new();
-    static SHA: OnceLock<Regex> = OnceLock::new();
-    let builtins = [
-        (
-            HintKind::Url,
-            URL.get_or_init(|| Regex::new(r"https?://[^\s<>]+").unwrap()),
-        ),
-        (
-            HintKind::Path,
-            PATH.get_or_init(|| Regex::new(r"(?:\.?\.?/|~/|/)[^\s:]+(?:[:][0-9]+)?").unwrap()),
-        ),
-        (
-            HintKind::GitSha,
-            SHA.get_or_init(|| Regex::new(r"\b[0-9a-fA-F]{7,40}\b").unwrap()),
-        ),
-    ];
-    let mut out = Vec::new();
-    for (row, line) in text.lines().enumerate() {
-        let mut push_match = |kind: HintKind, regex: &Regex| {
-            for matched in regex.find_iter(line) {
-                let raw = matched.as_str();
-                let trimmed = raw.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}']);
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if kind == HintKind::GitSha && !trimmed.bytes().any(|b| b.is_ascii_alphabetic()) {
-                    // Pure decimal runs are timestamps, PIDs, or byte counts — not Git SHAs.
-                    continue;
-                }
-                let start_col = line[..matched.start()].chars().count();
-                let end_col = start_col + trimmed.chars().count();
-                if out.iter().any(|existing: &HintMatch| {
-                    existing.row == row
-                        && start_col < existing.end_col
-                        && end_col > existing.start_col
-                }) {
-                    continue;
-                }
-                out.push(HintMatch {
-                    row,
-                    start_col,
-                    end_col,
-                    text: trimmed.to_string(),
-                    kind,
-                });
-            }
+    let mut scan = HintScan::new();
+    for (tag, hint) in custom.iter().enumerate() {
+        let Ok(tag) = u16::try_from(tag) else {
+            break;
         };
-        for (kind, regex) in builtins {
-            push_match(kind, regex);
-        }
-        for hint in custom {
-            push_match(HintKind::Custom { open: hint.open }, &hint.pattern);
-        }
+        let pattern = hint.pattern.clone();
+        scan = scan.custom(tag, move |line: &str, out: &mut Vec<Range<usize>>| {
+            out.extend(
+                pattern
+                    .find_iter(line)
+                    .map(|matched| matched.start()..matched.end()),
+            );
+        });
     }
-    out.sort_by_key(|matched| (matched.row, matched.start_col));
-    out
+    let mut found = scan.scan(text);
+    found.sort_by_key(|matched| (matched.row, matched.start_col, matched.end_col));
+    found
 }
 
-pub fn hint_labels(n: usize) -> Vec<String> {
-    if n <= LABEL_KEYS.len() {
-        return LABEL_KEYS[..n]
-            .iter()
-            .map(|key| char::from(*key).to_string())
-            .collect();
+fn can_open(kind: HintKind, custom: &[crate::config::HyprmuxHintConfig]) -> bool {
+    match kind {
+        HintKind::Url => true,
+        HintKind::Custom(tag) => custom.get(usize::from(tag)).is_some_and(|hint| hint.open),
+        HintKind::Path | HintKind::GitSha => false,
     }
-    (0..n)
-        .map(|index| {
-            let first = LABEL_KEYS[(index / LABEL_KEYS.len()) % LABEL_KEYS.len()];
-            let second = LABEL_KEYS[index % LABEL_KEYS.len()];
-            format!("{}{}", char::from(first), char::from(second))
-        })
-        .collect()
 }
 
 pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -131,7 +59,8 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::full();
     }
     let offset = pane.terminal.scrollback_offset();
-    let labels = hint_labels(matches.len());
+    crate::copy_mode::clear_copy_feedback(ctx);
+    let labels = assign_labels(matches.len(), HOME_ROW_HINT_KEYS);
     ctx.state.hint_mode = Some(HintModeState {
         target,
         matches,
@@ -162,7 +91,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
         return (true, Update::none());
     };
     let lower = ch.to_ascii_lowercase();
-    if !LABEL_KEYS.contains(&(lower as u8)) {
+    if !HOME_ROW_HINT_KEYS.as_bytes().contains(&(lower as u8)) {
         return (true, Update::none());
     }
     let Some(state) = ctx.state.hint_mode.as_mut() else {
@@ -170,18 +99,17 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     };
     let target = state.target;
     state.input.push(lower);
-    let candidates: Vec<usize> = state
-        .labels
-        .iter()
-        .enumerate()
-        .filter(|(_, label)| label.starts_with(&state.input))
-        .map(|(index, _)| index)
-        .collect();
-    if candidates.len() != 1 || state.labels[candidates[0]] != state.input {
+    let selected = match filter_labels(&state.labels, &state.input) {
+        HintFilter::Selected(index) if state.labels[index] == state.input => index,
+        HintFilter::NoMatch | HintFilter::Ambiguous | HintFilter::Selected(_) => {
+            return (true, Update::full());
+        }
+    };
+    if selected >= state.matches.len() {
         return (true, Update::full());
     }
-    let matched = state.matches[candidates[0]].clone();
-    let open = ch.is_ascii_uppercase() && matched.kind.can_open();
+    let matched = state.matches[selected].clone();
+    let open = ch.is_ascii_uppercase() && can_open(matched.kind, &ctx.state.config.hints);
     let result = if open {
         tui_lipan::utils::open_url(&matched.text).map_err(|err| err.to_string())
     } else {
@@ -201,21 +129,25 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
             ));
         }
     };
-    let update = exit(ctx);
-    if copied {
-        let end_col = matched.end_col.saturating_sub(1);
-        (
-            true,
-            crate::copy_mode::start_copy_flash(
-                ctx,
-                target,
-                ((matched.row, matched.start_col), (matched.row, end_col)),
-                false,
-            ),
+    let feedback = copied.then(|| {
+        crate::copy_mode::flash_copy_feedback(
+            ctx,
+            target,
+            tui_lipan::utils::GridSelection {
+                anchor: tui_lipan::utils::GridPos {
+                    row: matched.row,
+                    col: matched.start_col,
+                },
+                cursor: tui_lipan::utils::GridPos {
+                    row: matched.row,
+                    col: matched.end_col.saturating_sub(1),
+                },
+            },
         )
-    } else {
-        (true, update)
-    }
+    });
+    let mut update = exit(ctx);
+    update.command = feedback;
+    (true, update)
 }
 
 #[cfg(test)]
@@ -234,6 +166,18 @@ mod tests {
     }
 
     #[test]
+    fn scans_multiple_urls_after_ascii_prose() {
+        let found = scan_snapshot_with_custom("error at https://a.test and https://b.test", &[]);
+        assert_eq!(
+            found
+                .iter()
+                .map(|matched| matched.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://a.test", "https://b.test"]
+        );
+    }
+
+    #[test]
     fn pure_decimal_runs_are_not_sha_hints() {
         assert!(scan_snapshot_with_custom("size 17520384 pid 1234567890", &[]).is_empty());
         let found = scan_snapshot_with_custom("rev 1234abc timestamp 1720780800", &[]);
@@ -246,7 +190,7 @@ mod tests {
     #[test]
     fn labels_are_unique_and_prefix_free() {
         for n in [1, 10, 11] {
-            let labels = hint_labels(n);
+            let labels = assign_labels(n, HOME_ROW_HINT_KEYS);
             assert_eq!(labels.len(), n);
             for (i, label) in labels.iter().enumerate() {
                 assert!(
@@ -276,7 +220,7 @@ mod tests {
         assert!(
             found
                 .iter()
-                .any(|m| m.text == "10.0.0.1" && m.kind == HintKind::Custom { open: true })
+                .any(|m| m.text == "10.0.0.1" && m.kind == HintKind::Custom(0))
         );
         assert!(
             found
@@ -285,5 +229,11 @@ mod tests {
         );
         // Left-to-right order after sort by (row, start_col).
         assert_eq!(found[0].text, "10.0.0.1");
+    }
+
+    #[test]
+    fn scanners_report_display_columns_after_wide_text() {
+        let found = scan_snapshot_with_custom("你 https://example.com", &[]);
+        assert_eq!(found[0].start_col, 3);
     }
 }

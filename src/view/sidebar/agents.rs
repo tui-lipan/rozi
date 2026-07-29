@@ -160,9 +160,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                 .iter()
                 .enumerate()
                 .filter(|(_, pane)| {
-                    !pane.closing
-                        && pane.id != crate::state::SCRATCH_PANE_ID
+                    pane.id != crate::state::SCRATCH_PANE_ID
                         && pane.id != crate::state::POPUP_PANE_ID
+                        && !pane.closing
                         && pane.terminal.detected_agent.is_some()
                 })
                 .map(move |(pane_index, pane)| {
@@ -611,11 +611,11 @@ mod tests {
     use crate::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
     use crate::state::Pane;
 
-    fn pane(id: PaneId, value: Option<&str>, closing: bool) -> Pane {
-        pane_in(id, value, closing, None)
+    fn pane(id: PaneId, value: Option<&str>, _exiting: bool) -> Pane {
+        pane_in(id, value, false, None)
     }
 
-    fn pane_in(id: PaneId, value: Option<&str>, closing: bool, cwd: Option<&str>) -> Pane {
+    fn pane_in(id: PaneId, value: Option<&str>, _exiting: bool, cwd: Option<&str>) -> Pane {
         let mut pane = Pane::new(
             id,
             100,
@@ -626,7 +626,6 @@ mod tests {
                 h: 10.0,
             },
         );
-        pane.closing = closing;
         pane.terminal.detected_agent = Some(DetectedAgent {
             kind: AgentKind::Claude,
             state: DetectedAgentState::Idle,
@@ -668,13 +667,12 @@ mod tests {
             pane(6, None, false),
             pane(7, Some("blocked"), true),
         ];
-
         assert_eq!(
             agent_rows(&state)
                 .into_iter()
                 .map(|row| row.pane_id)
                 .collect::<Vec<_>>(),
-            vec![3, 4, 2, 5, 1, 6]
+            vec![3, 7, 4, 2, 5, 1, 6]
         );
     }
 

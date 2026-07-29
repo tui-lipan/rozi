@@ -202,6 +202,7 @@ pub(super) fn attached(
         ctx.state.animation = GeometryAnimation::None;
         bind_attached_pane_backends(ctx, panes);
         flush_pending_spawns(ctx);
+        crate::pty_events::flush_pending_resizes(ctx);
         Update::full()
     } else if had_panes {
         // Defensive: a live server holding panes but no committed layout (should not occur under
@@ -209,6 +210,7 @@ pub(super) fn attached(
         apply_attached_panes(ctx, panes);
         ctx.state.animation = GeometryAnimation::None;
         flush_pending_spawns(ctx);
+        crate::pty_events::flush_pending_resizes(ctx);
         Update::full()
     } else {
         // An empty server (fresh ephemeral, autostarted named session, or one whose panes all
@@ -216,6 +218,7 @@ pub(super) fn attached(
         // (controller) commits rev 1 on the tail chokepoint pass.
         let spawned = spawn_state_panes_on_session(ctx);
         flush_pending_spawns(ctx);
+        crate::pty_events::flush_pending_resizes(ctx);
         if spawned.is_empty() {
             Update::full()
         } else {

@@ -375,17 +375,27 @@ fn schedule_pane_resize_flush(epoch: u64) -> Command {
 
 /// Send the latest debounced size for every pane that still exists (see the controller debounce in
 /// [`handle_pane_resize`]). Clears the pending set and re-arms scheduling.
+///
+/// A pending size is the only record of that pane's geometry there is: `client.resize` is reached
+/// from here and from [`handle_pane_resize`] alone, both driven by the terminal widget, and the
+/// widget reports a viewport only when it *changes*. Nothing re-derives one. So a size dropped here
+/// leaves the PTY wrong until the pane's geometry happens to change again - which for a pane the
+/// user is not currently resizing may be never.
 pub(crate) fn flush_pending_resizes(ctx: &mut Context<HyprmuxApp>) {
-    let client = ctx.state.current().session_client.clone();
+    let Some(client) = ctx.state.current().session_client.clone() else {
+        // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
+        // but keep the sizes: `flush_pending_resizes` runs again once the client is installed.
+        if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
+            shared.resize_flush_scheduled = false;
+        }
+        return;
+    };
     let pending: Vec<(PaneId, (u16, u16))> = match ctx.state.current_mut().shared.as_mut() {
         Some(shared) => {
             shared.resize_flush_scheduled = false;
             shared.pending_resizes.drain().collect()
         }
         None => return,
-    };
-    let Some(client) = client else {
-        return;
     };
     for (id, (cols, rows)) in pending {
         if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
@@ -779,6 +789,53 @@ mod tests {
                     resizes(&controller_rx),
                     vec![(50, 20)],
                     "flush sends only the latest size per pane"
+                );
+
+                // A flush with no client must hold the size rather than discard it: nothing
+                // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
+                // happens to change again.
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(viewport);
+                let (client, reconnect_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().session_attached = true;
+                    state.current_mut().session_client = Some(client.clone());
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(1);
+                    state.current_mut().shared = Some(shared);
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::PaneResize(1, 50, 20))
+                    .expect("dispatch resize");
+                // The link drops between the report and the trailing-edge flush it armed.
+                backend.state_mut().current_mut().session_client = None;
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("dispatch flush while disconnected");
+                assert_eq!(
+                    backend
+                        .state()
+                        .current()
+                        .shared
+                        .as_ref()
+                        .expect("controller has shared state")
+                        .pending_resizes
+                        .get(&1),
+                    Some(&(50, 20)),
+                    "a flush with no client keeps the size for the next one"
+                );
+
+                // The client arriving is what delivers it.
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("dispatch flush after reconnect");
+                assert_eq!(
+                    resizes(&reconnect_rx),
+                    vec![(50, 20)],
+                    "the held size reaches the PTY once a client is back"
                 );
             })
             .expect("spawn resize test thread")

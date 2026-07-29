@@ -1081,6 +1081,9 @@ impl Default for WorkbarConfig {
     fn default() -> Self {
         // Badge + workspace tabs on the left; the session badge sits on the right but stays
         // invisible until an attach connection exists, so local mode looks unchanged.
+        // `layout` is the permanent home for the active layout mode: cycling it re-flows the tiles
+        // visibly in most cases, but a lone pane looks identical under every layout, so the name
+        // has to live somewhere that is always readable rather than in a toast that expires.
         Self {
             left: vec![
                 WorkbarItem::new(WorkbarSegment::Title),
@@ -1088,6 +1091,7 @@ impl Default for WorkbarConfig {
             ],
             right: vec![
                 WorkbarItem::new(WorkbarSegment::Location),
+                WorkbarItem::new(WorkbarSegment::Layout),
                 WorkbarItem::new(WorkbarSegment::Session),
             ],
             clock_format: "%H:%M".to_string(),
@@ -1181,6 +1185,10 @@ mod tests {
             vec![
                 WorkbarItem {
                     segment: WorkbarSegment::Location,
+                    color: None,
+                },
+                WorkbarItem {
+                    segment: WorkbarSegment::Layout,
                     color: None,
                 },
                 WorkbarItem {
@@ -1283,6 +1291,7 @@ mod tests {
             workbar.right,
             vec![
                 WorkbarItem::new(WorkbarSegment::Location),
+                WorkbarItem::new(WorkbarSegment::Layout),
                 WorkbarItem::new(WorkbarSegment::Session),
             ]
         );

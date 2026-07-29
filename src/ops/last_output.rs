@@ -17,33 +17,20 @@ pub(crate) fn copy_last_output(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::none();
     };
     let Some(text) = pane.terminal.capture_last_command_output() else {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            "No last command output (enable shell integration)",
-        ));
+        crate::pty_events::notify_info(ctx, "No last command output (enable shell integration)");
         return Update::full();
     };
     if text.is_empty() {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            "Last command produced no output",
-        ));
+        crate::pty_events::notify_info(ctx, "Last command produced no output");
         return Update::full();
     }
     match ctx.clipboard().copy(&text) {
         Ok(()) => {
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                "Copied last command output",
-            ));
+            crate::pty_events::notify_info(ctx, "Copied last command output");
             Update::full()
         }
         Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Copy failed",
-                err.to_string(),
-            ));
+            crate::pty_events::notify_error(ctx, "Copy failed", err.to_string());
             Update::full()
         }
     }

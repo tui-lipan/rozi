@@ -4,48 +4,183 @@ use crate::HyprmuxApp;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{PaneId, ToastChannel};
 
-/// Why input was rejected, plus whether this call actually surfaced a toast for it.
+/// Why input was rejected, and what surfacing that rejection did to the screen.
 struct BlockedInput {
     reason: String,
-    /// False when the 2s debounce swallowed the toast — nothing changed on screen, so the caller
-    /// must not ask for a frame. Held keys against a read-only pane would otherwise render at key
-    /// repeat rate to redraw an identical view.
-    notified: bool,
+    notified: Notified,
 }
 
 fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<BlockedInput> {
     let reason = ctx.state.pane_input_block_reason()?.to_string();
-    let notified = ctx
-        .state
-        .last_blocked_input_toast
-        .is_none_or(|last| last.elapsed() >= std::time::Duration::from_secs(2));
-    if notified {
-        ctx.state.last_blocked_input_toast = Some(std::time::Instant::now());
-        replace_toast(
-            ctx,
-            ToastChannel::InputState,
-            info_toast(&ctx.state.theme, reason.clone()),
-        );
-    }
+    // A held key against a read-only pane fires this at key-repeat rate. The first press pushes;
+    // every repeat renews the same message in place, which costs no frame, so the toast stays up
+    // for as long as the key is down without redrawing an identical view.
+    let notified = notify_on(ctx, ToastChannel::InputState, None, reason.clone());
     Some(BlockedInput { reason, notified })
 }
 
-/// The frame a blocked-input rejection needs: one only when its toast was actually shown.
-fn blocked_input_update(blocked: &BlockedInput) -> Update {
-    if blocked.notified {
-        Update::full()
-    } else {
-        Update::none()
+/// How long a tracked toast stays in [`crate::state::State::replaceable_toasts`] before it is
+/// assumed expired and pruned. Comfortably longer than the 6s error toast, which is the longest
+/// anything routed through [`notify`] can live.
+const TOAST_TRACKING_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A toast this app is still tracking, so a repeat of it can be recognized.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrackedToast {
+    id: OverlayId,
+    /// Refreshed on every push *and* renew, so pruning measures time since the toast was last
+    /// known to be alive rather than since it first appeared.
+    touched_at: std::time::Instant,
+    /// The exact rendered text. Compared rather than hashed so a hash collision degrades to an
+    /// ordinary replace instead of silently renewing an unrelated message.
+    content: std::sync::Arc<str>,
+}
+
+#[cfg(test)]
+impl TrackedToast {
+    /// The overlay this entry points at. A renew keeps it; a replace mints a new one, which is how
+    /// tests tell the two apart.
+    pub(crate) fn id(&self) -> OverlayId {
+        self.id
     }
 }
 
-/// Show the newest state for a notification channel without disturbing unrelated toasts.
-pub(crate) fn replace_toast(ctx: &mut Context<HyprmuxApp>, channel: ToastChannel, toast: Toast) {
-    if let Some(id) = ctx.state.replaceable_toasts.remove(&channel) {
-        ctx.toast().dismiss_immediately(id);
+/// Which slot a toast occupies for de-duplication purposes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ToastKey {
+    /// An explicit slot: the newest state wins even when its text differs, so `Layout controlled
+    /// by client 2` supersedes `Layout controlled by client 1` instead of stacking beside it.
+    Channel(ToastChannel),
+    /// The implicit slot every unkeyed toast lands in: its own content. Only a byte-identical
+    /// repeat collides, which is exactly when renewing is right.
+    Content(u64),
+}
+
+/// What a [`notify`] call did, and therefore whether the screen changed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Notified {
+    /// A new toast entered the stack.
+    Pushed,
+    /// An identical toast was already up; its countdown restarted in place. Nothing the renderer
+    /// reads changed.
+    Renewed,
+}
+
+impl Notified {
+    /// The frame this notification needs. A renew is invisible by construction, so it asks for
+    /// nothing — that is what keeps a held key from repainting.
+    pub(crate) fn update(self) -> Update {
+        match self {
+            Self::Pushed => Update::full(),
+            Self::Renewed => Update::none(),
+        }
+    }
+}
+
+pub(crate) fn content_key(content: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Drop tracking entries whose toasts must already have expired, bounding the map to whatever was
+/// raised in the last [`TOAST_TRACKING_TTL`]. Without this, content-keyed entries would accumulate
+/// one per distinct message for the life of the process.
+fn prune_tracked_toasts(ctx: &mut Context<HyprmuxApp>) {
+    ctx.state
+        .replaceable_toasts
+        .retain(|_, tracked| tracked.touched_at.elapsed() < TOAST_TRACKING_TTL);
+}
+
+/// Raise `toast`, collapsing it into an identical one that is already on screen.
+///
+/// Three outcomes, in order of preference: an unchanged message in the same slot is *renewed* (the
+/// existing toast keeps its place and its look, and just lives longer); a changed message in an
+/// explicit channel *replaces* what was there; anything else is *pushed*.
+fn notify(
+    ctx: &mut Context<HyprmuxApp>,
+    key: ToastKey,
+    content: std::sync::Arc<str>,
+    toast: Toast,
+) -> Notified {
+    prune_tracked_toasts(ctx);
+    if let Some(tracked) = ctx.state.replaceable_toasts.get(&key).cloned() {
+        // `renew` reports false once the toast has expired or begun fading, neither of which can be
+        // extended - then this falls through and pushes a fresh one.
+        if tracked.content == content && ctx.toast().renew(tracked.id) {
+            if let Some(tracked) = ctx.state.replaceable_toasts.get_mut(&key) {
+                tracked.touched_at = std::time::Instant::now();
+            }
+            return Notified::Renewed;
+        }
+        ctx.toast().dismiss_immediately(tracked.id);
     }
     let id = ctx.toast().push(toast);
-    ctx.state.replaceable_toasts.insert(channel, id);
+    ctx.state.replaceable_toasts.insert(
+        key,
+        TrackedToast {
+            id,
+            touched_at: std::time::Instant::now(),
+            content,
+        },
+    );
+    Notified::Pushed
+}
+
+/// The text two toasts must share to count as the same message. The separator is a byte that
+/// cannot appear in either half, so a title/message split can never be forged by content.
+fn toast_content(title: Option<&str>, message: &str) -> std::sync::Arc<str> {
+    match title {
+        Some(title) => format!("{title}\u{0}{message}").into(),
+        None => message.into(),
+    }
+}
+
+/// Report app state or a rejection. Identical repeats renew rather than stack.
+pub(crate) fn notify_info(ctx: &mut Context<HyprmuxApp>, message: impl Into<String>) -> Notified {
+    let message = message.into();
+    let content = toast_content(None, &message);
+    let toast = info_toast(&ctx.state.theme, message);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
+/// Report a failure. Identical repeats renew, which matters most for errors a loop can retry.
+pub(crate) fn notify_error(
+    ctx: &mut Context<HyprmuxApp>,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) -> Notified {
+    let (title, message) = (title.into(), message.into());
+    let content = toast_content(Some(&title), &message);
+    let toast = error_toast(&ctx.state.theme, title, message);
+    notify(
+        ctx,
+        ToastKey::Content(content_key(&content)),
+        content,
+        toast,
+    )
+}
+
+/// Report the newest state of `channel`, superseding whatever that channel last showed.
+pub(crate) fn notify_on(
+    ctx: &mut Context<HyprmuxApp>,
+    channel: ToastChannel,
+    title: Option<String>,
+    message: impl Into<String>,
+) -> Notified {
+    let message = message.into();
+    let content = toast_content(title.as_deref(), &message);
+    let toast = match title {
+        Some(title) => error_toast(&ctx.state.theme, title, message),
+        None => info_toast(&ctx.state.theme, message),
+    };
+    notify(ctx, ToastKey::Channel(channel), content, toast)
 }
 
 pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
@@ -110,7 +245,7 @@ pub(crate) fn forward_key_to_pane(
     key: KeyEvent,
 ) -> Update {
     if let Some(blocked) = input_blocked(ctx) {
-        return blocked_input_update(&blocked);
+        return blocked.notified.update();
     }
     let targets = synchronized_key_targets(&ctx.state, id);
     forward_key_to_targets(ctx, &targets, key)
@@ -255,7 +390,7 @@ pub(crate) fn handle_pane_input(
         return Update::none();
     }
     if let Some(blocked) = input_blocked(ctx) {
-        return blocked_input_update(&blocked);
+        return blocked.notified.update();
     }
 
     let client = ctx.state.current().session_client.clone();
@@ -296,12 +431,11 @@ pub(crate) fn handle_pane_mouse(
     let hover = crate::ops::focus::hover_focus_pane(ctx, id);
     let focus_update = if focus_moved { Update::full() } else { hover };
     if let Some(blocked) = input_blocked(ctx) {
-        // Pointer motion arrives continuously; without the toast there is nothing new to draw
-        // beyond whatever focus already asked for.
-        return if blocked.notified {
-            Update::full()
-        } else {
-            focus_update
+        // Pointer motion arrives continuously; a renewed rejection draws nothing new, so fall back
+        // to whatever focus already asked for.
+        return match blocked.notified {
+            Notified::Pushed => Update::full(),
+            Notified::Renewed => focus_update,
         };
     }
 

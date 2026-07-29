@@ -181,13 +181,17 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     };
     // The armed line is the whole safety step for closing a temporary session, so it says how many
     // go and stays on screen under the finger — not in a toast that may already have faded.
-    let confirm = rename
-        .leave
-        .filter(|leave| leave.armed)
-        .map(|leave| match leave.temporary {
-            1 => "Enter again closes this temporary session and quits".to_string(),
-            count => format!("Enter again closes {count} temporary sessions and quits"),
-        });
+    // A rejected name takes the same slot and wins it: the two never apply at once (arming needs an
+    // empty submit, rejection needs a bad one), and the reason belongs beside the field it is about.
+    let confirm = rename.error.clone().or_else(|| {
+        rename
+            .leave
+            .filter(|leave| leave.armed)
+            .map(|leave| match leave.temporary {
+                1 => "Enter again closes this temporary session and quits".to_string(),
+                count => format!("Enter again closes {count} temporary sessions and quits"),
+            })
+    });
     prompt_overlay(
         ctx,
         &title,

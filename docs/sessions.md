@@ -279,7 +279,8 @@ and pane identity). Purely local view state - focus, active workspace, overlays,
 - **Cooperative control requests.** *Request layout control* (`prefix g`, or the command palette)
   asks the current controller for the lease - it never steals. The requester is flagged in the
   client roster (a `wants control` badge) and the controller gets a single non-intrusive toast
-  (repeated presses are debounced, so a held key cannot spam it). The request toast shows the live
+  (the server debounces repeats, and an identical toast renews in place rather than stacking, so a
+  held key cannot spam it). The request toast shows the live
   *Grant layout control* binding (`prefix e` by default, following any `[keys]` override), which
   hands the lease to the requester in one keystroke; the controller can also **grant** or
   **decline** a specific client from the *Session clients* view, and a decline notifies the

@@ -52,10 +52,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     let matches = scan_snapshot_with_custom(&pane.terminal.capture_text(), &ctx.state.config.hints);
     if matches.is_empty() {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            "No hints in this pane",
-        ));
+        crate::pty_events::notify_info(ctx, "No hints in this pane");
         return Update::full();
     }
     let offset = pane.terminal.scrollback_offset();
@@ -122,11 +119,7 @@ pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
         // Success needs no toast: an opened URL raises the browser and a copy flashes below.
         Ok(()) => {}
         Err(error) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Hint failed",
-                error,
-            ));
+            crate::pty_events::notify_error(ctx, "Hint failed", error);
         }
     };
     let feedback = copied.then(|| {

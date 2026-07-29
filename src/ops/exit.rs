@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::pane_lifecycle::close_pane;
 use crate::profiles;
-use crate::pty_events::{confirm_toast, info_toast};
+use crate::pty_events::confirm_toast;
 use crate::state::{PendingDestructive, PendingDestructiveConfirmation, SessionDisposition, State};
 
 pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
@@ -224,8 +224,7 @@ pub(crate) fn kill_workspace_with_confirmation(
     let workspace = &ctx.state.current().workspaces[workspace_index];
     let pane_count = workspace.panes.iter().filter(|pane| !pane.closing).count();
     if pane_count == 0 {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Workspace is already empty"));
+        crate::pty_events::notify_info(ctx, "Workspace is already empty");
         return Update::full();
     }
 
@@ -279,10 +278,7 @@ pub(crate) fn kill_session_with_confirmation(
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            "Not attached to a named session",
-        ));
+        crate::pty_events::notify_info(ctx, "Not attached to a named session");
         return Update::full();
     }
     if !ctx.state.is_controller() {

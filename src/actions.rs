@@ -30,11 +30,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     let text = match ctx.clipboard().read() {
         Ok(text) => text,
         Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Paste failed",
-                err.to_string(),
-            ));
+            crate::pty_events::notify_error(ctx, "Paste failed", err.to_string());
             return Update::full();
         }
     };
@@ -45,11 +41,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
         pane.terminal.snapshot().key_modes
     });
     if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, encode_paste(&text, modes)) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Paste failed",
-            err,
-        ));
+        crate::pty_events::notify_error(ctx, "Paste failed", err);
     }
     Update::full()
 }
@@ -122,11 +114,7 @@ pub(crate) fn execute_user_command_action_with_env(
             };
             if let Err(err) = crate::pty_events::send_pane_bytes(ctx, id, text.as_bytes().to_vec())
             {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Command failed",
-                    err,
-                ));
+                crate::pty_events::notify_error(ctx, "Command failed", err);
             }
             Update::full()
         }
@@ -141,11 +129,7 @@ pub(crate) fn execute_user_command_action_with_env(
             env,
         )
         .unwrap_or_else(|error| {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Popup failed",
-                error,
-            ));
+            crate::pty_events::notify_error(ctx, "Popup failed", error);
             Update::full()
         }),
     }
@@ -197,10 +181,11 @@ fn navigation_key(direction: Direction) -> KeyEvent {
 
 fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
-        crate::pty_events::replace_toast(
+        crate::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
-            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+            Some("Preference not saved".to_string()),
+            err,
         );
     }
 }
@@ -215,20 +200,22 @@ macro_rules! toggle_pane_flag {
 
 fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_animation_flag(key, value) {
-        crate::pty_events::replace_toast(
+        crate::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
-            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+            Some("Preference not saved".to_string()),
+            err,
         );
     }
 }
 
 fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pty_events::replace_toast(
+        crate::pty_events::notify_on(
             ctx,
             ToastChannel::PreferenceSave,
-            crate::pty_events::error_toast(&ctx.state.theme, "Preference not saved", err),
+            Some("Preference not saved".to_string()),
+            err,
         );
     }
 }
@@ -412,7 +399,7 @@ fn execute_action_inner(
             Update::full()
         }
         Action::ToggleLayout => {
-            toggle_layout(ctx, !ctx.state.show_palette);
+            toggle_layout(ctx);
             Update::full()
         }
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),
@@ -436,10 +423,7 @@ fn execute_action_inner(
             }
             crate::ops::session::release_current_session(ctx);
             let update = crate::ops::session::swap_to_fresh_ephemeral(ctx);
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                "Started a fresh temporary session",
-            ));
+            crate::pty_events::notify_info(ctx, "Started a fresh temporary session");
             update
         }
         Action::RequestControl => crate::ops::session::request_control(ctx),
@@ -578,19 +562,11 @@ fn execute_action_inner(
         Action::EditScrollback => crate::ops::scrollback::edit_scrollback(ctx),
         Action::CopyLastOutput => crate::ops::last_output::copy_last_output(ctx),
         Action::TogglePaneSynchronization => {
-            let synchronized = {
-                let workspace = ctx.state.active_workspace_mut();
-                workspace.synchronized = !workspace.synchronized;
-                workspace.synchronized
-            };
-            crate::pty_events::replace_toast(
-                ctx,
-                ToastChannel::PaneSynchronization,
-                crate::pty_events::info_toast(
-                    &ctx.state.theme,
-                    if synchronized { "Sync on" } else { "Sync off" },
-                ),
-            );
+            // No toast: synchronization is a persistent mode that silently multiplies every
+            // keystroke across panes, so it needs a permanent `SYNC` chip in the workbar rather
+            // than a 3s announcement that leaves the dangerous state unmarked afterwards.
+            let workspace = ctx.state.active_workspace_mut();
+            workspace.synchronized = !workspace.synchronized;
             Update::full()
         }
     }
@@ -625,7 +601,7 @@ mod tests {
             Action::Focus(Direction::Left),
             Action::SwitchWorkspace(1),
             Action::EnterCopyMode,
-            Action::EnterHintMode,
+            Action::KillSession,
             Action::TogglePalette,
             Action::Detach,
             Action::KillSession,
@@ -891,52 +867,123 @@ mod tests {
         assert_eq!(navigation_key(Direction::Right), ctrl('l'));
     }
 
-    #[test]
-    fn repeated_state_toasts_replace_only_their_own_channel() {
-        use crate::Msg;
-        use tui_lipan::TestBackend;
-
+    /// Run `body` on a thread with enough stack for a `TestBackend`-hosted app.
+    fn with_backend(body: impl FnOnce(tui_lipan::TestBackend<HyprmuxApp>) + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
-
-                backend
-                    .dispatch(Msg::RunAction(Action::ToggleLayout))
-                    .expect("dispatch first layout cycle");
-                let first_layout_toast = *backend
-                    .state()
-                    .replaceable_toasts
-                    .get(&ToastChannel::LayoutMode)
-                    .expect("layout toast is tracked");
-
-                backend
-                    .dispatch(Msg::RunAction(Action::ToggleLayout))
-                    .expect("dispatch second layout cycle");
-                let second_layout_toast = *backend
-                    .state()
-                    .replaceable_toasts
-                    .get(&ToastChannel::LayoutMode)
-                    .expect("replacement layout toast is tracked");
-                assert_ne!(first_layout_toast, second_layout_toast);
-                assert_eq!(backend.state().replaceable_toasts.len(), 1);
-
-                backend
-                    .dispatch(Msg::RunAction(Action::TogglePaneSynchronization))
-                    .expect("dispatch synchronization toggle");
-                assert_eq!(backend.state().replaceable_toasts.len(), 2);
-                assert_eq!(
-                    backend
-                        .state()
-                        .replaceable_toasts
-                        .get(&ToastChannel::LayoutMode),
-                    Some(&second_layout_toast),
-                    "an independent toast channel must not replace the layout toast",
-                );
-            })
-            .expect("spawn toast replacement test thread")
+            .spawn(move || body(tui_lipan::TestBackend::new(HyprmuxApp::default())))
+            .expect("spawn toast test thread")
             .join()
-            .expect("toast replacement test thread completes");
+            .expect("toast test thread completes");
+    }
+
+    /// The slot a content-keyed toast lands in, so a test can look it up the way `notify` does.
+    fn content_slot(message: &str) -> crate::pty_events::ToastKey {
+        crate::pty_events::ToastKey::Content(crate::pty_events::content_key(message))
+    }
+
+    // Both rejections depend only on `session_attached`, which is deterministically false in a
+    // fresh backend. Anything gated on a focused pane would race the async first spawn, and
+    // anything `command_available` gates (RequestControl, GrantControl, ...) never reaches its
+    // handler at all here, since no shared session exists to enable it.
+    const NOT_ATTACHED_NAMED: &str = "Not attached to a named session";
+    const FRESH_TEMPORARY: &str = "Started a fresh temporary session";
+
+    #[test]
+    fn an_identical_toast_renews_the_one_already_on_screen() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch first kill-session");
+            let first = backend
+                .state()
+                .replaceable_toasts
+                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .expect("the rejection toast is tracked")
+                .id();
+
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch repeat kill-session");
+            let second = backend
+                .state()
+                .replaceable_toasts
+                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .expect("the rejection toast is still tracked")
+                .id();
+
+            // Same overlay id means the toast was renewed in place rather than dismissed and
+            // re-pushed, which is what keeps a repeat from blinking or jumping position.
+            assert_eq!(first, second, "a repeat must renew, not stack");
+        });
+    }
+
+    #[test]
+    fn different_messages_occupy_independent_slots() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::KillSession))
+                .expect("dispatch kill-session");
+            let output_toast = backend
+                .state()
+                .replaceable_toasts
+                .get(&content_slot(NOT_ATTACHED_NAMED))
+                .expect("the rejection toast is tracked")
+                .id();
+
+            backend
+                .dispatch(Msg::RunAction(Action::NewTemporarySession))
+                .expect("dispatch new-temporary-session");
+
+            // Asserted per slot rather than on the map size: startup spawns can raise their own
+            // toasts asynchronously, and a total count would make this test depend on them.
+            assert_eq!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .get(&content_slot(NOT_ATTACHED_NAMED))
+                    .map(crate::pty_events::TrackedToast::id),
+                Some(output_toast),
+                "an unrelated message must not disturb another slot",
+            );
+            assert!(
+                backend
+                    .state()
+                    .replaceable_toasts
+                    .contains_key(&content_slot(FRESH_TEMPORARY)),
+                "the second message gets its own slot",
+            );
+        });
+    }
+
+    #[test]
+    fn an_armed_confirmation_never_dedups_against_its_own_repeat() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            // Kill-pane arms on the first press and *executes* on the second, so the two presses are
+            // different events. Collapsing them would misreport the confirm window as still open,
+            // which is why confirm toasts are pushed directly and never enter the tracking map.
+            // Asserted against that one slot rather than the whole map, so an unrelated async
+            // toast (a failed startup spawn, say) cannot make this pass or fail by accident.
+            backend
+                .dispatch(Msg::RunAction(Action::Close))
+                .expect("dispatch first close-pane");
+            backend
+                .dispatch(Msg::RunAction(Action::Close))
+                .expect("dispatch repeat close-pane");
+            assert!(
+                !backend
+                    .state()
+                    .replaceable_toasts
+                    .contains_key(&content_slot("Again to kill pane")),
+                "confirm toasts must never be tracked for de-duplication",
+            );
+        });
     }
 
     #[test]

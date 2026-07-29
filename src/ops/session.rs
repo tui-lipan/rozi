@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
+use crate::HyprmuxApp;
 use crate::Msg;
 use crate::ops::focus::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
 };
 use crate::session::discovery::DiscoveredSession;
 use crate::state::{NamingMode, SessionPickerState, SessionRenameState};
-use crate::{HyprmuxApp, pty_events::info_toast};
 
 /// Clear any armed session-picker kill and dismiss its confirmation toast. Called from every path
 /// that abandons or resolves the arming (a confirmed kill, moving off the row, editing the query,
@@ -474,8 +474,7 @@ fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
     if ctx.state.current().session_attached {
         Some(())
     } else {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        crate::pty_events::notify_info(ctx, "Not attached to a session");
         None
     }
 }
@@ -483,13 +482,11 @@ fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
 fn require_writable(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
     require_attached(ctx)?;
     let Some(shared) = ctx.state.current().shared.as_ref() else {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not attached to a session"));
+        crate::pty_events::notify_info(ctx, "Not attached to a session");
         return None;
     };
     if shared.read_only {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Attached read-only"));
+        crate::pty_events::notify_info(ctx, "Attached read-only");
         return None;
     }
     Some(())
@@ -514,13 +511,11 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
     let how = crate::commands::command_prefix_chord(ctx, "request-control")
         .map(|chord| format!("{chord} to request control"))
         .unwrap_or_else(|| "Try requesting control".to_string());
-    crate::pty_events::replace_toast(
+    crate::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
-        info_toast(
-            &ctx.state.theme,
-            format!("Layout controlled by {who}\n{how}"),
-        ),
+        None,
+        format!("Layout controlled by {who}\n{how}"),
     );
     true
 }
@@ -535,10 +530,7 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::full();
     };
     if ctx.state.is_controller() {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            "You already control the layout",
-        ));
+        crate::pty_events::notify_info(ctx, "You already control the layout");
         return Update::full();
     }
     let Some(()) = require_writable(ctx) else {
@@ -567,10 +559,11 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         (false, Some(who)) => format!("Requested layout control from {who}"),
         (false, None) => "Requested layout control".to_string(),
     };
-    crate::pty_events::replace_toast(
+    crate::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
-        info_toast(&ctx.state.theme, message),
+        None,
+        message,
     );
     Update::full()
 }
@@ -653,8 +646,7 @@ pub(crate) fn resolve_follow_prompt(
             }
             let update = land_on_surviving_session(ctx);
             if let Some(name) = name {
-                ctx.toast()
-                    .push(info_toast(&ctx.state.theme, format!("Left `{name}` alone")));
+                crate::pty_events::notify_info(ctx, format!("Left `{name}` alone"));
             }
             update
         }
@@ -690,10 +682,7 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
     if !ctx.state.is_controller() {
         nudge_if_follower(ctx);
     } else if target.read_only {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            "Read-only clients cannot control the layout",
-        ));
+        crate::pty_events::notify_info(ctx, "Read-only clients cannot control the layout");
     } else if target.id != shared.client_id
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
@@ -730,8 +719,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Updat
             ctx.state.client_list = None;
         }
         None => {
-            ctx.toast()
-                .push(info_toast(&ctx.state.theme, "No pending control requests"));
+            crate::pty_events::notify_info(ctx, "No pending control requests");
         }
     }
     Update::full()
@@ -871,12 +859,8 @@ pub(crate) fn switch_to_parked(
         ctx.state.animation = crate::anim::GeometryAnimation::None;
     }
     apply_pending_background_closes(ctx);
-    if let Some(name) = ctx.state.current().session_name.clone() {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            format!("Switched to `{name}`"),
-        ));
-    }
+    // The whole screen just became the other session and the workbar badge carries its name; a
+    // toast saying so would be the third copy.
     let focused = ctx.state.current().focused_pane;
     if let Some(id) = focused {
         crate::ops::focus::request_pane_focus(ctx, id);
@@ -928,10 +912,12 @@ pub(crate) fn reconnect_current_session(ctx: &mut Context<HyprmuxApp>) -> Update
         left: None,
         parked_epoch: None,
     });
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
+    crate::pty_events::notify_on(
+        ctx,
+        crate::state::ToastChannel::SessionLifecycle,
+        None,
         format!("Reconnecting to {name}…"),
-    ));
+    );
     if let Some(target) = ctx.state.current().remote_target.clone() {
         let remote_config = ctx.state.config.remote.clone();
         return Update::with_command(Command::spawn(move |link| {
@@ -1105,10 +1091,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) 
     if let Some((session_name, target)) = killed_identity {
         remove_cached_remote_session(ctx, &session_name, &target);
     }
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
-        format!("Killed session `{name}`"),
-    ));
+    crate::pty_events::notify_info(ctx, format!("Killed session `{name}`"));
     update
 }
 
@@ -1183,11 +1166,11 @@ pub(crate) fn attach_session_by_name(
     autostart: bool,
 ) -> Update {
     if !crate::session::discovery::valid_attach_target(&name) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Invalid session name",
             "Use letters, numbers, _ or -",
-        ));
+        );
         return Update::full();
     }
     let remote_target = match (discovered_target, remote_host.as_deref()) {
@@ -1195,11 +1178,11 @@ pub(crate) fn attach_session_by_name(
         (None, Some(host)) => match crate::session::remote::parse_remote_target(host) {
             Ok(target) => Some(target),
             Err(err) => {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
+                crate::pty_events::notify_error(
+                    ctx,
                     "Invalid remote host",
                     format!("`{host}`: {err}"),
-                ));
+                );
                 return Update::full();
             }
         },
@@ -1209,10 +1192,7 @@ pub(crate) fn attach_session_by_name(
         && ctx.state.current().session_name.as_deref() == Some(name.as_str())
         && ctx.state.current().remote_target == remote_target
     {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            format!("Already attached to `{name}`"),
-        ));
+        crate::pty_events::notify_info(ctx, format!("Already attached to `{name}`"));
         return Update::full();
     }
     // An attach already running for *this same* target is the double-click case: say so and let it
@@ -1225,8 +1205,7 @@ pub(crate) fn attach_session_by_name(
         && pending.name == name
         && ctx.state.current().remote_target == remote_target
     {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Attach already in progress"));
+        crate::pty_events::notify_info(ctx, "Attach already in progress");
         return Update::full();
     }
     // Fast path: the target session is already retained in the background - switch to it instantly
@@ -1331,14 +1310,14 @@ pub(crate) fn activate_discovered_session(
         entry.status,
         crate::session::discovery::DiscoveredSessionStatus::Unknown
     ) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Attach failed",
             format!(
                 "`{}` runs an incompatible version\nCtrl+K removes it",
                 entry.name
             ),
-        ));
+        );
         return Update::full();
     }
     // A session shown in the picker is already running, so don't autostart a replacement if it
@@ -1414,6 +1393,18 @@ pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
     request_current_pane_focus(ctx);
     Update::full()
+}
+
+/// Reject the name currently in the session prompt, keeping the prompt open with the reason on it.
+///
+/// The rule stays inside the prompt rather than in a toast for two reasons: the prompt is modal and
+/// a toast would overlap the very field being corrected, and the message is about the text still
+/// sitting in that field, so it should disappear when the text does.
+fn reject_session_name(ctx: &mut Context<HyprmuxApp>) {
+    if let Some(rename) = ctx.state.rename_session.as_mut() {
+        rename.error = Some("Use letters, numbers, _ or -".to_string());
+    }
+    request_rename_session_focus(ctx);
 }
 
 /// Swap whatever overlays are open for a session naming/rename prompt and focus it. Shared by the
@@ -1498,12 +1489,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         NamingMode::CreateSession | NamingMode::OpenProfileAs => {
             let open_ephemeral = rename_state.mode == NamingMode::OpenProfileAs && name.is_empty();
             if !open_ephemeral && !crate::session::discovery::valid_session_name(&name) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Invalid session name",
-                    "Use letters, numbers, _ or -",
-                ));
-                request_rename_session_focus(ctx);
+                reject_session_name(ctx);
                 return Update::full();
             }
 
@@ -1580,12 +1566,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 return crate::ops::exit::leave_client_now(ctx, true);
             }
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Invalid session name",
-                    "Use letters, numbers, _ or -",
-                ));
-                request_rename_session_focus(ctx);
+                reject_session_name(ctx);
                 return Update::full();
             }
 
@@ -1595,11 +1576,11 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 // The client is leaving the session; there is nothing to return to.
                 crate::ops::overlay_return::leave(ctx);
                 let Some(client) = ctx.state.current().session_client.clone() else {
-                    ctx.toast().push(crate::pty_events::error_toast(
-                        &ctx.state.theme,
+                    crate::pty_events::notify_error(
+                        ctx,
                         "Rename failed",
                         "Session connection lost",
-                    ));
+                    );
                     return Update::full();
                 };
                 crate::update::flush_layout_commit(ctx);
@@ -1623,12 +1604,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
         }
         NamingMode::RenameSession => {
             if name.is_empty() || !crate::session::discovery::valid_session_name(&name) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Invalid session name",
-                    "Use letters, numbers, _ or -",
-                ));
-                request_rename_session_focus(ctx);
+                reject_session_name(ctx);
                 return Update::full();
             }
 
@@ -1653,11 +1629,11 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
             // Validate the SSH target before tearing anything down; a bad host must not strand the
             // current session.
             if let Err(err) = crate::session::remote::parse_remote_target(&host) {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
+                crate::pty_events::notify_error(
+                    ctx,
                     "Invalid remote host",
                     format!("`{host}`: {err}"),
-                ));
+                );
                 request_rename_session_focus(ctx);
                 return Update::full();
             }
@@ -1745,18 +1721,11 @@ pub(crate) fn kill_discovered_session(
             if let Some(target) = entry.remote_target.as_ref() {
                 remove_cached_remote_session(ctx, &entry.name, target);
             }
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
-                format!("Killed session `{display}`"),
-            ));
+            // The row the user acted on vanished from the list above: that *is* the confirmation.
             Update::full()
         }
         Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Kill failed",
-                err.to_string(),
-            ));
+            crate::pty_events::notify_error(ctx, "Kill failed", err.to_string());
             Update::full()
         }
     }
@@ -1801,20 +1770,14 @@ pub(crate) fn close_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> Update
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_target == entry.remote_target;
     if is_current {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            "Detach (Ctrl+D) or kill (Ctrl+K) the current session",
-        ));
+        crate::pty_events::notify_info(ctx, "Detach (Ctrl+D) or kill (Ctrl+K) the current session");
         return Update::full();
     }
     let Some(id) = ctx
         .state
         .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
     else {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            format!("Not attached to `{display}`"),
-        ));
+        crate::pty_events::notify_info(ctx, format!("Not attached to `{display}`"));
         return Update::full();
     };
     if let Some(attachment) = ctx.state.background.remove(&id)
@@ -1822,10 +1785,10 @@ pub(crate) fn close_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> Update
     {
         client.detach();
     }
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
+    crate::pty_events::notify_info(
+        ctx,
         format!("Closed attachment to `{display}` — server still running"),
-    ));
+    );
     refresh_session_picker(ctx)
 }
 
@@ -1843,8 +1806,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
         return Update::full();
     };
     let Some(target) = entry.remote_target.clone() else {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Not a remote session"));
+        crate::pty_events::notify_info(ctx, "Not a remote session");
         return Update::full();
     };
     disconnect_host(ctx, &target)
@@ -1896,23 +1858,20 @@ pub(crate) fn disconnect_host(
         // recognizes. Attachments on this host are already gone from the background above, so the
         // candidates are exactly the sessions that survive the disconnect.
         let update = land_on_surviving_session(ctx);
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_info(
+            ctx,
             format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
-        ));
+        );
         return update;
     }
     if closed == 0 {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            format!("Not connected to `{host_label}`"),
-        ));
+        crate::pty_events::notify_info(ctx, format!("Not connected to `{host_label}`"));
         return Update::full();
     }
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
+    crate::pty_events::notify_info(
+        ctx,
         format!("Disconnected from `{host_label}` — {closed} closed, servers still running"),
-    ));
+    );
     Update::full()
 }
 

@@ -113,13 +113,17 @@ pub struct PendingDestructiveConfirmation {
     pub toast_id: OverlayId,
 }
 
+/// A named toast slot, for state whose *newest* value should supersede the previous one even
+/// though the text differs. Everything else de-duplicates on its content instead and needs no
+/// entry here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ToastChannel {
     InputState,
     LayoutControl,
-    LayoutMode,
-    PaneSynchronization,
     PreferenceSave,
+    /// Attach/reconnect progress and its outcome, so `Reconnecting to X…` is replaced by whatever
+    /// happened rather than being buried under it.
+    SessionLifecycle,
 }
 
 impl SessionPickerState {

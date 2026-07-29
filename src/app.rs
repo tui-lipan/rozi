@@ -10,7 +10,7 @@ use crate::session::bootstrap::{SessionStart, attach_session_client, has_session
 use crate::state::{Pane, PaneId, State, ThemePreset};
 use crate::{
     anim, cli, commands, config, control, events, key_routing, ops, pane_lifecycle, platform,
-    profiles, pty_events, state, update, view,
+    profiles, state, update, view,
 };
 
 pub struct HyprmuxApp {
@@ -149,8 +149,7 @@ impl Component for HyprmuxApp {
         commands::sync(ctx);
 
         for message in std::mem::take(&mut self.startup_messages) {
-            ctx.toast()
-                .push(pty_events::info_toast(&ctx.state.theme, message));
+            crate::pty_events::notify_info(ctx, message);
         }
 
         if let Some(path) =
@@ -162,11 +161,7 @@ impl Component for HyprmuxApp {
             match ThemeWatcher::new(path, ThemePreset::Lipan.theme()) {
                 Ok(watcher) => ctx.state.theme_watcher = Some(watcher),
                 Err(err) => {
-                    ctx.toast().push(pty_events::error_toast(
-                        &ctx.state.theme,
-                        "Theme watch failed",
-                        err.to_string(),
-                    ));
+                    crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
                 }
             }
         }

@@ -8,7 +8,6 @@ use crate::config::{
 use crate::ops::focus::request_profile_picker_focus;
 use crate::ops::focus::request_save_profile_focus;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
-use crate::pty_events::{error_toast, info_toast};
 use crate::state::{Mode, ProfilePickerState, SaveProfileState};
 
 pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -51,11 +50,11 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
         .as_ref()
         .and_then(|prompt| normalize_profile_name(prompt.input.text()))
     else {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Invalid profile name",
             "Use letters, numbers, _ or -",
-        ));
+        );
         request_save_profile_focus(ctx);
         return Update::full();
     };
@@ -88,17 +87,16 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
                     ],
                 ),
             );
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
+            crate::pty_events::notify_info(
+                ctx,
                 format!(
                     "{} profile `{name}`",
                     if existed { "Overwrote" } else { "Captured" }
                 ),
-            ));
+            );
         }
         Err(message) => {
-            ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Capture failed", message));
+            crate::pty_events::notify_error(ctx, "Capture failed", message);
         }
     }
 
@@ -277,11 +275,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
         return Update::none();
     };
     if !ctx.state.current().session_attached {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
-            "Replace failed",
-            "Attach to a session first",
-        ));
+        crate::pty_events::notify_error(ctx, "Replace failed", "Attach to a session first");
         return Update::full();
     }
     if ctx
@@ -291,11 +285,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
         .as_ref()
         .is_some_and(|shared| shared.read_only)
     {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
-            "Replace failed",
-            "Client is read-only",
-        ));
+        crate::pty_events::notify_error(ctx, "Replace failed", "Client is read-only");
         return Update::full();
     }
     if crate::ops::session::nudge_if_follower(ctx) {
@@ -320,8 +310,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Replace failed", message));
+            crate::pty_events::notify_error(ctx, "Replace failed", message);
             return Update::full();
         }
     };
@@ -369,10 +358,8 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
             ],
         ),
     );
-    ctx.toast().push(info_toast(
-        &ctx.state.theme,
-        format!("Replaced session `{session}` with `{}`", entry.name),
-    ));
+    // Every pane on screen was just torn down and rebuilt from the profile - the layout itself is
+    // the confirmation.
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     ctx.state.commands_dirty = true;
@@ -407,8 +394,7 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
             }
         }
         Err(message) => {
-            ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Default not set", message));
+            crate::pty_events::notify_error(ctx, "Default not set", message);
         }
     }
     Update::full()
@@ -449,28 +435,19 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
                 match clear_default_profile(&name) {
                     Ok(Some(_)) => {
                         ctx.state.config.profile.default = None;
-                        ctx.toast()
-                            .push(info_toast(&ctx.state.theme, "Cleared startup default"));
+                        crate::pty_events::notify_info(ctx, "Cleared startup default");
                     }
                     Ok(None) => {}
                     Err(message) => {
-                        ctx.toast().push(error_toast(
-                            &ctx.state.theme,
-                            "Default not cleared",
-                            message,
-                        ));
+                        crate::pty_events::notify_error(ctx, "Default not cleared", message);
                     }
                 }
             }
+            // The refreshed picker no longer lists the profile, which says it better than a toast.
             refresh_profile_picker_entries(ctx);
-            ctx.toast().push(info_toast(
-                &ctx.state.theme,
-                format!("Deleted profile `{name}`"),
-            ));
         }
         Err(message) => {
-            ctx.toast()
-                .push(error_toast(&ctx.state.theme, "Delete failed", message));
+            crate::pty_events::notify_error(ctx, "Delete failed", message);
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
             }
@@ -539,11 +516,7 @@ pub(crate) fn open_named_target(
     intent: OpenNamedIntent,
 ) -> Update {
     if !crate::session::discovery::valid_session_name(&name) {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
-            "Invalid name",
-            "Use letters, numbers, _ or -",
-        ));
+        crate::pty_events::notify_error(ctx, "Invalid name", "Use letters, numbers, _ or -");
         return Update::full();
     }
     let exists = crate::session::discovery::discover_session(&name)
@@ -555,11 +528,11 @@ pub(crate) fn open_named_target(
         OpenNamedIntent::CreateFresh | OpenNamedIntent::CreateFromProfile { .. }
     );
     if explicit_create && exists {
-        ctx.toast().push(error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Create failed",
             format!("Session `{name}` is already running"),
-        ));
+        );
         return Update::full();
     }
     if !explicit_create && exists {
@@ -568,26 +541,22 @@ pub(crate) fn open_named_target(
     if ctx.state.current().session_attached
         && ctx.state.current().session_name.as_deref() == Some(name.as_str())
     {
-        ctx.toast().push(info_toast(
-            &ctx.state.theme,
-            format!("Already attached to `{name}`"),
-        ));
+        crate::pty_events::notify_info(ctx, format!("Already attached to `{name}`"));
         return Update::full();
     }
     if ctx.state.current().pending_session_attach.is_some() {
-        ctx.toast()
-            .push(info_toast(&ctx.state.theme, "Attach already in progress"));
+        crate::pty_events::notify_info(ctx, "Attach already in progress");
         return Update::full();
     }
 
     let seed = match intent {
         OpenNamedIntent::ResolveProfile { profile, path } => {
             if !path.exists() {
-                ctx.toast().push(error_toast(
-                    &ctx.state.theme,
+                crate::pty_events::notify_error(
+                    ctx,
                     "Not found",
                     format!("No session or profile `{name}`"),
-                ));
+                );
                 return Update::full();
             }
             Some((profile, path))
@@ -599,11 +568,7 @@ pub(crate) fn open_named_target(
         let profile = match load_profile(&path) {
             Ok(profile) => profile,
             Err(message) => {
-                ctx.toast().push(error_toast(
-                    &ctx.state.theme,
-                    "Profile load failed",
-                    message,
-                ));
+                crate::pty_events::notify_error(ctx, "Profile load failed", message);
                 return Update::full();
             }
         };
@@ -689,11 +654,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
         Err(message) => {
-            ctx.toast().push(error_toast(
-                &ctx.state.theme,
-                "Profile load failed",
-                message,
-            ));
+            crate::pty_events::notify_error(ctx, "Profile load failed", message);
             ctx.state.show_profile_picker = false;
             ctx.state.profile_picker = None;
             ctx.state.commands_dirty = true;

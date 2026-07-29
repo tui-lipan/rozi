@@ -102,6 +102,8 @@ pub(super) fn rename_session_changed(ctx: &mut Context<HyprmuxApp>, event: Input
         if let Some(leave) = rename.leave.as_mut() {
             leave.armed = false;
         }
+        // The rejection described the text that was there; once it changes, the verdict is stale.
+        rename.error = None;
     }
     crate::ops::focus::request_rename_session_focus(ctx);
     Update::full()

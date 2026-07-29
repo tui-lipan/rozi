@@ -75,6 +75,12 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     if state.sidebar.focused {
         trailing.push(TrailingChip::badge(" SIDEBAR ", text_fg, theme.status.info));
     }
+    // Synchronization silently sends every keystroke to every pane on the workspace, and nothing
+    // else on screen says so. It gets warning color for the same reason it gets a permanent chip:
+    // typing into what looks like one pane while hitting several is the costly surprise.
+    if state.current().workspaces[state.current().active_workspace].synchronized {
+        trailing.push(TrailingChip::badge(" SYNC ", text_fg, theme.status.warning));
+    }
     // Keep session identity in the configured session badge and collaboration state in one chip.
     // A normal solo client needs no status; read-only remains visible because it explains why
     // typing is blocked.

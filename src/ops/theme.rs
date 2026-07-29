@@ -177,11 +177,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     let system_theme = ctx.state.system_theme.clone();
     let resolved = crate::config::resolve_theme(&name, system_theme.as_ref());
     for warning in &resolved.warnings {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Theme warning",
-            warning.clone(),
-        ));
+        crate::pty_events::notify_error(ctx, "Theme warning", warning.clone());
     }
 
     // Watch the active theme's file only when it is a custom file; start the reload tick loop
@@ -196,11 +192,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
                 start_tick = !had_watcher;
             }
             Err(err) => {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Theme watch failed",
-                    err.to_string(),
-                ));
+                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
             }
         }
     }
@@ -221,11 +213,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     // so a started tick still wins below.
     let closed = crate::ops::overlay_return::finish(ctx);
     if let Err(err) = crate::config::persist_theme_name(&name) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Theme not saved",
-            err,
-        ));
+        crate::pty_events::notify_error(ctx, "Theme not saved", err);
     }
 
     if start_tick {

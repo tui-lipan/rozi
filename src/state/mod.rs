@@ -1,9 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Instant;
 
-use tui_lipan::prelude::{FloatRect, OverlayId, Rect, Theme, ThemeWatcher};
+use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
 
 use crate::anim::GeometryAnimation;
 use crate::config::HyprmuxConfig;
@@ -106,8 +105,10 @@ pub struct State {
     /// child was raised standalone, which is what keeps it from going stale) and consumed by
     /// [`crate::ops::overlay_return::restore`].
     pub overlay_return: Option<OverlayOrigin>,
-    pub last_blocked_input_toast: Option<Instant>,
-    pub(crate) replaceable_toasts: HashMap<ToastChannel, OverlayId>,
+    /// Toasts still young enough to be de-duplicated against, keyed by the slot they occupy.
+    /// Pruned on every notification, so it holds only what was raised in the last few seconds.
+    pub(crate) replaceable_toasts:
+        HashMap<crate::pty_events::ToastKey, crate::pty_events::TrackedToast>,
     /// Incremented each time the session picker opens; tags the off-thread auto-refresh watcher so
     /// stale ticks from a previous opening (or after close) are ignored.
     pub session_picker_epoch: u64,
@@ -249,7 +250,6 @@ impl State {
             client_list: None,
             follow_prompt: None,
             overlay_return: None,
-            last_blocked_input_toast: None,
             replaceable_toasts: HashMap::new(),
             session_picker_epoch: 0,
             profile_picker_epoch: 0,

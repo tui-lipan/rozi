@@ -7,7 +7,7 @@ use super::attach::{
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::pane_lifecycle::{find_pane, find_pane_mut, remove_pane_after_exit};
-use crate::pty_events::{error_toast, maybe_notify_pane_exit, maybe_notify_pane_status};
+use crate::pty_events::{maybe_notify_pane_exit, maybe_notify_pane_status};
 use crate::session::client::SessionClient;
 use crate::session::protocol::{ClientInfo, ControllerChangeReason, PaneMeta, PaneRuntimeState};
 use crate::shared_layout::{ClientId, SharedLayout};
@@ -72,8 +72,14 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     } else {
         crate::state::ConnectionState::Disconnected
     };
-    ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Attach failed", message));
+    // Same slot as the `Reconnecting to X…` progress message this outcome answers, so the
+    // failure replaces the attempt instead of stacking on top of it.
+    crate::pty_events::notify_on(
+        ctx,
+        crate::state::ToastChannel::SessionLifecycle,
+        Some("Attach failed".to_string()),
+        message,
+    );
     if !was_reconnect {
         // Creating/switching parked a live session to move away from it. If the new attach failed,
         // restore that session rather than strand the user on the broken empty attachment — for a
@@ -234,17 +240,6 @@ pub(super) fn attached(
     };
 
     let named = !crate::state::is_ephemeral_session_name(&session);
-    let suffix = pending
-        .left
-        .as_ref()
-        .map(|left| {
-            if left.was_ephemeral_shutdown {
-                "\nEnded the temporary session".to_string()
-            } else {
-                format!("\nDetached from `{}`", left.name)
-            }
-        })
-        .unwrap_or_default();
     if !populated && let crate::state::AttachIntent::ProfileSeed { profile, path } = &pending.intent
     {
         if let Some(client) = ctx.state.current().session_client.as_ref() {
@@ -252,31 +247,25 @@ pub(super) fn attached(
         }
         ctx.state.current_mut().pending_profile_loaded =
             Some((profile.clone(), path.clone(), session.clone()));
-        if named {
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                format!("Launched `{session}` from profile{suffix}"),
-            ));
-        }
-    } else if named {
-        if populated {
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                format!("Attached to `{session}`{suffix}"),
-            ));
-        } else if matches!(pending.intent, crate::state::AttachIntent::Plain) {
-            crate::events::emit(
-                &ctx.state,
-                crate::events::Event::new(
-                    crate::events::EventKind::SessionCreated,
-                    vec![("session", session.clone())],
-                ),
-            );
-            ctx.toast().push(crate::pty_events::info_toast(
-                &ctx.state.theme,
-                format!("Created session `{session}`{suffix}"),
-            ));
-        }
+    } else if named && !populated && matches!(pending.intent, crate::state::AttachIntent::Plain) {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::SessionCreated,
+                vec![("session", session.clone())],
+            ),
+        );
+    }
+    // Where this client landed is already on screen in the workbar session badge, so announcing it
+    // would just repeat the badge. What it *left* has no surface at all once it is off screen -
+    // that is the half worth a toast.
+    if let Some(left) = pending.left.as_ref() {
+        let message = if left.was_ephemeral_shutdown {
+            "Ended the temporary session".to_string()
+        } else {
+            format!("Detached from `{}`", left.name)
+        };
+        crate::pty_events::notify_info(ctx, message);
     }
     if let Some(origin) = ctx.state.current().created_from_profile.clone() {
         confirm_profile_origin(ctx, origin);
@@ -444,21 +433,17 @@ pub(super) fn controller_changed(
         let who = controller
             .map(|id| format!("client {id}"))
             .unwrap_or_else(|| "another client".to_string());
-        crate::pty_events::replace_toast(
+        crate::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::LayoutControl,
-            crate::pty_events::info_toast(
-                &ctx.state.theme,
-                format!("Layout control taken by {who}"),
-            ),
+            None,
+            format!("Layout control taken by {who}"),
         );
     } else if !was_controller && now_controller {
+        // No toast: the workbar chip flips to CTRL, and unlike losing control (which another client
+        // caused off screen) gaining it is either something this client asked for or a lease the
+        // server handed over - either way the chip is the whole story.
         crate::ops::session::apply_pending_background_closes(ctx);
-        crate::pty_events::replace_toast(
-            ctx,
-            crate::state::ToastChannel::LayoutControl,
-            crate::pty_events::info_toast(&ctx.state.theme, "You now control the layout"),
-        );
     }
     ctx.state.commands_dirty = true;
     Update::full()
@@ -489,24 +474,11 @@ pub(super) fn clients_changed(
         .as_ref()
         .map(|shared| roster_diff_events(&shared.clients, &clients))
         .unwrap_or_default();
+    // The lock state lives in the workbar chip (`CTRL LOCK` / `FOLLOW LOCK`), which flips with this
+    // assignment, so the transition needs no separate announcement.
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
-        let changed = shared.input_locked != input_locked;
         shared.clients = clients;
         shared.input_locked = input_locked;
-        if changed {
-            crate::pty_events::replace_toast(
-                ctx,
-                crate::state::ToastChannel::InputState,
-                crate::pty_events::info_toast(
-                    &ctx.state.theme,
-                    if input_locked {
-                        "Input locked to the controller"
-                    } else {
-                        "Input unlocked"
-                    },
-                ),
-            );
-        }
     }
     for event in roster_events {
         crate::events::emit(&ctx.state, event);
@@ -541,10 +513,7 @@ pub(super) fn control_requested(
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
         .unwrap_or_else(|| "grant from Session clients".to_string());
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
-        format!("{who} requests layout control\n{how}"),
-    ));
+    crate::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
     ctx.state.commands_dirty = true;
     Update::full()
 }
@@ -553,10 +522,7 @@ pub(super) fn control_declined(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
-        "Your control request was declined",
-    ));
+    crate::pty_events::notify_info(ctx, "Your control request was declined");
     Update::full()
 }
 
@@ -770,10 +736,7 @@ pub(super) fn exited(
     }
     // A clean exit closes the pane on its own; only a failure code is worth surfacing.
     if code != 0 {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            format!("Pane {pane_id} exited ({code})"),
-        ));
+        crate::pty_events::notify_info(ctx, format!("Pane {pane_id} exited ({code})"));
     }
     remove_pane_after_exit(ctx, pane_id)
 }
@@ -796,18 +759,23 @@ pub(super) fn pane_logging_changed(
     {
         pane.logging = enabled;
     }
-    let message = error.unwrap_or_else(|| {
-        if enabled {
-            format!(
-                "Logging pane {pane_id} to {}",
-                path.as_deref().unwrap_or("log file")
-            )
-        } else {
-            format!("Stopped logging pane {pane_id}")
+    // Starting logging is worth a toast because it reports the log path, which is chosen by the
+    // server and knowable nowhere else. Stopping reveals nothing the user did not just ask for.
+    match error {
+        Some(error) => {
+            crate::pty_events::notify_error(ctx, "Logging failed", error);
         }
-    });
-    ctx.toast()
-        .push(crate::pty_events::info_toast(&ctx.state.theme, message));
+        None if enabled => {
+            crate::pty_events::notify_info(
+                ctx,
+                format!(
+                    "Logging pane {pane_id} to {}",
+                    path.as_deref().unwrap_or("log file")
+                ),
+            );
+        }
+        None => {}
+    }
     Update::full()
 }
 
@@ -1186,8 +1154,7 @@ pub(super) fn spawn_result(
     }
     ctx.state.commands_dirty = true;
     if let Some(error) = toast_error {
-        ctx.toast()
-            .push(error_toast(&ctx.state.theme, "Spawn failed", error));
+        crate::pty_events::notify_error(ctx, "Spawn failed", error);
     }
     if should_close {
         remove_pane_after_exit(ctx, pane_id)
@@ -1205,8 +1172,7 @@ pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) 
     if message.trim().is_empty() {
         return Update::none();
     }
-    ctx.toast()
-        .push(error_toast(&ctx.state.theme, "Session error", message));
+    crate::pty_events::notify_error(ctx, "Session error", message);
     Update::full()
 }
 
@@ -1234,10 +1200,7 @@ pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String
     );
     // An ephemeral session becoming named flips the "Name/Rename session" palette label.
     ctx.state.commands_dirty = true;
-    ctx.toast().push(crate::pty_events::info_toast(
-        &ctx.state.theme,
-        format!("Renamed session to `{session}`"),
-    ));
+    // The new name is already rendered in the workbar session badge by the time this returns.
     Update::full()
 }
 

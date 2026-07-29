@@ -105,11 +105,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
                 start_theme_tick = !had_theme_watcher;
             }
             Err(err) => {
-                ctx.toast().push(crate::pty_events::error_toast(
-                    &ctx.state.theme,
-                    "Theme watch failed",
-                    err.to_string(),
-                ));
+                crate::pty_events::notify_error(ctx, "Theme watch failed", err.to_string());
             }
         }
     }
@@ -144,17 +140,10 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
-            "Config warning",
-            warning.clone(),
-        ));
+        crate::pty_events::notify_error(ctx, "Config warning", warning.clone());
     }
     if loaded.warnings.is_empty() && resolved.warnings.is_empty() {
-        ctx.toast().push(crate::pty_events::info_toast(
-            &ctx.state.theme,
-            "Config reloaded",
-        ));
+        crate::pty_events::notify_info(ctx, "Config reloaded");
         crate::events::emit(
             &ctx.state,
             crate::events::Event::new(
@@ -196,11 +185,11 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
     let path = crate::config::config_path();
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Editor not found",
             format!("`{command}` is not available\nSet $EDITOR"),
-        ));
+        );
         return Update::none();
     }
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));

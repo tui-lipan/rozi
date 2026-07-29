@@ -9,7 +9,6 @@ use crate::ops::focus::{
 use crate::ops::theme::{
     cancel_theme_picker, preview_theme as preview, select_theme as select, theme_tick as tick,
 };
-use crate::pty_events::error_toast;
 use crate::{HyprmuxApp, Msg};
 
 fn valid_padding_text(value: &str) -> bool {
@@ -26,11 +25,7 @@ fn padding_value(value: &str) -> Option<u16> {
 }
 
 fn padding_error(ctx: &mut Context<HyprmuxApp>) {
-    ctx.toast().push(error_toast(
-        &ctx.state.theme,
-        "Invalid padding",
-        "Enter one digit",
-    ));
+    crate::pty_events::notify_error(ctx, "Invalid padding", "Enter one digit");
 }
 
 pub(super) fn command_link_ready(ctx: &mut Context<HyprmuxApp>, link: CommandLink<Msg>) -> Update {
@@ -260,8 +255,7 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
     };
     ctx.state.config.pane.padding = (vertical, horizontal, vertical, horizontal);
     if let Err(error) = crate::config::persist_pane_padding(vertical, horizontal) {
-        ctx.toast()
-            .push(error_toast(&ctx.state.theme, "Padding not saved", error));
+        crate::pty_events::notify_error(ctx, "Padding not saved", error);
     }
     ctx.state.pane_padding_editor = None;
     if ctx.state.show_appearance {
@@ -328,11 +322,7 @@ pub(super) fn workbar_command_output(
 }
 
 pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Update {
-    ctx.toast().push(error_toast(
-        &ctx.state.theme,
-        "Theme reload failed",
-        message,
-    ));
+    crate::pty_events::notify_error(ctx, "Theme reload failed", message);
     Update::full()
 }
 

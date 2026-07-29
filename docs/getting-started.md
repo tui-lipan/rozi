@@ -83,9 +83,9 @@ modifier, prefix, animations, theme, or to select a default launch profile, crea
 `~/.config/hyprmux/hyprmux.toml` (or point `$HYPRMUX_CONFIG` at one). See
 [Configuration](configuration.md) for the full reference.
 
-On startup, `hyprmux` shows toast notifications reporting whether the config file, theme file,
-and launch profile were loaded - and any parse/read warnings - so a broken config never
-silently pretends to have loaded.
+On startup, `hyprmux` raises a toast for any problem reading the config file, theme file, or
+launch profile, so a broken config never silently pretends to have loaded. A clean start is
+quiet.
 
 ## Read-only sessions
 

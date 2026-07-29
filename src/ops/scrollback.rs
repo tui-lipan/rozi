@@ -21,22 +21,18 @@ pub(crate) fn edit_scrollback(ctx: &mut Context<HyprmuxApp>) -> Update {
     let path = match write_scrollback_dump(&PlatformEnv::from_process(), u64::from(id), &text) {
         Ok(path) => path,
         Err(err) => {
-            ctx.toast().push(crate::pty_events::error_toast(
-                &ctx.state.theme,
-                "Scrollback dump failed",
-                err.to_string(),
-            ));
+            crate::pty_events::notify_error(ctx, "Scrollback dump failed", err.to_string());
             return Update::none();
         }
     };
 
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
-        ctx.toast().push(crate::pty_events::error_toast(
-            &ctx.state.theme,
+        crate::pty_events::notify_error(
+            ctx,
             "Editor not found",
             format!("`{command}` is not available\nSet $EDITOR"),
-        ));
+        );
         return Update::none();
     }
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));

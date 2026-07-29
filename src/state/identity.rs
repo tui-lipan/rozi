@@ -87,6 +87,10 @@ pub struct SessionRenameState {
     /// (parking the current session in the background) instead of locally. Only the target string
     /// is involved — SSH handles authentication out of band.
     pub host_target: Option<crate::session::remote::RemoteTarget>,
+    /// Why the last submit was rejected. Rendered inside the prompt rather than as a toast: the
+    /// prompt is still open and holding the field being corrected, which a toast would cover.
+    /// Cleared on the next edit, so it never outlives the text that caused it.
+    pub error: Option<String>,
 }
 
 impl SessionRenameState {
@@ -97,6 +101,7 @@ impl SessionRenameState {
             leave: None,
             profile_seed: None,
             host_target: None,
+            error: None,
         }
     }
 
@@ -112,6 +117,7 @@ impl SessionRenameState {
             }),
             profile_seed: None,
             host_target: None,
+            error: None,
         }
     }
 

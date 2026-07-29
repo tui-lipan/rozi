@@ -52,11 +52,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
             match ctx.clipboard().copy(&text) {
                 Ok(()) => copied_selection = Some(selection),
                 Err(err) => {
-                    ctx.toast().push(crate::pty_events::error_toast(
-                        &ctx.state.theme,
-                        "Copy failed",
-                        err.to_string(),
-                    ));
+                    crate::pty_events::notify_error(ctx, "Copy failed", err.to_string());
                 }
             }
         }

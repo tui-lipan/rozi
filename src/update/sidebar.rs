@@ -320,7 +320,9 @@ pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>) -> Update {
         return Update::none();
     }
     ctx.state.sidebar.suppress_row_hover = false;
-    Update::full()
+    // Re-enabling the rows' hover effects changes how the row list describes itself, so the view has
+    // to run - but the description is the same shape, so reconciling it is enough.
+    Update::layout()
 }
 
 /// The pointer entered or left a row, which is what reveals that row's ✕.

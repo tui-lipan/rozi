@@ -244,11 +244,10 @@ pub(crate) fn error_toast(
 /// pane output is behind it - unreadable over bright content. Painting the theme's panel color
 /// makes it read as the same material as the palette and modals.
 ///
-/// `opacity` below `1.0` uses an alpha paint, which composites per cell against the real content
-/// underneath, so pane colors show through. That is a deliberate trade: the text contrast then
-/// depends on what is behind, and across the bundled themes a value like `0.82` puts 8 of them
-/// under the 4.5:1 readability floor over light content. The default stays solid for that reason;
-/// see `[pane] toast_opacity`.
+/// Below `1.0` the paint is alpha, which the overlay renderer composites per cell against the
+/// content the toast covers - tinted glass rather than a flat wash. The trade is that text
+/// contrast then depends on what is behind; see `[pane] toast_opacity` for the measured spread
+/// across themes and for raising it on one that reads poorly.
 ///
 /// The panel color is used rather than a fixed dark wash because the message text comes from
 /// `theme.primary` - on a light theme that text is dark, and a dark background under it would

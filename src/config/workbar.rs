@@ -180,11 +180,11 @@ mod tests {
     }
 
     #[test]
-    fn toast_opacity_defaults_to_solid_and_accepts_a_unit_fraction() {
+    fn toast_opacity_defaults_to_glass_and_accepts_a_unit_fraction() {
         assert_eq!(
             HyprmuxPaneConfig::default().toast_opacity,
-            1.0,
-            "a solid toast is the only setting whose contrast does not depend on pane content",
+            0.8,
+            "toasts default to tinted glass rather than a solid panel",
         );
 
         let parsed: PaneFileConfig = toml::from_str("toast_opacity = 0.82").expect("config parses");
@@ -203,7 +203,7 @@ mod tests {
             let mut warnings = Vec::new();
             apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
             assert_eq!(warnings.len(), 1, "{raw} should warn");
-            assert_eq!(pane.toast_opacity, 1.0, "{raw} must not take effect");
+            assert_eq!(pane.toast_opacity, 0.8, "{raw} must not take effect");
         }
     }
 

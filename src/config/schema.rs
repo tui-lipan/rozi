@@ -334,11 +334,15 @@ pub struct HyprmuxPaneConfig {
     pub workbar_style: CapStyle,
     /// How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`.
     ///
-    /// `1.0` (the default) paints the theme's panel color solid, which is the only value that
-    /// holds a toast's text at the theme's own contrast no matter what is behind it. Lowering it
-    /// lets pane colors show through, and the text contrast then depends on them: measured across
-    /// the bundled themes, `0.82` drops the worst case below the 4.5:1 readability floor on 8 of
-    /// them. Worth turning down only for a theme with high-contrast panel chrome.
+    /// The default `0.8` reads as tinted glass: the theme's panel color blended per cell with
+    /// whatever is behind, so content underneath stays visible rather than being replaced. `1.0`
+    /// paints the panel color solid.
+    ///
+    /// Below `1.0` the text contrast depends on what the toast covers, and themes differ widely in
+    /// how much headroom their panel/text pair has. Measured over white, yellow, red, and dark
+    /// panes across the 30 bundled themes, the worst case sits under the 4.5:1 readability floor
+    /// on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` — and those last 2 are at their own
+    /// theme's ceiling either way. Raise it on a theme whose toasts read poorly.
     pub toast_opacity: f32,
 }
 
@@ -365,7 +369,7 @@ impl Default for HyprmuxPaneConfig {
             workbar_powerline: true,
             workbar_tab_style: CapStyle::Padded,
             workbar_style: CapStyle::Padded,
-            toast_opacity: 1.0,
+            toast_opacity: 0.8,
         }
     }
 }

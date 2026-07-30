@@ -93,7 +93,7 @@ workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default
 workbar_powerline = true      # chain trailing badges into a powerline (default: true)
 workbar_tab_style = "padded" # workspace/sidebar tab caps: padded|round|arrow (default: padded)
 workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
-toast_opacity = 1.0           # toast background opacity over pane content (default: 1.0 = solid)
+toast_opacity = 0.8           # toast background opacity over pane content (default: 0.8)
 background_follows_terminal = false  # pin surface.backdrop to the host terminal bg (default: false)
 
 [animations]
@@ -274,7 +274,7 @@ Pane focus and chrome behavior.
 | `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
 | `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
-| `toast_opacity` | `1.0` | How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`. `1.0` paints the theme's `surface.panel` solid, so a toast reads as the same material as the palette and modals and its text contrast never depends on what is behind it. Lower values composite per cell against the live pane, letting its colors show through — a look, not a readability win: measured across the bundled themes, `0.82` puts 15 of 30 under the 4.5:1 text-contrast floor over light content, against 2 of 30 when solid (those two sit at their own theme's ceiling either way). Turn it down only if your theme has high-contrast panel chrome. Values outside `[0.0, 1.0]` warn and are ignored. |
+| `toast_opacity` | `0.8` | How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`. The default reads as tinted glass: the theme's `surface.panel` blended per cell with whatever is behind, so content underneath stays visible instead of being replaced. `1.0` paints the panel solid. Below `1.0` the text contrast depends on what the toast covers, and themes vary a lot in how much headroom their panel/text pair has — measured over white, yellow, red, and dark panes across the 30 bundled themes, the worst case falls under the 4.5:1 readability floor on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` (those last 2 sit at their own theme's ceiling either way). Raise it if your theme's toasts read poorly. Values outside `[0.0, 1.0]` warn and are ignored. |
 | `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
 | `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
 | `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The appearance toggle writes this back to config. |
@@ -447,9 +447,8 @@ appears only when something happened that you cannot already see:
 Validation errors from a prompt render *inside* the prompt, under the field they are about, and
 clear as soon as you edit it.
 
-Toasts paint the theme's panel color rather than letting pane output show through, so their text
-stays legible over any content. [`[pane] toast_opacity`](#pane) makes them translucent if you
-prefer the look.
+Toasts render as tinted glass: the theme's panel color blended per cell with the pane content they
+cover. [`[pane] toast_opacity`](#pane) controls how far, up to `1.0` for a solid panel.
 
 ## `[confirm]`
 

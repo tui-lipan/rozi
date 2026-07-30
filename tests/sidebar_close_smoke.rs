@@ -7,6 +7,19 @@ use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};
 
+/// Park the pointer at `(x, y)` and let the frames that crossing asks for run.
+fn move_to(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16) {
+    backend
+        .send_mouse(MouseEvent {
+            x,
+            y,
+            kind: MouseKind::Moved,
+            mods: KeyMods::NONE,
+        })
+        .expect("move the pointer");
+    settle(backend);
+}
+
 fn settle(backend: &mut TestBackend<HyprmuxApp>) {
     for _ in 0..4 {
         backend.render();
@@ -88,6 +101,11 @@ fn keyboard_navigation_suppresses_a_stale_hovered_close_affordance() {
 
 /// The ✕ is a nested MouseRegion so it can own clicks and its red foreground hover. Moving onto it
 /// must not drop the parent row's background lift: both effects compose while the pointer is there.
+///
+/// Every cell of the ✕ is the same target — the glyph and the padding cell beside it that holds it
+/// off the panel edge — so the row must read identically on both. The pointer drives the whole
+/// thing, hover state included: seeding `hovered_row` by hand would bypass the crossing this is
+/// about and leave the baseline reading an unhovered row.
 #[test]
 fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
     std::thread::Builder::new()
@@ -105,54 +123,48 @@ fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
                 state.sidebar_visible = true;
                 state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
                 state.config.sidebar.tabs = vec![SidebarTab::Panes];
-                // Reveal the nested region before moving the synthetic pointer onto it.
-                state.sidebar.hovered_row = Some(PANE_ROW);
             }
             settle(&mut backend);
 
-            let lines = backend.capture_frame().to_fixed_grid_lines();
-            let y = lines
+            let y = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
                 .iter()
-                .position(|line| line.contains('✕'))
-                .expect("hovered pane row reveals the ✕") as u16;
+                .position(|line| line.starts_with('▎'))
+                .expect("the active pane's row, marked in the gutter") as u16;
+
+            // Park the pointer on the row body: that is what reveals the ✕ and what the row's own
+            // hover lift has to survive.
+            move_to(&mut backend, 4, y);
+            let lines = backend.capture_frame().to_fixed_grid_lines();
             let x = lines[y as usize]
                 .chars()
                 .position(|ch| ch == '✕')
-                .expect("✕ column") as u16;
+                .expect("hovering the row reveals its ✕") as u16;
             let row_hover_bg = backend.capture_frame().cell(4, y).bg;
             let resting_x_fg = backend.capture_frame().cell(x, y).fg;
+            let error = backend.state().theme.status.error;
+            assert_ne!(resting_x_fg, error, "an unaimed-at ✕ is not red yet");
 
-            backend
-                .send_mouse(MouseEvent {
-                    x,
-                    y,
-                    kind: MouseKind::Moved,
-                    mods: KeyMods::NONE,
-                })
-                .expect("move onto ✕");
-            settle(&mut backend);
-
-            let frame = backend.capture_frame();
-            assert_eq!(
-                frame.cell(4, y).bg,
-                row_hover_bg,
-                "the row keeps its background hover while the nested region owns hover"
-            );
-            assert_eq!(
-                frame.cell(x, y).bg,
-                row_hover_bg,
-                "the row hover also covers the ✕ cell"
-            );
-            assert_ne!(
-                frame.cell(x, y).fg,
-                resting_x_fg,
-                "the ✕ adds its own foreground hover"
-            );
-            assert_eq!(
-                frame.cell(x, y).fg,
-                backend.state().theme.status.error,
-                "the ✕ hover reaches the configured error color"
-            );
+            for probe in [x, x + 1] {
+                move_to(&mut backend, probe, y);
+                let frame = backend.capture_frame();
+                assert_eq!(
+                    frame.cell(4, y).bg,
+                    row_hover_bg,
+                    "the row keeps its background hover while the nested region owns hover (x={probe})"
+                );
+                assert_eq!(
+                    frame.cell(probe, y).bg,
+                    row_hover_bg,
+                    "the row hover also covers the ✕ cell (x={probe})"
+                );
+                assert_eq!(
+                    frame.cell(x, y).fg,
+                    error,
+                    "the ✕ adds its own foreground hover, reaching the configured error color (x={probe})"
+                );
+            }
         })
         .expect("spawn nested hover smoke thread")
         .join()

@@ -600,9 +600,13 @@ pub(super) fn output(
     // Both flags only ever go false -> true here, so that is a single frame per quiet period
     // rather than one per output chunk.
     let mut indicator_raised = false;
+    let mut chrome_changed = false;
     let matched = match find_pane_mut(&mut ctx.state, pane_id) {
         Some(pane) if pane.pty_generation == generation => {
-            pane.terminal.process_server_output(&bytes);
+            chrome_changed |= matches!(
+                pane.terminal.process_server_output(&bytes),
+                crate::pane::OutputFrame::Rebuild
+            );
             let bell = pane.terminal.take_bell();
             pane.activity.last_activity = Some(std::time::Instant::now());
             if focused != Some(pane_id) {
@@ -629,8 +633,21 @@ pub(super) fn output(
     // The screen is already updated above; only ask for a frame when the result reaches the
     // display. A chatty pane on an inactive workspace would otherwise drive the renderer at full
     // rate painting a view its output never appears in (see `State::pane_is_rendered`).
-    if indicator_raised || ctx.state.pane_is_rendered(pane_id) {
+    //
+    // Output is a *repaint*: the view hands the widget the screen itself (`TerminalPane::screen_handle`),
+    // so nothing about the element tree depends on what the child program just drew and the runtime
+    // picks the new contents up on its way to the buffer. A full frame here would instead re-run
+    // `view()` and layout for every pane, workbar segment and sidebar row in the window on every
+    // chunk. That is a real saving but not the dominant one while a pane streams - parsing the bytes
+    // and diffing the buffer cost more - so the reason to keep this at `paint` is that the work is
+    // unnecessary, not that it is the bottleneck.
+    //
+    // A raised activity or bell indicator is different: those *are* view state (the workbar counts
+    // them), as is a changed OSC title, so those frames have to be full ones.
+    if indicator_raised || chrome_changed {
         Update::full()
+    } else if ctx.state.pane_is_rendered(pane_id) {
+        Update::paint()
     } else {
         Update::none()
     }

@@ -342,8 +342,10 @@ pub(crate) fn row_hover(ctx: &mut Context<HyprmuxApp>, index: usize, hovered: bo
     }
     ctx.state.sidebar.hovered_row = next;
     // A click-only region does not repaint on a hover transition by itself, and the ✕ appearing is
-    // exactly what the transition has to show.
-    Update::full()
+    // exactly what the transition has to show — so the view has to run. `layout` rather than `full`:
+    // the row list is described the same way either side of the transition, one glyph aside, so
+    // re-running the view and reconciling is enough without rebuilding the whole element tree.
+    Update::layout()
 }
 
 /// A row's ✕ was clicked. The first click arms a confirmation (the row strikes through and its

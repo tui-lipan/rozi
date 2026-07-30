@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use tui_lipan::prelude::*;
 use tui_lipan::utils::{GridPos, GridSelection};
@@ -56,14 +57,20 @@ pub struct TerminalPane {
     /// the render snapshot is pulled by the view (which only ever holds `&State`), and rebuilding
     /// it at read time rather than at write time is what collapses a burst of output messages into
     /// one rebuild. See [`TerminalPane::process_server_output`].
-    screen: RefCell<Box<TerminalScreen>>,
+    /// Shared rather than owned so the view can hand the widget a [`TerminalScreenHandle`] instead
+    /// of a snapshot: with the screen out of the element tree, output repaints instead of rebuilding.
+    screen: Rc<RefCell<TerminalScreen>>,
 }
 
+/// What a chunk of pane output needs from the next frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PaneEventOutcome {
+pub enum OutputFrame {
+    /// Only the screen moved. The view hands the widget the screen itself, so the new contents reach
+    /// the buffer without `view()` running again.
     Repaint,
-    StatusChanged,
-    Exited(i32),
+    /// Metadata the chrome around the screen renders moved too - an OSC title, or the parser
+    /// reporting itself ready for the first time - so the view has to run.
+    Rebuild,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,7 +128,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             last_palette: None,
             seen_bell_count: 0,
-            screen: RefCell::new(Box::new(screen)),
+            screen: Rc::new(RefCell::new(screen)),
         }
     }
 
@@ -133,6 +140,17 @@ impl TerminalPane {
     /// one per message.
     pub fn snapshot(&self) -> TerminalRenderSnapshot {
         self.screen.borrow_mut().render_snapshot()
+    }
+
+    /// The screen itself, for the `Terminal` widget to read at paint time.
+    ///
+    /// Preferred over [`snapshot`](Self::snapshot) in the view: a snapshot in the element makes the
+    /// element change on every chunk of output, which forces a full `view()` + layout pass for the
+    /// whole window. A handle holds still, so output is answered with [`Update::paint`].
+    ///
+    /// [`Update::paint`]: tui_lipan::prelude::Update::paint
+    pub fn screen_handle(&self) -> TerminalScreenHandle {
+        TerminalScreenHandle::new(Rc::clone(&self.screen))
     }
 
     pub fn bind_session(&mut self, pane_id: crate::state::PaneId, generation: u64) {
@@ -158,7 +176,7 @@ impl TerminalPane {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
         let mut screen = self.screen.borrow_mut();
-        **screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        *screen = TerminalScreen::new(self.rows, self.cols, 5000);
         self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
             screen.set_palette(palette);
@@ -175,7 +193,7 @@ impl TerminalPane {
 
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
-    pub fn process_server_output(&mut self, bytes: &[u8]) -> PaneEventOutcome {
+    pub fn process_server_output(&mut self, bytes: &[u8]) -> OutputFrame {
         self.screen.borrow_mut().process_bytes(bytes);
         let _ = self.screen.borrow_mut().drain_responses();
         let title = self
@@ -189,9 +207,17 @@ impl TerminalPane {
                 .and_then(shell_title_parts)
                 .and_then(|(user, _)| user.map(str::to_string));
         }
+        // The titlebar renders both of these, so a chunk that moves either has to be answered with a
+        // frame that runs the view - unlike the screen itself, which the widget reads for itself.
+        let chrome_changed =
+            self.title != title || !matches!(self.status, ManagedTerminalStatus::Ready);
         self.title = title;
         self.status = ManagedTerminalStatus::Ready;
-        PaneEventOutcome::Repaint
+        if chrome_changed {
+            OutputFrame::Rebuild
+        } else {
+            OutputFrame::Repaint
+        }
     }
 
     pub fn is_ready(&self) -> bool {

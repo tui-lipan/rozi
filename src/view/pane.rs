@@ -332,19 +332,22 @@ pub(crate) fn pane_element(
         window_stack = window_stack.child(title_bar);
     }
 
-    let snapshot = terminal_snapshot_for_pane(ctx, pane);
     let terminal_ready = pane.terminal_active && !pane.opening && !pane.closing;
-    let show_cursor = terminal_cursor_visible(
-        snapshot.cursor_visible,
-        ctx.state.hint_mode.as_ref().map(|hints| hints.target),
-        id,
-        exited,
-    );
-
+    // The widget reads the screen itself rather than being handed a snapshot, which keeps this
+    // element identical from one chunk of output to the next - that is what lets `session::output`
+    // ask for a repaint instead of a rebuild of every pane in the window. Decorations ride along
+    // separately so search hits and hint labels survive a paint-only frame.
     let mut terminal_widget = Terminal::new()
-        .snapshot(snapshot)
+        .screen(pane.terminal.screen_handle())
+        .decorations(terminal_decorations_for_pane(ctx, pane))
         .paste_shortcut_behavior(TerminalPasteShortcutBehavior::Performable)
-        .show_cursor(show_cursor)
+        // A mask over what the child program asks for: a pane wearing hint labels or one whose
+        // command has exited shows no caret regardless.
+        .show_cursor(app_allows_cursor(
+            ctx.state.hint_mode.as_ref().map(|hints| hints.target),
+            id,
+            exited,
+        ))
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
         .focus_style(Style::default())
@@ -611,15 +614,22 @@ pub(crate) fn pane_element(
     element.key(pane_window_key(id, pane.pty_generation))
 }
 
-fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> TerminalRenderSnapshot {
-    let snapshot = pane.terminal.snapshot();
+/// Overlays this pane's screen wears this frame: hint labels, or search-match highlights.
+///
+/// Returned separately from the screen so the widget can re-apply them to whatever the screen
+/// reports at paint time. Both sources depend only on hint/search state, and a change in either
+/// already warrants a full frame of its own.
+fn terminal_decorations_for_pane(
+    ctx: &Context<HyprmuxApp>,
+    pane: &Pane,
+) -> Vec<TerminalDecoration> {
     if let Some(hints) = ctx
         .state
         .hint_mode
         .as_ref()
         .filter(|hints| hints.target == pane.id)
     {
-        let decorations = hints
+        return hints
             .matches
             .iter()
             .enumerate()
@@ -642,17 +652,18 @@ fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> Termina
                 ])
             })
             .flatten()
-            .collect::<Vec<_>>();
-        return snapshot.decorated(&decorations);
+            .collect();
     }
     let Some(query) = search_highlight_query(ctx, pane.id) else {
-        return snapshot;
+        return Vec::new();
     };
     let needle = query.to_ascii_lowercase();
     if needle.is_empty() {
-        return snapshot;
+        return Vec::new();
     }
 
+    // Matching runs over the plain snapshot text; only the highlights it produces are handed on.
+    let snapshot = pane.terminal.snapshot();
     let active = active_search_highlight(ctx, pane);
     let mut decorations = Vec::new();
     for (row, line) in snapshot.text.lines().enumerate() {
@@ -690,7 +701,7 @@ fn terminal_snapshot_for_pane(ctx: &Context<HyprmuxApp>, pane: &Pane) -> Termina
             search_from = end;
         }
     }
-    snapshot.decorated(&decorations)
+    decorations
 }
 
 fn search_highlight_query(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<&str> {
@@ -1128,13 +1139,10 @@ fn selection_for_render(selection: &GridSelection) -> TerminalSelection {
     }
 }
 
-fn terminal_cursor_visible(
-    snapshot_cursor_visible: bool,
-    hint_target: Option<PaneId>,
-    id: PaneId,
-    exited: bool,
-) -> bool {
-    snapshot_cursor_visible && hint_target != Some(id) && !exited
+/// Whether the app permits this pane a caret at all; the child program still decides whether it
+/// wants one, and the widget ANDs the two.
+fn app_allows_cursor(hint_target: Option<PaneId>, id: PaneId, exited: bool) -> bool {
+    hint_target != Some(id) && !exited
 }
 
 #[cfg(test)]
@@ -1154,13 +1162,13 @@ mod tests {
     }
 
     #[test]
-    fn hint_mode_and_exit_state_suppress_snapshot_cursor_visibility() {
-        assert!(!terminal_cursor_visible(true, Some(7), 7, false));
-        assert!(terminal_cursor_visible(true, Some(7), 8, false));
-        assert!(terminal_cursor_visible(true, None, 7, false));
-        assert!(!terminal_cursor_visible(false, None, 7, false));
-        assert!(!terminal_cursor_visible(false, Some(8), 7, false));
-        assert!(!terminal_cursor_visible(true, None, 7, true));
+    fn hint_mode_and_exit_state_withhold_the_cursor() {
+        // The pane wearing the hint labels loses its caret; its neighbors keep theirs.
+        assert!(!app_allows_cursor(Some(7), 7, false));
+        assert!(app_allows_cursor(Some(7), 8, false));
+        assert!(app_allows_cursor(None, 7, false));
+        assert!(!app_allows_cursor(None, 7, true));
+        assert!(!app_allows_cursor(Some(7), 7, true));
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {

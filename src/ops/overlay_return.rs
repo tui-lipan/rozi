@@ -151,8 +151,10 @@ mod tests {
         });
     }
 
+    /// Cancelling steps back into Appearance, but picking a theme is the errand finished: it leaves
+    /// the whole stack rather than dropping the user back into a list they are done with.
     #[test]
-    fn selecting_a_theme_from_appearance_returns_to_it() {
+    fn selecting_a_theme_from_appearance_closes_the_dialogs() {
         with_backend(|backend| {
             // Selecting persists the pick, so point the writer at a throwaway file rather than the
             // developer's own config.
@@ -172,16 +174,18 @@ mod tests {
             backend
                 .dispatch(Msg::SelectTheme(0))
                 .expect("select first theme");
-            let restored = backend.state().show_appearance;
-            let closed = !backend.state().show_theme_picker;
+            let appearance_closed = !backend.state().show_appearance;
+            let picker_closed = !backend.state().show_theme_picker;
+            let origin_cleared = backend.state().overlay_return.is_none();
 
             unsafe {
                 std::env::remove_var("HYPRMUX_CONFIG");
             }
             let _ = std::fs::remove_file(&config_path);
 
-            assert!(closed);
-            assert!(restored);
+            assert!(picker_closed);
+            assert!(appearance_closed);
+            assert!(origin_cleared);
         });
     }
 

@@ -166,12 +166,21 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
     ctx.state.commands_dirty = true;
 }
 
+/// Picking a theme finishes the errand it was opened for, so it leaves the whole dialog stack —
+/// including the Appearance list it may have been raised from — rather than stepping back one level
+/// into a dialog the user is done with. Cancelling still returns to Appearance.
+fn close_after_theme_pick(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::overlay_return::leave(ctx);
+    crate::ops::focus::request_current_pane_focus(ctx);
+    Update::full()
+}
+
 pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     let choices = crate::config::theme_choices();
     let Some(choice) = choices.get(index) else {
         ctx.state.show_theme_picker = false;
         ctx.state.commands_dirty = true;
-        return crate::ops::overlay_return::finish(ctx);
+        return close_after_theme_pick(ctx);
     };
     let name = choice.id();
     let system_theme = ctx.state.system_theme.clone();
@@ -208,10 +217,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
     ctx.state.commands_dirty = true;
-    // Back to Appearance when the picker was opened from it, so the `Theme` row shows the pick and
-    // tweaking can continue; otherwise back to the pane. Appearance carries no command of its own,
-    // so a started tick still wins below.
-    let closed = crate::ops::overlay_return::finish(ctx);
+    let closed = close_after_theme_pick(ctx);
     if let Err(err) = crate::config::persist_theme_name(&name) {
         crate::pty_events::notify_error(ctx, "Theme not saved", err);
     }

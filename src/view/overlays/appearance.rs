@@ -364,24 +364,12 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
                 .callback(|event: SearchEvent<usize>| Msg::SelectTheme(event.item.value)),
         );
 
-    // Opened from Appearance, the picker leads back there - say so. Opened standalone it just
-    // closes, which needs no footer.
-    let content: Element = if ctx.state.overlay_return.is_some() {
-        VStack::new()
-            .height(Length::Auto)
-            .child(palette)
-            .child(hint_row().child(hint_pill(&ctx.state.theme, "back", "esc")))
-            .into()
-    } else {
-        palette.into()
-    };
-
     action_palette(
         ctx,
         "Change theme",
         theme_picker_key(),
         Msg::CloseThemePicker,
-        content,
+        palette,
         60,
     )
 }

@@ -25,18 +25,16 @@ fn hint_row() -> Flow {
 
 /// Footer hints shared by the single-input prompt overlays (rename pane/workspace/session, save
 /// profile) so they read like the command palette instead of a bare dialog.
+///
+/// A prompt raised from a picker returns to it on Esc, but that goes unsaid: "back esc" is the one
+/// thing every dialog does, so spelling it out only crowds the hints that carry information.
 fn prompt_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    // A prompt raised from a picker returns to it, so name the key for what it does here.
-    let cancel = if ctx.state.overlay_return.is_some() {
-        "back"
-    } else {
-        "cancel"
-    };
-    hint_row()
-        .child(hint_pill(theme, "submit", "enter"))
-        .child(hint_pill(theme, cancel, "esc"))
-        .into()
+    let mut row = hint_row().child(hint_pill(theme, "submit", "enter"));
+    if ctx.state.overlay_return.is_none() {
+        row = row.child(hint_pill(theme, "cancel", "esc"));
+    }
+    row.into()
 }
 
 /// Shared chrome for the single-input prompt overlays so they all read like the command palette:

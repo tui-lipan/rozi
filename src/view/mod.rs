@@ -10,7 +10,7 @@ pub use keys::{
     profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
     search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
 };
-pub(crate) use pane::{PaneMerge, pane_element};
+pub(crate) use pane::{PaneKind, PaneMerge, pane_element};
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 
 use tui_lipan::prelude::*;
@@ -88,12 +88,13 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let mut canvas = Canvas::new()
         .style(Style::new().bg(theme.surface.backdrop))
         .height(Length::Flex(1));
-    // With merged borders, tiles whose rects are still animating (and the dragged tile) are
-    // lifted above the settled merged layer: they draw in Replace mode, so on top they cleanly
-    // occlude the seams they sweep across instead of settled panes Exact-merging with their
-    // transient border positions. Each vec keeps `ordered_panes` relative order while the focused
-    // pane stays last.
-    let merge_layering = ctx.state.config.pane.merge_borders;
+    // Tiles whose rects are still animating (and the dragged tile) are lifted above merged seams
+    // or stable Divider widgets. They therefore occlude chrome they sweep across instead of
+    // merging with it or having a divider painted over their terminal content. Each vec keeps
+    // `ordered_panes` relative order while the focused pane stays last.
+    let merge_layering = ctx.state.config.pane.border_mode.merges_frames();
+    let divider_mode = ctx.state.config.pane.border_mode.draws_dividers();
+    let mut divider_panes = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
@@ -202,6 +203,16 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // geometry animates it sweeps across settled panes, and Exact-merging every transient
         // overlap would smear junction glyphs along the way.
         let settled = rect_settled(animated_rect, target_rect);
+        if divider_mode
+            && !pane.floating
+            && !pane.fullscreen
+            && !pane.opening
+            && !pane.closing
+            && moving.is_none()
+            && settled
+        {
+            divider_panes.push(pane.id);
+        }
         // Capped titles paint their seam cap in the neighbor's title color so a shared cell reads
         // as a split junction; only same-row neighbors (their titlebar on this pane's top row)
         // qualify, so a taller pane above the seam leaves the cap on the plain backdrop.
@@ -226,17 +237,42 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             seam_left_bg,
             seam_right_bg,
         };
-        let element = pane_element(app, ctx, pane, render_rect, focused_pane, None, merge);
+        let kind = if pane.fullscreen {
+            PaneKind::Fullscreen
+        } else if pane.floating {
+            PaneKind::Floating
+        } else {
+            PaneKind::Tiled
+        };
+        let element = pane_element(app, ctx, pane, render_rect, focused_pane, None, kind, merge);
         if pane.fullscreen {
             fullscreen_panes.push((render_rect, element));
         } else if pane.floating {
             floating_panes.push((render_rect, element));
-        } else if merge_layering && moving.is_some() {
+        } else if (merge_layering || divider_mode) && moving.is_some() {
             dragged_tiles.push((render_rect, element));
-        } else if merge_layering && !settled {
+        } else if (merge_layering || divider_mode)
+            && (!settled || (divider_mode && (pane.opening || pane.closing)))
+        {
             animating_tiles.push((render_rect, element));
         } else {
             canvas = canvas.child_at(render_rect.to_rect(), element);
+        }
+    }
+
+    if divider_mode {
+        let divider_style = Style::new().fg(crate::ops::theme::pane_frame_foreground(
+            theme, false, false,
+        ));
+        for divider in internal_dividers_for(&placements, &divider_panes) {
+            let element: Element = match divider.orientation {
+                Orientation::Horizontal => Divider::horizontal().style(divider_style).into(),
+                Orientation::Vertical => Divider::vertical().style(divider_style).into(),
+            };
+            canvas = canvas.child_at(
+                canvas_rect_to_root(divider.rect, top_offset).to_rect(),
+                element,
+            );
         }
     }
 
@@ -390,6 +426,140 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     ThemeProvider::new(ctx.state.theme.clone())
         .child(shell)
         .into()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InternalDivider {
+    orientation: Orientation,
+    rect: FloatRect,
+}
+
+/// Derive visible split separators from final pane adjacency. Extending each segment by one cell
+/// along its span makes nested split endpoints overlap, allowing tui-lipan to compose junctions.
+fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
+    if placements.len() < 2 {
+        return Vec::new();
+    }
+
+    let min_x = placements
+        .iter()
+        .map(|placement| placement.rect.x)
+        .fold(f32::INFINITY, f32::min);
+    let min_y = placements
+        .iter()
+        .map(|placement| placement.rect.y)
+        .fold(f32::INFINITY, f32::min);
+    let max_x = placements
+        .iter()
+        .map(|placement| placement.rect.x + placement.rect.w)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_y = placements
+        .iter()
+        .map(|placement| placement.rect.y + placement.rect.h)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let mut dividers = Vec::new();
+
+    for (index, first) in placements.iter().enumerate() {
+        for second in &placements[index + 1..] {
+            let (left, right) = if first.rect.x <= second.rect.x {
+                (first.rect, second.rect)
+            } else {
+                (second.rect, first.rect)
+            };
+            let overlap_top = left.y.max(right.y);
+            let overlap_bottom = (left.y + left.h).min(right.y + right.h);
+            if (left.x + left.w + 1.0 - right.x).abs() < 0.5 && overlap_bottom > overlap_top {
+                let y = (overlap_top - 1.0).max(min_y);
+                let bottom = (overlap_bottom + 1.0).min(max_y);
+                let divider = InternalDivider {
+                    orientation: Orientation::Vertical,
+                    rect: FloatRect {
+                        x: left.x + left.w,
+                        y,
+                        w: 1.0,
+                        h: bottom - y,
+                    },
+                };
+                push_internal_divider(&mut dividers, divider);
+            }
+
+            let (top, bottom) = if first.rect.y <= second.rect.y {
+                (first.rect, second.rect)
+            } else {
+                (second.rect, first.rect)
+            };
+            let overlap_left = top.x.max(bottom.x);
+            let overlap_right = (top.x + top.w).min(bottom.x + bottom.w);
+            if (top.y + top.h + 1.0 - bottom.y).abs() < 0.5 && overlap_right > overlap_left {
+                let x = (overlap_left - 1.0).max(min_x);
+                let right = (overlap_right + 1.0).min(max_x);
+                let divider = InternalDivider {
+                    orientation: Orientation::Horizontal,
+                    rect: FloatRect {
+                        x,
+                        y: top.y + top.h,
+                        w: right - x,
+                        h: 1.0,
+                    },
+                };
+                push_internal_divider(&mut dividers, divider);
+            }
+        }
+    }
+
+    dividers
+}
+
+fn internal_dividers_for(
+    placements: &[PanePlacement],
+    eligible_panes: &[PaneId],
+) -> Vec<InternalDivider> {
+    let settled: Vec<_> = placements
+        .iter()
+        .copied()
+        .filter(|placement| eligible_panes.contains(&placement.id))
+        .collect();
+    internal_dividers(&settled)
+}
+
+fn push_internal_divider(dividers: &mut Vec<InternalDivider>, mut divider: InternalDivider) {
+    loop {
+        let merge_index = dividers
+            .iter()
+            .position(|existing| match divider.orientation {
+                Orientation::Vertical => {
+                    existing.orientation == Orientation::Vertical
+                        && (existing.rect.x - divider.rect.x).abs() < 0.5
+                        && existing.rect.y <= divider.rect.y + divider.rect.h
+                        && divider.rect.y <= existing.rect.y + existing.rect.h
+                }
+                Orientation::Horizontal => {
+                    existing.orientation == Orientation::Horizontal
+                        && (existing.rect.y - divider.rect.y).abs() < 0.5
+                        && existing.rect.x <= divider.rect.x + divider.rect.w
+                        && divider.rect.x <= existing.rect.x + existing.rect.w
+                }
+            });
+        let Some(index) = merge_index else {
+            dividers.push(divider);
+            return;
+        };
+        let existing = dividers.swap_remove(index);
+        match divider.orientation {
+            Orientation::Vertical => {
+                let start = existing.rect.y.min(divider.rect.y);
+                let end = (existing.rect.y + existing.rect.h).max(divider.rect.y + divider.rect.h);
+                divider.rect.y = start;
+                divider.rect.h = end - start;
+            }
+            Orientation::Horizontal => {
+                let start = existing.rect.x.min(divider.rect.x);
+                let end = (existing.rect.x + existing.rect.w).max(divider.rect.x + divider.rect.w);
+                divider.rect.x = start;
+                divider.rect.w = end - start;
+            }
+        }
+    }
 }
 
 /// The canvas bounds to render the active workspace into. A follower returns the controller's
@@ -594,4 +764,75 @@ pub(crate) fn fg_only(style: &Style) -> Style {
         .fg
         .map(|paint| Style::new().fg(paint.color()))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod divider_tests {
+    use super::*;
+
+    fn placement(id: PaneId, x: f32, y: f32, w: f32, h: f32) -> PanePlacement {
+        PanePlacement {
+            id,
+            rect: FloatRect { x, y, w, h },
+        }
+    }
+
+    #[test]
+    fn nested_split_dividers_overlap_at_their_junction() {
+        let dividers = internal_dividers(&[
+            placement(1, 0.0, 0.0, 9.0, 21.0),
+            placement(2, 10.0, 0.0, 10.0, 9.0),
+            placement(3, 10.0, 10.0, 10.0, 11.0),
+        ]);
+        let horizontal = dividers
+            .iter()
+            .find(|divider| divider.orientation == Orientation::Horizontal)
+            .expect("nested split should have a horizontal divider");
+        assert_eq!(horizontal.rect.y, 9.0);
+        assert_eq!(horizontal.rect.x, 9.0);
+        assert!(dividers.iter().any(|divider| {
+            divider.orientation == Orientation::Vertical
+                && divider.rect.x == 9.0
+                && divider.rect.y <= horizontal.rect.y
+                && divider.rect.y + divider.rect.h > horizontal.rect.y
+        }));
+    }
+
+    #[test]
+    fn monocle_placements_have_no_internal_dividers() {
+        assert!(
+            internal_dividers(&[
+                placement(1, 0.0, 0.0, 20.0, 10.0),
+                placement(2, 0.0, 0.0, 20.0, 10.0),
+            ])
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn unsettled_region_does_not_remove_unrelated_dividers() {
+        let placements = [
+            placement(1, 0.0, 0.0, 9.0, 9.0),
+            placement(2, 0.0, 10.0, 9.0, 10.0),
+            placement(3, 10.0, 0.0, 10.0, 9.0),
+            placement(4, 10.0, 10.0, 10.0, 10.0),
+        ];
+        let dividers = internal_dividers_for(&placements, &[1, 2, 3]);
+
+        assert!(
+            dividers
+                .iter()
+                .any(|divider| divider.orientation == Orientation::Horizontal),
+            "the stable left column keeps its row divider"
+        );
+        assert!(
+            dividers
+                .iter()
+                .any(|divider| divider.orientation == Orientation::Vertical),
+            "the stable top row keeps its column divider"
+        );
+        assert!(dividers.iter().all(|divider| {
+            divider.rect.y + divider.rect.h <= 10.0 || divider.rect.x + divider.rect.w <= 10.0
+        }));
+    }
 }

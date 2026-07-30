@@ -224,7 +224,7 @@ mod palette_alias_tests {
             AppearanceAction::ToggleHighlightFocusedBackground,
             AppearanceAction::ToggleHighlightFocusedBorder,
             AppearanceAction::ToggleHighlightFocusedTitlebar,
-            AppearanceAction::ToggleBorderMerge,
+            AppearanceAction::CycleBorderMode,
             AppearanceAction::CycleBorderStyle,
             AppearanceAction::ToggleBackgroundFollowsTerminal,
         ];

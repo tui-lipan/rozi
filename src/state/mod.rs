@@ -552,14 +552,11 @@ impl State {
         }
     }
 
-    /// Per-axis gap between adjacent tiled panes. When border merging is on the gap goes negative
-    /// so neighboring panes overlap by exactly one cell: their borders land on the same column/row
-    /// and the terminal backend fuses the shared glyphs (`┬`/`├`/`┼`/…) with no extra divider. The
-    /// vertical overlap is suppressed only for the separate bar, since a lower pane's title row
-    /// would otherwise cover the border of the pane above it.
+    /// Per-axis gap between adjacent tiled panes for the selected border presentation.
     pub fn tile_gap(&self) -> TileGap {
-        if self.config.pane.merge_borders {
-            TileGap {
+        match self.config.pane.border_mode {
+            PaneBorderMode::Separate => TileGap::DEFAULT,
+            PaneBorderMode::Merged => TileGap {
                 horizontal: -1.0,
                 vertical: if self.config.pane.show_titles
                     && self.config.pane.titlebar.takes_title_row()
@@ -568,9 +565,15 @@ impl State {
                 } else {
                     -1.0
                 },
-            }
-        } else {
-            TileGap::DEFAULT
+            },
+            PaneBorderMode::None => TileGap {
+                horizontal: 0.0,
+                vertical: 0.0,
+            },
+            PaneBorderMode::Dividers => TileGap {
+                horizontal: 1.0,
+                vertical: 1.0,
+            },
         }
     }
 

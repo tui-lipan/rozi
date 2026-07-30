@@ -49,7 +49,7 @@ running. (For a quick one-pane maximize that restores afterward, use fullscreen 
 Toggle the focused pane between tiling and floating with `t`. A floating pane:
 
 - carries its own explicit rectangle instead of a slot in the tile tree,
-- renders with a distinct double border and a `floating` badge in its titlebar,
+- renders with a distinct double border in frame modes and a `floating` badge in its titlebar,
 - can be moved (`modifier`+left-drag) and resized (`modifier`+right-drag) freely with the
   mouse, including slightly off-screen (a margin keeps it grabbable).
 
@@ -58,6 +58,11 @@ Toggle the focused pane between tiling and floating with `t`. A floating pane:
 Toggle the focused pane fullscreen with `f`. A fullscreen pane fills the workspace area
 (below the workbar) and shows a `fullscreen` badge. Toggle again to restore its previous
 tiled or floating geometry.
+
+`none` and `dividers` also remove frames from floating panes, popups, scratchpads, and fullscreen
+panes for a consistent borderless presentation. Set the config-file-only
+`keep_special_borders = true` to retain double frames around floating panes, popups, and the
+scratchpad; fullscreen panes always follow the global mode.
 
 ## Focus and movement
 
@@ -75,6 +80,13 @@ tiled or floating geometry.
   highlighted titlebar when `[pane] highlight_focused_border` and
   `[pane] highlight_focused_titlebar` are enabled respectively (these color changes animate when
   `focus_chrome` is enabled).
+
+Set `[pane] border_mode` to `separate`, `merged`, `none`, or `dividers`. Separate mode draws a
+frame around every pane; merged mode fuses adjacent frame cells; none removes all pane chrome
+except enabled titlebars; and dividers reserves one cell only at internal tiled splits, where
+tui-lipan composes corners, tees, and crossings automatically. `border_style` selects frame glyphs
+only, so its appearance control is unavailable in the two frameless modes. Merged panes use a
+standalone terminal scrollbar rather than painting its thumb over a draggable shared seam.
 
 A **new pane opens in the focused pane's current working directory** (when it can be
 discovered; see [Terminal features](terminal.md)), falling back to the configured `cwd`.
@@ -107,11 +119,13 @@ transitions as workspace panes.
 ## Titlebars
 
 Each pane can show its icon (tiled / floating / fullscreen) and title as a separate bar, embedded
-in the frame border, or as an integrated top-border strip. Set `[pane] titlebar` to `bar`,
+in the frame border, or as an integrated top strip. Set `[pane] titlebar` to `bar`,
 `border`, or `integrated`; the compact modes preserve the terminal row used by the separate bar.
 Set `[pane] show_titles = false` to hide the selected layout without losing it, or toggle titles
 with the *Toggle pane titlebars* palette command. Set `[pane] highlight_focused_titlebar = false`
 to keep focused and unfocused titlebars styled identically across all three layouts.
+Border and integrated headers remain visible in frameless modes: tui-lipan gives them their own
+row when no frame edge exists.
 
 The displayed title uses this precedence:
 

@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 #[cfg(test)]
 use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
+use crate::state::{PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
@@ -294,7 +294,8 @@ pub(super) struct PaneFileConfig {
     workbar_gap: Option<bool>,
     workbar_at_bottom: Option<bool>,
     show_titles: Option<bool>,
-    merge_borders: Option<bool>,
+    border_mode: Option<String>,
+    keep_special_borders: Option<bool>,
     background_follows_terminal: Option<bool>,
     border_style: Option<String>,
     padding: Option<PaddingSpec>,
@@ -566,8 +567,16 @@ pub fn load_config() -> LoadedConfig {
     if let Some(show_titles) = parsed.pane.show_titles {
         config.pane.show_titles = show_titles;
     }
-    if let Some(merge_borders) = parsed.pane.merge_borders {
-        config.pane.merge_borders = merge_borders;
+    if let Some(keep_special_borders) = parsed.pane.keep_special_borders {
+        config.pane.keep_special_borders = keep_special_borders;
+    }
+    if let Some(border_mode) = parsed.pane.border_mode.as_deref() {
+        match PaneBorderMode::parse(border_mode) {
+            Some(mode) => config.pane.border_mode = mode,
+            None => warnings.push(format!(
+                "Ignored unknown pane.border_mode \"{border_mode}\" (expected one of: separate, merged, none, dividers)"
+            )),
+        }
     }
     if let Some(background_follows_terminal) = parsed.pane.background_follows_terminal {
         config.pane.background_follows_terminal = background_follows_terminal;
@@ -937,6 +946,8 @@ mod file_tests {
             workbar_gap = false
             workbar_at_bottom = true
             show_titles = false
+            border_mode = "dividers"
+            keep_special_borders = true
             padding = 2
             titlebar = "integrated"
             title_style = "round"
@@ -955,6 +966,8 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_gap, Some(false));
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
+        assert_eq!(parsed.pane.border_mode.as_deref(), Some("dividers"));
+        assert_eq!(parsed.pane.keep_special_borders, Some(true));
         assert_eq!(parsed.pane.padding, Some(PaddingSpec::All(2)));
         assert_eq!(parsed.pane.titlebar.as_deref(), Some("integrated"));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));

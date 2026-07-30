@@ -83,6 +83,9 @@ workbar_gap = true            # 1-line gap between workbar and panes (default: t
 workbar_at_bottom = false     # draw the workbar below the panes (default: false)
 show_titles = true            # show pane titles (default: true)
 titlebar = "bar"              # pane title layout: bar|border|integrated (default: bar)
+border_mode = "separate"      # separate|merged|none|dividers (default: separate)
+border_style = "rounded"      # rounded|plain|double|thick (frame modes only)
+keep_special_borders = false  # frame floating/popup/scratch panes in borderless modes
 padding = 0                   # blank cells between border and terminal (default: 0)
                                # scalar = all sides; [v, h]; or [top, right, bottom, left]
 title_style = "padded"        # bar/integrated title caps: padded|half|round|arrow (default: padded)
@@ -263,6 +266,9 @@ Pane focus and chrome behavior.
 | `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The palette/appearance toggle writes this back to config. |
 | `show_titles` | `true` | Show the selected pane titlebar layout. The palette toggle writes this back to config without changing the selected `titlebar` layout. |
 | `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The appearance cycle writes this back to config. |
+| `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The appearance cycle writes this back to config. |
+| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The appearance row is disabled when the selected mode has no pane frames. |
+| `keep_special_borders` | `false` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Fullscreen panes remain consistent with the selected global mode. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
 | `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
@@ -814,7 +820,8 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
-`toggle-highlight-focused-background`, `cycle-border-style`, `cycle-title-style`,
+`toggle-highlight-focused-background`, `toggle-highlight-focused-border`,
+`toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).

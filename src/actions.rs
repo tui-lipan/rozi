@@ -525,7 +525,12 @@ fn execute_action_inner(
         Action::ToggleHighlightFocusedTitlebar => {
             toggle_pane_flag!(ctx, highlight_focused_titlebar)
         }
-        Action::ToggleBorderMerge => toggle_pane_flag!(ctx, merge_borders),
+        Action::CycleBorderMode => {
+            let next = ctx.state.config.pane.border_mode.next();
+            ctx.state.config.pane.border_mode = next;
+            persist_pane_string_or_toast(ctx, "border_mode", next.id());
+            Update::full()
+        }
         Action::ToggleBackgroundFollowsTerminal => {
             toggle_pane_flag!(ctx, background_follows_terminal);
             crate::ops::theme::reapply_active_theme(ctx)

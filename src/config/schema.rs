@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::state::{
-    DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
+    DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -303,9 +303,11 @@ pub struct HyprmuxPaneConfig {
     pub show_titles: bool,
     /// Structural presentation for tiled/floating pane titles.
     pub titlebar: PaneTitlebarMode,
-    /// Whether adjacent tiled panes overlap by a cell so their borders fuse into a shared seam
-    /// instead of drawing a gap between separate boxes.
-    pub merge_borders: bool,
+    /// Whether panes use separate frames, merged frames, no borders, or internal dividers.
+    pub border_mode: PaneBorderMode,
+    /// Keep double frames around floating panes, popups, and the scratchpad when the selected
+    /// border mode otherwise disables per-pane frames. Config-file only.
+    pub keep_special_borders: bool,
     /// Whether `surface.backdrop` (canvas gaps, unfocused pane frames) always tracks the host
     /// terminal's own background instead of the active theme's authored value. Overrides any
     /// theme, including a custom file that already sets a concrete `backdrop`.
@@ -345,7 +347,8 @@ impl Default for HyprmuxPaneConfig {
             workbar_at_bottom: false,
             show_titles: true,
             titlebar: PaneTitlebarMode::Bar,
-            merge_borders: false,
+            border_mode: PaneBorderMode::Separate,
+            keep_special_borders: false,
             background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
             padding: (0, 0, 0, 0),
@@ -1195,6 +1198,11 @@ mod tests {
         );
         assert!(HyprmuxPaneConfig::default().workbar_powerline);
         assert!(HyprmuxPaneConfig::default().show_titles);
+        assert_eq!(
+            HyprmuxPaneConfig::default().border_mode,
+            PaneBorderMode::Separate
+        );
+        assert!(!HyprmuxPaneConfig::default().keep_special_borders);
         assert!(HyprmuxPaneConfig::default().highlight_focused_titlebar);
     }
 

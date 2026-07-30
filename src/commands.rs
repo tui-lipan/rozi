@@ -568,8 +568,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::ToggleBorderMerge,
-        label: "Merge pane borders",
+        action: Action::CycleBorderMode,
+        label: "Border mode",
         category: "Appearance",
         default_keys: &[],
         palette: false,
@@ -1141,8 +1141,8 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             "focused pane titlebar",
             state.config.pane.highlight_focused_titlebar,
         ),
-        Action::ToggleBorderMerge => {
-            enable_disable_label("border merging", state.config.pane.merge_borders)
+        Action::CycleBorderMode => {
+            format!("Border mode: {}", state.config.pane.border_mode.label())
         }
         Action::ToggleBackgroundFollowsTerminal => enable_disable_label(
             "background follows terminal",
@@ -1449,7 +1449,7 @@ mod tests {
         assert!(!is_palette_eligible("toggle-animations"));
         assert!(!is_palette_eligible("toggle-highlight-focused-background"));
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));
-        assert!(!is_palette_eligible("toggle-border-merge"));
+        assert!(!is_palette_eligible("cycle-border-mode"));
         assert!(!is_palette_eligible("cycle-border-style"));
     }
 

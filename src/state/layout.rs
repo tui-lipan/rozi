@@ -24,10 +24,8 @@ impl SplitAxis {
 }
 
 /// Per-axis gap between tiled panes. Split apart because the two axes differ: left|right splits
-/// carry a visible column gap, while top|bottom splits sit flush (their titlebars separate
-/// stacked panes). Border merging drives both negative (a one-cell overlap so shared borders
-/// fuse), except a separate bar suppresses vertical overlap - otherwise a lower pane's title row
-/// would land on the border of the pane above it.
+/// carry a visible column gap, while top|bottom splits sit flush. Other border modes select zero,
+/// positive divider, or negative merged-frame gaps through `State::tile_gap`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileGap {
     pub horizontal: f32,

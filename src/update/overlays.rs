@@ -154,8 +154,8 @@ pub(super) fn appearance_activate(
             crate::state::AppearanceAction::ToggleHighlightFocusedTitlebar => {
                 execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
             }
-            crate::state::AppearanceAction::ToggleBorderMerge => {
-                execute_action(ctx, Action::ToggleBorderMerge);
+            crate::state::AppearanceAction::CycleBorderMode => {
+                execute_action(ctx, Action::CycleBorderMode);
             }
             crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
                 execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);

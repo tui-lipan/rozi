@@ -191,12 +191,17 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "highlight titlebar",
             "active titlebar",
         ]),
-        AppearanceAction::ToggleBorderMerge => alias_list(&[
+        AppearanceAction::CycleBorderMode => alias_list(&[
+            "border mode",
             "border merge",
             "merge borders",
             "merging",
             "seam",
             "border seam",
+            "borderless",
+            "no borders",
+            "dividers",
+            "separators",
         ]),
         AppearanceAction::ToggleBackgroundFollowsTerminal => alias_list(&[
             "background follows terminal",

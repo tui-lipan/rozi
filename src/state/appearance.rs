@@ -69,6 +69,73 @@ pub enum PaneBorderStyle {
     Thick,
 }
 
+/// Structural presentation of pane borders. Glyph shape remains independently controlled by
+/// `PaneBorderStyle`; this mode decides whether pane frames or internal split dividers are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneBorderMode {
+    Separate,
+    Merged,
+    None,
+    Dividers,
+}
+
+impl PaneBorderMode {
+    pub fn all() -> &'static [PaneBorderMode] {
+        &[Self::Separate, Self::Merged, Self::None, Self::Dividers]
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Separate => "separate",
+            Self::Merged => "merged",
+            Self::None => "none",
+            Self::Dividers => "dividers",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Separate => "Separate",
+            Self::Merged => "Merged",
+            Self::None => "None",
+            Self::Dividers => "Dividers",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-")
+            .as_str()
+        {
+            "separate" | "frames" | "frame" | "default" => Some(Self::Separate),
+            "merged" | "merge" | "joined" => Some(Self::Merged),
+            "none" | "disabled" | "off" | "borderless" => Some(Self::None),
+            "dividers" | "divider" | "separators" => Some(Self::Dividers),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
+        all[(index + 1) % all.len()]
+    }
+
+    pub fn draws_frames(self) -> bool {
+        matches!(self, Self::Separate | Self::Merged)
+    }
+
+    pub fn merges_frames(self) -> bool {
+        self == Self::Merged
+    }
+
+    pub fn draws_dividers(self) -> bool {
+        self == Self::Dividers
+    }
+}
+
 impl PaneBorderStyle {
     /// Cycle order for `Action::CycleBorderStyle`.
     pub fn all() -> &'static [PaneBorderStyle] {
@@ -196,7 +263,7 @@ pub enum AppearanceAction {
     ToggleHighlightFocusedBackground,
     ToggleHighlightFocusedBorder,
     ToggleHighlightFocusedTitlebar,
-    ToggleBorderMerge,
+    CycleBorderMode,
     ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
     CycleTitleStyle,
@@ -248,6 +315,11 @@ impl AppearanceAction {
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
             Self::CycleTitleStyle if pane.titlebar == PaneTitlebarMode::Border => {
                 Some("Needs bar or integrated titlebar")
+            }
+            Self::ToggleHighlightFocusedBorder | Self::CycleBorderStyle
+                if !pane.border_mode.draws_frames() =>
+            {
+                Some("Needs pane frames")
             }
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarPosition
@@ -512,6 +584,38 @@ mod tests {
         assert!(asymmetric.vertical.text().is_empty());
         assert!(asymmetric.horizontal.text().is_empty());
         assert!(asymmetric.normalizes_asymmetric);
+    }
+
+    #[test]
+    fn border_modes_parse_and_cycle() {
+        assert_eq!(
+            PaneBorderMode::parse("borderless"),
+            Some(PaneBorderMode::None)
+        );
+        assert_eq!(
+            PaneBorderMode::parse("divider"),
+            Some(PaneBorderMode::Dividers)
+        );
+        assert_eq!(PaneBorderMode::Separate.next(), PaneBorderMode::Merged);
+        assert_eq!(PaneBorderMode::Merged.next(), PaneBorderMode::None);
+        assert_eq!(PaneBorderMode::None.next(), PaneBorderMode::Dividers);
+        assert_eq!(PaneBorderMode::Dividers.next(), PaneBorderMode::Separate);
+    }
+
+    #[test]
+    fn frame_only_controls_are_disabled_for_borderless_modes() {
+        let mut pane = crate::config::HyprmuxPaneConfig::default();
+        for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
+            pane.border_mode = mode;
+            assert_eq!(
+                AppearanceAction::CycleBorderStyle.disabled_reason(&pane),
+                Some("Needs pane frames")
+            );
+            assert_eq!(
+                AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
+                Some("Needs pane frames")
+            );
+        }
     }
 
     #[test]

@@ -87,9 +87,9 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
             AppearanceAction::ToggleHighlightFocusedTitlebar,
         ),
         (
-            "Border merging",
-            enabled_status(pane.merge_borders),
-            AppearanceAction::ToggleBorderMerge,
+            "Border mode",
+            pane.border_mode.label().to_string(),
+            AppearanceAction::CycleBorderMode,
         ),
         (
             "Border style",

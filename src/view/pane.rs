@@ -1,7 +1,9 @@
 use tui_lipan::prelude::*;
 use tui_lipan::utils::GridSelection;
 
-use crate::state::{LayoutKind, Pane, PaneId, PaneTitlebarMode, TileGap, Workspace};
+use crate::state::{
+    LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
+};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
 
@@ -25,6 +27,29 @@ pub(crate) struct PaneMerge {
     /// Title background of the same-row neighbor sharing the right seam cell, if any. Mirrors
     /// `seam_left_bg` for the right cap so either side of a seam renders the same split.
     pub seam_right_bg: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PaneKind {
+    Tiled,
+    Floating,
+    Fullscreen,
+    Popup,
+    Scratch,
+}
+
+impl PaneKind {
+    fn is_special(self) -> bool {
+        matches!(self, Self::Floating | Self::Popup | Self::Scratch)
+    }
+}
+
+fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
+    if border_mode.merges_frames() {
+        ScrollbarVariant::Standalone
+    } else {
+        ScrollbarVariant::Integrated
+    }
 }
 
 /// A pane's titlebar background: the active border color when focused, otherwise the neutral
@@ -82,6 +107,7 @@ pub(crate) fn pane_element(
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
     title_marker: Option<&str>,
+    kind: PaneKind,
     merge: PaneMerge,
 ) -> Element {
     let theme = &ctx.state.theme;
@@ -101,11 +127,10 @@ pub(crate) fn pane_element(
     } else {
         None
     };
-    // Floating panes keep a Double border so they read as a distinct layer; tiled panes follow
-    // the app-wide `pane.border_style` (cycled by `Action::CycleBorderStyle`). Border merging
-    // is achieved by overlapping tiled pane rects a cell (see `State::tile_gap`) so neighbors
-    // share a border column that the terminal backend fuses - no per-frame join flag needed.
-    let border_style = if pane.floating {
+    let border_mode = ctx.state.config.pane.border_mode;
+    let show_border = border_mode.draws_frames()
+        || (kind.is_special() && ctx.state.config.pane.keep_special_borders);
+    let border_style = if kind.is_special() {
         BorderStyle::Double
     } else {
         ctx.state.config.pane.border_style.to_border_style()
@@ -326,12 +351,13 @@ pub(crate) fn pane_element(
         .focusable(terminal_ready)
         .width(Length::Flex(1))
         .height(Length::Flex(1))
-        .scrollbar_config(
+        .scrollbar_config({
             integrated_scrollbar_config()
+                .variant(pane_scrollbar_variant(border_mode))
                 .thumb_style(Style::new().fg(frame_fg))
                 .thumb_focus_style(Style::new().fg(frame_fg))
-                .track_style(Style::new().fg(frame_fg).bg(frame_bg)),
-        )
+                .track_style(Style::new().fg(frame_fg).bg(frame_bg))
+        })
         .scroll_wheel(terminal_ready)
         .on_resize(ctx.link().callback(move |viewport: TerminalViewport| {
             Msg::PaneResize(id, viewport.cols, viewport.rows)
@@ -365,9 +391,9 @@ pub(crate) fn pane_element(
     // rounded corners have no arc junction glyphs, so Exact refuses to fuse them, while Fuzzy
     // merges exactly when possible and falls back to plain junctions for arcs.
     let mut body = Frame::new()
-        .border(true)
+        .border(show_border)
         .border_style(border_style)
-        .border_merge_mode(if merge.enabled {
+        .border_merge_mode(if border_mode.merges_frames() && merge.enabled {
             BorderMergeMode::Fuzzy
         } else {
             BorderMergeMode::Replace
@@ -420,7 +446,7 @@ pub(crate) fn pane_element(
                         }
                         row.into()
                     }
-                    Some(_) if title_style == CapStyle::Half => {
+                    Some(_) if title_style == CapStyle::Half && show_border => {
                         let mut row = HStack::new()
                             .style(title_bar_fill_style)
                             .padding((0, 0, 0, 1))
@@ -441,9 +467,8 @@ pub(crate) fn pane_element(
                         if let Some(badge_text) = badge_text {
                             middle = middle.child(badge_text);
                         }
-                        // Keep the Frame's corner glyphs visible for capped integrated headers. The
-                        // caps sit immediately inside them, using the pane background as their off
-                        // color, while the colored middle still spans the compact top border row.
+                        // With a frame, keep its corner glyphs visible by placing caps immediately
+                        // inside them. Without one, the caps become the header's own outer cells.
                         HStack::new()
                             .width(Length::Flex(1))
                             .height(Length::Px(1))
@@ -479,13 +504,16 @@ pub(crate) fn pane_element(
                     .child(title_row)
                     .into();
                 body = body.header_content(header);
-                body = match title_style {
-                    CapStyle::Padded => body.decoration(integrated_titlebar_top_edge(title_bar_bg)),
-                    CapStyle::Half => {
-                        body.decoration(integrated_half_titlebar_top_edge(title_bar_bg, frame_bg))
-                    }
-                    CapStyle::Round | CapStyle::Arrow => body,
-                };
+                if show_border {
+                    body = match title_style {
+                        CapStyle::Padded => {
+                            body.decoration(integrated_titlebar_top_edge(title_bar_bg))
+                        }
+                        CapStyle::Half => body
+                            .decoration(integrated_half_titlebar_top_edge(title_bar_bg, frame_bg)),
+                        CapStyle::Round | CapStyle::Arrow => body,
+                    };
+                }
             }
             PaneTitlebarMode::Bar => {}
         }
@@ -1112,6 +1140,18 @@ fn terminal_cursor_visible(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_frames_use_a_standalone_terminal_scrollbar() {
+        assert!(matches!(
+            pane_scrollbar_variant(PaneBorderMode::Merged),
+            ScrollbarVariant::Standalone
+        ));
+        assert!(matches!(
+            pane_scrollbar_variant(PaneBorderMode::Separate),
+            ScrollbarVariant::Integrated
+        ));
+    }
 
     #[test]
     fn hint_mode_and_exit_state_suppress_snapshot_cursor_visibility() {

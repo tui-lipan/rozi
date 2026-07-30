@@ -152,8 +152,10 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
   never `std::os::unix` / `/proc` / Win32 directly from a feature module.
 - Use `cargo fmt`; avoid hand-formatting style debates.
 - Use `cargo clippy` for linting before commits that touch Rust code.
-- Prefer small, direct changes over compatibility shims; this project is pre-1.0 with no external
-  compatibility obligations.
+- Hyprmux is in active development with no users or external compatibility obligations. Prefer a
+  clean breaking change when it improves the design; do not add migrations, deprecated aliases, or
+  compatibility shims unless the user explicitly requests them or an internal protocol test
+  intentionally covers version skew.
 - Comments describe current invariants and non-obvious reasons, never changelog/history.
 - Feature reaction modules live under `ops/`, such as `ops/focus.rs`, `ops/theme.rs`, and
   `ops/exit.rs`.
@@ -338,7 +340,10 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 ## Agent Guardrails
 
 - Do not edit `target/` or generated build artifacts.
-- Do not modify `../tui-lipan` unless the bug is in the framework or the user explicitly asks.
+- Hyprmux is a case study for the sibling `../tui-lipan` framework, which is owned alongside this
+  project. Framework changes are welcome when a missing capability is reusable framework behavior
+  rather than hyprmux-specific policy; do not work around a framework deficiency in the app solely
+  to avoid editing tui-lipan.
 - If editing `../tui-lipan`, inspect its git status separately and stage only intended files.
 - Do not sweep unrelated local files, `.superpowers/` reports, or `.agents/` skills into commits.
 - Preserve unrelated worktree changes; never revert user work without explicit approval.
@@ -347,8 +352,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - Stage paths explicitly; this workspace may be dirty.
 - Run `git diff --check` before a commit.
 - Keep docs synchronized when changing user-visible behavior, CLI flags, config keys, or workflows.
-- Avoid backwards-compatibility shims unless persisted data, shipped behavior, or a user request
-  requires them.
+- Prefer intentional breaking changes over backwards-compatibility code during active development.
 
 ## Extensibility Hooks
 

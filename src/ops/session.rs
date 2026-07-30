@@ -508,9 +508,16 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
         .map(|id| format!("client {id}"))
         .unwrap_or_else(|| "another client".to_string());
     // Advertise the live request binding so the hint tracks any `[keys]` override.
+    let allow_takeover = ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .is_some_and(|shared| shared.allow_takeover);
+    let verb = if allow_takeover { "take" } else { "request" };
     let how = crate::commands::command_prefix_chord(ctx, "request-control")
-        .map(|chord| format!("{chord} to request control"))
-        .unwrap_or_else(|| "Try requesting control".to_string());
+        .map(|chord| format!("{chord} to {verb} control"))
+        .unwrap_or_else(|| format!("Try to {verb} control"));
     crate::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::LayoutControl,
@@ -520,11 +527,8 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
     true
 }
 
-/// Ask the current controller for the layout-control lease (cooperative - never steals). A no-op
-/// with a toast when unattached, read-only, or already in control. The server auto-grants only when
-/// no controller holds the lease; otherwise it flags the request and notifies the controller, who
-/// grants or declines from the session-clients view. Repeated presses re-send harmlessly (the server
-/// debounces the controller's toast) but keep the local status message informative.
+/// Request the layout-control lease. A takeover-enabled server grants immediately; cooperative
+/// sessions flag the request and notify the controller for a grant or decline.
 pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
@@ -546,6 +550,7 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
         .clients
         .iter()
         .any(|client| client.id == shared.client_id && client.requesting_control);
+    let allow_takeover = shared.allow_takeover;
     let controller_label = shared
         .controller
         .and_then(|id| shared.clients.iter().find(|client| client.id == id))
@@ -553,11 +558,15 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(client) = ctx.state.current().session_client.clone() {
         client.request_control();
     }
-    let message = match (already_requested, controller_label) {
-        (true, Some(who)) => format!("Still waiting on {who} for layout control"),
-        (true, None) => "Control request already pending".to_string(),
-        (false, Some(who)) => format!("Requested layout control from {who}"),
-        (false, None) => "Requested layout control".to_string(),
+    let message = if allow_takeover {
+        "Taking layout control".to_string()
+    } else {
+        match (already_requested, controller_label) {
+            (true, Some(who)) => format!("Still waiting on {who} for layout control"),
+            (true, None) => "Control request already pending".to_string(),
+            (false, Some(who)) => format!("Requested layout control from {who}"),
+            (false, None) => "Requested layout control".to_string(),
+        }
     };
     crate::pty_events::notify_on(
         ctx,
@@ -606,6 +615,7 @@ pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
     let Some(session) = ctx.state.current().session_name.clone() else {
         return;
     };
+    let allow_takeover = shared.allow_takeover;
     ctx.state.show_palette = false;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
@@ -613,6 +623,7 @@ pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
     ctx.state.follow_prompt = Some(crate::state::FollowPromptState {
         session,
         controller_label,
+        allow_takeover,
         selected: 0,
     });
     ctx.state.commands_dirty = true;
@@ -639,12 +650,16 @@ pub(crate) fn resolve_follow_prompt(
         }
         crate::state::FollowChoice::Cancel => {
             let name = ctx.state.current().session_name.clone();
+            let detached_epoch = ctx.state.runtime_epoch;
             crate::update::flush_layout_commit(ctx);
             crate::ops::exit::mark_session_detached(ctx, None);
             if let Some(client) = ctx.state.current().session_client.clone() {
                 client.detach();
             }
             let update = land_on_surviving_session(ctx);
+            // Switching back temporarily parks the cancelled attachment. It was intentionally
+            // detached, so retaining it would make discovery render the still-live server offline.
+            ctx.state.background.remove(&detached_epoch);
             if let Some(name) = name {
                 crate::pty_events::notify_info(ctx, format!("Left `{name}` alone"));
             }
@@ -668,6 +683,41 @@ pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
         .expect("writable session checked");
     if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.set_input_lock(!shared.input_locked);
+    }
+    Update::full()
+}
+
+pub(crate) fn toggle_control_takeover(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if nudge_if_follower(ctx) {
+        return Update::full();
+    }
+    let Some(()) = require_writable(ctx) else {
+        return Update::full();
+    };
+    if ctx
+        .state
+        .current()
+        .session_client
+        .as_ref()
+        .is_none_or(|client| {
+            client.effective_protocol() < crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
+        })
+    {
+        crate::pty_events::notify_info(
+            ctx,
+            "This session server does not support control takeover",
+        );
+        return Update::full();
+    }
+    let allowed = !ctx
+        .state
+        .current()
+        .shared
+        .as_ref()
+        .expect("writable session checked")
+        .allow_takeover;
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
+        client.set_control_takeover(allowed);
     }
     Update::full()
 }
@@ -2136,6 +2186,191 @@ mod tests {
             .expect("spawn test thread")
             .join()
             .expect("test thread panicked");
+    }
+
+    #[test]
+    fn collaboration_dialog_separates_self_controls_and_other_clients() {
+        use crate::HyprmuxApp;
+        use crate::session::client::SessionClient;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::Rect;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 90,
+                    h: 28,
+                });
+                let (client, _rx) = SessionClient::test_channel();
+                let state = backend.state_mut();
+                state.current_mut().session_name = Some("dev".into());
+                state.current_mut().session_attached = true;
+                state.current_mut().session_client = Some(client);
+                let mut shared = SharedSessionState::new(1);
+                shared.controller = Some(1);
+                shared.clients = vec![
+                    ClientInfo {
+                        id: 1,
+                        label: "me".into(),
+                        read_only: false,
+                        requesting_control: false,
+                        parked: false,
+                    },
+                    ClientInfo {
+                        id: 2,
+                        label: "laptop".into(),
+                        read_only: false,
+                        requesting_control: true,
+                        parked: false,
+                    },
+                ];
+                state.current_mut().shared = Some(shared);
+                state.client_list = Some(crate::state::ClientListState { selected: 0 });
+
+                backend.render();
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(rendered.contains("Session collaboration"), "{rendered}");
+                assert!(rendered.contains("You: me  #1 · controller"), "{rendered}");
+                assert_eq!(rendered.matches("me  #1").count(), 1, "{rendered}");
+                assert!(rendered.contains("Enable input lock"), "{rendered}");
+                assert!(
+                    rendered.contains("Enable immediate control takeover"),
+                    "{rendered}"
+                );
+                assert!(rendered.contains("laptop  #2"), "{rendered}");
+                assert!(rendered.contains("wants control"), "{rendered}");
+            })
+            .expect("spawn collaboration dialog test")
+            .join()
+            .expect("collaboration dialog test completes");
+    }
+
+    #[test]
+    fn occupied_session_prompt_keeps_context_in_the_title() {
+        use crate::HyprmuxApp;
+        use crate::state::FollowPromptState;
+        use tui_lipan::TestBackend;
+        use tui_lipan::prelude::Rect;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 72,
+                    h: 20,
+                });
+                backend.state_mut().follow_prompt = Some(FollowPromptState {
+                    session: "test".into(),
+                    controller_label: "razuer".into(),
+                    allow_takeover: true,
+                    selected: 0,
+                });
+
+                backend.render();
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(rendered.contains("`test` in use by razuer"), "{rendered}");
+                assert!(!rendered.contains("is being driven"), "{rendered}");
+                assert!(rendered.contains("no layout control"), "{rendered}");
+                assert!(rendered.contains("control moves to you"), "{rendered}");
+                assert!(rendered.contains("go back"), "{rendered}");
+            })
+            .expect("spawn occupied-session prompt test")
+            .join()
+            .expect("occupied-session prompt test completes");
+    }
+
+    #[test]
+    fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+        use crate::state::{Attachment, ConnectionState, FollowPromptState};
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (target_client, target_rx) = SessionClient::test_channel();
+                let (survivor_client, _survivor_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 10;
+                    state.current_mut().epoch = 10;
+                    state.current_mut().session_name = Some("occupied".into());
+                    state.current_mut().session_attached = true;
+                    state.current_mut().connection = ConnectionState::Connected;
+                    state.current_mut().session_client = Some(target_client);
+                    let mut shared = SharedSessionState::new(2);
+                    shared.controller = Some(1);
+                    shared.clients = vec![
+                        ClientInfo {
+                            id: 1,
+                            label: "desktop".into(),
+                            read_only: false,
+                            requesting_control: false,
+                            parked: false,
+                        },
+                        ClientInfo {
+                            id: 2,
+                            label: "laptop".into(),
+                            read_only: false,
+                            requesting_control: false,
+                            parked: false,
+                        },
+                    ];
+                    state.current_mut().shared = Some(shared);
+
+                    let mut survivor = Attachment::new();
+                    survivor.epoch = 5;
+                    survivor.parked_seq = 1;
+                    survivor.session_name = Some("previous".into());
+                    survivor.session_attached = true;
+                    survivor.connection = ConnectionState::Connected;
+                    survivor.session_client = Some(survivor_client);
+                    let mut survivor_shared = SharedSessionState::new(1);
+                    survivor_shared.controller = Some(1);
+                    survivor.shared = Some(survivor_shared);
+                    state.background.insert(5, survivor);
+                    state.follow_prompt = Some(FollowPromptState {
+                        session: "occupied".into(),
+                        controller_label: "desktop".into(),
+                        allow_takeover: false,
+                        selected: 2,
+                    });
+                }
+
+                backend
+                    .dispatch(Msg::FollowPromptChoose(2))
+                    .expect("cancel occupied attach");
+
+                assert_eq!(
+                    backend.state().current().session_name.as_deref(),
+                    Some("previous")
+                );
+                assert!(!backend.state().background.contains_key(&10));
+                assert!(
+                    backend
+                        .state()
+                        .attachment_by_identity("occupied", None)
+                        .is_none()
+                );
+                assert!(target_rx.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::Control(ClientMessage::Detach)
+                )));
+            })
+            .expect("spawn cancel attach test")
+            .join()
+            .expect("cancel attach test completes");
     }
 
     #[test]

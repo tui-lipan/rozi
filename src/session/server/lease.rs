@@ -54,8 +54,8 @@ impl SessionServer {
     }
 
     /// A request for the lease. Auto-grants when there is no controller (nobody to ask); otherwise
-    /// flags the requester in the roster and notifies the controller, debounced per requester so a
-    /// held key cannot spam the controller with toasts. Never steals from a present controller.
+    /// takes immediately when takeover is enabled; otherwise flags the requester in the roster and
+    /// notifies the controller, debounced per requester so a held key cannot spam with toasts.
     pub(super) fn handle_request_control(
         &mut self,
         client_id: ClientId,
@@ -71,6 +71,9 @@ impl SessionServer {
             return Vec::new();
         }
         if self.controller.is_none() {
+            return self.assign_controller(client_id, ControllerChangeReason::Granted);
+        }
+        if self.allow_takeover {
             return self.assign_controller(client_id, ControllerChangeReason::Granted);
         }
         let controller = self.controller;
@@ -181,6 +184,18 @@ impl SessionServer {
         self.assign_controller(to, ControllerChangeReason::Granted)
     }
 
+    pub(super) fn handle_set_control_takeover(
+        &mut self,
+        client_id: ClientId,
+        allowed: bool,
+    ) -> Vec<(Target, ServerMessage)> {
+        if !self.is_controller(client_id) || self.client_read_only(client_id) {
+            return Vec::new();
+        }
+        self.allow_takeover = allowed;
+        vec![(Target::Broadcast, self.clients_changed())]
+    }
+
     /// Controller declines `to`'s pending request: clear its flag, refresh the roster, and tell it.
     pub(super) fn handle_decline_control(
         &mut self,
@@ -280,6 +295,7 @@ impl SessionServer {
         ServerMessage::ClientsChanged {
             clients: self.client_roster(),
             input_locked: self.input_locked,
+            allow_takeover: self.allow_takeover,
         }
     }
 

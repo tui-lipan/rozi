@@ -492,6 +492,7 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                 controller,
                 clients,
                 input_locked,
+                allow_takeover,
                 created_from_profile,
                 ..
             } => Msg::SessionAttached {
@@ -508,6 +509,7 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                     .is_some_and(|client| client.read_only),
                 clients,
                 input_locked,
+                allow_takeover,
                 created_from_profile,
             },
             ServerMessage::SessionInfo { .. } => Msg::SessionError {
@@ -548,10 +550,12 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
             ServerMessage::ClientsChanged {
                 clients,
                 input_locked,
+                allow_takeover,
             } => Msg::SessionClientsChanged {
                 epoch,
                 clients,
                 input_locked,
+                allow_takeover,
             },
             ServerMessage::ControlRequested { from } => {
                 Msg::SessionControlRequested { epoch, from }

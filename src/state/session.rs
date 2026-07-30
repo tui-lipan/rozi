@@ -59,6 +59,8 @@ pub struct SharedSessionState {
     /// How many clients are attached to the session (including this one).
     pub clients: Vec<crate::session::protocol::ClientInfo>,
     pub input_locked: bool,
+    /// Whether writable followers may immediately take the layout-control lease.
+    pub allow_takeover: bool,
     pub read_only: bool,
     /// The controller's canonical pane canvas in cells (excluding the workbar). Followers letterbox
     /// to this; `None` until the first layout with a canvas is seen.
@@ -87,6 +89,7 @@ impl SharedSessionState {
             controller: None,
             clients: Vec::new(),
             input_locked: false,
+            allow_takeover: false,
             read_only: false,
             canonical_canvas: None,
             last_committed_layout: None,

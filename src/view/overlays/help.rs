@@ -135,16 +135,17 @@ fn help_category_priority(category: &str) -> usize {
     match category {
         "App" => 0,
         "Session" => 1,
-        "Panes" => 2,
-        "Focus" => 3,
-        "Layout" => 4,
-        "Workspaces" => 5,
-        "Copy mode" => 6,
-        "Profile" => 7,
-        "Appearance" => 8,
-        "Mouse" => 9,
-        "Custom" => 10,
-        _ => 11,
+        "Collaboration" => 2,
+        "Panes" => 3,
+        "Focus" => 4,
+        "Layout" => 5,
+        "Workspaces" => 6,
+        "Copy mode" => 7,
+        "Profile" => 8,
+        "Appearance" => 9,
+        "Mouse" => 10,
+        "Custom" => 11,
+        _ => 12,
     }
 }
 
@@ -260,6 +261,7 @@ mod palette_alias_tests {
             "Appearance",
             "Layout",
             "Session",
+            "Collaboration",
             "App",
             "Panes",
             "Profile",
@@ -272,6 +274,7 @@ mod palette_alias_tests {
             [
                 "App",
                 "Session",
+                "Collaboration",
                 "Panes",
                 "Layout",
                 "Profile",

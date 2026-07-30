@@ -335,6 +335,19 @@ impl SessionServer {
                 responses
             }
             ClientMessage::RequestControl => self.handle_request_control(client_id),
+            ClientMessage::SetControlTakeover { allowed } => {
+                if self
+                    .clients
+                    .iter()
+                    .find(|client| client.id == client_id)
+                    .is_none_or(|client| {
+                        client.effective_protocol < protocol::CONTROL_TAKEOVER_PROTOCOL
+                    })
+                {
+                    return Vec::new();
+                }
+                self.handle_set_control_takeover(client_id, allowed)
+            }
             ClientMessage::SetParked { parked } => self.handle_set_parked(client_id, parked),
             ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
             ClientMessage::DeclineControl { to } => self.handle_decline_control(client_id, to),
@@ -462,6 +475,7 @@ impl SessionServer {
             controller: self.controller,
             clients,
             input_locked: self.input_locked,
+            allow_takeover: self.allow_takeover,
             created_from_profile: self.created_from_profile.clone(),
         };
         let mut responses = vec![(Target::Sender, attached)];

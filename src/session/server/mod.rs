@@ -62,6 +62,7 @@ pub struct SessionServer {
     origin_seed_client: Option<ClientId>,
     controller: Option<ClientId>,
     input_locked: bool,
+    allow_takeover: bool,
     clients: Vec<ClientConn>,
     next_client_id: ClientId,
     max_backlog: usize,
@@ -93,6 +94,8 @@ pub struct ServerSettings {
     pub snapshot_interval: Duration,
     /// Maximum time an attached client may go without a heartbeat pong.
     pub heartbeat_timeout: Duration,
+    /// Whether a writable follower's control request immediately transfers the lease.
+    pub allow_takeover: bool,
     /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
     /// which respawns panes with no controlling client yet connected to resolve them - the
     /// server's own config load is the only launch-policy source available at that point. Empty
@@ -114,6 +117,7 @@ impl Default for ServerSettings {
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
+            allow_takeover: false,
             shell: Vec::new(),
             command_shell: Vec::new(),
         }
@@ -309,6 +313,7 @@ impl SessionServer {
             origin_seed_client: None,
             controller: None,
             input_locked: false,
+            allow_takeover: settings.allow_takeover,
             clients: Vec::new(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
@@ -556,6 +561,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
         ServerSettings {
             log_dir: loaded.config.logging.dir,
             resurrect: loaded.config.session.resurrect,
+            allow_takeover: loaded.config.session.allow_takeover,
             shell,
             command_shell,
             ..ServerSettings::default()

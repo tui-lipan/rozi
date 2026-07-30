@@ -271,6 +271,12 @@ impl SessionClient {
     pub fn request_control(&self) {
         self.send_control(ClientMessage::RequestControl);
     }
+    pub fn set_control_takeover(&self, allowed: bool) {
+        if self.effective_protocol < crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL {
+            return;
+        }
+        self.send_control(ClientMessage::SetControlTakeover { allowed });
+    }
     pub fn grant_control(&self, to: ClientId) {
         self.send_control(ClientMessage::GrantControl { to });
     }
@@ -408,6 +414,7 @@ mod tests {
             controller: Some(7),
             clients: Vec::new(),
             input_locked: false,
+            allow_takeover: false,
             created_from_profile: None,
         }
     }

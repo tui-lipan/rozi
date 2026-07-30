@@ -137,6 +137,7 @@ pub fn attached_message() -> ServerMessage {
             })
             .collect(),
         input_locked: false,
+        allow_takeover: false,
     }
 }
 

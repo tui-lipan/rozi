@@ -206,6 +206,10 @@ vanish from the list just because its link is down.
   `state_dir/host-sessions.json` (session name, ephemeral flag, and pane count only — never any
   credential; SSH handles authentication out of band), shown as muted *"N panes · last seen"* rows
   under an offline host; selecting one connects and attaches.
+- **Sharing stays compact.** A live session shared with other clients shows a right-aligned `󰍺 N`
+  badge beside its name, where `N` is the total attached-client count. Pane count,
+  background/reconnect state, and creation profile remain on the detail line, so narrow sidebars do
+  not spend that line spelling out "shared with N others".
 - **Create and connect from the list.** The local group and each online host end with a
   `+ New session`, and a `+ Connect a host…` row at the bottom opens the connect-remote-host prompt.
   Creating a session on a host parks the current session in the background and attaches the new one,
@@ -267,8 +271,8 @@ and pane identity). Purely local view state - focus, active workspace, overlays,
   are never promoted into one — a background connection is not an occupant.
 - **Following is chosen, never assigned.** Attaching to a session another client is actively
   driving raises a prompt: **Follow**, **Ask for control**, or **Cancel** (which leaves the session
-  alone and returns you to where you were). Nothing follows automatically, and nothing takes control
-  out from under the client that has it — "ask" is as strong as it gets.
+  alone and returns you to where you were). When immediate takeover is enabled, **Ask for control**
+  becomes **Take control**. Nothing follows or transfers control silently.
 - **Live commits.** The controller commits a new layout revision on every change (split, move,
   resize, float, workspace edit, …); the server bumps the revision and broadcasts it, and every
   follower reconciles its local state toward it without disturbing live terminal screens or
@@ -276,17 +280,19 @@ and pane identity). Purely local view state - focus, active workspace, overlays,
 - **Followers are read-only for layout.** A follower that tries a layout-mutating action gets a
   toast nudging it to request control; focus, workspace switching, copy/search, the palette, and
   terminal input all still work locally.
-- **Cooperative control requests.** *Request layout control* (`prefix g`, or the command palette)
-  asks the current controller for the lease - it never steals. The requester is flagged in the
-  client roster (a `wants control` badge) and the controller gets a single non-intrusive toast
+- **Control requests.** *Request layout control* (`prefix g`, or the command palette) asks the
+  current controller for the lease by default. The requester is flagged in the client roster (a
+  `wants control` badge) and the controller gets a single non-intrusive toast
   (the server debounces repeats, and an identical toast renews in place rather than stacking, so a
   held key cannot spam it). The request toast shows the live
   *Grant layout control* binding (`prefix e` by default, following any `[keys]` override), which
   hands the lease to the requester in one keystroke; the controller can also **grant** or
-  **decline** a specific client from the *Session clients* view, and a decline notifies the
+  **decline** a specific client from the *Session collaboration* view, and a decline notifies the
   requester. When *no* client holds the lease (e.g. right after the controller left), a request is
-  auto-granted so control is never stuck. A truly wedged controller still auto-releases via the
-  heartbeat timeout below.
+  auto-granted so control is never stuck. If `[session].allow_takeover` is enabled on the server,
+  the same request immediately transfers control from the old controller instead. The current
+  controller can change that running-session policy with `toggle-control-takeover`. A truly wedged
+  controller still auto-releases via the heartbeat timeout below.
 - **Workbar chip.** While more than one client is attached, the workbar shows a `CTRL` badge (you
   control the layout) or `VIEW` badge (you are following), and the session badge folds in the client
   count (`dev ·2`). A solo session shows neither. When you control the layout and another client has
@@ -312,14 +318,22 @@ reattach to it (shown as `ephemeral`) from the picker and recover the scrollback
 
 ### Client roster and input control
 
-Open **Session clients** from the command palette (`session-clients`) to see every attached client,
-including its label, id, and `you`, `controller`, `read-only`, or `wants control` markers. The
-controller can select a writable client and press Enter or `g` to grant it layout control, or press
-`d` to decline a pending request from the selected client.
+Open **Session collaboration** from the command palette (`session-clients`) to manage sharing in one
+place. Your own client is shown as non-selectable context; request/take control, input lock, and
+immediate takeover appear as state-valid control rows. Other clients show their label, id, and
+`controller`, `read-only`, `parked`, or `wants control` markers. The controller can select a
+writable client and press Enter or `g` to grant it layout control, or press `d` to decline a pending
+request from that client.
 
 The `toggle-input-lock` command restricts terminal input to the current controller. The lock follows
 the control lease automatically. Clients attached with `--read-only` cannot type, request control,
 commit layouts, or receive a grant. These policies are enforced by the session server.
+
+The `toggle-control-takeover` command enables or disables immediate takeover for the running
+session. Only the current writable controller may change it. `[session].allow_takeover` supplies the
+initial value when the server starts; changing the config does not retroactively alter an existing
+server. Enabling takeover assumes all writable clients authenticated as the same OS account are
+trusted, and an input lock moves with the lease when control is taken.
 
 ## Crash recovery and reaping
 

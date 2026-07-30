@@ -213,6 +213,7 @@ pub enum Msg {
         controller: Option<shared_layout::ClientId>,
         clients: Vec<session::protocol::ClientInfo>,
         input_locked: bool,
+        allow_takeover: bool,
         read_only: bool,
         created_from_profile: Option<String>,
     },
@@ -240,6 +241,7 @@ pub enum Msg {
         epoch: u64,
         clients: Vec<session::protocol::ClientInfo>,
         input_locked: bool,
+        allow_takeover: bool,
     },
     /// Another client asked this (controller) client for the layout-control lease.
     SessionControlRequested {

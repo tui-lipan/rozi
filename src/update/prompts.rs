@@ -258,14 +258,10 @@ pub(super) fn close_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(super) fn client_list_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let len = ctx
-        .state
-        .current()
-        .shared
-        .as_ref()
-        .map_or(0, |shared| shared.clients.len());
     if let Some(list) = ctx.state.client_list.as_mut() {
-        list.selected = index.min(len.saturating_sub(1));
+        // The view clamps this against its state-dependent mix of control actions and other
+        // clients. Keeping the requested item here avoids duplicating that derivation in update.
+        list.selected = index;
     }
     Update::full()
 }

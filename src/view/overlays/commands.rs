@@ -82,6 +82,12 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "titlebar focus",
         ]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
+        "session-clients" => alias_list(&["collaboration", "clients", "roster", "sharing"]),
+        "request-control" => alias_list(&["take control", "layout control", "collaboration"]),
+        "toggle-input-lock" => alias_list(&["input lock", "follower input", "collaboration"]),
+        "toggle-control-takeover" => {
+            alias_list(&["takeover", "control safety", "collaboration"])
+        }
         // The live label is "Enable/Disable sidebar", so a bare "sidebar" query only matches its
         // label as a mid-string substring and loses to "Next/Previous sidebar tab". An exact
         // "sidebar" alias competes via `max()` and floats the toggle to the top.

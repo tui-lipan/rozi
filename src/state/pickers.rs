@@ -44,8 +44,8 @@ pub struct ClientListState {
 pub enum FollowChoice {
     /// Stay attached as a follower: same panes and layout, view synchronized to the controller.
     Follow,
-    /// Follow, and ask the controller for the layout-control lease. Asking is the whole mechanism —
-    /// control is never taken out from under a client that is using it.
+    /// Request the layout-control lease. This asks the controller under cooperative policy and
+    /// takes the lease immediately when session takeover is enabled.
     AskForControl,
     /// Leave the session alone and go back where we came from.
     Cancel,
@@ -54,30 +54,32 @@ pub enum FollowChoice {
 impl FollowChoice {
     pub const ALL: [Self; 3] = [Self::Follow, Self::AskForControl, Self::Cancel];
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, allow_takeover: bool) -> &'static str {
         match self {
             Self::Follow => "Follow",
+            Self::AskForControl if allow_takeover => "Take control",
             Self::AskForControl => "Ask for control",
             Self::Cancel => "Cancel",
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub fn description(self, allow_takeover: bool) -> &'static str {
         match self {
-            Self::Follow => "watch along; layout stays with the other client",
-            Self::AskForControl => "follow, and request the layout lease",
-            Self::Cancel => "leave the session and go back",
+            Self::Follow => "no layout control",
+            Self::AskForControl if allow_takeover => "control moves to you",
+            Self::AskForControl => "send a request",
+            Self::Cancel => "go back",
         }
     }
 }
 
 /// Raised when an attach lands on a session another client is actively controlling. Following is a
-/// deliberate choice, never something that happens to a client for being second — and control is
-/// never stolen, so the third option is simply to back out.
+/// deliberate choice, never something that happens silently to a client for being second.
 pub struct FollowPromptState {
     pub session: String,
     /// How the controlling client identifies itself in the roster.
     pub controller_label: String,
+    pub allow_takeover: bool,
     pub selected: usize,
 }
 

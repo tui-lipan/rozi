@@ -17,6 +17,28 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum CollaborationItem {
+    Action {
+        action: Action,
+        position: usize,
+    },
+    Client {
+        roster_index: usize,
+        position: usize,
+        grantable: bool,
+        requesting: bool,
+    },
+}
+
+impl CollaborationItem {
+    fn position(self) -> usize {
+        match self {
+            Self::Action { position, .. } | Self::Client { position, .. } => position,
+        }
+    }
+}
+
 pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(list) = ctx.state.client_list.as_ref() else {
         return Text::new("").into();
@@ -24,15 +46,52 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Text::new("").into();
     };
-    let entries = shared
-        .clients
-        .iter()
-        .enumerate()
-        .map(|(index, client)| {
+    let mut entries = Vec::new();
+    let mut items = Vec::new();
+    let control_actions = [
+        Action::RequestControl,
+        Action::ToggleInputLock,
+        Action::ToggleControlTakeover,
+    ];
+    for action in control_actions {
+        if !crate::commands::command_available(action, &ctx.state) {
+            continue;
+        }
+        let position = items.len();
+        let item = CollaborationItem::Action { action, position };
+        let label = crate::commands::action_label(action, &ctx.state)
+            .unwrap_or_else(|| action.id().unwrap_or("control").to_string());
+        let hint = crate::commands::command_prefix_chord(ctx, action.id().unwrap_or(""));
+        let mut entry = SearchEntry::item(label, item);
+        if let Some(hint) = hint {
+            entry = entry.description(ItemDescription::new().right(hint));
+        }
+        entries.push(entry);
+        items.push(item);
+    }
+    if !items.is_empty() {
+        entries.insert(0, SearchEntry::header("Controls"));
+    }
+    if shared.clients.iter().any(|client| client.id != shared.client_id) {
+        entries.push(SearchEntry::header("Clients"));
+    }
+    for (roster_index, client) in shared.clients.iter().enumerate() {
+        if client.id == shared.client_id {
+            continue;
+        }
+        let grantable = !shared.read_only
+            && shared.is_controller()
+            && !client.read_only
+            && !client.parked;
+        let position = items.len();
+        let item = CollaborationItem::Client {
+            roster_index,
+            position,
+            grantable,
+            requesting: client.requesting_control,
+        };
+        let entry = {
             let mut markers = Vec::new();
-            if client.id == shared.client_id {
-                markers.push("you".to_string());
-            }
             if Some(client.id) == shared.controller {
                 markers.push("controller".to_string());
             }
@@ -47,70 +106,109 @@ pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             if client.requesting_control && Some(client.id) != shared.controller {
                 markers.push("wants control".to_string());
             }
-            SearchEntry::item(format!("{}  #{}", client.label, client.id), index)
+            SearchEntry::item(format!("{}  #{}", client.label, client.id), item)
                 .description(ItemDescription::new().right(markers.join(" · ")))
-        })
-        .collect::<Vec<_>>();
+        };
+        entries.push(entry);
+        items.push(item);
+    }
     let key = client_list_key();
-    let selected = list.selected;
-    let client_count = shared.clients.len();
-    let can_grant = !shared.read_only && shared.is_controller();
-    // Declining only applies to a controller acting on a client with a pending request.
-    let selected_requesting = can_grant
-        && shared.clients.get(selected).is_some_and(|client| {
-            client.requesting_control && Some(client.id) != shared.controller
-        });
+    let selected = list.selected.min(items.len().saturating_sub(1));
+    let selected_item = items.get(selected).copied();
+    let selected_client = match selected_item {
+        Some(CollaborationItem::Client {
+            roster_index,
+            grantable,
+            requesting,
+            ..
+        }) => Some((roster_index, grantable, requesting)),
+        _ => None,
+    };
+    let item_count = items.len();
     let interceptor = ctx.link().key_handler(move |key_event| {
         if key_event.is(KeyCode::Esc) {
             Some(Msg::CloseClientList)
         } else if key_event.is(KeyCode::Char('j')) {
             Some(Msg::ClientListSelect(
-                (selected + 1).min(client_count.saturating_sub(1)),
+                (selected + 1).min(item_count.saturating_sub(1)),
             ))
         } else if key_event.is(KeyCode::Char('k')) {
             Some(Msg::ClientListSelect(selected.saturating_sub(1)))
-        } else if can_grant && matches!(key_event.code, KeyCode::Char('g') | KeyCode::Char('G')) {
-            Some(Msg::ClientListGrant(selected))
-        } else if selected_requesting
+        } else if let Some((roster_index, true, _)) = selected_client
+            && matches!(key_event.code, KeyCode::Char('g') | KeyCode::Char('G'))
+        {
+            Some(Msg::ClientListGrant(roster_index))
+        } else if let Some((roster_index, true, true)) = selected_client
             && matches!(key_event.code, KeyCode::Char('d') | KeyCode::Char('D'))
         {
-            Some(Msg::ClientListDecline(selected))
+            Some(Msg::ClientListDecline(roster_index))
         } else {
             None
         }
     });
-    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
+    let palette = shared_search_palette::<CollaborationItem>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
         .entries(entries)
         .placeholder("")
-        .initial_selected_item_index(Some(list.selected))
+        .initial_selected_item_index(Some(selected))
         .sync_selection(true)
         .description_placement(DescriptionPlacement::Right)
         .input_key_interceptor(interceptor)
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::ClientListSelect(event.item.value)),
-        );
-    if can_grant {
-        palette = palette.on_activate(
-            ctx.link()
-                .callback(|event: SearchEvent<usize>| Msg::ClientListGrant(event.item.value)),
-        );
-    }
-    let mut body = VStack::new().height(Length::Auto).child(palette);
-    if can_grant {
+                .callback(|event: SearchEvent<CollaborationItem>| {
+                    Msg::ClientListSelect(event.item.value.position())
+                }),
+        )
+        .on_activate(ctx.link().callback(
+            |event: SearchEvent<CollaborationItem>| match event.item.value {
+                CollaborationItem::Action { action, .. } => Msg::RunAction(action),
+                CollaborationItem::Client {
+                    roster_index,
+                    grantable: true,
+                    ..
+                } => Msg::ClientListGrant(roster_index),
+                CollaborationItem::Client { position, .. } => Msg::ClientListSelect(position),
+            },
+        ));
+    let you = shared
+        .clients
+        .iter()
+        .find(|client| client.id == shared.client_id)
+        .map(|client| format!("{}  #{}", client.label, client.id))
+        .unwrap_or_else(|| format!("client #{}", shared.client_id));
+    let role = if shared.read_only {
+        "read-only"
+    } else if shared.is_controller() {
+        "controller"
+    } else {
+        "follower"
+    };
+    let mut body = VStack::new()
+        .height(Length::Auto)
+        .child(
+            Text::new(format!("You: {you} · {role}"))
+                .style(fg_only(&ctx.state.theme.muted)),
+        )
+        .child(palette);
+    if let Some((_, true, requesting)) = selected_client {
         let mut hints = hint_row().child(hint_pill(&ctx.state.theme, "grant control", "enter / g"));
-        if selected_requesting {
+        if requesting {
             hints = hints.child(hint_pill(&ctx.state.theme, "decline", "d"));
         }
         body = body.child(hints);
     }
-    action_palette(ctx, "Session clients", key, Msg::CloseClientList, body, 64)
+    action_palette(
+        ctx,
+        "Session collaboration",
+        key,
+        Msg::CloseClientList,
+        body,
+        64,
+    )
 }
 
-/// The choice offered when an attach lands on a session another client is driving. There is no
-/// "steal control" row on purpose: control only ever moves by the holder's consent, so the strongest
-/// thing this can do is ask.
+/// The choice offered when an attach lands on a session another client is driving.
 pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(prompt) = ctx.state.follow_prompt.as_ref() else {
         return Text::new("").into();
@@ -119,8 +217,9 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .iter()
         .enumerate()
         .map(|(index, choice)| {
-            SearchEntry::item(choice.label().to_string(), index)
-                .description(ItemDescription::new().right(choice.description().to_string()))
+            SearchEntry::item(choice.label(prompt.allow_takeover).to_string(), index).description(
+                ItemDescription::new().right(choice.description(prompt.allow_takeover).to_string()),
+            )
         })
         .collect::<Vec<_>>();
     let selected = prompt.selected;
@@ -153,19 +252,13 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::FollowPromptChoose(event.item.value)),
         );
-    let body = VStack::new()
-        .height(Length::Auto)
-        .child(Text::new(format!(
-            "`{}` is being driven by {}.",
-            prompt.session, prompt.controller_label
-        )))
-        .child(palette);
+    let title = format!("`{}` in use by {}", prompt.session, prompt.controller_label);
     action_palette(
         ctx,
-        "Session in use",
+        &title,
         crate::view::follow_prompt_key(),
         Msg::FollowPromptChoose(last),
-        body,
+        palette,
         64,
     )
 }

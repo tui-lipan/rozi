@@ -363,8 +363,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::OpenClientList,
-        label: "Session clients…",
-        category: "Session",
+        label: "Session collaboration…",
+        category: "Collaboration",
         default_keys: &[],
         palette: true,
     },
@@ -385,21 +385,28 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::RequestControl,
         label: "Request layout control",
-        category: "Session",
+        category: "Collaboration",
         default_keys: &["g"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::GrantControl,
         label: "Grant layout control to requester",
-        category: "Session",
+        category: "Collaboration",
         default_keys: &["e"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::ToggleInputLock,
         label: "Toggle input lock",
-        category: "Session",
+        category: "Collaboration",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::ToggleControlTakeover,
+        label: "Toggle immediate control takeover",
+        category: "Collaboration",
         default_keys: &[],
         palette: true,
     },
@@ -897,9 +904,33 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
                     matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
                 })
         }),
-        Action::OpenClientList => shared.is_some_and(|shared| shared.clients.len() > 1),
+        Action::OpenClientList => shared.is_some_and(|shared| {
+            shared.active_clients() > 1
+                || (!shared.read_only
+                    && shared.is_controller()
+                    && state
+                        .current()
+                        .session_client
+                        .as_ref()
+                        .is_some_and(|client| {
+                            client.effective_protocol()
+                                >= crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
+                        }))
+        }),
         Action::ToggleInputLock => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
+        }),
+        Action::ToggleControlTakeover => shared.is_some_and(|shared| {
+            !shared.read_only
+                && shared.is_controller()
+                && state
+                    .current()
+                    .session_client
+                    .as_ref()
+                    .is_some_and(|client| {
+                        client.effective_protocol()
+                            >= crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
+                    })
         }),
         Action::RequestControl => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && !shared.is_controller()
@@ -1022,6 +1053,13 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     base_label.to_string()
 }
 
+pub(crate) fn action_label(action: Action, state: &State) -> Option<String> {
+    BUILTIN_COMMANDS
+        .iter()
+        .find(|command| command.action == action)
+        .map(|command| resolved_label(action, command.label, state))
+}
+
 fn edit_scrollback_label(editor: &str) -> String {
     format!("Edit scrollback in {editor}")
 }
@@ -1067,6 +1105,26 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
                 .shared
                 .as_ref()
                 .is_some_and(|shared| shared.input_locked),
+        ),
+        Action::RequestControl => {
+            let takeover = state
+                .current()
+                .shared
+                .as_ref()
+                .is_some_and(|shared| shared.allow_takeover);
+            if takeover {
+                "Take layout control".to_string()
+            } else {
+                "Request layout control".to_string()
+            }
+        }
+        Action::ToggleControlTakeover => enable_disable_label(
+            "immediate control takeover",
+            state
+                .current()
+                .shared
+                .as_ref()
+                .is_some_and(|shared| shared.allow_takeover),
         ),
         Action::ToggleFocusOnHover => {
             enable_disable_label("focus on hover", state.config.pane.focus_on_hover)

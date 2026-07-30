@@ -92,6 +92,7 @@ fn v13_client_against_a_v12_server_negotiates_12_and_sends_no_file_tree_messages
                     parked: false,
                 }],
                 input_locked: false,
+                allow_takeover: false,
                 created_from_profile: None,
             },
         )

@@ -122,6 +122,7 @@ pub(super) fn attached(
     controller: Option<ClientId>,
     clients: Vec<ClientInfo>,
     input_locked: bool,
+    allow_takeover: bool,
     read_only: bool,
     created_from_profile: Option<String>,
 ) -> Update {
@@ -165,6 +166,7 @@ pub(super) fn attached(
     shared.controller = controller;
     shared.clients = clients;
     shared.input_locked = input_locked;
+    shared.allow_takeover = allow_takeover;
     shared.read_only = read_only;
     ctx.state.current_mut().shared = Some(shared);
 
@@ -454,6 +456,7 @@ pub(super) fn clients_changed(
     epoch: u64,
     clients: Vec<ClientInfo>,
     input_locked: bool,
+    allow_takeover: bool,
 ) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(shared) = ctx
@@ -464,6 +467,7 @@ pub(super) fn clients_changed(
         {
             shared.clients = clients;
             shared.input_locked = input_locked;
+            shared.allow_takeover = allow_takeover;
         }
         return Update::none();
     }
@@ -479,6 +483,7 @@ pub(super) fn clients_changed(
     if let Some(shared) = ctx.state.current_mut().shared.as_mut() {
         shared.clients = clients;
         shared.input_locked = input_locked;
+        shared.allow_takeover = allow_takeover;
     }
     for event in roster_events {
         crate::events::emit(&ctx.state, event);
@@ -512,7 +517,7 @@ pub(super) fn control_requested(
     // hardcoded key; fall back to the session-clients view when the action is unbound.
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
-        .unwrap_or_else(|| "grant from Session clients".to_string());
+        .unwrap_or_else(|| "grant from Session collaboration".to_string());
     crate::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
     ctx.state.commands_dirty = true;
     Update::full()
@@ -1917,6 +1922,7 @@ mod tests {
                         controller: Some(controller),
                         clients: Vec::new(),
                         input_locked: false,
+                        allow_takeover: false,
                         read_only: false,
                         created_from_profile: None,
                     })
@@ -1984,6 +1990,7 @@ mod tests {
                         controller: Some(1),
                         clients: Vec::new(),
                         input_locked: false,
+                        allow_takeover: false,
                         read_only: false,
                         created_from_profile: None,
                     })

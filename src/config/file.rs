@@ -239,6 +239,7 @@ struct SessionFileConfig {
     path: Option<String>,
     startup: Option<String>,
     resurrect: Option<bool>,
+    allow_takeover: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -478,6 +479,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(resurrect) = parsed.session.resurrect {
         config.session.resurrect = resurrect;
+    }
+    if let Some(allow_takeover) = parsed.session.allow_takeover {
+        config.session.allow_takeover = allow_takeover;
     }
     if let Some(path) = non_empty(parsed.session.path) {
         config.session.path = Some(expand_path(path));
@@ -897,10 +901,12 @@ mod file_tests {
     }
 
     #[test]
-    fn session_section_parses_startup() {
+    fn session_section_parses_startup_and_takeover() {
         let parsed: FileConfig =
-            toml::from_str("[session]\nstartup = \"picker\"").expect("config parses");
+            toml::from_str("[session]\nstartup = \"picker\"\nallow_takeover = true")
+                .expect("config parses");
         assert_eq!(parsed.session.startup.as_deref(), Some("picker"));
+        assert_eq!(parsed.session.allow_takeover, Some(true));
     }
 
     #[test]

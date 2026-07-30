@@ -813,6 +813,7 @@ mod reconciler_tests {
                     controller: Some(1),
                     clients: Vec::new(),
                     input_locked: false,
+                    allow_takeover: false,
                     read_only: false,
                     created_from_profile: None,
                 })

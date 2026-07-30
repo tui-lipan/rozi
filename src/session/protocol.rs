@@ -26,12 +26,14 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
+/// 15 adds the server-owned control-takeover policy.
+///
 /// 14 adds [`ClientMessage::SetParked`] and the `parked` flag on [`ClientInfo`], which separate a
 /// client merely holding a session open in the background from one actually using it.
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
@@ -42,6 +44,8 @@ pub const FILE_TREE_PROTOCOL: u32 = 13;
 /// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
 /// sent: that server keeps the pre-14 behavior where any attached client counts as an occupant.
 pub const PARKED_PROTOCOL: u32 = 14;
+/// First version that lets a controller change the control-takeover policy at runtime.
+pub const CONTROL_TAKEOVER_PROTOCOL: u32 = 15;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -401,10 +405,15 @@ pub enum ClientMessage {
         base_rev: u64,
         layout: SharedLayout,
     },
-    /// Ask the current controller for the layout-control lease. The server auto-grants when there is
-    /// no controller; otherwise it flags this client as requesting and notifies the controller (see
-    /// [`ServerMessage::ControlRequested`]). Never steals from a present controller.
+    /// Request the layout-control lease. The server grants immediately when there is no controller
+    /// or takeover is enabled; otherwise it flags this client as requesting and notifies the
+    /// controller (see [`ServerMessage::ControlRequested`]).
     RequestControl,
+    /// Controller-only: allow or forbid writable followers from taking the lease immediately when
+    /// they send [`ClientMessage::RequestControl`].
+    SetControlTakeover {
+        allowed: bool,
+    },
     /// Declare whether this client is parked: still attached, with its screens kept live, but not
     /// displaying or driving the session. Parking releases the layout-control lease if this client
     /// held it and excludes it from promotion, so a client keeping several sessions open in the
@@ -525,6 +534,8 @@ pub enum ServerMessage {
         controller: Option<ClientId>,
         clients: Vec<ClientInfo>,
         input_locked: bool,
+        #[serde(default)]
+        allow_takeover: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         created_from_profile: Option<String>,
     },
@@ -607,6 +618,8 @@ pub enum ServerMessage {
     ClientsChanged {
         clients: Vec<ClientInfo>,
         input_locked: bool,
+        #[serde(default)]
+        allow_takeover: bool,
     },
     Ping {
         seq: u64,
@@ -1264,7 +1277,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":14,
+                "protocol_version":15,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1292,7 +1305,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":14,
+                "protocol_version":15,
                 "min_protocol_version":12
             })
         );
@@ -1316,6 +1329,7 @@ mod tests {
             ClientMessage::GrantControl { to: 7 },
             ClientMessage::DeclineControl { to: 7 },
             ClientMessage::RequestControl,
+            ClientMessage::SetControlTakeover { allowed: true },
             ClientMessage::SetInputLock { locked: true },
         ] {
             let mut bytes = Vec::new();
@@ -1347,9 +1361,10 @@ mod tests {
                     parked: false,
                 }],
                 input_locked: true,
+                allow_takeover: false,
             })
             .unwrap(),
-            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false,"requesting_control":true,"parked":false}],"input_locked":true})
+            serde_json::json!({"type":"clients-changed","clients":[{"id":1,"label":"alice","read_only":false,"requesting_control":true,"parked":false}],"input_locked":true,"allow_takeover":false})
         );
         assert_eq!(
             serde_json::to_value(ServerMessage::Ping { seq: 9 }).unwrap(),
@@ -1375,7 +1390,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":14,
+                "effective_protocol":15,
                 "created_from_profile":"work"
             })
         );

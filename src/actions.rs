@@ -430,6 +430,7 @@ fn execute_action_inner(
         }
         Action::RequestControl => crate::ops::session::request_control(ctx),
         Action::GrantControl => crate::ops::session::grant_control_to_requester(ctx),
+        Action::ToggleControlTakeover => crate::ops::session::toggle_control_takeover(ctx),
         Action::ToggleInputLock => crate::ops::session::toggle_input_lock(ctx),
         // One way out. `detach` and `quit` differed only in what they did to sessions as a side
         // effect, which stopped being a property of *how* you leave once a client could hold

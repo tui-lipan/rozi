@@ -208,6 +208,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             controller,
             clients,
             input_locked,
+            allow_takeover,
             read_only,
             created_from_profile,
         } => session::attached(
@@ -221,6 +222,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             controller,
             clients,
             input_locked,
+            allow_takeover,
             read_only,
             created_from_profile,
         ),
@@ -248,7 +250,8 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             epoch,
             clients,
             input_locked,
-        } => session::clients_changed(ctx, epoch, clients, input_locked),
+            allow_takeover,
+        } => session::clients_changed(ctx, epoch, clients, input_locked, allow_takeover),
         Msg::SessionControlRequested { epoch, from } => {
             session::control_requested(ctx, epoch, from)
         }

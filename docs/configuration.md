@@ -138,6 +138,7 @@ load_profile = true            # confirm replacing a live ephemeral session from
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 resurrect = true             # snapshot named sessions for restart after server loss (default: true)
 startup = "picker"           # "picker" (default), "ephemeral", or "last"
+allow_takeover = false       # let writable followers take layout control immediately
 # path = "~/.local/state/hyprmux/session.toml"  # default location if omitted
 
 [scratchpad]
@@ -478,8 +479,10 @@ background session server and can be detached/reattached with live terminal stat
 | Key | Default | Notes |
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
+| `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. |
 | `startup` | `"picker"` | `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted. |
 | `path` | `$XDG_STATE_HOME/hyprmux/session.toml` | Session file location (falls back to `~/.local/state/...`). |
+| `allow_takeover` | `false` | Let any writable, active follower take the layout-control lease immediately with `request-control`. The session server reads this when it starts; use `toggle-control-takeover` to change a running session. Read-only and parked clients can never take control. |
 
 An explicit target takes precedence over startup configuration. `startup = "last"` takes precedence
 over `[profile] default` and autosave; those remain ephemeral-layout seeders.
@@ -492,10 +495,10 @@ Opening the picker creates no session: nothing is attached until you choose. Dis
 picker can be reopened at any time. See [Sessions](sessions.md).
 
 When several clients attach to one session they share a live, server-authoritative layout with a
-single controlling client and cooperative control requests (`request-control`, default `g`, which
-asks the controller to grant rather than stealing). This needs no configuration - the request
-notification debounce and client heartbeat are fixed built-in constants - see
-[Shared live layouts](sessions.md#shared-live-layouts).
+single controlling client. By default `request-control` (`g`) asks that controller to grant the
+lease. With `allow_takeover = true`, the same command transfers the lease immediately. The current
+controller can change the running session policy with `toggle-control-takeover`; this runtime change
+does not rewrite the config file. See [Shared live layouts](sessions.md#shared-live-layouts).
 
 ## `[remote]`
 
@@ -806,7 +809,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `move-left/down/up/right`, `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
-`save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `detach`, `quit`, `kill-workspace`, `kill-session`,
+`save-profile`, `open-profile`, `sessions`, `rename-session`, `request-control`, `grant-control`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,

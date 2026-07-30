@@ -6,24 +6,14 @@ use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::session::remote::RemoteTarget;
 use crate::state::{ConnectionState, HostEntry, HostStatus};
 
-fn session_detail(entry: &DiscoveredSession, we_hold: bool) -> String {
+fn session_detail(entry: &DiscoveredSession) -> String {
     match &entry.status {
         DiscoveredSessionStatus::Running {
             panes,
-            clients,
             created_from_profile,
             ..
         } => {
             let mut detail = format!("{panes} pane{}", if *panes == 1 { "" } else { "s" });
-            // `clients` includes our own connection when we hold one; drop it so this counts only
-            // other people sharing the session.
-            let others = clients.saturating_sub(u32::from(we_hold));
-            if others > 0 {
-                detail.push_str(&format!(
-                    " · shared with {others} other{}",
-                    if others == 1 { "" } else { "s" }
-                ));
-            }
             if let Some(profile) = created_from_profile {
                 detail.push_str(&format!(" · from {profile}"));
             }
@@ -31,6 +21,15 @@ fn session_detail(entry: &DiscoveredSession, we_hold: bool) -> String {
         }
         DiscoveredSessionStatus::Busy => "busy".to_string(),
         DiscoveredSessionStatus::Unknown => "incompatible or unavailable".to_string(),
+    }
+}
+
+fn shared_client_count(entry: &DiscoveredSession, we_hold: bool) -> Option<u32> {
+    match &entry.status {
+        DiscoveredSessionStatus::Running { clients, .. } => {
+            (clients.saturating_sub(u32::from(we_hold)) > 0).then_some(*clients)
+        }
+        _ => None,
     }
 }
 
@@ -68,30 +67,37 @@ fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarR
         .state
         .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
         .map(|attachment| attachment.connection);
-    // We hold a connection to this session (current or retained) — used to drop our own client from
-    // the "shared with N others" count and to prefix the retained state.
+    // We hold a connection to this session (current or retained), so discovery's client count
+    // includes us. Show the total only when at least one other client is present.
     let we_hold = current || connection.is_some();
     let label = if entry.ephemeral {
         "ephemeral".to_string()
     } else {
         entry.name.clone()
     };
-    let detail = session_detail(entry, we_hold);
-    let row = Row::new(label)
+    let detail = session_detail(entry);
+    let clients = shared_client_count(entry, we_hold);
+    let mut row = Row::new(label)
         .active(current)
-        .title_style(super::super::fg_only(&ctx.state.theme.primary))
-        .detail(
-            match (current, connection) {
-                // Attached but not the session on screen: our connection is kept in the background.
-                (false, Some(ConnectionState::Connected)) => format!("background · {detail}"),
-                (false, Some(ConnectionState::Connecting | ConnectionState::Reconnecting)) => {
-                    format!("reconnecting · {detail}")
-                }
-                (false, Some(_)) => format!("offline · {detail}"),
-                _ => detail,
-            },
+        .title_style(super::super::fg_only(&ctx.state.theme.primary));
+    if let Some(clients) = clients {
+        row = row.badge(
+            format!("󰍺 {clients}"),
             super::super::fg_only(&ctx.state.theme.muted),
         );
+    }
+    let row = row.detail(
+        match (current, connection) {
+            // Attached but not the session on screen: our connection is kept in the background.
+            (false, Some(ConnectionState::Connected)) => format!("background · {detail}"),
+            (false, Some(ConnectionState::Connecting | ConnectionState::Reconnecting)) => {
+                format!("reconnecting · {detail}")
+            }
+            (false, Some(_)) => format!("offline · {detail}"),
+            _ => detail,
+        },
+        super::super::fg_only(&ctx.state.theme.muted),
+    );
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
     // the one on screen is fine; the UI hops onto a fresh ephemeral session rather than quitting.
     SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(

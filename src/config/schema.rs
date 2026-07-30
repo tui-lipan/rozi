@@ -198,6 +198,9 @@ pub struct HyprmuxSessionConfig {
     pub startup: SessionStartup,
     /// Persist and restart named sessions after their server disappears.
     pub resurrect: bool,
+    /// Let a writable follower take layout control immediately instead of waiting for the current
+    /// controller to grant its request.
+    pub allow_takeover: bool,
 }
 
 impl Default for HyprmuxSessionConfig {
@@ -207,6 +210,7 @@ impl Default for HyprmuxSessionConfig {
             path: None,
             startup: SessionStartup::default(),
             resurrect: true,
+            allow_takeover: false,
         }
     }
 }

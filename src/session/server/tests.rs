@@ -445,6 +445,86 @@ fn request_control_flags_requester_and_notifies_controller_without_stealing() {
 }
 
 #[test]
+fn enabled_takeover_transfers_control_on_request() {
+    let mut server = SessionServer::new_named_with_settings(
+        "dev",
+        ServerSettings {
+            allow_takeover: true,
+            ..ServerSettings::default()
+        },
+    );
+    let (first, _s1) = attach_client(&mut server);
+    let (second, _s2) = attach_client(&mut server);
+
+    let responses = server.handle_message(second, ClientMessage::RequestControl);
+
+    assert_eq!(server.controller, Some(second));
+    assert!(responses.iter().any(|(_, message)| matches!(
+        message,
+        ServerMessage::ControllerChanged {
+            controller: Some(id),
+            reason: ControllerChangeReason::Granted,
+        } if *id == second
+    )));
+    assert!(!responses.iter().any(|(target, message)| matches!(
+        (target, message),
+        (Target::Client(id), ServerMessage::ControlRequested { .. }) if *id == first
+    )));
+}
+
+#[test]
+fn takeover_still_rejects_read_only_and_parked_clients() {
+    let mut server = SessionServer::new_named_with_settings(
+        "dev",
+        ServerSettings {
+            allow_takeover: true,
+            ..ServerSettings::default()
+        },
+    );
+    let (controller, _s1) = attach_client(&mut server);
+    let (viewer, _s2) = attach_read_only_client(&mut server);
+    let (parked, _s3) = attach_client(&mut server);
+    server.handle_message(parked, ClientMessage::SetParked { parked: true });
+
+    assert!(
+        server
+            .handle_message(viewer, ClientMessage::RequestControl)
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(parked, ClientMessage::RequestControl)
+            .is_empty()
+    );
+    assert_eq!(server.controller, Some(controller));
+}
+
+#[test]
+fn only_controller_can_toggle_takeover() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _s1) = attach_client(&mut server);
+    let (second, _s2) = attach_client(&mut server);
+
+    assert!(
+        server
+            .handle_message(second, ClientMessage::SetControlTakeover { allowed: true },)
+            .is_empty()
+    );
+    assert!(!server.allow_takeover);
+
+    let responses =
+        server.handle_message(first, ClientMessage::SetControlTakeover { allowed: true });
+    assert!(server.allow_takeover);
+    assert!(responses.iter().any(|(_, message)| matches!(
+        message,
+        ServerMessage::ClientsChanged {
+            allow_takeover: true,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn repeated_requests_are_debounced_to_one_controller_notification() {
     let mut server = SessionServer::new_named("dev");
     let (_first, _s1) = attach_client(&mut server);
@@ -752,6 +832,7 @@ fn clients_changed_contains_roster_and_lock_state() {
     let ServerMessage::ClientsChanged {
         clients,
         input_locked,
+        ..
     } = server.clients_changed()
     else {
         panic!("expected clients changed");

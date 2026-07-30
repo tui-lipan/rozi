@@ -473,13 +473,19 @@ impl HyprmuxApp {
         }
     }
 
+    /// A pane chrome colour, as a paint the renderer resolves while drawing.
+    ///
+    /// `animated_color` rather than `transition`: chrome colours only ever land in styles, so naming
+    /// the fade instead of embedding its current value keeps this element identical for the whole
+    /// 160ms. Each frame of a focus change is then a repaint rather than a rebuild of every pane,
+    /// workbar segment and sidebar row in the window.
     pub(crate) fn chrome_color(
         &self,
         ctx: &Context<Self>,
         pane: PaneId,
         slot: &str,
         target: Color,
-    ) -> Color {
+    ) -> Paint {
         // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
         // verbatim so the user's terminal palette resolves them; blending them animates
         // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
@@ -491,7 +497,7 @@ impl HyprmuxApp {
         } else {
             anim::instant_transition()
         };
-        ctx.transition(format!("hyprmux-pane-chrome-{pane}-{slot}"), target, config)
+        ctx.animated_color(format!("hyprmux-pane-chrome-{pane}-{slot}"), target, config)
     }
 }
 

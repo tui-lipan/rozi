@@ -716,7 +716,7 @@ fn seam_neighbor_title_bgs(
     pane_id: PaneId,
     base_rect: FloatRect,
     focused_pane: Option<PaneId>,
-) -> (Option<Color>, Option<Color>) {
+) -> (Option<Paint>, Option<Paint>) {
     let same_top_row = |other: &PanePlacement| (other.rect.y - base_rect.y).abs() < 0.5;
     let color_of = |id: PaneId| pane_title_bg(app, ctx, id, focused_pane == Some(id));
     // A neighbor across the left seam has its right border column on our left column; across the

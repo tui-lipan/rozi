@@ -23,10 +23,10 @@ pub(crate) struct PaneMerge {
     /// left cap paints its off (left) half in this color so the shared cell reads as a split
     /// junction between the two titlebars. `None` when the neighbor shows a border there (a
     /// taller pane above the seam) - the cap falls back to the backdrop and sits on the border.
-    pub seam_left_bg: Option<Color>,
+    pub seam_left_bg: Option<Paint>,
     /// Title background of the same-row neighbor sharing the right seam cell, if any. Mirrors
     /// `seam_left_bg` for the right cap so either side of a seam renders the same split.
-    pub seam_right_bg: Option<Color>,
+    pub seam_right_bg: Option<Paint>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,7 +59,7 @@ pub(crate) fn pane_title_bg(
     ctx: &Context<HyprmuxApp>,
     pane_id: PaneId,
     focused: bool,
-) -> Color {
+) -> Paint {
     let theme = &ctx.state.theme;
     let target = if focused {
         theme.border_active
@@ -71,7 +71,7 @@ pub(crate) fn pane_title_bg(
 
 /// A padded integrated titlebar owns the frame's top border row: the decoration paints the
 /// corners and slack cells, while the header paints the title text across the inner span.
-fn integrated_titlebar_top_edge(bg: Color) -> EdgeDecoration {
+fn integrated_titlebar_top_edge(bg: Paint) -> EdgeDecoration {
     EdgeDecoration::new(Edge::Top)
         .glyph(DecorationGlyph::Custom(' '))
         .cap_start(DecorationGlyph::Custom(' '))
@@ -86,7 +86,7 @@ fn integrated_titlebar_top_edge(bg: Color) -> EdgeDecoration {
 
 /// Half-block integrated titles use their caps as the frame's corner cells rather than placing
 /// them inside rounded/plain corners. The header paints the colored span between these caps.
-fn integrated_half_titlebar_top_edge(title_bg: Color, frame_bg: Color) -> EdgeDecoration {
+fn integrated_half_titlebar_top_edge(title_bg: Paint, frame_bg: Paint) -> EdgeDecoration {
     EdgeDecoration::new(Edge::Top)
         .glyph(DecorationGlyph::Custom(' '))
         .cap_start(DecorationGlyph::Custom('▐'))
@@ -146,16 +146,12 @@ pub(crate) fn pane_element(
             ctx.state.config.pane.highlight_focused_border,
         ),
     );
-    let frame_bg = app.chrome_color(
-        ctx,
-        pane.id,
-        "frame-bg",
-        crate::ops::theme::pane_frame_background(
-            theme,
-            focused,
-            ctx.state.config.pane.highlight_focused_background,
-        ),
+    let frame_bg_target = crate::ops::theme::pane_frame_background(
+        theme,
+        focused,
+        ctx.state.config.pane.highlight_focused_background,
     );
+    let frame_bg = app.chrome_color(ctx, pane.id, "frame-bg", frame_bg_target);
     let exited = matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_));
     let frame_style = if exited {
         Style::new().fg(frame_fg).bg(frame_bg).dim()
@@ -171,8 +167,10 @@ pub(crate) fn pane_element(
         theme.surface.element
     };
     let title_bar_bg = pane_title_bg(app, ctx, pane.id, titlebar_focused);
+    // The *target* background, not the one mid-fade: this picks a contrasting foreground, and
+    // deriving it from a moving colour would make the foreground wobble through the fade.
     let title_fg_background = if titlebar == PaneTitlebarMode::Border {
-        frame_bg
+        frame_bg_target
     } else {
         title_bar_bg_target
     };
@@ -267,7 +265,7 @@ pub(crate) fn pane_element(
                 // reads as a split junction (the caller hands whichever pane draws last the same
                 // left/right colors, so the seam looks the same regardless of draw order). Off a
                 // seam the off half is the backdrop, giving the usual pill edge.
-                let backdrop = theme.surface.backdrop;
+                let backdrop = Paint::Solid(theme.surface.backdrop);
                 let left_cap_bg = if merge.left_seam {
                     merge.seam_left_bg.unwrap_or(backdrop)
                 } else {

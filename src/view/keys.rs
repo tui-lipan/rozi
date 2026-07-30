@@ -36,8 +36,8 @@ pub fn session_picker_key() -> &'static str {
     "hyprmux-session-picker"
 }
 
-pub fn client_list_key() -> &'static str {
-    "hyprmux-client-list"
+pub fn collaboration_key() -> &'static str {
+    "hyprmux-collaboration"
 }
 
 pub fn follow_prompt_key() -> &'static str {

@@ -94,7 +94,9 @@ pub struct ServerSettings {
     pub snapshot_interval: Duration,
     /// Maximum time an attached client may go without a heartbeat pong.
     pub heartbeat_timeout: Duration,
-    /// Whether a writable follower's control request immediately transfers the lease.
+    /// Whether a writable follower's control request immediately transfers the lease. Mirrors
+    /// [`crate::config::HyprmuxSessionConfig::allow_takeover`], including its `true` default, so a
+    /// server started without a config behaves like one started from the default config.
     pub allow_takeover: bool,
     /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
     /// which respawns panes with no controlling client yet connected to resolve them - the
@@ -117,7 +119,7 @@ impl Default for ServerSettings {
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
-            allow_takeover: false,
+            allow_takeover: true,
             shell: Vec::new(),
             command_shell: Vec::new(),
         }

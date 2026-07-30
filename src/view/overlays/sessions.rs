@@ -17,195 +17,225 @@ pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
+/// A row in the collaborators roster: one other client, plus what may be done to it from here.
 #[derive(Clone, Copy, PartialEq)]
-enum CollaborationItem {
-    Action {
-        action: Action,
-        position: usize,
-    },
-    Client {
-        roster_index: usize,
-        position: usize,
-        grantable: bool,
-        requesting: bool,
-    },
+struct CollaboratorItem {
+    /// Index into the shared roster, which is what the grant/decline/evict ops address.
+    roster_index: usize,
+    client_id: crate::shared_layout::ClientId,
+    position: usize,
+    grantable: bool,
+    requesting: bool,
+    kickable: bool,
 }
 
-impl CollaborationItem {
-    fn position(self) -> usize {
-        match self {
-            Self::Action { position, .. } | Self::Client { position, .. } => position,
-        }
-    }
-}
-
-pub(crate) fn client_list_overlay(ctx: &Context<HyprmuxApp>) -> Element {
-    let Some(list) = ctx.state.client_list.as_ref() else {
+/// Who else is on the session, and what this client may do about them.
+pub(crate) fn collaboration_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+    let Some(state) = ctx.state.collaboration.as_ref() else {
         return Text::new("").into();
     };
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Text::new("").into();
     };
-    let mut entries = Vec::new();
+    let can_evict = crate::ops::session::can_evict(&ctx.state);
+    let mut rows: Vec<SearchItem<CollaboratorItem>> = Vec::new();
     let mut items = Vec::new();
-    let control_actions = [
-        Action::RequestControl,
-        Action::ToggleInputLock,
-        Action::ToggleControlTakeover,
-    ];
-    for action in control_actions {
-        if !crate::commands::command_available(action, &ctx.state) {
-            continue;
-        }
-        let position = items.len();
-        let item = CollaborationItem::Action { action, position };
-        let label = crate::commands::action_label(action, &ctx.state)
-            .unwrap_or_else(|| action.id().unwrap_or("control").to_string());
-        let hint = crate::commands::command_prefix_chord(ctx, action.id().unwrap_or(""));
-        let mut entry = SearchEntry::item(label, item);
-        if let Some(hint) = hint {
-            entry = entry.description(ItemDescription::new().right(hint));
-        }
-        entries.push(entry);
-        items.push(item);
-    }
-    if !items.is_empty() {
-        entries.insert(0, SearchEntry::header("Controls"));
-    }
-    if shared.clients.iter().any(|client| client.id != shared.client_id) {
-        entries.push(SearchEntry::header("Clients"));
-    }
     for (roster_index, client) in shared.clients.iter().enumerate() {
         if client.id == shared.client_id {
             continue;
         }
-        let grantable = !shared.read_only
-            && shared.is_controller()
-            && !client.read_only
-            && !client.parked;
         let position = items.len();
-        let item = CollaborationItem::Client {
+        let item = CollaboratorItem {
             roster_index,
+            client_id: client.id,
             position,
-            grantable,
+            grantable: !shared.read_only
+                && shared.is_controller()
+                && !client.read_only
+                && !client.parked,
             requesting: client.requesting_control,
+            kickable: can_evict,
         };
-        let entry = {
-            let mut markers = Vec::new();
-            if Some(client.id) == shared.controller {
-                markers.push("controller".to_string());
-            }
-            if client.read_only {
-                markers.push("read-only".to_string());
-            }
-            // A parked client is connected but not here: it holds no control and is not competing
-            // for the session, which is worth saying rather than listing it like an active viewer.
-            if client.parked {
-                markers.push("parked".to_string());
-            }
-            if client.requesting_control && Some(client.id) != shared.controller {
-                markers.push("wants control".to_string());
-            }
-            SearchEntry::item(format!("{}  #{}", client.label, client.id), item)
-                .description(ItemDescription::new().right(markers.join(" · ")))
-        };
-        entries.push(entry);
+        let mut markers = Vec::new();
+        if Some(client.id) == shared.controller {
+            markers.push("ctrl");
+        }
+        if client.read_only {
+            markers.push("ro");
+        }
+        // A parked client is connected but not here: it holds no control and is not competing
+        // for the session, which is worth flagging rather than listing it like an active viewer.
+        if client.parked {
+            markers.push("parked");
+        }
+        if client.requesting_control && Some(client.id) != shared.controller {
+            markers.push("wants ctrl");
+        }
+        rows.push(
+            SearchItem::new(client_tag(&client.label, client.id), item)
+                .description(ItemDescription::new().right(markers.join(" · "))),
+        );
         items.push(item);
     }
-    let key = client_list_key();
-    let selected = list.selected.min(items.len().saturating_sub(1));
-    let selected_item = items.get(selected).copied();
-    let selected_client = match selected_item {
-        Some(CollaborationItem::Client {
-            roster_index,
-            grantable,
-            requesting,
-            ..
-        }) => Some((roster_index, grantable, requesting)),
-        _ => None,
+    let entries: Vec<_> = rows.iter().cloned().map(SearchEntry::Item).collect();
+
+    // Rank the roster exactly as the widget does, so "the highlighted client" means the same thing
+    // to the footer hints and the Ctrl chords as it does on screen. Without this the selection is an
+    // index into the *unfiltered* roster, and a query that hides that row would leave `ctrl+k`
+    // pointed at somebody the user can no longer see.
+    let visible = rank_search_palette_indices_with_mode(
+        &rows,
+        &state.query,
+        SearchMatchMode::Hybrid,
+        |_, _, score| score as f64,
+    );
+    let selected = state.selected.min(items.len().saturating_sub(1));
+    let selected_item = if visible.contains(&selected) {
+        items.get(selected).copied()
+    } else {
+        // The filter moved the highlight off the recorded row; follow it to the top match.
+        visible.first().and_then(|index| items.get(*index).copied())
     };
-    let item_count = items.len();
+    let armed = state
+        .pending_kick
+        .filter(|id| selected_item.is_some_and(|item| item.client_id == *id));
+    // An empty list means two different things and must not claim the wrong one: the roster really
+    // is empty, or the query hid everyone in it.
+    let query = state.query.trim();
+    let empty_text = if items.is_empty() {
+        "No other clients".to_string()
+    } else {
+        format!("No client matches `{query}`")
+    };
+    // The query input owns focus here, so every action key is a Ctrl chord: a bare letter has to
+    // reach the filter. Enter is the exception the list already owns.
     let interceptor = ctx.link().key_handler(move |key_event| {
         if key_event.is(KeyCode::Esc) {
-            Some(Msg::CloseClientList)
-        } else if key_event.is(KeyCode::Char('j')) {
-            Some(Msg::ClientListSelect(
-                (selected + 1).min(item_count.saturating_sub(1)),
-            ))
-        } else if key_event.is(KeyCode::Char('k')) {
-            Some(Msg::ClientListSelect(selected.saturating_sub(1)))
-        } else if let Some((roster_index, true, _)) = selected_client
-            && matches!(key_event.code, KeyCode::Char('g') | KeyCode::Char('G'))
-        {
-            Some(Msg::ClientListGrant(roster_index))
-        } else if let Some((roster_index, true, true)) = selected_client
+            Some(Msg::CloseCollaboration)
+        } else if let Some(item) = selected_item.filter(|item| item.grantable && item.requesting)
+            && key_event.mods.ctrl
             && matches!(key_event.code, KeyCode::Char('d') | KeyCode::Char('D'))
         {
-            Some(Msg::ClientListDecline(roster_index))
+            Some(Msg::CollaborationDecline(item.roster_index))
+        } else if let Some(item) = selected_item.filter(|item| item.kickable)
+            && key_event.mods.ctrl
+            && matches!(key_event.code, KeyCode::Char('k') | KeyCode::Char('K'))
+        {
+            Some(Msg::CollaborationKick(item.roster_index))
         } else {
             None
         }
     });
-    let palette = shared_search_palette::<CollaborationItem>(ctx, Length::Auto, false)
+    let error_bg = ctx.state.theme.status.error;
+    let mut palette = shared_search_palette::<CollaboratorItem>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
         .entries(entries)
-        .placeholder("")
+        .placeholder("Search other clients…")
+        .empty_text(empty_text)
+        .initial_query(state.query.clone())
         .initial_selected_item_index(Some(selected))
         .sync_selection(true)
         .description_placement(DescriptionPlacement::Right)
         .input_key_interceptor(interceptor)
+        .on_query_change(
+            ctx.link()
+                .callback(|query: Arc<str>| Msg::CollaborationQueryChanged(query.to_string())),
+        )
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<CollaborationItem>| {
-                    Msg::ClientListSelect(event.item.value.position())
+                .callback(|event: SearchEvent<CollaboratorItem>| {
+                    Msg::CollaborationSelect(event.item.value.position)
                 }),
         )
         .on_activate(ctx.link().callback(
-            |event: SearchEvent<CollaborationItem>| match event.item.value {
-                CollaborationItem::Action { action, .. } => Msg::RunAction(action),
-                CollaborationItem::Client {
+            |event: SearchEvent<CollaboratorItem>| match event.item.value {
+                CollaboratorItem {
                     roster_index,
                     grantable: true,
                     ..
-                } => Msg::ClientListGrant(roster_index),
-                CollaborationItem::Client { position, .. } => Msg::ClientListSelect(position),
+                } => Msg::CollaborationGrant(roster_index),
+                CollaboratorItem { position, .. } => Msg::CollaborationSelect(position),
             },
         ));
-    let you = shared
-        .clients
-        .iter()
-        .find(|client| client.id == shared.client_id)
-        .map(|client| format!("{}  #{}", client.label, client.id))
-        .unwrap_or_else(|| format!("client #{}", shared.client_id));
-    let role = if shared.read_only {
-        "read-only"
-    } else if shared.is_controller() {
-        "controller"
-    } else {
-        "follower"
-    };
-    let mut body = VStack::new()
-        .height(Length::Auto)
-        .child(
-            Text::new(format!("You: {you} · {role}"))
-                .style(fg_only(&ctx.state.theme.muted)),
-        )
-        .child(palette);
-    if let Some((_, true, requesting)) = selected_client {
-        let mut hints = hint_row().child(hint_pill(&ctx.state.theme, "grant control", "enter / g"));
-        if requesting {
-            hints = hints.child(hint_pill(&ctx.state.theme, "decline", "d"));
+    if let Some(armed) = armed {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<CollaboratorItem>, _hl| {
+            (item.value.client_id == armed).then(|| render_pending_kick_item(item, error_bg))
+        }));
+    }
+
+    let mut body = VStack::new().height(Length::Auto).child(palette);
+    if let Some(item) = selected_item {
+        let mut hints = hint_row();
+        if item.grantable {
+            hints = hints.child(hint_pill(&ctx.state.theme, "grant control", "enter"));
+        }
+        if item.grantable && item.requesting {
+            hints = hints.child(hint_pill(&ctx.state.theme, "decline", "ctrl+d"));
+        }
+        if item.kickable {
+            let label = if armed.is_some() { "confirm kick" } else { "kick" };
+            hints = hints.child(hint_pill(&ctx.state.theme, label, "ctrl+k"));
         }
         body = body.child(hints);
     }
-    action_palette(
-        ctx,
-        "Session collaboration",
-        key,
-        Msg::CloseClientList,
-        body,
-        64,
-    )
+    // This client's own identity and role ride the top border as a right header rather than a line
+    // of prose above the input — see the overlay convention in AGENTS.md.
+    let panel: Element = Frame::new()
+        .header_left("Manage collaborators")
+        .header_right(self_tag(shared))
+        .header_style(ctx.state.theme.accent.bold())
+        .border_style(BorderStyle::Rounded)
+        .padding(0)
+        .style(Style::new().bg(ctx.state.theme.surface.element))
+        .height(Length::Auto)
+        .child(action_palette_frame(body))
+        .into();
+    Modal::new()
+        .width(Length::Px(64))
+        .height(Length::Auto)
+        .max_height(Length::Percent(65))
+        .reserve_height(Length::Percent(65))
+        .border(false)
+        .padding(0)
+        .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+        .on_close(ctx.link().callback(|_| Msg::CloseCollaboration))
+        .child(panel)
+        .key(collaboration_key())
+}
+
+/// One client as a compact token: `razuer #2077`.
+fn client_tag(label: &str, id: crate::shared_layout::ClientId) -> String {
+    format!("{label} #{id}")
+}
+
+/// This client's own row of the roster, for the dialog's right header: `razuer #2077 · ctrl`.
+fn self_tag(shared: &crate::state::SharedSessionState) -> String {
+    let label = shared
+        .clients
+        .iter()
+        .find(|client| client.id == shared.client_id)
+        .map(|client| client_tag(&client.label, client.id))
+        .unwrap_or_else(|| format!("#{}", shared.client_id));
+    let role = if shared.read_only {
+        "ro"
+    } else if shared.is_controller() {
+        "ctrl"
+    } else {
+        "follow"
+    };
+    format!("{label} · {role}")
+}
+
+/// The row of a client awaiting its confirming second press: struck through in the error color,
+/// worded exactly like an armed session kill in the session picker.
+fn render_pending_kick_item(item: &SearchItem<CollaboratorItem>, error_bg: Color) -> ListItem {
+    let fg = readable_text_color(None, error_bg);
+    ListItem::from_spans(vec![
+        Span::new(item.label.as_ref()).style(Style::new().fg(fg).strikethrough()),
+    ])
+    .description("again to confirm")
+    .description_style(Style::new().fg(fg).italic())
+    .style(Style::new().bg(error_bg).fg(fg))
 }
 
 /// The choice offered when an attach lands on a session another client is driving.

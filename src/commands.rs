@@ -362,8 +362,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
-        action: Action::OpenClientList,
-        label: "Session collaboration…",
+        action: Action::OpenCollaborators,
+        label: "Manage collaborators…",
         category: "Collaboration",
         default_keys: &[],
         palette: true,
@@ -675,7 +675,7 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
         && state.save_profile_prompt.is_none()
         && !state.show_profile_picker
         && !state.show_session_picker
-        && state.client_list.is_none()
+        && state.collaboration.is_none()
         && state.follow_prompt.is_none()
 }
 
@@ -904,18 +904,13 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
                     matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
                 })
         }),
-        Action::OpenClientList => shared.is_some_and(|shared| {
-            shared.active_clients() > 1
-                || (!shared.read_only
-                    && shared.is_controller()
-                    && state
-                        .current()
-                        .session_client
-                        .as_ref()
-                        .is_some_and(|client| {
-                            client.effective_protocol()
-                                >= crate::session::protocol::CONTROL_TAKEOVER_PROTOCOL
-                        }))
+        // The roster lists other clients and acts on them, so it is worth opening only when there is
+        // somebody in it. Parked clients count: they are still attached and still removable.
+        Action::OpenCollaborators => shared.is_some_and(|shared| {
+            shared
+                .clients
+                .iter()
+                .any(|client| client.id != shared.client_id)
         }),
         Action::ToggleInputLock => shared.is_some_and(|shared| {
             shared.clients.len() > 1 && !shared.read_only && shared.is_controller()
@@ -1051,13 +1046,6 @@ fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
         .to_string();
     }
     base_label.to_string()
-}
-
-pub(crate) fn action_label(action: Action, state: &State) -> Option<String> {
-    BUILTIN_COMMANDS
-        .iter()
-        .find(|command| command.action == action)
-        .map(|command| resolved_label(action, command.label, state))
 }
 
 fn edit_scrollback_label(editor: &str) -> String {
@@ -1515,22 +1503,42 @@ mod tests {
         state
     }
 
+    /// Every collaboration command is an ordinary palette row under one category. Only the roster
+    /// is a dialog, and it is a dialog because it acts on a live list of people — not a menu of the
+    /// commands beside it.
+    #[test]
+    fn collaboration_commands_are_flat_palette_rows() {
+        for id in [
+            "collaborators",
+            "request-control",
+            "grant-control",
+            "toggle-input-lock",
+            "toggle-control-takeover",
+        ] {
+            assert!(is_palette_eligible(id), "{id} belongs in the palette");
+            assert!(
+                Action::from_id(id).is_some(),
+                "{id} must stay valid for `[keys]` and run-action"
+            );
+        }
+    }
+
     #[test]
     fn collaboration_commands_follow_roster_and_permissions() {
         let solo = shared_state(1, 1, false, 1);
-        assert!(!command_available(Action::OpenClientList, &solo));
+        assert!(!command_available(Action::OpenCollaborators, &solo));
         assert!(!command_available(Action::RequestControl, &solo));
         assert!(!command_available(Action::ToggleInputLock, &solo));
 
         let controller = shared_state(1, 1, false, 2);
-        assert!(command_available(Action::OpenClientList, &controller));
+        assert!(command_available(Action::OpenCollaborators, &controller));
         assert!(!command_available(Action::RequestControl, &controller));
         assert!(command_available(Action::ToggleInputLock, &controller));
         // Grant is offered only once a follower is actually requesting.
         assert!(!command_available(Action::GrantControl, &controller));
 
         let follower = shared_state(2, 1, false, 2);
-        assert!(command_available(Action::OpenClientList, &follower));
+        assert!(command_available(Action::OpenCollaborators, &follower));
         assert!(command_available(Action::RequestControl, &follower));
         assert!(!command_available(Action::ToggleInputLock, &follower));
         assert!(!command_available(Action::GrantControl, &follower));
@@ -1550,7 +1558,7 @@ mod tests {
         ));
 
         let viewer = shared_state(2, 1, true, 2);
-        assert!(command_available(Action::OpenClientList, &viewer));
+        assert!(command_available(Action::OpenCollaborators, &viewer));
         assert!(!command_available(Action::RequestControl, &viewer));
         assert!(!command_available(Action::ToggleInputLock, &viewer));
     }

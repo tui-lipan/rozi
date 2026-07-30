@@ -280,19 +280,23 @@ and pane identity). Purely local view state - focus, active workspace, overlays,
 - **Followers are read-only for layout.** A follower that tries a layout-mutating action gets a
   toast nudging it to request control; focus, workspace switching, copy/search, the palette, and
   terminal input all still work locally.
-- **Control requests.** *Request layout control* (`prefix g`, or the command palette) asks the
-  current controller for the lease by default. The requester is flagged in the client roster (a
-  `wants control` badge) and the controller gets a single non-intrusive toast
-  (the server debounces repeats, and an identical toast renews in place rather than stacking, so a
-  held key cannot spam it). The request toast shows the live
+- **Taking control.** *Take layout control* (`prefix g`, or the command palette) transfers the lease
+  to the asking client immediately. This is the default (`[session].allow_takeover = true`) because
+  every client that can attach is already the same OS account, and the usual second client is you on
+  another machine: waiting to be granted the lease there means walking back to the first keyboard.
+  It is symmetric — the other client takes it back the same way — and nothing is destroyed; the
+  lease and the canonical PTY size move.
+- **Cooperative requests.** With `[session].allow_takeover = false`, the same key *asks* instead.
+  The requester is flagged in the client roster (a `wants control` badge) and the controller gets a
+  single non-intrusive toast (the server debounces repeats, and an identical toast renews in place
+  rather than stacking, so a held key cannot spam it). The request toast shows the live
   *Grant layout control* binding (`prefix e` by default, following any `[keys]` override), which
   hands the lease to the requester in one keystroke; the controller can also **grant** or
-  **decline** a specific client from the *Session collaboration* view, and a decline notifies the
+  **decline** a specific client from the *Manage collaborators* dialog, and a decline notifies the
   requester. When *no* client holds the lease (e.g. right after the controller left), a request is
-  auto-granted so control is never stuck. If `[session].allow_takeover` is enabled on the server,
-  the same request immediately transfers control from the old controller instead. The current
-  controller can change that running-session policy with `toggle-control-takeover`. A truly wedged
-  controller still auto-releases via the heartbeat timeout below.
+  auto-granted so control is never stuck either way. The current controller can change the running
+  session's policy with `toggle-control-takeover`. A truly wedged controller still auto-releases via
+  the heartbeat timeout below.
 - **Workbar chip.** While more than one client is attached, the workbar shows a `CTRL` badge (you
   control the layout) or `VIEW` badge (you are following), and the session badge folds in the client
   count (`dev ·2`). A solo session shows neither. When you control the layout and another client has
@@ -316,24 +320,53 @@ reattach to it (shown as `ephemeral`) from the picker and recover the scrollback
 > Known limitation: the scratchpad is controller-only in this version (its pane id is shared and
 > would collide across clients).
 
-### Client roster and input control
+### Collaboration commands and input control
 
-Open **Session collaboration** from the command palette (`session-clients`) to manage sharing in one
-place. Your own client is shown as non-selectable context; request/take control, input lock, and
-immediate takeover appear as state-valid control rows. Other clients show their label, id, and
-`controller`, `read-only`, `parked`, or `wants control` markers. The controller can select a
-writable client and press Enter or `g` to grant it layout control, or press `d` to decline a pending
-request from that client.
+Sharing is driven from ordinary command-palette rows grouped under **Collaboration**. Each appears
+only while it would do something, so the group tracks the session rather than listing dead controls:
 
-The `toggle-input-lock` command restricts terminal input to the current controller. The lock follows
+| Row | Appears when |
+| --- | --- |
+| *Take / Request layout control* (`request-control`) | you are a writable follower; the verb follows the takeover policy |
+| *Grant layout control to requester* (`grant-control`) | you are the controller and a request is pending |
+| *Enable / Disable input lock* (`toggle-input-lock`) | you are the writable controller and somebody else is attached |
+| *Enable / Disable immediate control takeover* (`toggle-control-takeover`) | you are the writable controller, including alone — it decides what happens to the *next* client |
+| *Manage collaborators…* (`collaborators`) | at least one other client is attached |
+
+**Manage collaborators…** is the one that opens a dialog, because it acts on a live list of people
+rather than toggling a setting. Your own client and role ride the dialog's top border as a right
+header (`razuer #2077 · ctrl`, or `· follow` / `· ro`); each other client is a row carrying its
+`ctrl`, `ro`, `parked`, or `wants ctrl` markers. Typing filters the roster.
+
+The query input owns focus, so every action key is a Ctrl chord — a bare letter belongs to the
+filter. The keys act on the highlighted client, and each is advertised in the footer only while it
+would do something:
+
+- `Enter` — grant it layout control (writable, non-parked targets only)
+- `ctrl+d` — decline its pending control request
+- `ctrl+k` — **remove** it from the session. This runs on the same arm-then-confirm window as a
+  session kill or pane close: the first press strikes the row through (`again to confirm`), a
+  second press within a few seconds sends it, and an arming left alone lapses on its own
+
+A filter that hides the highlighted client takes its keys with it: nothing can be granted or removed
+that is not on screen.
+
+A removed client is told why, dropped to whatever session it still has (or the launcher), and does
+*not* reconnect; the session, its panes, and every other client are untouched. Removing requires a
+session server speaking wire protocol 16 or newer — against an older server the key is not offered.
+
+`toggle-input-lock` restricts terminal input to the current controller. The lock follows
 the control lease automatically. Clients attached with `--read-only` cannot type, request control,
 commit layouts, or receive a grant. These policies are enforced by the session server.
 
-The `toggle-control-takeover` command enables or disables immediate takeover for the running
-session. Only the current writable controller may change it. `[session].allow_takeover` supplies the
-initial value when the server starts; changing the config does not retroactively alter an existing
-server. Enabling takeover assumes all writable clients authenticated as the same OS account are
-trusted, and an input lock moves with the lease when control is taken.
+`toggle-control-takeover` enables or disables immediate takeover for the running
+session. Only the current writable controller may change it. `[session].allow_takeover` (default
+`true`) supplies the initial value when the server starts; changing the config does not retroactively
+alter an existing server. An input lock moves with the lease when control is taken.
+
+Turn takeover off for a session shared with another *person*, where a silent takeover would reflow
+their panes mid-thought. For a person who should only watch, `--read-only` is stronger than either
+setting: such a client can never take or be granted control regardless of the policy.
 
 ## Crash recovery and reaping
 

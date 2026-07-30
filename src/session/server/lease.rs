@@ -219,6 +219,42 @@ impl SessionServer {
         ]
     }
 
+    /// Controller removes `target` from the session: tell it why, then close it once that reached
+    /// the wire. The roster broadcast follows from the disconnect itself (see
+    /// [`Self::flush_clients`]), and the target's own panes keep running — this ends one client's
+    /// attachment, not the session.
+    ///
+    /// A read-only controller cannot evict: it holds the lease only because nobody else does, and
+    /// nothing else it can do changes the session for other people either.
+    pub(super) fn handle_evict_client(
+        &mut self,
+        client_id: ClientId,
+        target: ClientId,
+    ) -> Vec<(Target, ServerMessage)> {
+        if !self.is_controller(client_id)
+            || self.client_read_only(client_id)
+            || target == client_id
+            || !self.client_attached(target)
+        {
+            return Vec::new();
+        }
+        let by = self
+            .clients
+            .iter()
+            .find(|client| client.id == client_id)
+            .and_then(|client| client.label.as_deref())
+            .map(|label| format!("{label} #{client_id}"))
+            .unwrap_or_else(|| format!("client #{client_id}"));
+        self.set_close_after_flush(target);
+        vec![(
+            Target::Client(target),
+            ServerMessage::Error {
+                code: protocol::EVICTED_ERROR_CODE.to_string(),
+                message: format!("removed from the session by {by}"),
+            },
+        )]
+    }
+
     /// Move the lease to `to`, clearing its pending request, and broadcast the controller change plus
     /// the refreshed roster (so any request badge on the new controller clears everywhere).
     pub(super) fn assign_controller(

@@ -162,6 +162,15 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
 - Lifecycle/event/data modules use plain names, such as `pane_lifecycle`, `pty_events`, and
   `profiles`.
 - Keep `input.rs` as the source of truth for command/action metadata used by help and palettes.
+- Overlays and modals present **structured data, not prose**. A dialog is a list of rows, badges,
+  and chrome labels; it is not a place for explanatory sentences. Concretely:
+  - No sentence-shaped body lines (`You: razuer #2077 · controller`, `Sides differ; applying writes
+    symmetric padding.`). Put the same fact in a row, a right-aligned `ItemDescription`, a footer
+    hint, or a `Frame` header label (`header_right` carries per-dialog context well).
+  - Prefer compact tokens over spelled-out status: `ctrl` / `follow` / `ro`, not
+    `you are currently the controller`.
+  - Keep labels terse and parallel; let position and alignment carry meaning instead of words.
+  - Explanation belongs in `docs/`, not on screen.
 - Keep split direction based on the focused tile aspect ratio and the configured
   `layout.split_width_multiplier`.
 - Keep geometry animations app-driven; position/opacity may animate, but terminal size changes
@@ -201,7 +210,7 @@ Profiles restore layout and launch intent only, while a live session preserves P
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
 share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
-range; this build max 15, min 12). One client holds the
+range; this build max 16, min 12). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state

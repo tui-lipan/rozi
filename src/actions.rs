@@ -412,7 +412,7 @@ fn execute_action_inner(
         Action::OpenProfilePicker => open_profile_picker(ctx),
         Action::ApplyProfile => crate::ops::profile::open_apply_profile_picker(ctx),
         Action::OpenSessionPicker => crate::ops::session::open_session_picker(ctx),
-        Action::OpenClientList => crate::ops::session::open_client_list(ctx),
+        Action::OpenCollaborators => crate::ops::session::open_collaborators(ctx),
         Action::RenameSession => crate::ops::session::open_rename_session(ctx),
         Action::NewTemporarySession => {
             if ctx.state.current().session_attached

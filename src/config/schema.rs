@@ -200,6 +200,13 @@ pub struct HyprmuxSessionConfig {
     pub resurrect: bool,
     /// Let a writable follower take layout control immediately instead of waiting for the current
     /// controller to grant its request.
+    ///
+    /// Defaults to `true`. Every client that can attach at all is already the same OS account (the
+    /// endpoint is per-user), so this is a politeness policy between equally trusted clients rather
+    /// than a permission boundary — and the common multi-client case is one person on two machines,
+    /// where waiting to be granted means walking to the other keyboard. Taking control is
+    /// symmetric and instantly reversible; set `false` for a session shared with another person,
+    /// or attach that person with `--read-only`.
     pub allow_takeover: bool,
 }
 
@@ -210,7 +217,7 @@ impl Default for HyprmuxSessionConfig {
             path: None,
             startup: SessionStartup::default(),
             resurrect: true,
-            allow_takeover: false,
+            allow_takeover: true,
         }
     }
 }

@@ -180,11 +180,13 @@ Client and server advertise a max and min protocol version on attach/query. They
 minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
 bump `MIN_SUPPORTED_PROTOCOL`.
 
-This build speaks protocol **13**, with **12** as the minimum. Protocol 13 adds the file-tree
-browsing messages, so a 13-client attached to a 12-server negotiates 12 and simply does not send
-them — everything else works. Servers at v11 and earlier still do strict equality, so attaching to
-one surfaces the usual “kill it and start a new one” message, after which a fresh remote server
-speaks the negotiated range.
+This build speaks protocol **16**, with **12** as the minimum. Each version above the minimum adds
+messages the client sends only once negotiation reaches it: 13 the file-tree browsing messages, 14
+the parked flag, 15 the runtime control-takeover policy, 16 removing a client from a session. A
+16-client attached to a 12-server negotiates 12 and simply does not send them — everything else
+works, and the UI leaves out the affordances that would have needed them. Servers at v11 and
+earlier still do strict equality, so attaching to one surfaces the usual “kill it and start a new
+one” message, after which a fresh remote server speaks the negotiated range.
 
 ## Local vs remote feature split
 

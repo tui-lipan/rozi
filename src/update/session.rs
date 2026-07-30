@@ -514,10 +514,10 @@ pub(super) fn control_requested(
         .map(|client| format!("{} #{}", client.label, client.id))
         .unwrap_or_else(|| format!("client {from}"));
     // Advertise the live grant binding so the hint tracks any `[keys]` override instead of a
-    // hardcoded key; fall back to the session-clients view when the action is unbound.
+    // hardcoded key; fall back to the collaborators view when the action is unbound.
     let how = crate::commands::command_prefix_chord(ctx, "grant-control")
         .map(|chord| format!("{chord} to grant"))
-        .unwrap_or_else(|| "grant from Session collaboration".to_string());
+        .unwrap_or_else(|| "grant from Manage collaborators".to_string());
     crate::pty_events::notify_info(ctx, format!("{who} requests layout control\n{how}"));
     ctx.state.commands_dirty = true;
     Update::full()
@@ -1196,6 +1196,38 @@ pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) 
     }
     crate::pty_events::notify_error(ctx, "Session error", message);
     Update::full()
+}
+
+/// The controller removed this client. The server has already closed the connection, so there is
+/// nothing to detach — this only has to leave the session behind deliberately, before the resulting
+/// disconnect reaches [`disconnected`] and gets answered with a reconnect.
+pub(super) fn evicted(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
+    if epoch != ctx.state.runtime_epoch {
+        // Removed from a session we were keeping in the background: drop the attachment rather than
+        // let it sit there offline, since reconnecting it is exactly what the removal ruled out.
+        // The server has closed the connection already, so there is nothing to detach.
+        if ctx.state.background.remove(&epoch).is_some() {
+            crate::update::sidebar::invalidate_sessions(ctx);
+        }
+        return Update::none();
+    }
+    let name = ctx.state.current().session_name.clone();
+    crate::update::flush_layout_commit(ctx);
+    crate::ops::exit::mark_session_detached(ctx, None);
+    let update = crate::ops::session::land_on_surviving_session(ctx);
+    // The attachment was ended by the server, not parked; retaining it would render a session we
+    // are no longer welcome in as merely offline.
+    ctx.state.background.remove(&epoch);
+    crate::pty_events::notify_on(
+        ctx,
+        crate::state::ToastChannel::SessionLifecycle,
+        Some("Removed from session".to_string()),
+        match name {
+            Some(name) => format!("`{name}`: {message}"),
+            None => message,
+        },
+    );
+    update
 }
 
 pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String) -> Update {

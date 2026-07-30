@@ -577,16 +577,78 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn open_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
+/// Open the roster of everyone else on the session. The session-wide controls that go with it
+/// (request control, input lock, takeover) are their own command-palette entries, not a menu here.
+pub(crate) fn open_collaborators(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
     ctx.state.show_palette = false;
     ctx.state.show_session_picker = false;
-    ctx.state.client_list = Some(crate::state::ClientListState { selected: 0 });
+    ctx.state.collaboration = Some(crate::state::CollaborationState::new());
     ctx.state.commands_dirty = true;
-    ctx.request_focus(crate::view::client_list_key());
+    ctx.request_focus(crate::view::collaboration_key());
     Update::full()
+}
+
+/// Controller-only: remove the client at `index` in the roster. Destructive to someone else's
+/// attachment, so it goes through the shared arm-then-confirm window ([`crate::ops::confirm`]) the
+/// session kill and pane close use: the first press arms, a second within the window sends it, and
+/// an arming left alone lapses.
+pub(crate) fn evict_client(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    let Some(shared) = ctx.state.current().shared.as_ref() else {
+        return Update::none();
+    };
+    let Some(target) = shared.clients.get(index) else {
+        return Update::none();
+    };
+    if !ctx.state.is_controller() {
+        nudge_if_follower(ctx);
+        return Update::full();
+    }
+    if target.id == shared.client_id {
+        return Update::full();
+    }
+    let target_id = target.id;
+    let label = format!("{} #{}", target.label, target.id);
+    let armed = ctx
+        .state
+        .collaboration
+        .as_ref()
+        .is_some_and(|collaboration| collaboration.pending_kick == Some(target_id));
+    if !armed {
+        // First press only arms, on the same clock every other destructive gesture uses: the row
+        // renders its own struck-through "again to confirm" cue, and the arming lapses on its own
+        // if the second press never comes.
+        if let Some(collaboration) = ctx.state.collaboration.as_mut() {
+            collaboration.pending_kick = Some(target_id);
+        }
+        return crate::ops::confirm::arm(ctx);
+    }
+    if let Some(collaboration) = ctx.state.collaboration.as_mut() {
+        collaboration.pending_kick = None;
+    }
+    if let Some(client) = ctx.state.current().session_client.as_ref() {
+        client.evict_client(target_id);
+    }
+    crate::pty_events::notify_info(ctx, format!("Removed {label} from the session"));
+    Update::full()
+}
+
+/// Whether this client can remove others: the writable controller of a session whose server is new
+/// enough to understand the message.
+pub(crate) fn can_evict(state: &crate::state::State) -> bool {
+    state.current().shared.as_ref().is_some_and(|shared| {
+        !shared.read_only
+            && shared.is_controller()
+            && state
+                .current()
+                .session_client
+                .as_ref()
+                .is_some_and(|client| {
+                    client.effective_protocol() >= crate::session::protocol::EVICT_CLIENT_PROTOCOL
+                })
+    })
 }
 
 /// Raise the follow prompt if this attach landed on a session another client is actively driving.
@@ -619,7 +681,7 @@ pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
     ctx.state.show_palette = false;
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
-    ctx.state.client_list = None;
+    ctx.state.collaboration = None;
     ctx.state.follow_prompt = Some(crate::state::FollowPromptState {
         session,
         controller_label,
@@ -737,7 +799,7 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
         client.grant_control(target.id);
-        ctx.state.client_list = None;
+        ctx.state.collaboration = None;
     }
     Update::full()
 }
@@ -766,7 +828,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Updat
             if let Some(client) = ctx.state.current().session_client.as_ref() {
                 client.grant_control(id);
             }
-            ctx.state.client_list = None;
+            ctx.state.collaboration = None;
         }
         None => {
             crate::pty_events::notify_info(ctx, "No pending control requests");
@@ -2188,65 +2250,346 @@ mod tests {
             .expect("test thread panicked");
     }
 
-    #[test]
-    fn collaboration_dialog_separates_self_controls_and_other_clients() {
+    /// Set up a controller on a session shared with one writable client that wants the lease.
+    #[cfg(test)]
+    fn shared_controller_backend() -> tui_lipan::TestBackend<crate::HyprmuxApp> {
         use crate::HyprmuxApp;
         use crate::session::client::SessionClient;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;
 
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 90,
+            h: 28,
+        });
+        let (client, _rx) = SessionClient::test_channel();
+        let state = backend.state_mut();
+        state.current_mut().session_name = Some("dev".into());
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
+        let mut shared = SharedSessionState::new(1);
+        shared.controller = Some(1);
+        shared.clients = vec![
+            ClientInfo {
+                id: 1,
+                label: "me".into(),
+                read_only: false,
+                requesting_control: false,
+                parked: false,
+            },
+            ClientInfo {
+                id: 2,
+                label: "laptop".into(),
+                read_only: false,
+                requesting_control: true,
+                parked: false,
+            },
+        ];
+        state.current_mut().shared = Some(shared);
+        backend
+    }
+
+    /// The dialog is rows and chrome, never prose: this client's identity and role ride the top
+    /// border as a right header, the other clients are rows with compact markers, and the keys that
+    /// currently apply are footer pills. Nothing states a fact in a sentence.
+    #[test]
+    fn collaborators_dialog_is_rows_and_chrome_with_no_prose_line() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
-                backend.set_viewport(Rect {
-                    x: 0,
-                    y: 0,
-                    w: 90,
-                    h: 28,
-                });
-                let (client, _rx) = SessionClient::test_channel();
-                let state = backend.state_mut();
-                state.current_mut().session_name = Some("dev".into());
-                state.current_mut().session_attached = true;
-                state.current_mut().session_client = Some(client);
-                let mut shared = SharedSessionState::new(1);
-                shared.controller = Some(1);
-                shared.clients = vec![
-                    ClientInfo {
-                        id: 1,
-                        label: "me".into(),
-                        read_only: false,
-                        requesting_control: false,
-                        parked: false,
-                    },
-                    ClientInfo {
-                        id: 2,
-                        label: "laptop".into(),
-                        read_only: false,
-                        requesting_control: true,
-                        parked: false,
-                    },
-                ];
-                state.current_mut().shared = Some(shared);
-                state.client_list = Some(crate::state::ClientListState { selected: 0 });
+                let mut backend = shared_controller_backend();
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
 
                 backend.render();
                 let rendered = backend.capture_frame().to_fixed_grid();
-                assert!(rendered.contains("Session collaboration"), "{rendered}");
-                assert!(rendered.contains("You: me  #1 · controller"), "{rendered}");
-                assert_eq!(rendered.matches("me  #1").count(), 1, "{rendered}");
-                assert!(rendered.contains("Enable input lock"), "{rendered}");
+                // Title and self-context share the top border, so neither costs a content row.
                 assert!(
-                    rendered.contains("Enable immediate control takeover"),
-                    "{rendered}"
+                    rendered.contains("Manage collaborators"),
+                    "expected the title on the border: {rendered}"
                 );
-                assert!(rendered.contains("laptop  #2"), "{rendered}");
-                assert!(rendered.contains("wants control"), "{rendered}");
+                assert!(
+                    rendered.contains("me #1 · ctrl"),
+                    "expected the self tag as a right header: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("You:"),
+                    "the self context must not be a prose line: {rendered}"
+                );
+                assert_eq!(rendered.matches("me #1").count(), 1, "{rendered}");
+                assert!(rendered.contains("Search other clients"), "{rendered}");
+                assert!(rendered.contains("laptop #2"), "{rendered}");
+                assert!(rendered.contains("wants ctrl"), "{rendered}");
+                // Every key that applies is advertised, and each is a Ctrl chord or Enter, because
+                // the query input owns focus and a bare letter has to reach the filter.
+                assert!(rendered.contains("grant control enter"), "{rendered}");
+                assert!(rendered.contains("decline ctrl+d"), "{rendered}");
+                assert!(rendered.contains("kick ctrl+k"), "{rendered}");
             })
-            .expect("spawn collaboration dialog test")
+            .expect("spawn collaborators view test")
             .join()
-            .expect("collaboration dialog test completes");
+            .expect("collaborators view test completes");
+    }
+
+    /// Typing filters the roster instead of triggering actions: the letters that used to navigate
+    /// or act (`j`, `k`, `g`, `d`, `x`) must reach the query input now that it owns focus.
+    #[test]
+    fn plain_letters_reach_the_filter_instead_of_acting() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = shared_controller_backend();
+                let (client, rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+                backend.render();
+
+                for letter in ['j', 'k', 'g', 'd', 'x'] {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(letter),
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("send letter");
+                }
+
+                let sent: Vec<_> = rx.try_iter().collect();
+                assert!(
+                    !sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(
+                            ClientMessage::GrantControl { .. }
+                                | ClientMessage::DeclineControl { .. }
+                                | ClientMessage::EvictClient { .. }
+                        )
+                    )),
+                    "typing must not act on a client, got {sent:?}"
+                );
+                assert!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .is_some_and(|collaboration| collaboration.pending_kick.is_none()),
+                    "typing must not arm a removal"
+                );
+                // The letters landed in the filter, which is the whole point of freeing them.
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(rendered.contains("jkgdx"), "{rendered}");
+                assert!(!rendered.contains("laptop #2"), "{rendered}");
+            })
+            .expect("spawn filter-typing test")
+            .join()
+            .expect("filter-typing test completes");
+    }
+
+    /// An empty list means two different things, and the message must not claim the wrong one: a
+    /// query that matched nobody is not the same as a session nobody else is on.
+    #[test]
+    fn an_empty_list_says_whether_it_is_the_filter_or_the_roster() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = shared_controller_backend();
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+                backend
+                    .dispatch(crate::Msg::CollaborationQueryChanged("zzz".to_string()))
+                    .expect("filter to nothing");
+                backend.render();
+                let filtered = backend.capture_frame().to_fixed_grid();
+                assert!(
+                    filtered.contains("No client matches `zzz`"),
+                    "a filtered-out roster must name the query: {filtered}"
+                );
+                assert!(
+                    !filtered.contains("No other clients"),
+                    "clients are attached, so claiming otherwise is false: {filtered}"
+                );
+
+                // The same dialog with the roster genuinely empty says so, query or not.
+                if let Some(shared) = backend.state_mut().current_mut().shared.as_mut() {
+                    shared.clients.retain(|client| client.id == 1);
+                }
+                backend.render();
+                let empty = backend.capture_frame().to_fixed_grid();
+                assert!(empty.contains("No other clients"), "{empty}");
+                assert!(!empty.contains("No client matches"), "{empty}");
+            })
+            .expect("spawn empty-text test")
+            .join()
+            .expect("empty-text test completes");
+    }
+
+    /// A query that hides every client must leave nothing to act on: the footer stops advertising
+    /// keys, and `ctrl+k` cannot reach a row scrolled out of sight by the filter.
+    #[test]
+    fn a_filter_that_hides_everyone_disarms_the_dialog() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = shared_controller_backend();
+                let (client, rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+                backend.render();
+
+                // Positive control: unfiltered, the chord reaches the interceptor and arms the row.
+                // Without this the negative below would pass even if no key arrived at all.
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('k'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("send ctrl+k");
+                assert_eq!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .and_then(|collaboration| collaboration.pending_kick),
+                    Some(2),
+                    "ctrl+k must arm the highlighted client when it is visible"
+                );
+
+                backend
+                    .dispatch(crate::Msg::CollaborationQueryChanged("zzz".to_string()))
+                    .expect("filter to nothing");
+                backend.render();
+                let rendered = backend.capture_frame().to_fixed_grid();
+                assert!(!rendered.contains("kick"), "{rendered}");
+                assert!(!rendered.contains("grant control"), "{rendered}");
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('k'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("send ctrl+k");
+                let sent: Vec<_> = rx.try_iter().collect();
+                assert!(
+                    !sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::EvictClient { .. })
+                    )),
+                    "a hidden client must not be removable, got {sent:?}"
+                );
+            })
+            .expect("spawn hidden-filter test")
+            .join()
+            .expect("hidden-filter test completes");
+    }
+
+    /// Removing a client is destructive to somebody else's attachment, so the first press only arms
+    /// the row and nothing goes on the wire until the second one.
+    #[test]
+    fn kicking_a_collaborator_takes_two_presses() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use crate::session::protocol::ClientMessage;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = shared_controller_backend();
+                // `test_channel` speaks this build's maximum protocol, which is what gates evicting.
+                let (client, rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+
+                backend
+                    .dispatch(crate::Msg::CollaborationKick(1))
+                    .expect("arm the removal");
+                assert_eq!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .and_then(|collaboration| collaboration.pending_kick),
+                    Some(2),
+                    "arming is held by client id, not roster position"
+                );
+                let armed_traffic: Vec<_> = rx.try_iter().collect();
+                assert!(
+                    !armed_traffic.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::EvictClient { .. })
+                    )),
+                    "arming must not remove anyone yet, got {armed_traffic:?}"
+                );
+
+                backend
+                    .dispatch(crate::Msg::CollaborationKick(1))
+                    .expect("confirm the removal");
+                let sent: Vec<_> = rx.try_iter().collect();
+                assert!(
+                    sent.iter().any(|message| matches!(
+                        message,
+                        ClientOutbound::Control(ClientMessage::EvictClient { target: 2 })
+                    )),
+                    "expected an evict for client 2, got {sent:?}"
+                );
+                assert!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .is_some_and(|collaboration| collaboration.pending_kick.is_none())
+                );
+            })
+            .expect("spawn kick test")
+            .join()
+            .expect("kick test completes");
+    }
+
+    /// The arming runs on the shared confirmation clock, so a kick left half-pressed lapses like
+    /// every other destructive gesture rather than waiting indefinitely for a second key.
+    #[test]
+    fn an_unconfirmed_kick_lapses_on_the_shared_confirm_window() {
+        use crate::session::client::SessionClient;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = shared_controller_backend();
+                let (client, _rx) = SessionClient::test_channel();
+                backend.state_mut().current_mut().session_client = Some(client);
+                backend.state_mut().collaboration = Some(crate::state::CollaborationState::new());
+
+                backend
+                    .dispatch(crate::Msg::CollaborationKick(1))
+                    .expect("arm the removal");
+                let armed_epoch = backend.state().confirm_epoch;
+                assert!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .is_some_and(|collaboration| collaboration.pending_kick.is_some()),
+                    "arming must register with the shared clock"
+                );
+
+                backend
+                    .dispatch(crate::Msg::ConfirmationExpired(armed_epoch))
+                    .expect("the window lapses");
+                assert!(
+                    backend
+                        .state()
+                        .collaboration
+                        .as_ref()
+                        .is_some_and(|collaboration| collaboration.pending_kick.is_none()),
+                    "an unconfirmed kick must disarm itself"
+                );
+            })
+            .expect("spawn kick-expiry test")
+            .join()
+            .expect("kick-expiry test completes");
     }
 
     #[test]

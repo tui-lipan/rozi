@@ -70,7 +70,7 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
         | Action::OpenProfilePicker
         | Action::ApplyProfile
         | Action::OpenSessionPicker
-        | Action::OpenClientList => {}
+        | Action::OpenCollaborators => {}
         // The scratchpad manages its own focus (the scratch terminal on show, the previously
         // focused pane on hide); don't override it.
         Action::ToggleScratchpad => {}

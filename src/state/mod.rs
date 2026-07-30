@@ -96,7 +96,7 @@ pub struct State {
     pub profile_picker: Option<ProfilePickerState>,
     pub show_session_picker: bool,
     pub session_picker: Option<SessionPickerState>,
-    pub client_list: Option<ClientListState>,
+    pub collaboration: Option<CollaborationState>,
     /// Raised when an attach lands on a session another client is actively controlling, so
     /// following is something the user chooses rather than something that happens to them.
     pub follow_prompt: Option<FollowPromptState>,
@@ -247,7 +247,7 @@ impl State {
             profile_picker: None,
             show_session_picker: false,
             session_picker: None,
-            client_list: None,
+            collaboration: None,
             follow_prompt: None,
             overlay_return: None,
             replaceable_toasts: HashMap::new(),

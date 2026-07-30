@@ -618,6 +618,14 @@ fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
                 ok,
                 error,
             },
+            // An eviction arrives as an error with a reserved code, immediately before the server
+            // closes the connection. It has to be told apart from a dropped link here: the generic
+            // path reconnects, which would walk straight back into the session we were removed from.
+            ServerMessage::Error { code, message }
+                if code == crate::session::protocol::EVICTED_ERROR_CODE =>
+            {
+                Msg::SessionEvicted { epoch, message }
+            }
             ServerMessage::Error { message, .. } => Msg::SessionError { epoch, message },
             ServerMessage::Renamed { session } => Msg::SessionRenamed { epoch, session },
             ServerMessage::PaneLoggingChanged {

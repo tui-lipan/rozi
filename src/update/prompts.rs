@@ -250,28 +250,45 @@ pub(super) fn session_picker_name_current(ctx: &mut Context<HyprmuxApp>) -> Upda
     crate::ops::session::open_rename_session(ctx)
 }
 
-pub(super) fn close_client_list(ctx: &mut Context<HyprmuxApp>) -> Update {
-    ctx.state.client_list = None;
+pub(super) fn close_collaboration(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.collaboration = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(super) fn client_list_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    if let Some(list) = ctx.state.client_list.as_mut() {
+pub(super) fn collaboration_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+    if let Some(collaboration) = ctx.state.collaboration.as_mut() {
+        collaboration.query = query;
+        // Re-filtering moves what is highlighted; an arming aimed at the old row must not survive.
+        collaboration.pending_kick = None;
+    }
+    Update::full()
+}
+
+pub(super) fn collaboration_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    if let Some(list) = ctx.state.collaboration.as_mut() {
         // The view clamps this against its state-dependent mix of control actions and other
         // clients. Keeping the requested item here avoids duplicating that derivation in update.
+        // Moving the highlight off an armed removal cancels its confirmation.
+        if list.selected != index {
+            list.pending_kick = None;
+        }
         list.selected = index;
     }
     Update::full()
 }
 
-pub(super) fn client_list_grant(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_grant(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     crate::ops::session::grant_control(ctx, index)
 }
 
-pub(super) fn client_list_decline(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_decline(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     crate::ops::session::decline_control(ctx, index)
+}
+
+pub(super) fn collaboration_kick(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+    crate::ops::session::evict_client(ctx, index)
 }
 
 pub(super) fn follow_prompt_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {

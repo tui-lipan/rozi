@@ -145,10 +145,13 @@ pub enum Msg {
     SessionPickerDisconnectHost,
     SessionPickerConnectHost,
     SessionPickerNameCurrent,
-    CloseClientList,
-    ClientListSelect(usize),
-    ClientListGrant(usize),
-    ClientListDecline(usize),
+    CloseCollaboration,
+    CollaborationQueryChanged(String),
+    CollaborationSelect(usize),
+    CollaborationGrant(usize),
+    CollaborationDecline(usize),
+    /// Remove the roster's `index`-th client from the session; the first one arms, the second sends.
+    CollaborationKick(usize),
     /// Move the highlight in the follow prompt raised by attaching to a session someone else is
     /// driving.
     FollowPromptSelect(usize),
@@ -332,6 +335,12 @@ pub enum Msg {
         path: String,
     },
     SessionError {
+        epoch: u64,
+        message: String,
+    },
+    /// The session's controller removed this client. The server closes the connection right after,
+    /// so this leaves the session deliberately instead of treating the drop as a fault to reconnect.
+    SessionEvicted {
         epoch: u64,
         message: String,
     },

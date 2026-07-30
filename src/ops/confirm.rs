@@ -54,6 +54,9 @@ fn clear_all(ctx: &mut Context<HyprmuxApp>) -> Update {
         cleared |= picker.pending_delete.take().is_some();
         cleared |= picker.pending_open.take().is_some();
     }
+    if let Some(collaboration) = ctx.state.collaboration.as_mut() {
+        cleared |= collaboration.pending_kick.take().is_some();
+    }
     if cleared {
         Update::full()
     } else {

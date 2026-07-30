@@ -283,6 +283,15 @@ impl SessionClient {
     pub fn decline_control(&self, to: ClientId) {
         self.send_control(ClientMessage::DeclineControl { to });
     }
+    /// Controller-only: remove another client from the session. Silently does nothing against a
+    /// server too old to understand the message, which is why the UI gates the affordance on the
+    /// same version rather than letting a key press vanish.
+    pub fn evict_client(&self, target: ClientId) {
+        if self.effective_protocol < crate::session::protocol::EVICT_CLIENT_PROTOCOL {
+            return;
+        }
+        self.send_control(ClientMessage::EvictClient { target });
+    }
     pub fn set_input_lock(&self, locked: bool) {
         self.send_control(ClientMessage::SetInputLock { locked });
     }

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use tui_lipan::Justify::SpaceBetween;
 use tui_lipan::prelude::*;
+use tui_lipan::rank_search_palette_indices_with_mode;
 use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::Action;
@@ -12,7 +13,7 @@ use crate::state::{
 use crate::{HyprmuxApp, Msg};
 
 use super::keys::{
-    appearance_palette_key, client_list_key, help_scroll_key, palette_key,
+    appearance_palette_key, collaboration_key, help_scroll_key, palette_key,
     pane_padding_horizontal_key, pane_padding_vertical_key, profile_picker_key, rename_input_key,
     rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
     theme_picker_key,

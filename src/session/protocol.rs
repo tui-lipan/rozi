@@ -26,6 +26,8 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
+/// 16 adds [`ClientMessage::EvictClient`], the controller's way to remove another client.
+///
 /// 15 adds the server-owned control-takeover policy.
 ///
 /// 14 adds [`ClientMessage::SetParked`] and the `parked` flag on [`ClientInfo`], which separate a
@@ -33,7 +35,7 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
@@ -46,6 +48,13 @@ pub const FILE_TREE_PROTOCOL: u32 = 13;
 pub const PARKED_PROTOCOL: u32 = 14;
 /// First version that lets a controller change the control-takeover policy at runtime.
 pub const CONTROL_TAKEOVER_PROTOCOL: u32 = 15;
+/// First version carrying [`ClientMessage::EvictClient`]. An older server would ignore the unknown
+/// variant, so the client neither sends it nor offers the affordance below this version.
+pub const EVICT_CLIENT_PROTOCOL: u32 = 16;
+/// `code` on the [`ServerMessage::Error`] a client receives just before the server closes it for
+/// being evicted. Distinguishes a removal from a dropped connection, which the client would
+/// otherwise answer by reconnecting straight back into the session it was removed from.
+pub const EVICTED_ERROR_CODE: &str = "evicted";
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 pub const PANE_STATUS_MAX_LEN: usize = 64;
 pub const PANE_STATUS_REASON_MAX_LEN: usize = 256;
@@ -430,6 +439,12 @@ pub enum ClientMessage {
     /// (see [`ServerMessage::ControlDeclined`]).
     DeclineControl {
         to: ClientId,
+    },
+    /// Controller-only: remove `target` from the session (protocol 16+). The server sends the
+    /// target an [`ServerMessage::Error`] carrying [`EVICTED_ERROR_CODE`] and then closes its
+    /// connection; the session itself and every other client keep running.
+    EvictClient {
+        target: ClientId,
     },
     SetInputLock {
         locked: bool,
@@ -1277,7 +1292,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":15,
+                "protocol_version":16,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1305,7 +1320,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":15,
+                "protocol_version":16,
                 "min_protocol_version":12
             })
         );
@@ -1328,6 +1343,7 @@ mod tests {
         for message in [
             ClientMessage::GrantControl { to: 7 },
             ClientMessage::DeclineControl { to: 7 },
+            ClientMessage::EvictClient { target: 7 },
             ClientMessage::RequestControl,
             ClientMessage::SetControlTakeover { allowed: true },
             ClientMessage::SetInputLock { locked: true },
@@ -1390,7 +1406,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":15,
+                "effective_protocol":16,
                 "created_from_profile":"work"
             })
         );

@@ -913,10 +913,23 @@ mod file_tests {
     #[test]
     fn session_section_parses_startup_and_takeover() {
         let parsed: FileConfig =
-            toml::from_str("[session]\nstartup = \"picker\"\nallow_takeover = true")
+            toml::from_str("[session]\nstartup = \"picker\"\nallow_takeover = false")
                 .expect("config parses");
         assert_eq!(parsed.session.startup.as_deref(), Some("picker"));
-        assert_eq!(parsed.session.allow_takeover, Some(true));
+        assert_eq!(parsed.session.allow_takeover, Some(false));
+    }
+
+    /// Takeover is on unless a config turns it off, and the server's own settings default agrees —
+    /// a server started without a config must not behave differently from one started with the
+    /// default config.
+    #[test]
+    fn takeover_is_enabled_by_default_on_both_sides() {
+        assert!(
+            crate::config::HyprmuxConfig::default()
+                .session
+                .allow_takeover
+        );
+        assert!(crate::session::server::ServerSettings::default().allow_takeover);
     }
 
     #[test]

@@ -351,6 +351,7 @@ impl SessionServer {
             ClientMessage::SetParked { parked } => self.handle_set_parked(client_id, parked),
             ClientMessage::GrantControl { to } => self.handle_grant_control(client_id, to),
             ClientMessage::DeclineControl { to } => self.handle_decline_control(client_id, to),
+            ClientMessage::EvictClient { target } => self.handle_evict_client(client_id, target),
             ClientMessage::SetInputLock { locked } => {
                 if !self.is_controller(client_id) || self.client_read_only(client_id) {
                     return Vec::new();

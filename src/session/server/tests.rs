@@ -46,6 +46,20 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
     }
 }
 
+/// A server with takeover turned off, so a control request has to be granted or declined rather
+/// than transferring the lease outright. Takeover is on by default (see
+/// [`crate::config::HyprmuxSessionConfig::allow_takeover`]), so the cooperative path only exists in
+/// a session that has opted into it — and a test exercising that path has to say so.
+fn cooperative_server(session_name: &str) -> SessionServer {
+    SessionServer::new_named_with_settings(
+        session_name,
+        ServerSettings {
+            allow_takeover: false,
+            ..ServerSettings::default()
+        },
+    )
+}
+
 /// Register a client backed by a socketpair and return its id plus the client-side stream.
 fn add_client(server: &mut SessionServer) -> (ClientId, UnixStream) {
     let (client_stream, server_stream) = UnixStream::pair().unwrap();
@@ -424,7 +438,7 @@ fn stale_base_rev_is_rejected_with_authoritative_layout() {
 
 #[test]
 fn request_control_flags_requester_and_notifies_controller_without_stealing() {
-    let mut server = SessionServer::new_named("dev");
+    let mut server = cooperative_server("dev");
     let (first, _s1) = attach_client(&mut server);
     let (second, _s2) = attach_client(&mut server);
     let responses = server.handle_message(second, ClientMessage::RequestControl);
@@ -442,6 +456,71 @@ fn request_control_flags_requester_and_notifies_controller_without_stealing() {
         (Target::Client(id), ServerMessage::ControlRequested { from })
             if *id == first && *from == second
     )));
+}
+
+/// The controller can remove another client: it is told why, and its connection is closed once that
+/// reached the wire. Everyone else — and the session — stays put.
+#[test]
+fn controller_evicts_another_client_with_a_reason_then_closes_it() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _s1) = attach_client(&mut server);
+    let (other, _s2) = attach_client(&mut server);
+
+    let responses = server.handle_message(controller, ClientMessage::EvictClient { target: other });
+
+    let [(Target::Client(id), ServerMessage::Error { code, message })] = responses.as_slice()
+    else {
+        panic!("expected one evict error, got {responses:?}");
+    };
+    assert_eq!(*id, other);
+    assert_eq!(code, protocol::EVICTED_ERROR_CODE);
+    assert!(message.contains(&format!("#{controller}")), "{message}");
+    assert!(
+        server
+            .clients
+            .iter()
+            .find(|client| client.id == other)
+            .is_some_and(|client| client.close_after_flush)
+    );
+    assert_eq!(server.controller, Some(controller));
+    assert!(!server.shutdown);
+}
+
+/// Evicting is a controller power, and never a way to remove yourself.
+#[test]
+fn eviction_is_refused_from_a_follower_a_read_only_controller_or_at_oneself() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _s1) = attach_client(&mut server);
+    let (follower, _s2) = attach_client(&mut server);
+
+    assert!(
+        server
+            .handle_message(follower, ClientMessage::EvictClient { target: controller })
+            .is_empty()
+    );
+    assert!(
+        server
+            .handle_message(
+                controller,
+                ClientMessage::EvictClient { target: controller }
+            )
+            .is_empty()
+    );
+    assert!(
+        !server.clients.iter().any(|client| client.close_after_flush),
+        "a refused eviction must not close anyone"
+    );
+
+    // A read-only client holding the lease only because nobody else does cannot use it to evict.
+    let mut viewer_server = SessionServer::new_named("dev");
+    let (viewer, _s3) = attach_read_only_client(&mut viewer_server);
+    let (writer, _s4) = attach_client(&mut viewer_server);
+    viewer_server.controller = Some(viewer);
+    assert!(
+        viewer_server
+            .handle_message(viewer, ClientMessage::EvictClient { target: writer })
+            .is_empty()
+    );
 }
 
 #[test]
@@ -501,7 +580,7 @@ fn takeover_still_rejects_read_only_and_parked_clients() {
 
 #[test]
 fn only_controller_can_toggle_takeover() {
-    let mut server = SessionServer::new_named("dev");
+    let mut server = cooperative_server("dev");
     let (first, _s1) = attach_client(&mut server);
     let (second, _s2) = attach_client(&mut server);
 
@@ -537,7 +616,7 @@ fn repeated_requests_are_debounced_to_one_controller_notification() {
 
 #[test]
 fn granting_a_requested_control_clears_the_flag() {
-    let mut server = SessionServer::new_named("dev");
+    let mut server = cooperative_server("dev");
     let (first, _s1) = attach_client(&mut server);
     let (second, _s2) = attach_client(&mut server);
     server.handle_message(second, ClientMessage::RequestControl);
@@ -552,7 +631,7 @@ fn granting_a_requested_control_clears_the_flag() {
 
 #[test]
 fn declining_control_clears_flag_and_notifies_requester() {
-    let mut server = SessionServer::new_named("dev");
+    let mut server = cooperative_server("dev");
     let (first, _s1) = attach_client(&mut server);
     let (second, _s2) = attach_client(&mut server);
     server.handle_message(second, ClientMessage::RequestControl);

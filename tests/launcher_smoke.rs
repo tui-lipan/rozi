@@ -44,6 +44,21 @@ fn a_sessionless_client_renders_the_launcher_panel() {
                 lines.iter().any(|line| line.contains("start a shell")),
                 "the launcher must say how to start a session, got {lines:#?}"
             );
+            // The launcher claims a bare Enter (`key_routing::launcher_start_key`); advertising
+            // only the spawn binding here is what made the state look like a dead end.
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Enter / Ctrl+A Enter")
+                        && line.contains("start a shell")),
+                "the launcher must offer the bare Enter it accepts, got {lines:#?}"
+            );
+            // Prefix and held-modifier spellings resolve to the same table entry
+            // (`config::schema::scheme_shortcuts`), so listing both would be one binding said twice.
+            assert!(
+                !lines.iter().any(|line| line.contains("Alt+Enter")),
+                "the modifier spelling is the same binding as the prefix one, got {lines:#?}"
+            );
             assert!(
                 !lines.iter().any(|line| line.contains("Empty workspace")),
                 "the empty-workspace hint is about panes, not sessions"

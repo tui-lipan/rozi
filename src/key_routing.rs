@@ -1,9 +1,10 @@
 use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
+use crate::input::Action;
 use crate::ops::focus::{focus_pane, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
-use crate::state::{Direction, Mode, PaneId};
+use crate::state::{Direction, Mode, PaneId, State};
 use crate::view;
 
 /// Route a key that reached hyprmux's own handling: app command chords (leader/modifier) are
@@ -39,6 +40,9 @@ pub(crate) fn handle_key_routing(
             if let Some(id) = source_pane {
                 return (true, crate::pty_events::forward_key_to_pane(ctx, id, key));
             }
+            if launcher_start_key(&ctx.state, key) {
+                return (true, crate::actions::execute_action(ctx, Action::Spawn));
+            }
             (false, Update::none())
         }
         Mode::Resize => handle_resize_mode_key(ctx, key),
@@ -62,6 +66,16 @@ pub(crate) fn handle_key_routing(
 /// fixed step rather than a viewport-derived one — the row list is short and the view follows the
 /// cursor anyway, so measuring the viewport buys nothing.
 const PAGE_ROWS: isize = 5;
+
+/// Whether a bare `Enter` should start a shell: only in the launcher, where no pane owns the
+/// keyboard and the panel advertises exactly one thing to do. The configured `spawn` chord stays
+/// bound everywhere and is unaffected; this only gives the launcher's single offer the obvious key.
+///
+/// `commands_active` is the same gate app chords use, so an overlay raised over the launcher (the
+/// session picker, a rename prompt) keeps `Enter` for itself.
+fn launcher_start_key(state: &State, key: KeyEvent) -> bool {
+    key.is(KeyCode::Enter) && state.is_launcher() && crate::commands::commands_active(state)
+}
 
 fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Update> {
     use crate::update::sidebar;
@@ -146,5 +160,63 @@ pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
     let framework_focus = framework_focused_pane(ctx);
     if let Some(id) = framework_focus {
         focus_pane(&mut ctx.state, id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HyprmuxConfig;
+    use crate::state::Attachment;
+    use tui_lipan::prelude::{KeyMods, Theme};
+
+    fn key(code: KeyCode, mods: KeyMods) -> KeyEvent {
+        KeyEvent { code, mods }
+    }
+
+    /// A state in the launcher: what dismissing the startup picker leaves behind.
+    fn launcher_state() -> State {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        *state.current_mut() = Attachment::new();
+        assert!(state.is_launcher());
+        state
+    }
+
+    #[test]
+    fn bare_enter_starts_a_shell_only_in_an_unobstructed_launcher() {
+        let mut state = launcher_state();
+        assert!(launcher_start_key(
+            &state,
+            key(KeyCode::Enter, KeyMods::NONE)
+        ));
+
+        // The picker over the launcher owns Enter — that is how a session row is activated.
+        state.show_session_picker = true;
+        assert!(!launcher_start_key(
+            &state,
+            key(KeyCode::Enter, KeyMods::NONE)
+        ));
+        state.show_session_picker = false;
+
+        // Modified Enter is the configured `spawn` chord, resolved before key routing sees it.
+        assert!(!launcher_start_key(
+            &state,
+            key(KeyCode::Enter, KeyMods::ALT)
+        ));
+        assert!(!launcher_start_key(
+            &state,
+            key(KeyCode::Esc, KeyMods::NONE)
+        ));
+    }
+
+    /// With a session attached, Enter is the shell's, not the app's.
+    #[test]
+    fn bare_enter_is_not_claimed_outside_the_launcher() {
+        let state = State::new(HyprmuxConfig::default(), Theme::default());
+        assert!(!state.is_launcher());
+        assert!(!launcher_start_key(
+            &state,
+            key(KeyCode::Enter, KeyMods::NONE)
+        ));
     }
 }

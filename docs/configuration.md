@@ -503,8 +503,8 @@ With `startup = "picker"` (the default, also reachable with `--pick`), the picke
 **only when there is something to pick** - a running named session, a resurrection snapshot, or a
 remote host with cached sessions; otherwise the launch attaches to an ephemeral session as usual.
 Opening the picker creates no session: nothing is attached until you choose. Dismissing it with
-`Esc` leaves the client in the launcher with no session, where `Enter` starts a shell and the
-picker can be reopened at any time. See [Sessions](sessions.md).
+`Esc` leaves the client in the launcher with no session, where `Enter` (or any `spawn` binding)
+starts a shell and the picker can be reopened at any time. See [Sessions](sessions.md).
 
 When several clients attach to one session they share a live, server-authoritative layout with a
 single controlling client. By default `request-control` (`g`) transfers the lease immediately: every

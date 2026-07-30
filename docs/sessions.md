@@ -175,9 +175,13 @@ snapshot, or a remote host with cached sessions. With nothing to choose from, th
 through to an ephemeral session, which is the only thing it could have offered anyway.
 
 Dismissing the picker with `Esc` leaves the client in the **launcher**: attached to nothing, with a
-panel saying how to start a shell (`Enter`, which starts an ephemeral session with whatever layout
-the launch had prepared) or reopen the picker. A client with no session is a normal state - the
-launcher is also where killing your last session lands you.
+panel saying how to start a shell or reopen the picker. A client with no session is a normal state -
+the launcher is also where killing your last session lands you.
+
+Starting a shell there gives you an ephemeral session with whatever layout the launch had prepared.
+Because no pane is competing for the keyboard in the launcher, a bare `Enter` does it; the ordinary
+`spawn` binding works there too - in either spelling, `<prefix> Enter` or `<mod>+Enter` - and is
+what you keep using once a session is up.
 
 Set `[session] startup = "ephemeral"` to skip all of this and start a scratch session immediately.
 

@@ -765,8 +765,32 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// or the last session was killed. Distinct from the empty-workspace hint, which talks about
 /// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the two ways
 /// out: pick a session, or start a shell.
+///
+/// A bare `Enter` starts the shell here (`key_routing::launcher_start_key`) because no pane is
+/// competing for it; the ordinary `spawn` binding is listed beside it, since that is what works
+/// everywhere else. Both rows spell that binding the prefix way: `scheme_shortcuts` generates one
+/// table entry per key as *both* `<prefix> <key>` and `<modifier>-<key>`, so the held-modifier
+/// spelling would be the same binding said twice — and it is the spelling that disappears when
+/// `[input] modifier_shortcuts` is off, while the prefix route always exists.
+///
+/// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x8, which
+/// leaves four content rows, and a prose spelling of the shortcuts does not survive the wrap. The
+/// key column is measured rather than fixed so a long custom prefix still aligns.
 pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
     let prefix = input.prefix.to_string();
+    let rows = [
+        (format!("Enter / {prefix} Enter"), "start a shell"),
+        (format!("{prefix} s"), "pick a session"),
+    ];
+    let key_width = rows
+        .iter()
+        .map(|(keys, _)| keys.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2;
+    let keys = rows.iter().fold(VStack::new(), |stack, (keys, what)| {
+        stack.child(Text::new(format!("{keys:<key_width$}{what}")))
+    });
     Frame::new()
         .header_left("No session")
         .header_padding(1)
@@ -782,10 +806,7 @@ pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
             VStack::new()
                 .gap(1)
                 .child(Text::new("Not attached to any session."))
-                .child(Text::new(format!(
-                    "Press {prefix} s to pick a session, or {}+Enter to start a shell.",
-                    input.modifier.label(),
-                ))),
+                .child(keys),
         )
         .into()
 }

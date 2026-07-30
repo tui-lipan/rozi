@@ -206,7 +206,11 @@ pub(crate) fn close_focused_pane_with_confirmation(
         && !confirm_second_press(
             ctx,
             PendingDestructive::ClosePane(id),
-            confirm_toast(&ctx.state.theme, "Again to kill pane"),
+            confirm_toast(
+                &ctx.state.theme,
+                ctx.state.config.pane.toast_opacity,
+                "Again to kill pane",
+            ),
         )
     {
         return Update::full();
@@ -235,6 +239,7 @@ pub(crate) fn kill_workspace_with_confirmation(
             PendingDestructive::KillWorkspace(workspace_index),
             confirm_toast(
                 &ctx.state.theme,
+                ctx.state.config.pane.toast_opacity,
                 format!(
                     "Again to kill {pane_count} {} on workspace {label}",
                     if pane_count == 1 { "pane" } else { "panes" }
@@ -300,6 +305,7 @@ pub(crate) fn kill_session_with_confirmation(
             PendingDestructive::KillSession,
             confirm_toast(
                 &ctx.state.theme,
+                ctx.state.config.pane.toast_opacity,
                 format!("Again to kill session `{session_name}`"),
             ),
         )
@@ -315,6 +321,7 @@ pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bo
     let pending = PendingDestructive::NewTemporarySession;
     let toast = confirm_toast(
         &ctx.state.theme,
+        ctx.state.config.pane.toast_opacity,
         "Again to start a fresh temporary session\nCurrent session is discarded",
     );
     confirm_second_press(ctx, pending, toast)

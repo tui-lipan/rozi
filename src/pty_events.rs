@@ -141,7 +141,11 @@ fn toast_content(title: Option<&str>, message: &str) -> std::sync::Arc<str> {
 pub(crate) fn notify_info(ctx: &mut Context<HyprmuxApp>, message: impl Into<String>) -> Notified {
     let message = message.into();
     let content = toast_content(None, &message);
-    let toast = info_toast(&ctx.state.theme, message);
+    let toast = info_toast(
+        &ctx.state.theme,
+        ctx.state.config.pane.toast_opacity,
+        message,
+    );
     notify(
         ctx,
         ToastKey::Content(content_key(&content)),
@@ -158,7 +162,12 @@ pub(crate) fn notify_error(
 ) -> Notified {
     let (title, message) = (title.into(), message.into());
     let content = toast_content(Some(&title), &message);
-    let toast = error_toast(&ctx.state.theme, title, message);
+    let toast = error_toast(
+        &ctx.state.theme,
+        ctx.state.config.pane.toast_opacity,
+        title,
+        message,
+    );
     notify(
         ctx,
         ToastKey::Content(content_key(&content)),
@@ -176,19 +185,20 @@ pub(crate) fn notify_on(
 ) -> Notified {
     let message = message.into();
     let content = toast_content(title.as_deref(), &message);
+    let opacity = ctx.state.config.pane.toast_opacity;
     let toast = match title {
-        Some(title) => error_toast(&ctx.state.theme, title, message),
-        None => info_toast(&ctx.state.theme, message),
+        Some(title) => error_toast(&ctx.state.theme, opacity, title, message),
+        None => info_toast(&ctx.state.theme, opacity, message),
     };
     notify(ctx, ToastKey::Channel(channel), content, toast)
 }
 
-pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
+pub(crate) fn info_toast(theme: &Theme, opacity: f32, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(3.0)
         .wrap(true)
         .max_width(Length::Px(64))
-        .frame_style(toast_frame_style(theme.status.info))
+        .frame_style(toast_frame_style(theme, theme.status.info, opacity))
         .title_style(toast_text_style(theme).bold())
         .message_style(toast_text_style(theme))
         .copyable(true)
@@ -198,18 +208,19 @@ pub(crate) fn info_toast(theme: &Theme, message: impl Into<String>) -> Toast {
 
 /// Toast for an armed destructive action: error-colored chrome, visible for exactly the confirm
 /// window so its dismissal coincides with the pending action expiring.
-pub(crate) fn confirm_toast(theme: &Theme, message: impl Into<String>) -> Toast {
+pub(crate) fn confirm_toast(theme: &Theme, opacity: f32, message: impl Into<String>) -> Toast {
     Toast::new(message.into())
         .duration(crate::ops::confirm::CONFIRM_WINDOW.as_secs_f64())
         .wrap(true)
         .max_width(Length::Px(64))
-        .frame_style(toast_frame_style(theme.status.error))
+        .frame_style(toast_frame_style(theme, theme.status.error, opacity))
         .message_style(toast_text_style(theme))
         .padding((0, 0, 0, 0))
 }
 
 pub(crate) fn error_toast(
     theme: &Theme,
+    opacity: f32,
     title: impl Into<String>,
     message: impl Into<String>,
 ) -> Toast {
@@ -219,7 +230,7 @@ pub(crate) fn error_toast(
         .wrap(true)
         .max_width(Length::Px(64))
         .border(true)
-        .frame_style(toast_frame_style(theme.status.error))
+        .frame_style(toast_frame_style(theme, theme.status.error, opacity))
         .title_style(toast_text_style(theme).bold())
         .message_style(toast_text_style(theme))
         .copyable(true)
@@ -227,8 +238,28 @@ pub(crate) fn error_toast(
         .padding((0, 0, 0, 0))
 }
 
-fn toast_frame_style(accent: Color) -> Style {
-    Style::new().fg(accent)
+/// Chrome for a toast: `accent` over the theme's own panel color.
+///
+/// A toast sets no background of its own by default in the widget, so it would inherit whatever
+/// pane output is behind it - unreadable over bright content. Painting the theme's panel color
+/// makes it read as the same material as the palette and modals.
+///
+/// `opacity` below `1.0` uses an alpha paint, which composites per cell against the real content
+/// underneath, so pane colors show through. That is a deliberate trade: the text contrast then
+/// depends on what is behind, and across the bundled themes a value like `0.82` puts 8 of them
+/// under the 4.5:1 readability floor over light content. The default stays solid for that reason;
+/// see `[pane] toast_opacity`.
+///
+/// The panel color is used rather than a fixed dark wash because the message text comes from
+/// `theme.primary` - on a light theme that text is dark, and a dark background under it would
+/// recreate the very problem this solves.
+fn toast_frame_style(theme: &Theme, accent: Color, opacity: f32) -> Style {
+    let style = Style::new().fg(accent);
+    if opacity >= 1.0 {
+        style.bg(theme.surface.panel)
+    } else {
+        style.bg_alpha(theme.surface.panel, opacity.clamp(0.0, 1.0))
+    }
 }
 
 fn toast_text_style(theme: &Theme) -> Style {

@@ -110,6 +110,15 @@ pub(super) fn apply_workbar_style_config(
     if let Some(workbar_powerline) = parsed.workbar_powerline {
         config.workbar_powerline = workbar_powerline;
     }
+    if let Some(opacity) = parsed.toast_opacity {
+        if opacity.is_finite() && (0.0..=1.0).contains(&opacity) {
+            config.toast_opacity = opacity;
+        } else {
+            warnings.push(format!(
+                "Ignored pane.toast_opacity {opacity} (expected a number between 0.0 and 1.0)"
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -168,6 +177,34 @@ mod tests {
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
         assert!(warnings.is_empty());
         assert!(!pane.workbar_powerline);
+    }
+
+    #[test]
+    fn toast_opacity_defaults_to_solid_and_accepts_a_unit_fraction() {
+        assert_eq!(
+            HyprmuxPaneConfig::default().toast_opacity,
+            1.0,
+            "a solid toast is the only setting whose contrast does not depend on pane content",
+        );
+
+        let parsed: PaneFileConfig = toml::from_str("toast_opacity = 0.82").expect("config parses");
+        let mut pane = HyprmuxPaneConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+        assert!(warnings.is_empty());
+        assert_eq!(pane.toast_opacity, 0.82);
+    }
+
+    #[test]
+    fn toast_opacity_outside_the_unit_range_warns_and_keeps_the_default() {
+        for raw in ["toast_opacity = 1.5", "toast_opacity = -0.2"] {
+            let parsed: PaneFileConfig = toml::from_str(raw).expect("config parses");
+            let mut pane = HyprmuxPaneConfig::default();
+            let mut warnings = Vec::new();
+            apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
+            assert_eq!(warnings.len(), 1, "{raw} should warn");
+            assert_eq!(pane.toast_opacity, 1.0, "{raw} must not take effect");
+        }
     }
 
     #[test]

@@ -305,6 +305,7 @@ pub(super) struct PaneFileConfig {
     pub(super) workbar_powerline: Option<bool>,
     pub(super) workbar_tab_style: Option<String>,
     pub(super) workbar_style: Option<String>,
+    pub(super) toast_opacity: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

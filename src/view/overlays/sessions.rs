@@ -435,12 +435,14 @@ fn session_picker_palette(
                 .description(session_description(entry, we_hold)),
         );
     }
+    // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
+    // repeating it in the body says the same thing twice in a longer sentence.
     let empty_text = if picker.entries.is_empty() {
-        "No sessions - press Ctrl+N to create".to_string()
+        "No sessions".to_string()
     } else if query.is_empty() {
-        "Type to filter sessions, or press Ctrl+N to create".to_string()
+        "Type to filter sessions".to_string()
     } else {
-        format!("No sessions match `{query}` - press Ctrl+N to create")
+        format!("No sessions match `{query}`")
     };
 
     let pending_kill = picker.pending_kill;

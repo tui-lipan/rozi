@@ -109,8 +109,10 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
 **separate** session - it never renames the one you're in:
 
 - Highlight an existing session and press `Enter` to attach to it.
-- Type a new name and press `Ctrl+N` to create a fresh empty session under that name. Creation is
-  explicit and fails if the name is already running.
+- Type a new name and press `Ctrl+N` to create a fresh empty session under that name. The filter
+  text carries into the create prompt, so a search that matched nothing becomes the name of the
+  session you make instead — no retyping. Creation is explicit and fails if the name is already
+  running.
 - Press `Ctrl+D` to detach the current named session and exit the client, leaving its server running
   for later reattach.
 - Press `Ctrl+K` twice to kill the highlighted named session or reset a highlighted ephemeral one.

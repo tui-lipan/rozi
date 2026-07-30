@@ -247,8 +247,17 @@ mod tests {
             backend
                 .dispatch(Msg::SessionPickerCreateFromQuery)
                 .expect("open create prompt");
-            assert!(backend.state().rename_session.is_some());
             assert!(!backend.state().show_session_picker);
+            // Ctrl+N from a query means "then make that one": the name comes along rather than
+            // being typed a second time.
+            assert_eq!(
+                backend
+                    .state()
+                    .rename_session
+                    .as_ref()
+                    .map(|rename| rename.input.text().to_string()),
+                Some("dev".to_string())
+            );
 
             backend
                 .dispatch(Msg::CloseRenameSession)

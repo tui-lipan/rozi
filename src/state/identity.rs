@@ -121,8 +121,10 @@ impl SessionRenameState {
         }
     }
 
-    pub fn new_create() -> Self {
-        Self::new("", NamingMode::CreateSession)
+    /// A create-session prompt prefilled with `initial` (the session picker's query, when the
+    /// prompt was raised from it). Empty is the ordinary case.
+    pub fn new_create_named(initial: impl AsRef<str>) -> Self {
+        Self::new(initial, NamingMode::CreateSession)
     }
 
     /// A "New session on `<host>`" prompt: names a session to create on `target`.

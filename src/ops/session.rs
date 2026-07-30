@@ -1537,9 +1537,19 @@ fn enter_session_rename(ctx: &mut Context<HyprmuxApp>, rename: SessionRenameStat
     Update::full()
 }
 
+/// Raise the create-session prompt, carrying whatever was typed into the session picker. Reaching
+/// `Ctrl+N` from a query that matched nothing means "then make that one", so the name comes along
+/// rather than making the user type it a second time.
 pub(crate) fn open_create_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let seed = ctx
+        .state
+        .session_picker
+        .as_ref()
+        .filter(|_| ctx.state.show_session_picker)
+        .map(|picker| picker.input.text().trim().to_string())
+        .unwrap_or_default();
     clear_pending_session_arms(ctx);
-    enter_session_rename(ctx, SessionRenameState::new_create())
+    enter_session_rename(ctx, SessionRenameState::new_create_named(seed))
 }
 
 /// Raise the create-session prompt pre-targeted at a remote host ("New session on `<host>`"). The

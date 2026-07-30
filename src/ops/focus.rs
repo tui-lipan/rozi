@@ -22,6 +22,19 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
 }
 
+/// Whether focus is pinned to the pane currently covering the workspace.
+///
+/// A fullscreen pane hides every tile behind it, so moving focus by direction or cycling order
+/// would land on a pane the user cannot see and send their keystrokes there. Fullscreen already
+/// locks out moving, resizing, and split dragging (`ops::resize_move`, `promote_focused_to_master`);
+/// this is the same lock for focus. Toggling fullscreen off unlocks it.
+pub(crate) fn focus_locked_by_fullscreen(state: &State) -> bool {
+    state
+        .current()
+        .focused_pane
+        .is_some_and(|id| active_pane_is_fullscreen(state, id))
+}
+
 /// Focus a live workspace pane regardless of which workspace currently owns the view.
 pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> bool {
     let Some(workspace_index) = ctx.state.current().workspaces.iter().position(|workspace| {
@@ -99,6 +112,9 @@ fn focus_in_direction_with_wrap(
     viewport: Rect,
     wrap: bool,
 ) -> Option<PaneId> {
+    if focus_locked_by_fullscreen(state) {
+        return None;
+    }
     let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
     let workspace = &state.current().workspaces[state.current().active_workspace];
     let placements = workspace_target_rects(
@@ -292,6 +308,9 @@ fn interval_gap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
 /// the current focus is floating (not part of the tiled order) it falls back to the first
 /// tiled pane. Returns the newly focused id, or `None` when there are no tiled panes.
 pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Option<PaneId> {
+    if focus_locked_by_fullscreen(state) {
+        return None;
+    }
     let ids = state.current().workspaces[state.current().active_workspace].tiled_ids();
     if ids.is_empty() {
         return None;
@@ -852,6 +871,47 @@ mod tests {
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    /// A fullscreen pane hides every tile behind it, so moving focus off it would put the keyboard
+    /// on a pane the user cannot see. Both movement styles stay put until fullscreen is toggled off.
+    #[test]
+    fn fullscreen_pins_focus_to_the_pane_covering_the_workspace() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.current_mut().focused_pane = Some(2);
+        state.current_mut().workspaces[0].panes[1].fullscreen = true;
+
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            None
+        );
+        assert_eq!(
+            focus_in_direction_no_wrap(&mut state, Direction::Right, viewport),
+            None
+        );
+        assert_eq!(cycle_focus_in_tiled_order(&mut state, true), None);
+        assert_eq!(state.current().focused_pane, Some(2));
+
+        // Leaving fullscreen releases the lock.
+        state.current_mut().workspaces[0].panes[1].fullscreen = false;
+        assert!(cycle_focus_in_tiled_order(&mut state, true).is_some());
+    }
+
+    /// The lock follows the focused pane, not the workspace: a fullscreen pane in the background
+    /// (its own workspace is not active, or the focus sits elsewhere) must not freeze navigation.
+    #[test]
+    fn a_fullscreen_pane_that_is_not_focused_does_not_lock_focus() {
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.current_mut().focused_pane = Some(2);
+        state.current_mut().workspaces[0].panes[0].fullscreen = true;
+
+        assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
     }
 
     #[test]

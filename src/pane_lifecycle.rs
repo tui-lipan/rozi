@@ -158,12 +158,20 @@ pub(crate) fn spawn_pane_in_workspace(
         .current_mut()
         .next_pty_generation
         .saturating_add(1);
+    // A fullscreen pane covers the whole workspace, so a plain tiled spawn would hand the focus to
+    // a pane nobody can see and leave keystrokes going somewhere invisible. Pass the fullscreen on
+    // to the new pane instead, so the focused pane stays the visible one; leaving fullscreen (the
+    // other option) would instead yank a layout the user deliberately set up. A spawn that does not
+    // take focus must not take the screen either — it lands in the tree behind the fullscreen pane.
+    let takes_over_fullscreen = placement.focus
+        && placement.float.is_none()
+        && workspace_has_fullscreen(&ctx.state, workspace_index);
     let floating_rect = default_floating_rect(bounds, id);
     let mut pane = Pane::new(id, ctx.state.config.scrollback, floating_rect);
     pane.pty_generation = generation;
     pane.terminal.bind_server_backend(id, generation);
     pane.identity = identity;
-    pane.fullscreen = placement.fullscreen;
+    pane.fullscreen = placement.fullscreen || takes_over_fullscreen;
     if let Some(float) = placement.float {
         pane.floating = true;
         let w = bounds.w * float.width;
@@ -200,7 +208,15 @@ pub(crate) fn spawn_pane_in_workspace(
     let cols = pane.terminal.cols;
     let rows = pane.terminal.rows;
 
+    let fullscreen = pane.fullscreen;
     let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    if fullscreen {
+        // At most one pane per workspace is fullscreen: two would stack, and which one you saw
+        // would come down to render order. The new pane is not in `panes` yet.
+        for other in &mut workspace.panes {
+            other.fullscreen = false;
+        }
+    }
     workspace.panes.push(pane);
     place_spawned_pane(
         workspace,
@@ -251,6 +267,14 @@ pub(crate) fn spawn_pane_in_workspace(
         activate_delay,
     ));
     (id, update)
+}
+
+/// Whether a live pane in `workspace_index` currently covers the workspace.
+fn workspace_has_fullscreen(state: &State, workspace_index: usize) -> bool {
+    state.current().workspaces[workspace_index]
+        .panes
+        .iter()
+        .any(|pane| pane.fullscreen && !pane.closing)
 }
 
 fn apply_spawn_focus(

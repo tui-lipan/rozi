@@ -59,6 +59,18 @@ Toggle the focused pane fullscreen with `f`. A fullscreen pane fills the workspa
 (below the workbar) and shows a `fullscreen` badge. Toggle again to restore its previous
 tiled or floating geometry.
 
+Fullscreen is a lock, not just a size: everything behind the pane is hidden, so the focus stays on
+it. Directional focus and Tab cycling do nothing until you leave fullscreen, and moving, resizing,
+and split dragging are already refused there. Spawning a pane still works and the new pane **takes
+the fullscreen over** - it opens covering the workspace and the previous pane returns to its tile
+underneath, so the pane you are typing into is always the pane you can see. Only one pane per
+workspace is fullscreen at a time. A spawn that does not take focus (a `[[rules]]` entry with
+`focus = false`) lands in the tiling behind the fullscreen pane and leaves it alone.
+
+Jumps to a *named* pane are not locked: the sidebar, `focus-next-blocked-pane`, and the control
+socket's `focus-pane` still move focus out of a fullscreen pane, because those name a destination
+rather than walking the layout.
+
 `none` and `dividers` also remove frames from floating panes, popups, scratchpads, and fullscreen
 panes for a consistent borderless presentation. Set the config-file-only
 `keep_special_borders = true` to retain double frames around floating panes, popups, and the

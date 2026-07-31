@@ -103,6 +103,39 @@ fn nested_dividers_compose_an_automatic_junction() {
 }
 
 #[test]
+fn titled_divider_segments_tee_instead_of_cornering() {
+    on_large_stack(|| {
+        let mut backend = backend(PaneBorderMode::Dividers, 4);
+        {
+            let state = backend.state_mut();
+            state.config.pane.show_titles = true;
+            state.config.pane.titlebar = PaneTitlebarMode::Border;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.start_axis = SplitAxis::Vertical;
+            let ids: Vec<_> = workspace.panes.iter().map(|pane| pane.id).collect();
+            workspace.tile_tree = build_dwindle_tree(&ids, SplitAxis::Vertical, &[]);
+            for (index, pane) in workspace.panes.iter_mut().enumerate() {
+                pane.set_custom_title(format!("PANE{index}"));
+            }
+        }
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        assert!(
+            lines.iter().all(|line| !line.contains('┌') && !line.contains('┐')),
+            "titled horizontal segments meeting a split vertical must tee (┬/┼), not corner:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            lines.iter().any(|line| {
+                line.contains('┬') || line.contains('┼') || line.contains('├') || line.contains('┤')
+            }),
+            "expected a composed tee/cross among titled dividers:\n{}",
+            lines.join("\n")
+        );
+    });
+}
+
+#[test]
 fn moving_one_pane_preserves_unaffected_dividers() {
     on_large_stack(|| {
         let mut backend = backend(PaneBorderMode::Dividers, 4);
@@ -179,6 +212,62 @@ fn integrated_header_uses_one_row_in_borderless_modes() {
                 );
             }
         }
+    });
+}
+
+#[test]
+fn merged_border_titlebar_keeps_lower_title_when_upper_focused() {
+    on_large_stack(|| {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 40,
+            h: 12,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.animations.enabled = false;
+            state.config.pane.show_workbar = false;
+            state.config.pane.show_titles = true;
+            state.config.pane.titlebar = PaneTitlebarMode::Border;
+            state.config.pane.border_mode = PaneBorderMode::Merged;
+            state.config.pane.highlight_focused_border = true;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.start_axis = SplitAxis::Vertical;
+            workspace.panes.clear();
+            workspace.tile_tree = None;
+            let ids = [10u32, 11u32];
+            for (i, id) in ids.iter().enumerate() {
+                let mut pane = Pane::new(
+                    *id,
+                    5_000,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 40.0,
+                        h: 12.0,
+                    },
+                );
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.set_custom_title(if i == 0 { "TOP-PANE" } else { "BOTTOM-PANE" });
+                workspace.panes.push(pane);
+            }
+            workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
+            workspace.focused_pane = Some(10);
+            state.current_mut().focused_pane = Some(10);
+        }
+        backend.render();
+        let lines = backend.capture_frame().to_fixed_grid_lines();
+        assert!(
+            lines.iter().any(|line| line.contains("TOP-PANE")),
+            "top title missing: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("󰖲  BOTTOM-PANE")),
+            "bottom title wiped or its icon gap collapsed by focused upper border: {lines:?}"
+        );
     });
 }
 

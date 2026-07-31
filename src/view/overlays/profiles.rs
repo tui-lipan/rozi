@@ -18,7 +18,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         profile_picker_key(),
         Msg::CloseProfilePicker,
         body,
-        60,
+        64,
     )
 }
 

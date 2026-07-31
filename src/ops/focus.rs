@@ -144,17 +144,33 @@ fn focus_in_direction_with_wrap(
         focus_pane(state, id);
         return Some(id);
     };
+    let continue_band = continue_focus_band(workspace, &candidates, focused, direction);
     let geometric = candidates
         .iter()
         .filter(|candidate| candidate.id != focused)
         .filter_map(|candidate| {
-            directional_score(current.rect, candidate.rect, direction)
-                .map(|score| (candidate.id, score))
+            // Require cross-axis overlap so focus stays orthogonal (2→Right wraps to 1, not
+            // diagonally to 4). Swap already uses the same rule.
+            (cross_axis_overlap(current.rect, candidate.rect, direction) > 0.0)
+                .then(|| directional_score(current.rect, candidate.rect, direction))
+                .flatten()
+                .map(|score| {
+                    let band_rank = continue_band.map_or((0, 0.0), |band| {
+                        cross_axis_band_rank(band, candidate.rect, direction)
+                    });
+                    (candidate.id, band_rank, score)
+                })
         })
-        .min_by(|(_, a), (_, b)| a.total_cmp(b))
-        .map(|(id, _)| id)
+        .min_by(|(_, band_a, score_a), (_, band_b, score_b)| {
+            band_a
+                .0
+                .cmp(&band_b.0)
+                .then_with(|| band_a.1.total_cmp(&band_b.1))
+                .then_with(|| score_a.total_cmp(score_b))
+        })
+        .map(|(id, _, _)| id)
         .or_else(|| {
-            wrap.then(|| wrapped_focus_id(&candidates, current, direction))
+            wrap.then(|| wrapped_focus_id(&candidates, current, direction, continue_band))
                 .flatten()
         });
     let remembered = remembered_focus_target(workspace, &candidates, focused, direction);
@@ -180,12 +196,34 @@ fn remembered_focus_target(
     direction: Direction,
 ) -> Option<PaneId> {
     let hint = workspace.last_directional_focus?;
+    // Only reverse restores the exact entry sibling. Continue uses `continue_focus_band` so wrap
+    // stays in the entry row/column (4→3→1→4) instead of jumping to another band (→2) or
+    // oscillating on the entry pane (1↔3).
     (hint.pane == focused
-        && split_axis_for_direction(direction) == split_axis_for_direction(hint.entry_direction)
+        && direction == opposite_direction(hint.entry_direction)
         && candidates
             .iter()
             .any(|candidate| candidate.id == hint.target))
     .then_some(hint.target)
+}
+
+/// When continuing in the direction that entered the current pane, remember the entry pane's
+/// cross-axis band so edge wrap stays on that row/column.
+fn continue_focus_band(
+    workspace: &Workspace,
+    candidates: &[tiling::PanePlacement],
+    focused: PaneId,
+    direction: Direction,
+) -> Option<FloatRect> {
+    let hint = workspace.last_directional_focus?;
+    (hint.pane == focused && direction == hint.entry_direction)
+        .then(|| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.id == hint.target)
+                .map(|candidate| candidate.rect)
+        })
+        .flatten()
 }
 
 fn prefer_aligned_focus_target(
@@ -195,9 +233,15 @@ fn prefer_aligned_focus_target(
     remembered: Option<PaneId>,
     geometric: Option<PaneId>,
 ) -> Option<PaneId> {
-    let (Some(remembered), Some(geometric)) = (remembered, geometric) else {
-        return geometric;
+    let Some(geometric) = geometric else {
+        return remembered;
     };
+    let Some(remembered) = remembered else {
+        return Some(geometric);
+    };
+    if remembered == geometric {
+        return Some(geometric);
+    }
     let remembered_rect = candidates
         .iter()
         .find(|candidate| candidate.id == remembered)?
@@ -206,6 +250,12 @@ fn prefer_aligned_focus_target(
         .iter()
         .find(|candidate| candidate.id == geometric)?
         .rect;
+    let remembered_in_direction = is_orthogonal_neighbor(current.rect, remembered_rect, direction);
+    let geometric_in_direction = is_orthogonal_neighbor(current.rect, geometric_rect, direction);
+    // Reverse-sticky may point at a behind-the-back pane on a wrap; a real forward neighbor wins.
+    if geometric_in_direction && !remembered_in_direction {
+        return Some(geometric);
+    }
     if cross_axis_gap(current.rect, remembered_rect, direction)
         <= cross_axis_gap(current.rect, geometric_rect, direction)
     {
@@ -219,11 +269,12 @@ fn wrapped_focus_id(
     candidates: &[tiling::PanePlacement],
     current: &tiling::PanePlacement,
     direction: Direction,
+    band: Option<FloatRect>,
 ) -> Option<PaneId> {
     candidates
         .iter()
         .filter(|candidate| candidate.id != current.id)
-        .min_by(|a, b| compare_wrap_candidates(current.rect, a.rect, b.rect, direction))
+        .min_by(|a, b| compare_wrap_candidates(current.rect, a.rect, b.rect, direction, band))
         .map(|candidate| candidate.id)
 }
 
@@ -232,6 +283,7 @@ fn compare_wrap_candidates(
     a: FloatRect,
     b: FloatRect,
     direction: Direction,
+    band: Option<FloatRect>,
 ) -> std::cmp::Ordering {
     let rank = |candidate: FloatRect| {
         let (current_start, current_end, candidate_start, candidate_end, opposite_edge) =
@@ -265,16 +317,41 @@ fn compare_wrap_candidates(
                     candidate.y,
                 ),
             };
+        let band_rank = band.map_or((0, 0.0), |band| {
+            cross_axis_band_rank(band, candidate, direction)
+        });
         let cross_gap = interval_gap(current_start, current_end, candidate_start, candidate_end);
         let center_offset =
             ((candidate_start + candidate_end) - (current_start + current_end)).abs();
-        (cross_gap, opposite_edge, center_offset)
+        (
+            band_rank.0,
+            band_rank.1,
+            cross_gap,
+            opposite_edge,
+            center_offset,
+        )
     };
     let a = rank(a);
     let b = rank(b);
-    a.0.total_cmp(&b.0)
+    a.0.cmp(&b.0)
         .then_with(|| a.1.total_cmp(&b.1))
         .then_with(|| a.2.total_cmp(&b.2))
+        .then_with(|| a.3.total_cmp(&b.3))
+        .then_with(|| a.4.total_cmp(&b.4))
+}
+
+fn is_orthogonal_neighbor(current: FloatRect, candidate: FloatRect, direction: Direction) -> bool {
+    directional_score(current, candidate, direction).is_some()
+        && cross_axis_overlap(current, candidate, direction) > 0.0
+}
+
+fn opposite_direction(direction: Direction) -> Direction {
+    match direction {
+        Direction::Left => Direction::Right,
+        Direction::Right => Direction::Left,
+        Direction::Up => Direction::Down,
+        Direction::Down => Direction::Up,
+    }
 }
 
 fn cross_axis_gap(current: FloatRect, candidate: FloatRect, direction: Direction) -> f32 {
@@ -294,6 +371,31 @@ fn cross_axis_gap(current: FloatRect, candidate: FloatRect, direction: Direction
     }
 }
 
+fn cross_axis_band_rank(band: FloatRect, candidate: FloatRect, direction: Direction) -> (u8, f32) {
+    if cross_axis_overlap(band, candidate, direction) > 0.0 {
+        (0, 0.0)
+    } else {
+        (1, cross_axis_gap(band, candidate, direction))
+    }
+}
+
+fn cross_axis_overlap(current: FloatRect, candidate: FloatRect, direction: Direction) -> f32 {
+    match direction {
+        Direction::Left | Direction::Right => interval_overlap(
+            current.y,
+            current.y + current.h,
+            candidate.y,
+            candidate.y + candidate.h,
+        ),
+        Direction::Up | Direction::Down => interval_overlap(
+            current.x,
+            current.x + current.w,
+            candidate.x,
+            candidate.x + candidate.w,
+        ),
+    }
+}
+
 fn interval_gap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
     if b_end < a_start {
         a_start - b_end
@@ -302,6 +404,10 @@ fn interval_gap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
     } else {
         0.0
     }
+}
+
+fn interval_overlap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
+    (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
 }
 
 /// Move focus to the next/previous tiled pane in `tiled_ids()` order, wrapping around. If
@@ -587,7 +693,12 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
     let previous = state.current().focused_pane;
-    state.active_workspace_mut().last_directional_focus = None;
+    // Only drop axis sticky when focus actually moves. Framework focus sync (and other
+    // re-affirmations of the current pane) call this on every key and must not erase the hint
+    // that keeps 4→3→1→4 on the entry row.
+    if previous != Some(id) {
+        state.active_workspace_mut().last_directional_focus = None;
+    }
     if let Some(pane) = state
         .active_workspace_mut()
         .panes
@@ -856,10 +967,12 @@ mod tests {
         };
         let mut state = state_with_floating(placements);
         state.current_mut().focused_pane = Some(start);
-        for (&direction, &expected) in directions.iter().zip(expected) {
+        for (step, (&direction, &expected)) in directions.iter().zip(expected).enumerate() {
+            let from = state.current().focused_pane;
             assert_eq!(
                 focus_in_direction(&mut state, direction, viewport),
-                Some(expected)
+                Some(expected),
+                "step {step}: {direction:?} from {from:?}"
             );
         }
     }
@@ -974,6 +1087,138 @@ mod tests {
         );
     }
 
+    /// Layout shaped like:
+    /// ```text
+    ///   |   2
+    /// 1 |-------
+    ///   | 3 | 4
+    /// ```
+    /// Edge wrap from the spanning pane stays on the entry row: 4→3→1→4 and 3→4→1→3.
+    #[test]
+    fn directional_focus_escapes_peer_axis_sticky_when_neighbor_lies_ahead() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let layout = [
+            (
+                1,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 29.0,
+                },
+            ),
+            (
+                2,
+                FloatRect {
+                    x: 51.0,
+                    y: 0.0,
+                    w: 49.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                3,
+                FloatRect {
+                    x: 51.0,
+                    y: 15.0,
+                    w: 24.0,
+                    h: 14.0,
+                },
+            ),
+            (
+                4,
+                FloatRect {
+                    x: 76.0,
+                    y: 15.0,
+                    w: 24.0,
+                    h: 14.0,
+                },
+            ),
+        ];
+
+        assert_directional_sequence(&layout, 2, &[Direction::Right], &[1]);
+        assert_directional_sequence(&layout, 4, &[Direction::Left], &[3]);
+        assert_directional_sequence(
+            &layout,
+            4,
+            &[
+                Direction::Left,
+                Direction::Left,
+                Direction::Left,
+                Direction::Left,
+                Direction::Left,
+            ],
+            &[3, 1, 4, 3, 1],
+        );
+        assert_directional_sequence(
+            &layout,
+            3,
+            &[
+                Direction::Right,
+                Direction::Right,
+                Direction::Right,
+                Direction::Right,
+                Direction::Right,
+            ],
+            &[4, 1, 3, 4, 1],
+        );
+        assert_directional_sequence(&layout, 2, &[Direction::Right, Direction::Left], &[1, 2]);
+        assert_directional_sequence(
+            &layout,
+            3,
+            &[Direction::Right, Direction::Left, Direction::Left],
+            &[4, 3, 1],
+        );
+        assert_directional_sequence(
+            &layout,
+            2,
+            &[
+                Direction::Down,
+                Direction::Left,
+                Direction::Right,
+                Direction::Right,
+            ],
+            &[3, 1, 3, 4],
+        );
+
+        let mut state = state_with_floating(&layout);
+        state.current_mut().focused_pane = Some(3);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(1)
+        );
+
+        // Framework focus sync re-affirms the current pane between keys; that must not erase the
+        // entry-row band that makes the next Left wrap to 4 instead of 2.
+        assert_directional_sequence(&layout, 4, &[Direction::Left, Direction::Left], &[3, 1]);
+        let mut state = state_with_floating(&layout);
+        state.current_mut().focused_pane = Some(4);
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(3)
+        );
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(1)
+        );
+        focus_pane(&mut state, 1);
+        assert!(
+            state
+                .active_workspace_ref()
+                .last_directional_focus
+                .is_some()
+        );
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(4)
+        );
+    }
+
     #[test]
     fn directional_focus_returns_to_the_pane_that_entered_a_spanning_pane() {
         let viewport = Rect {
@@ -1012,32 +1257,37 @@ mod tests {
             ),
         ];
         for source in [1, 2] {
-            for return_direction in [Direction::Down, Direction::Up] {
-                let mut state = state_with_floating(&vertical);
-                state.current_mut().focused_pane = Some(source);
-                assert_eq!(
-                    focus_in_direction(&mut state, Direction::Down, viewport),
-                    Some(3)
-                );
-                assert_eq!(
-                    focus_in_direction(&mut state, return_direction, viewport),
-                    Some(source)
-                );
-            }
+            let mut state = state_with_floating(&vertical);
+            state.current_mut().focused_pane = Some(source);
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Down, viewport),
+                Some(3)
+            );
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Up, viewport),
+                Some(source)
+            );
         }
         let mut state = state_with_floating(&vertical);
         state.current_mut().focused_pane = Some(3);
-        assert_eq!(
-            focus_in_direction(&mut state, Direction::Left, viewport),
-            Some(1)
-        );
+        // Full-width spanning pane: Left has no orthogonal neighbor, so wrap hits the rightmost
+        // top pane first, then steps left across that row.
         assert_eq!(
             focus_in_direction(&mut state, Direction::Left, viewport),
             Some(2)
         );
-        for direction in [Direction::Up, Direction::Down] {
-            assert_directional_sequence(&vertical, 2, &[direction; 3], &[3, 2, 3]);
-        }
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Left, viewport),
+            Some(1)
+        );
+        // Reverse returns to the entry sibling; continuing wraps within the entry band.
+        assert_directional_sequence(
+            &vertical,
+            2,
+            &[Direction::Down, Direction::Up, Direction::Down],
+            &[3, 2, 3],
+        );
+        assert_directional_sequence(&vertical, 2, &[Direction::Down, Direction::Down], &[3, 2]);
 
         let horizontal = [
             (
@@ -1069,43 +1319,50 @@ mod tests {
             ),
         ];
         for source in [1, 2] {
-            for return_direction in [Direction::Right, Direction::Left] {
-                let mut state = state_with_floating(&horizontal);
-                state.current_mut().focused_pane = Some(source);
-                assert_eq!(
-                    focus_in_direction(&mut state, Direction::Right, viewport),
-                    Some(3)
-                );
-                assert_eq!(
-                    focus_in_direction(&mut state, return_direction, viewport),
-                    Some(source)
-                );
-            }
+            let mut state = state_with_floating(&horizontal);
+            state.current_mut().focused_pane = Some(source);
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Right, viewport),
+                Some(3)
+            );
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Left, viewport),
+                Some(source)
+            );
         }
         let mut state = state_with_floating(&horizontal);
         state.current_mut().focused_pane = Some(3);
         assert_eq!(
             focus_in_direction(&mut state, Direction::Up, viewport),
-            Some(1)
+            Some(2)
         );
         assert_eq!(
             focus_in_direction(&mut state, Direction::Up, viewport),
-            Some(2)
+            Some(1)
         );
-        for direction in [Direction::Left, Direction::Right] {
-            assert_directional_sequence(&horizontal, 2, &[direction; 3], &[3, 2, 3]);
-        }
+        assert_directional_sequence(
+            &horizontal,
+            2,
+            &[Direction::Right, Direction::Left, Direction::Right],
+            &[3, 2, 3],
+        );
+        assert_directional_sequence(
+            &horizontal,
+            2,
+            &[Direction::Right, Direction::Right],
+            &[3, 2],
+        );
         assert_directional_sequence(
             &horizontal,
             3,
             &[Direction::Up, Direction::Down, Direction::Up],
-            &[1, 2, 1],
+            &[2, 1, 2],
         );
         assert_directional_sequence(
             &horizontal,
             3,
             &[Direction::Down, Direction::Up, Direction::Down],
-            &[2, 1, 2],
+            &[1, 2, 1],
         );
     }
 

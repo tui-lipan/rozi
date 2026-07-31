@@ -1456,7 +1456,7 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!("session row missing pane count\n{}", lines.join("\n"))
                     });
-                let current_col = row.find("current").expect("current marker");
+                let current_col = row.find('●').expect("current gutter marker");
                 let pane_col = row.find("1 pane").expect("right pane count");
                 assert!(
                     pane_col > current_col + 12,

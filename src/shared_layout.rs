@@ -340,7 +340,6 @@ pub(crate) fn apply_shared_layout(
             .as_ref()
             .and_then(|tree| dwindle_from_shared(tree, &known));
         ws.last_move_swap = None;
-        ws.last_directional_focus = None;
 
         // Closing panes rejoin their workspace so they keep rendering while they scale out.
         // They are already excluded from tiling, focus, and counts, so nothing else sees them.
@@ -560,10 +559,11 @@ mod reconciler_tests {
     use super::*;
     use crate::HyprmuxApp;
     use crate::Msg;
+    use crate::input::Action;
     use crate::pane_lifecycle::{find_pane, find_pane_mut};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
-    use crate::state::SharedSessionState;
+    use crate::state::{Direction, DirectionalFocusHint, SharedSessionState};
     use tui_lipan::TestBackend;
 
     const VIEWPORT: Rect = Rect {
@@ -778,6 +778,134 @@ mod reconciler_tests {
                 crate::anim::GeometryAnimation::TileFloat,
                 "live layout commits should retain geometry transitions"
             );
+        });
+    }
+
+    #[test]
+    fn shared_layout_reconcile_preserves_directional_focus_hint() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let layout = layout_with_panes(&[(1, 0), (2, 0)]);
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("seed shared layout");
+
+            let hint = DirectionalFocusHint {
+                pane: 1,
+                entry_direction: Direction::Left,
+                target: 2,
+            };
+            backend.state_mut().current_mut().workspaces[0].last_directional_focus = Some(hint);
+
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 2,
+                    author: 2,
+                    layout,
+                })
+                .expect("reconcile shared layout");
+
+            assert_eq!(
+                backend.state().current().workspaces[0].last_directional_focus,
+                Some(hint)
+            );
+        });
+    }
+
+    #[test]
+    fn directional_focus_keeps_entry_row_across_shared_reconciles() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let mut layout = layout_with_panes(&[(1, 0), (2, 0), (3, 0), (4, 0)]);
+            layout.workspaces[0].tree = Some(SharedTree::Split {
+                axis: SharedSplitAxis::Horizontal,
+                ratio: 0.5,
+                first: Box::new(SharedTree::Leaf { pane: 1 }),
+                second: Box::new(SharedTree::Split {
+                    axis: SharedSplitAxis::Vertical,
+                    ratio: 0.5,
+                    first: Box::new(SharedTree::Leaf { pane: 2 }),
+                    second: Box::new(SharedTree::Split {
+                        axis: SharedSplitAxis::Horizontal,
+                        ratio: 0.5,
+                        first: Box::new(SharedTree::Leaf { pane: 3 }),
+                        second: Box::new(SharedTree::Leaf { pane: 4 }),
+                    }),
+                }),
+            });
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("seed shared layout");
+
+            backend.state_mut().current_mut().focused_pane = Some(4);
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(4);
+            for (rev, expected) in [(2, 3), (3, 1), (4, 4)] {
+                backend
+                    .dispatch(Msg::RunAction(Action::Focus(Direction::Left)))
+                    .expect("focus left");
+                assert_eq!(backend.state().current().focused_pane, Some(expected));
+                backend
+                    .dispatch(Msg::SessionLayoutCommitted {
+                        epoch: 0,
+                        rev,
+                        author: 2,
+                        layout: layout.clone(),
+                    })
+                    .expect("reconcile shared layout");
+                assert_eq!(
+                    backend.state().current().workspaces[0].last_directional_focus,
+                    Some(DirectionalFocusHint {
+                        pane: expected,
+                        entry_direction: Direction::Left,
+                        target: match expected {
+                            3 => 4,
+                            1 => 3,
+                            4 => 1,
+                            _ => unreachable!(),
+                        },
+                    }),
+                    "directional hint changed after revision {rev}"
+                );
+            }
+
+            backend.state_mut().current_mut().focused_pane = Some(3);
+            backend.state_mut().current_mut().workspaces[0].focused_pane = Some(3);
+            backend.state_mut().current_mut().workspaces[0].last_directional_focus = None;
+            for (rev, expected) in [(5, 4), (6, 1), (7, 3)] {
+                backend
+                    .dispatch(Msg::RunAction(Action::Focus(Direction::Right)))
+                    .expect("focus right");
+                assert_eq!(backend.state().current().focused_pane, Some(expected));
+                backend
+                    .dispatch(Msg::SessionLayoutCommitted {
+                        epoch: 0,
+                        rev,
+                        author: 2,
+                        layout: layout.clone(),
+                    })
+                    .expect("reconcile shared layout");
+            }
         });
     }
 

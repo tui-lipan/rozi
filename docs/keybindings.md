@@ -115,10 +115,11 @@ pass-through can only reach the remote host's clipboard.
 
 ### Focus
 
-Spatial focus moves to the nearest pane in a direction (not just the next in a list). At an edge,
-focus wraps to the opposite edge while preserving the current row or column when possible. When
-multiple panes feed into one spanning pane, continuing or reversing direction returns to the pane
-focus entered from.
+Spatial focus moves to the nearest pane in a direction (not just the next in a list). Neighbors
+must share cross-axis overlap, so focus stays orthogonal (no diagonal jumps). At an edge, focus
+wraps to the opposite edge while preserving the current row or column when possible — including
+the row/column you entered a spanning pane from. Reversing direction returns to the pane focus
+entered from.
 
 | Command | Keys |
 | --- | --- |

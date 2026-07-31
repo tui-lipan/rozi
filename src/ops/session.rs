@@ -961,8 +961,7 @@ pub(crate) fn switch_to_parked(
     // Back in the foreground: reclaim the lease, which the server grants outright when the session
     // has no active controller — the usual case for a session this client left parked.
     mark_current_parked(ctx, false);
-    ctx.state.show_session_picker = false;
-    ctx.state.session_picker = None;
+    dismiss_session_pickers(ctx);
     ctx.state.commands_dirty = true;
     // Snap to the restored session's geometry rather than interpolating from the previous view.
     ctx.state.animation = crate::anim::GeometryAnimation::None;
@@ -1084,16 +1083,21 @@ pub(crate) fn release_background_for_exit(ctx: &mut Context<HyprmuxApp>, close_t
     }
 }
 
+/// Drop the session and profile pickers that led into a session switch or attach.
+fn dismiss_session_pickers(ctx: &mut Context<HyprmuxApp>) {
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
+}
+
 /// Shared cleanup when a new current session is installed: close the popup and scratchpad (bound to
 /// the outgoing session) and the session/profile selection overlays that led here, and mark the
 /// Sessions tab stale so the post-update chokepoint re-sweeps for the new current.
 fn prepare_session_install(ctx: &mut Context<HyprmuxApp>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
-    ctx.state.show_session_picker = false;
-    ctx.state.session_picker = None;
-    ctx.state.show_profile_picker = false;
-    ctx.state.profile_picker = None;
+    dismiss_session_pickers(ctx);
     ctx.state.sidebar.invalidate_sessions();
 }
 
@@ -1351,8 +1355,7 @@ pub(crate) fn attach_session_by_name(
             left
         };
     ctx.state.runtime_epoch = epoch;
-    ctx.state.show_session_picker = false;
-    ctx.state.session_picker = None;
+    dismiss_session_pickers(ctx);
     ctx.state.commands_dirty = true;
     ctx.state.current_mut().remote_host = remote_host.clone();
     ctx.state.current_mut().remote_target = remote_target.clone();
@@ -2957,5 +2960,115 @@ mod tests {
     #[test]
     fn switching_away_parks_a_used_ephemeral() {
         assert!(background_after_leaving_ephemeral(true));
+    }
+
+    /// Attaching to a session that is already retained must retire the Profiles overlay the same way
+    /// a launch does — otherwise Enter on a running profile leaves the picker covering the session
+    /// that just came to the foreground.
+    #[test]
+    fn attaching_to_parked_session_closes_profile_picker() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::SessionClient;
+        use crate::state::{Attachment, ConnectionState, ProfilePickerState};
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (current_client, _current_rx) = SessionClient::test_channel();
+                let (parked_client, _parked_rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 1;
+                    state.current_mut().epoch = 1;
+                    state.current_mut().session_name = Some("other".into());
+                    state.current_mut().session_attached = true;
+                    state.current_mut().connection = ConnectionState::Connected;
+                    state.current_mut().session_client = Some(current_client);
+
+                    let mut parked = Attachment::new();
+                    parked.epoch = 2;
+                    parked.parked_seq = 1;
+                    parked.session_name = Some("dev".into());
+                    parked.session_attached = true;
+                    parked.connection = ConnectionState::Connected;
+                    parked.session_client = Some(parked_client);
+                    state.background.insert(2, parked);
+
+                    state.show_profile_picker = true;
+                    state.profile_picker = Some(ProfilePickerState::new(Vec::new()));
+                    state.session_picker =
+                        Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                    state.show_session_picker = true;
+                }
+
+                backend
+                    .dispatch(Msg::SessionPickerActivate(0))
+                    .expect("attach to parked session");
+
+                assert_eq!(
+                    backend.state().current().session_name.as_deref(),
+                    Some("dev")
+                );
+                assert!(!backend.state().show_profile_picker);
+                assert!(backend.state().profile_picker.is_none());
+                assert!(!backend.state().show_session_picker);
+                assert!(backend.state().session_picker.is_none());
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
+    /// A cold attach (session running, not retained here) must dismiss Profiles as soon as the
+    /// switch starts — not wait for `SessionAttached`, which left the overlay up over Connecting.
+    #[test]
+    fn cold_attach_closes_profile_picker_before_connect() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::session::client::SessionClient;
+        use crate::state::{ConnectionState, ProfilePickerState};
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let (client, _rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.runtime_epoch = 1;
+                    state.current_mut().epoch = 1;
+                    state.current_mut().session_name = Some("other".into());
+                    state.current_mut().session_attached = true;
+                    state.current_mut().connection = ConnectionState::Connected;
+                    state.current_mut().session_client = Some(client);
+                    state.show_profile_picker = true;
+                    state.profile_picker = Some(ProfilePickerState::new(Vec::new()));
+                    state.session_picker =
+                        Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                    state.show_session_picker = true;
+                }
+
+                backend
+                    .dispatch(Msg::SessionPickerActivate(0))
+                    .expect("start cold attach");
+
+                assert!(!backend.state().show_profile_picker);
+                assert!(backend.state().profile_picker.is_none());
+                assert!(
+                    backend
+                        .state()
+                        .current()
+                        .pending_session_attach
+                        .as_ref()
+                        .is_some_and(|pending| pending.name == "dev")
+                );
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
     }
 }

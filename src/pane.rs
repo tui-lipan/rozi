@@ -101,7 +101,11 @@ impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
         let rows = 32;
-        let screen = TerminalScreen::new(rows, cols, scrollback);
+        let mut screen = TerminalScreen::new(rows, cols, scrollback);
+        // Images the child draws are sized in cells against this. The same value rides to the
+        // server with every resize, so the PTY reports it to the child and both ends agree on how
+        // many rows a picture takes.
+        screen.set_cell_size(tui_lipan::host_cell_size());
         Self {
             pane_id: 0,
             generation: 0,
@@ -177,6 +181,7 @@ impl TerminalPane {
         self.runtime_sequence = 0;
         let mut screen = self.screen.borrow_mut();
         *screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        screen.set_cell_size(tui_lipan::host_cell_size());
         self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
             screen.set_palette(palette);
@@ -782,5 +787,29 @@ mod tests {
         pane.process_server_output("a你b".as_bytes());
 
         assert_eq!(pane.extract_text((0, 0), (0, 2)), "a你");
+    }
+
+    /// A pane decodes the kitty graphics the child writes, and sizes the result against the host
+    /// cell rather than a guess - the wiring the server's PTY reports to the child in pixels.
+    #[test]
+    fn kitty_graphics_from_the_child_become_a_placement() {
+        let mut pane = TerminalPane::new(100);
+        pane.apply_server_resize(40, 20);
+        let cell = tui_lipan::host_cell_size();
+        assert_eq!(pane.screen.borrow().cell_size(), cell);
+
+        // Two cells wide by three tall, in whatever the host's cell happens to be. All-zero RGB
+        // keeps the base64 trivial (`A` per 6 bits) so the test needs no encoder.
+        let (width, height) = (u32::from(cell.width) * 2, u32::from(cell.height) * 3);
+        let payload = "A".repeat((width * height * 4) as usize);
+        pane.process_server_output(
+            format!("\x1b_Ga=T,f=24,s={width},v={height},t=d,i=1;{payload}\x1b\\").as_bytes(),
+        );
+
+        let snapshot = pane.screen.borrow_mut().render_snapshot();
+        assert_eq!(snapshot.images.len(), 1);
+        assert_eq!((snapshot.images[0].rows, snapshot.images[0].cols), (3, 2));
+        // The escape is consumed, not painted.
+        assert!(!snapshot.text.contains("_Ga="));
     }
 }

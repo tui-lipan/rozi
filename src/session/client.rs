@@ -22,6 +22,10 @@ pub struct SessionClient {
     /// Wire version agreed with this server. Gates messages added after the minimum supported
     /// version so an older server never receives a variant it cannot deserialize.
     effective_protocol: u32,
+    /// This client's host cell size in pixels, sent with the canonical PTY size so the server's
+    /// PTYs report pixel dimensions the child can size images against. Read once: it is a
+    /// property of the terminal this process is attached to, not of any one pane.
+    cell: tui_lipan::TerminalCellSize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +52,7 @@ impl SessionClient {
         (
             Self {
                 tx,
+                cell: tui_lipan::TerminalCellSize::default(),
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
             },
@@ -132,6 +137,7 @@ impl SessionClient {
                 tx,
                 server_pid,
                 effective_protocol,
+                cell: tui_lipan::host_cell_size(),
             },
             attached,
         ))
@@ -209,6 +215,8 @@ impl SessionClient {
             palette: WirePalette::from(palette),
             shell,
             command_shell,
+            cell_width: self.cell.width,
+            cell_height: self.cell.height,
         });
     }
 
@@ -225,6 +233,8 @@ impl SessionClient {
             generation,
             cols,
             rows,
+            cell_width: self.cell.width,
+            cell_height: self.cell.height,
         });
     }
     pub fn kill(&self, pane_id: PaneId, generation: u64) {

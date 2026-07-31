@@ -183,6 +183,34 @@ file. Older dumps are pruned so the directory stays near 20 files.
 in the terminal (tokens, passwords, private URLs). Treat the dump directory as sensitive local
 data; do not share those files.
 
+## Images
+
+Programs in a pane can draw pictures with the
+[Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) — `kitty +kitten
+icat file.png`, `timg -pk file.png`, `chafa -f kitty file.png`, and anything else that probes for
+graphics support before drawing.
+
+**Your terminal does not have to speak Kitty.** The pane decodes what the child sends and re-encodes
+it for whatever your host supports — Kitty, iTerm2, sixel, or half-blocks. Images scroll with the
+text they were drawn against, come back when you scroll back, and disappear with the alternate
+screen a full-screen program drew them on.
+
+The controller reports its cell size to the server, which passes it to every PTY in
+`TIOCGWINSZ`, so a program sizing a picture for itself reserves the same rows the pane draws.
+Attached clients on terminals with different cell sizes render against the controller's value, the
+same rule the canonical pane size already follows.
+
+Limits worth knowing:
+
+- **Reattaching loses images drawn before the attach.** Attach seeding replays VT text, not image
+  payloads.
+- **Transmission through a file or shared memory is refused** (`t=f`, `t=t`, `t=s`). A client can
+  be attached from a different machine than the one that wrote the file. Tools fall back to inline
+  transmission.
+- **The protocol's own animation frames are not supported.** A program that animates by
+  re-drawing the image — which is what most do — works fine.
+- Decoded pixels are capped per pane and evicted least-recently-used.
+
 ## Runtime persistence boundaries
 
 - **The server owns live state.** PTYs live in the session server, not the UI process. A bare

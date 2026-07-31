@@ -210,6 +210,8 @@ impl SessionServer {
                 palette,
                 shell,
                 command_shell,
+                cell_width,
+                cell_height,
             } => {
                 if !self.is_controller(client_id) {
                     return vec![(
@@ -240,6 +242,7 @@ impl SessionServer {
                     palette,
                     shell,
                     command_shell,
+                    cell: cell_size(cell_width, cell_height),
                 });
                 if initial_seed && matches!(message, ServerMessage::SpawnResult { ok: true, .. }) {
                     self.origin_seed_client = Some(client_id);
@@ -251,6 +254,8 @@ impl SessionServer {
                 generation,
                 cols,
                 rows,
+                cell_width,
+                cell_height,
             } => {
                 if !self.is_controller(client_id) {
                     return Vec::new();
@@ -259,8 +264,15 @@ impl SessionServer {
                     pane.cols = cols.max(1);
                     pane.rows = rows.max(1);
                     pane.screen.resize(pane.rows, pane.cols);
+                    // The controller's cell size is canonical alongside its pane size: the child
+                    // reads it out of the PTY to decide how many cells a picture needs, and the
+                    // pane that renders that picture is measuring against the same value.
+                    if let Some(cell) = cell_size(cell_width, cell_height) {
+                        pane.cell = cell;
+                        pane.screen.set_cell_size(cell);
+                    }
                     if let Some(pty) = &pane.pty {
-                        let _ = pty.resize(pane.cols, pane.rows);
+                        let _ = pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell);
                     }
                     // Broadcast so every client's parser reshapes at the same byte position.
                     return vec![(

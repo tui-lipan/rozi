@@ -196,6 +196,9 @@ impl SessionServer {
                     palette: saved.palette,
                     shell: self.settings.shell.clone(),
                     command_shell: self.settings.command_shell.clone(),
+                    // Resurrect predates any client attaching; the first controller resize
+                    // reports the real cell size.
+                    cell: None,
                 },
                 Some(&replay),
                 true,

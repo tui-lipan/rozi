@@ -149,6 +149,12 @@ pub struct ServerPane {
     pub screen: TerminalScreen,
     pub cols: u16,
     pub rows: u16,
+    /// Host cell size in pixels, as reported by the controller and handed to the PTY.
+    ///
+    /// The child reads it out of `TIOCGWINSZ` to size images in cells; the client rendering those
+    /// images measures against the same value, so what the child reserved and what the pane draws
+    /// agree.
+    pub cell: tui_lipan::TerminalCellSize,
     pub exited: Option<i32>,
     pub log: Option<PaneLog>,
     /// The resolved interactive shell and spawn environment this pane was launched with, kept so a
@@ -440,6 +446,13 @@ struct SpawnRequest {
     palette: WirePalette,
     shell: Vec<String>,
     command_shell: Vec<String>,
+    /// Host cell size, when the client reported one.
+    cell: Option<tui_lipan::TerminalCellSize>,
+}
+
+/// A reported cell size, or `None` when the peer sent none (pre-17 clients send zeroes).
+fn cell_size(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize> {
+    (width > 0 && height > 0).then(|| tui_lipan::TerminalCellSize::new(width, height))
 }
 
 impl ServerPane {

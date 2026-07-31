@@ -9,6 +9,7 @@ description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
 [dependencies]
 tui-lipan = { path = "../tui-lipan/", features = [
   "terminal",
+  "terminal-images",
   "terminal-serde",
   "clipboard-images",
   "theme-reload",

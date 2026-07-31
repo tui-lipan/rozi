@@ -35,7 +35,7 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
@@ -374,12 +374,26 @@ pub enum ClientMessage {
         /// client-side via `platform::command::resolve_command_shell`. Only used when `command`
         /// is `Some`; the command string becomes its final argument.
         command_shell: Vec<String>,
+        /// Host cell size in pixels, so the PTY reports pixel dimensions a child that draws
+        /// images can use. Zero (the pre-17 default) leaves the PTY's own default in place.
+        #[serde(default)]
+        cell_width: u16,
+        /// See `cell_width`.
+        #[serde(default)]
+        cell_height: u16,
     },
     Resize {
         pane_id: PaneId,
         generation: u64,
         cols: u16,
         rows: u16,
+        /// Host cell width in pixels, from the controller. Zero (the pre-17 default) means the
+        /// client did not report one; the server keeps whatever the PTY already had.
+        #[serde(default)]
+        cell_width: u16,
+        /// Host cell height in pixels. See `cell_width`.
+        #[serde(default)]
+        cell_height: u16,
     },
     Kill {
         pane_id: PaneId,
@@ -1248,6 +1262,8 @@ mod tests {
                 background: None,
                 ansi: [Color::Black; 16],
             },
+            cell_width: 0,
+            cell_height: 0,
             shell: vec!["/bin/sh".to_string()],
             command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
         };
@@ -1292,7 +1308,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":16,
+                "protocol_version":17,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1320,7 +1336,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":16,
+                "protocol_version":17,
                 "min_protocol_version":12
             })
         );
@@ -1406,7 +1422,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":16,
+                "effective_protocol":17,
                 "created_from_profile":"work"
             })
         );
@@ -1480,11 +1496,13 @@ mod tests {
             palette,
             shell: vec!["/bin/zsh".to_string()],
             command_shell: vec!["/bin/sh".to_string(), "-c".to_string()],
+            cell_width: 9,
+            cell_height: 18,
         })
         .unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"]})
+            serde_json::json!({"type":"spawn-pane","pane_id":7,"generation":9,"command":"bash","cwd":"/repo","cols":80,"rows":24,"keep_open":true,"env":[["A","B"]],"title":"shell","palette":serde_json::to_value(palette).unwrap(),"shell":["/bin/zsh"],"command_shell":["/bin/sh","-c"],"cell_width":9,"cell_height":18})
         );
     }
 

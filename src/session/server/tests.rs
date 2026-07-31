@@ -29,6 +29,7 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
         command: None,
         keep_open: false,
         command_completed: false,
+        cell: tui_lipan::TerminalCellSize::default(),
         shell: Vec::new(),
         env: Vec::new(),
         palette: test_palette(),
@@ -250,6 +251,8 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
             palette: test_palette(),
             shell: test_shell(),
             command_shell: test_command_shell(),
+            cell_width: 0,
+            cell_height: 0,
         },
     );
     server.handle_message(
@@ -688,6 +691,8 @@ fn spawn_from_follower_is_rejected() {
             palette: test_palette(),
             shell: test_shell(),
             command_shell: test_command_shell(),
+            cell_width: 0,
+            cell_height: 0,
         },
     );
     assert!(matches!(
@@ -936,6 +941,7 @@ fn resize_updates_screen_and_broadcasts_ack() {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: test_palette(),
@@ -960,6 +966,8 @@ fn resize_updates_screen_and_broadcasts_ack() {
             generation: 2,
             cols: 80,
             rows: 24,
+            cell_width: 0,
+            cell_height: 0,
         },
     );
 
@@ -981,6 +989,48 @@ fn resize_updates_screen_and_broadcasts_ack() {
 }
 
 #[test]
+fn resize_adopts_the_controllers_cell_size() {
+    let mut server = SessionServer::new_named("dev");
+    let (controller, _s1) = attach_client(&mut server);
+    server.panes.insert(1, status_test_pane(2, None));
+
+    server.handle_message(
+        controller,
+        ClientMessage::Resize {
+            pane_id: 1,
+            generation: 2,
+            cols: 80,
+            rows: 24,
+            cell_width: 9,
+            cell_height: 18,
+        },
+    );
+    let pane = server.panes.get(&1).unwrap();
+    // The PTY reports this to the child in pixels, and the client that rendered the resize sizes
+    // images against the same cell - a mismatch is images overlapping the text below them.
+    assert_eq!(pane.cell, tui_lipan::TerminalCellSize::new(9, 18));
+    assert_eq!(
+        pane.screen.cell_size(),
+        tui_lipan::TerminalCellSize::new(9, 18)
+    );
+
+    // A pre-17 client reports no cell size; the last known one stands rather than collapsing.
+    server.handle_message(
+        controller,
+        ClientMessage::Resize {
+            pane_id: 1,
+            generation: 2,
+            cols: 100,
+            rows: 30,
+            cell_width: 0,
+            cell_height: 0,
+        },
+    );
+    let pane = server.panes.get(&1).unwrap();
+    assert_eq!(pane.cell, tui_lipan::TerminalCellSize::new(9, 18));
+}
+
+#[test]
 fn duplicate_spawn_is_rejected() {
     let mut server = SessionServer::new_named("dev");
     server.panes.insert(
@@ -992,6 +1042,7 @@ fn duplicate_spawn_is_rejected() {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: test_palette(),
@@ -1021,6 +1072,7 @@ fn duplicate_spawn_is_rejected() {
         palette: test_palette(),
         shell: test_shell(),
         command_shell: test_command_shell(),
+        cell: None,
     });
     assert!(matches!(
         result,
@@ -1040,6 +1092,7 @@ fn exited_pane_can_be_respawned() {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: test_palette(),
@@ -1070,6 +1123,7 @@ fn exited_pane_can_be_respawned() {
         palette: test_palette(),
         shell: test_shell(),
         command_shell: test_command_shell(),
+        cell: None,
     });
 
     assert!(matches!(
@@ -1094,6 +1148,7 @@ fn attach_reports_layout_and_panes() {
         command: None,
         keep_open: false,
         command_completed: false,
+        cell: tui_lipan::TerminalCellSize::default(),
         shell: Vec::new(),
         env: Vec::new(),
         palette: test_palette(),
@@ -1173,6 +1228,7 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: test_palette(),
@@ -1233,6 +1289,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: test_palette(),
@@ -1296,6 +1353,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 command: Some("true".into()),
                 keep_open: false,
                 command_completed: false,
+                cell: tui_lipan::TerminalCellSize::default(),
                 shell: Vec::new(),
                 env: Vec::new(),
                 palette: test_palette(),
@@ -1376,6 +1434,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
         palette: test_palette(),
         shell: test_shell(),
         command_shell: test_command_shell(),
+        cell: None,
     });
     assert!(matches!(
         result,
@@ -1453,6 +1512,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         palette: test_palette(),
         shell: test_shell(),
         command_shell: test_command_shell(),
+        cell: None,
     });
     assert!(matches!(
         result,

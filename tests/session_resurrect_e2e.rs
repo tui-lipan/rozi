@@ -70,6 +70,8 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         palette: WirePalette::from(TerminalColorPalette::default()),
         shell,
         command_shell,
+        cell_width: 0,
+        cell_height: 0,
     });
     read_until(&mut client, |frame| {
         matches!(

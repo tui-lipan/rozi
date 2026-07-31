@@ -81,6 +81,8 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
         palette: WirePalette::from(TerminalColorPalette::default()),
         shell,
         command_shell,
+        cell_width: 0,
+        cell_height: 0,
     });
 
     let mut saw_spawn = false;

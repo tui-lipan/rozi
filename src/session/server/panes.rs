@@ -113,7 +113,10 @@ impl SessionServer {
         };
         let generation = request.generation;
         self.next_generation = self.next_generation.max(generation.saturating_add(1));
+        // Pre-17 clients report no cell size; the PTY's own default stands in until one resizes.
+        let cell = request.cell.unwrap_or_default();
         let mut screen = TerminalScreen::new(rows.max(1), cols.max(1), DEFAULT_SCROLLBACK);
+        screen.set_cell_size(cell);
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.
         screen.set_palette(request.palette.into());
@@ -126,7 +129,8 @@ impl SessionServer {
             &request.shell,
             &request.command_shell,
         )
-        .size(cols.max(1), rows.max(1));
+        .size(cols.max(1), rows.max(1))
+        .cell_size(cell);
         let effective_cwd = effective_spawn_cwd(request.cwd.as_deref());
         if let Some(cwd) = effective_cwd.as_ref() {
             config = config.cwd(cwd.clone());
@@ -155,6 +159,7 @@ impl SessionServer {
                         screen,
                         cols: cols.max(1),
                         rows: rows.max(1),
+                        cell,
                         exited: None,
                         log: None,
                         shell: request.shell,
@@ -192,6 +197,7 @@ impl SessionServer {
                             screen,
                             cols: cols.max(1),
                             rows: rows.max(1),
+                            cell,
                             exited: Some(127),
                             log: None,
                             shell: request.shell,

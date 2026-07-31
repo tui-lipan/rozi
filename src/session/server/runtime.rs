@@ -496,6 +496,7 @@ mod tests {
             command: None,
             keep_open: false,
             command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
             shell: Vec::new(),
             env: Vec::new(),
             palette: WirePalette::from(TerminalColorPalette::default()),

@@ -210,7 +210,7 @@ Profiles restore layout and launch intent only, while a live session preserves P
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
 share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
-range; this build max 16, min 12). One client holds the
+range; this build max 17, min 12). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state
@@ -387,7 +387,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
   `docs/remote.md`. `HYPRMUX_REMOTE_BINARY` forces which local binary is installed on the remote.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
-  crate uses `terminal`, `terminal-serde`, `clipboard-images`, `theme-reload`, and `devtools`.
+  crate uses `terminal`, `terminal-images`, `terminal-serde`, `clipboard-images`, `theme-reload`,
+  and `devtools`.
 
 ## Further Reading
 

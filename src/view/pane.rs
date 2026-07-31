@@ -781,18 +781,19 @@ pub(crate) fn tiled_resize_strips(
 
     let gap = ctx.state.tile_gap();
     let (vertical_strips, horizontal_strips) = resize_strip_hitboxes(&tiled, gap, master);
+    // Strip rects are canvas-space; every coordinate compared against a pointer event has to be
+    // moved into root space first. A left sidebar shifts x exactly as the workbar shifts y.
     let top_offset = f32::from(ctx.state.content_top_offset());
+    let left_offset = f32::from(ctx.state.terminal_content_left_offset(ctx.viewport()));
 
     let mut strips = Vec::new();
     for strip in &vertical_strips {
         strips.push((
             strip.rect,
-            resize_strip_element(ctx, strip, true, strip.boundary),
+            resize_strip_element(ctx, strip, true, strip.boundary + left_offset),
         ));
     }
     for strip in &horizontal_strips {
-        // Strip rects are canvas-space; the chrome coordinate is compared against event
-        // coordinates, which are root-space.
         strips.push((
             strip.rect,
             resize_strip_element(ctx, strip, false, strip.boundary + top_offset),
@@ -801,7 +802,7 @@ pub(crate) fn tiled_resize_strips(
     for junction in resize_junction_hitboxes(&vertical_strips, &horizontal_strips) {
         strips.push((
             junction.rect,
-            resize_junction_element(ctx, junction, top_offset),
+            resize_junction_element(ctx, junction, left_offset, top_offset),
         ));
     }
     strips
@@ -812,8 +813,6 @@ fn resize_strip_hitboxes(
     gap: TileGap,
     master: bool,
 ) -> (Vec<ResizeStripHitbox>, Vec<ResizeStripHitbox>) {
-    // Include both neighboring border cells plus the gap between them. Merged borders overlap by
-    // one cell, so this naturally collapses back to a one-cell shared seam.
     let h_gap = gap.horizontal;
     let v_gap = gap.vertical;
     let eps = 1.5;
@@ -827,11 +826,17 @@ fn resize_strip_hitboxes(
                 let y0 = a.y.max(b.y);
                 let y1 = (a.y + a.h).min(b.y + b.h);
                 if y1 - y0 > eps {
+                    // Span only what lies *between* the two panes, so the strip never covers a
+                    // vertical border: in the separate border mode that column carries the
+                    // terminal's integrated scrollbar, and a strip over it would swallow every
+                    // scrollbar press. Merged borders overlap by a column, which leaves nothing
+                    // in between - `max(1)` puts the strip back on the shared seam, and the
+                    // near/far routing below decides which pane owns a press on it.
                     vertical_strips.push(ResizeStripHitbox {
                         rect: FloatRect {
-                            x: a_right - 1.0,
+                            x: a_right.min(b.x),
                             y: y0,
-                            w: (b.x - a_right + 2.0).max(1.0),
+                            w: (b.x - a_right).max(1.0),
                             h: y1 - y0,
                         },
                         pane_id: *a_id,
@@ -841,6 +846,9 @@ fn resize_strip_hitboxes(
                 }
             }
             // Horizontal boundary → vertical (top|bottom) split. Not adjustable in master.
+            // Unlike a vertical boundary this keeps straddling both panes' chrome: the stacked
+            // gap is zero even with separate borders, so there is no row between them to grab,
+            // and no scrollbar rides a horizontal border.
             if !master {
                 let a_bottom = a.y + a.h;
                 if (b.y - (a_bottom + v_gap)).abs() < eps {
@@ -1057,6 +1065,7 @@ fn resize_strip_element(
 fn resize_junction_element(
     ctx: &Context<HyprmuxApp>,
     junction: ResizeJunctionHitbox,
+    left_offset: f32,
     top_offset: f32,
 ) -> Element {
     let start_targets = (
@@ -1070,8 +1079,13 @@ fn resize_junction_element(
     MouseRegion::new()
         .drag_threshold(1, 1)
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
-            let (horizontal_panes, vertical_panes) =
-                junction_targets_at(&start_targets.0, &start_targets.1, &event, top_offset);
+            let (horizontal_panes, vertical_panes) = junction_targets_at(
+                &start_targets.0,
+                &start_targets.1,
+                &event,
+                left_offset,
+                top_offset,
+            );
             Msg::BeginResizeSplitJunction(
                 horizontal_panes,
                 vertical_panes,
@@ -1080,8 +1094,13 @@ fn resize_junction_element(
             )
         }))
         .on_drag(ctx.link().callback(move |event: MouseDragEvent| {
-            let (horizontal_panes, vertical_panes) =
-                junction_targets_at(&horizontal_targets, &vertical_targets, &event, top_offset);
+            let (horizontal_panes, vertical_panes) = junction_targets_at(
+                &horizontal_targets,
+                &vertical_targets,
+                &event,
+                left_offset,
+                top_offset,
+            );
             Msg::ResizeSplitJunction(
                 horizontal_panes,
                 vertical_panes,
@@ -1102,13 +1121,14 @@ fn junction_targets_at(
     horizontal: &[ResizeJunctionTarget],
     vertical: &[ResizeJunctionTarget],
     event: &MouseDragEvent,
+    left_offset: f32,
     top_offset: f32,
 ) -> (Vec<PaneId>, Vec<PaneId>) {
     (
         junction_target_at(horizontal, f32::from(event.from_y) - top_offset)
             .into_iter()
             .collect(),
-        junction_target_at(vertical, f32::from(event.from_x))
+        junction_target_at(vertical, f32::from(event.from_x) - left_offset)
             .into_iter()
             .collect(),
     )
@@ -1203,8 +1223,11 @@ mod tests {
         FloatRect { x, y, w, h }
     }
 
+    /// A vertical strip covers only what lies between the panes, never their side borders. With
+    /// separate borders the terminal draws its scrollbar into that border column, and a strip on
+    /// top of it swallows every scrollbar press.
     #[test]
-    fn resize_strips_cover_both_borders_and_gap() {
+    fn a_vertical_strip_stays_off_the_panes_side_borders() {
         let tiled = vec![
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(11.0, 0.0, 10.0, 10.0)),
@@ -1213,7 +1236,49 @@ mod tests {
 
         assert!(horizontal.is_empty());
         assert_eq!(vertical.len(), 1);
-        assert_eq!(vertical[0].rect, rect(9.0, 0.0, 3.0, 10.0));
+        // Pane 1 ends on column 9 and pane 2 starts on 11, so only column 10 is up for grabs.
+        assert_eq!(vertical[0].rect, rect(10.0, 0.0, 1.0, 10.0));
+    }
+
+    /// Merged borders overlap by a column, leaving nothing between the panes: the strip falls
+    /// back to the shared seam rather than to zero width.
+    #[test]
+    fn a_merged_vertical_strip_falls_back_to_the_shared_seam() {
+        let gap = TileGap {
+            horizontal: -1.0,
+            vertical: -1.0,
+        };
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(9.0, 0.0, 10.0, 10.0)),
+        ];
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false);
+
+        assert_eq!(vertical.len(), 1);
+        assert_eq!(vertical[0].rect, rect(9.0, 0.0, 1.0, 10.0));
+    }
+
+    /// `boundary` is canvas-space and the pointer is root-space, so `tiled_resize_strips` shifts
+    /// it by the chrome offset first. Without that a left sidebar pushed every strip cell past
+    /// the boundary, and a press beside the near pane's border focused the pane on the far side.
+    #[test]
+    fn strip_ownership_is_decided_in_root_space() {
+        let (near, far, boundary, sidebar) = (1, 2, 11u16, 32u16);
+
+        assert_eq!(strip_pointer_owner(near, far, boundary, 10), near);
+        assert_eq!(strip_pointer_owner(near, far, boundary, 11), far);
+
+        // The same two cells arrive shifted by the sidebar; the boundary has to shift with them.
+        assert_eq!(
+            strip_pointer_owner(near, far, boundary + sidebar, 10 + sidebar),
+            near
+        );
+        assert_eq!(
+            strip_pointer_owner(near, far, boundary + sidebar, 11 + sidebar),
+            far
+        );
+        // Leaving the boundary in canvas space is what the bug looked like: both read as `far`.
+        assert_eq!(strip_pointer_owner(near, far, boundary, 10 + sidebar), far);
     }
 
     #[test]
@@ -1241,7 +1306,7 @@ mod tests {
         let junctions = resize_junction_hitboxes(&vertical, &horizontal);
 
         assert_eq!(junctions.len(), 1, "coincident intersections must merge");
-        assert_eq!(junctions[0].rect, rect(9.0, 9.0, 3.0, 2.0));
+        assert_eq!(junctions[0].rect, rect(10.0, 9.0, 1.0, 2.0));
         assert_eq!(
             junctions[0].horizontal_targets,
             vec![

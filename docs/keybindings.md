@@ -284,7 +284,8 @@ including the workspace digits and mouse gestures.
 
 Press `r` (or run *Resize mode* from the palette) to enter **resize mode**: use `h/j/k/l` (or the
 arrow keys) to adjust the focused pane's split ratios, and `Esc` to leave. The workbar shows a green
-**RESIZE hjkl Esc** indicator while active.
+**RESIZE hjkl Esc** indicator while active. A press moves the divider 4% of the split it sits in,
+rounded to a whole cell and never less than one, so repeated presses step evenly.
 
 A **floating** pane has no split to adjust, so it resizes its own rectangle instead: `l`/`j` grow it
 and `h`/`k` shrink it, anchored at its top-left corner so it stays put while changing size. Pair

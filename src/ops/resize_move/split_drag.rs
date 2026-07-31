@@ -205,7 +205,7 @@ fn apply_resize_split_pixels(
         if axis != state::SplitAxis::Horizontal {
             return false;
         }
-        let available = master_available_width(tile_bounds);
+        let available = master_available_width(tile_bounds, tile_gap);
         if resize_master_split_by_pixels(workspace, pane_id, pixels, available) {
             ctx.state.animation = GeometryAnimation::None;
             return true;
@@ -274,8 +274,8 @@ fn distinct_split_representatives(
 mod tests {
     use super::*;
     use crate::ops::resize_move::test_util::{
-        TEST_VIEWPORT, assert_ratio_close, balanced_grid_ratios, balanced_grid_tree, in_test_stack,
-        root_ratio,
+        TEST_VIEWPORT, assert_ratio_close, balanced_grid_ratios, balanced_grid_tree, divider_cell,
+        first_pane_extent, in_test_stack, root_ratio, steps, two_pane_backend,
     };
     use crate::state::{Pane, SplitAxis, TileGap, Workspace};
     use crate::tiling::{DwindleTree, nearest_split_available, resize_tiled_split};
@@ -388,8 +388,13 @@ mod tests {
                     .as_ref()
                     .unwrap(),
             );
-            assert_ratio_close(ratios.0, 0.5 + 10.0 / root_available);
-            assert_ratio_close(ratios.1, 0.5 + 3.0 / left_available);
+            // Each divider commits on a whole cell, so the check is where it renders, not what
+            // fraction it stores: the pointer moved 10 columns and 3 rows, so each divider moved
+            // that many cells from where it started.
+            let root_start = divider_cell(0.5, root_available);
+            let left_start = divider_cell(0.5, left_available);
+            assert_eq!(divider_cell(ratios.0, root_available), root_start + 10.0);
+            assert_eq!(divider_cell(ratios.1, left_available), left_start + 3.0);
             assert_ratio_close(ratios.2, 0.5);
 
             backend
@@ -408,8 +413,8 @@ mod tests {
                     .as_ref()
                     .unwrap(),
             );
-            assert_ratio_close(ratios.0, 0.5 + 11.0 / root_available);
-            assert_ratio_close(ratios.1, 0.5 + 4.0 / left_available);
+            assert_eq!(divider_cell(ratios.0, root_available), root_start + 11.0);
+            assert_eq!(divider_cell(ratios.1, left_available), left_start + 4.0);
             assert_ratio_close(ratios.2, 0.5);
         });
     }
@@ -686,6 +691,56 @@ mod tests {
             });
         }
 
+        /// Dragging a divider one cell at a time must move it one cell at a time, on both axes.
+        ///
+        /// Two things used to break this. The divider was stored as a bare ratio and rendered by
+        /// rounding `usable * ratio`, so on the 99-column axis every whole-cell offset sat on a
+        /// half-cell tie and f32 noise decided it - a run of single-cell pulls came out
+        /// 0,0,+2,+2,+1,+1. And the framework's default drag threshold is 3 columns against 1
+        /// row, so the first two columns of a left/right drag were swallowed and the third
+        /// arrived already three cells out.
+        #[test]
+        fn a_divider_drag_tracks_the_pointer_cell_for_cell() {
+            in_test_stack(|| {
+                for vertical_divider in [true, false] {
+                    let axis = axis(vertical_divider);
+                    let mut backend = two_pane_backend(axis);
+                    let start = first_pane_extent(&mut backend, axis);
+                    // The divider sits just past pane 1; a horizontal one is below the workbar.
+                    let (grab_x, grab_y) = if vertical_divider {
+                        (start.round() as u16, 10)
+                    } else {
+                        (
+                            50,
+                            start.round() as u16 + backend.state_mut().content_top_offset(),
+                        )
+                    };
+
+                    backend
+                        .send_mouse(mouse(grab_x, grab_y, MouseKind::Down(MouseButton::Left)))
+                        .expect("press");
+                    let mut extents = vec![start];
+                    for step in 1..=5u16 {
+                        let (x, y) = if vertical_divider {
+                            (grab_x + step, grab_y)
+                        } else {
+                            (grab_x, grab_y + step)
+                        };
+                        backend
+                            .send_mouse(mouse(x, y, MouseKind::Drag(MouseButton::Left)))
+                            .expect("drag");
+                        extents.push(first_pane_extent(&mut backend, axis));
+                    }
+
+                    assert_eq!(
+                        steps(&extents),
+                        vec![1.0; 5],
+                        "{axis:?}: extents {extents:?} should follow the pointer one cell per cell"
+                    );
+                }
+            });
+        }
+
         /// A junction moves exactly one divider per axis - the segment under the drag origin -
         /// and keeps that pair for the whole gesture.
         #[test]
@@ -703,8 +758,14 @@ mod tests {
                         .expect("split")
                         .1
                 };
-                assert_ratio_close(ratio(&[]), 0.5 + 6.0 / 99.0);
-                assert_ratio_close(ratio(&[false]), 0.5 + 4.0 / 28.0);
+                assert_eq!(
+                    divider_cell(ratio(&[]), 99.0),
+                    divider_cell(0.5, 99.0) + 6.0
+                );
+                assert_eq!(
+                    divider_cell(ratio(&[false]), 28.0),
+                    divider_cell(0.5, 28.0) + 4.0
+                );
                 assert_ratio_close(ratio(&[true]), 0.5);
             });
         }

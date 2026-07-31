@@ -20,8 +20,12 @@ Because terminal cells are taller than they are wide, the axis decision applies 
 drives the choice. Set it to your terminal cell height divided by cell width.
 
 - **Flip the focused split axis** with `Space`.
-- **Grow / shrink** the focused split with `]`/`+` and `[`/`-`.
-- **Resize mode** (`r`) gives `hjkl` control over split ratios until you press `Esc`.
+- **Grow / shrink** the focused pane against its immediate sibling with `]`/`+` and `[`/`-`.
+- **Resize mode** (`r`) gives `hjkl` control over the surrounding splits until you press `Esc`.
+
+Every resize lands on a whole cell. A keyboard step is 4% of the split it moves, rounded to a
+cell and never less than one, so each press of a key moves a given divider by the same amount;
+dragging a divider with the mouse follows the pointer one cell per cell.
 
 ### Master
 

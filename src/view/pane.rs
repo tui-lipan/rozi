@@ -388,8 +388,7 @@ pub(crate) fn pane_element(
                 .resolved_fg()
                 .filter(|color| !color.is_sentinel())
         {
-            terminal_widget =
-                terminal_widget.selection_style(Style::new().bg(accent).fg(frame_bg));
+            terminal_widget = terminal_widget.selection_style(Style::new().bg(accent).fg(frame_bg));
         }
         terminal_widget = terminal_widget.selection(Some(selection));
     }
@@ -1019,6 +1018,10 @@ fn resize_strip_element(
     };
 
     let mut region = MouseRegion::new()
+        // A divider has no click gesture to tell a drag apart from, so it tracks the pointer from
+        // its first cell. On the default threshold a left/right drag ignored two columns and then
+        // arrived three out at once, which reads as a dead zone followed by a jump.
+        .drag_threshold(1, 1)
         .on_mouse_down(
             ctx.link()
                 .callback(move |event: MouseEvent| Msg::FocusPane(owner(event.x, event.y))),
@@ -1065,6 +1068,7 @@ fn resize_junction_element(
     // Segments are picked from the drag origin, so the pair a gesture grabs is fixed for its whole
     // lifetime; the drag session keeps it even if a later event is routed from another strip.
     MouseRegion::new()
+        .drag_threshold(1, 1)
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
             let (horizontal_panes, vertical_panes) =
                 junction_targets_at(&start_targets.0, &start_targets.1, &event, top_offset);

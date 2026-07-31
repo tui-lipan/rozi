@@ -2,16 +2,16 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::geometry::{clamp_float_rect, directional_score, lift_off_float_rect};
+use crate::geometry::{
+    clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
+};
 use crate::layout::{self, insert_tiled_pane_at_point, placement_for, workspace_target_rects};
 use crate::ops::focus::{active_pane_is_fullscreen, active_pane_mut, request_pane_focus};
-use crate::state::{
-    Direction, LayoutKind, MoveSwapHint, PaneId, State, TILE_GAP, TileGap, Workspace,
-};
+use crate::state::{Direction, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace};
 use crate::tiling::{
-    adjust_ratio_value, adjust_tree_split_for_focused, append_tiled_window,
-    flip_tree_split_for_focused, move_tiled_window_around_target, ratio_at, remove_tiled_window,
-    swap_tree_leaves,
+    append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
+    move_tiled_window_around_target, ratio_at, remove_tiled_window, resize_tiled_split,
+    swap_tree_leaves, usable_axis_extent,
 };
 
 use super::float::{
@@ -130,14 +130,31 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
     }
 }
 
-pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
-    let Some(focused) = state.current().focused_pane else {
+/// Grow or shrink the focused pane against its immediate sibling by one whole-cell step.
+///
+/// The axis is whichever way that innermost split runs, which is what separates this from resize
+/// mode: there the direction key picks the axis and the pane may push against an outer split.
+pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<HyprmuxApp>, grow: bool) {
+    let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
-    let workspace = state.active_workspace_mut();
+    if active_pane_is_fullscreen(&ctx.state, focused) {
+        return;
+    }
+    let bounds = ctx
+        .state
+        .canvas_bounds_from_terminal_viewport(ctx.viewport());
+    let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
+    let tile_gap = ctx.state.tile_gap();
+    let workspace = ctx.state.active_workspace_mut();
+
+    // Both resize entry points take pixels that are positive when the *focused* pane grows; the
+    // split's own orientation is applied further down.
     if workspace.layout_kind == LayoutKind::Master {
-        if adjust_master_split_for_focused(workspace, focused, delta) {
-            state.animation = GeometryAnimation::None;
+        let available = master_available_width(tile_bounds, tile_gap);
+        let pixels = signed_step(grow, available);
+        if resize_master_split_by_pixels(workspace, focused, pixels, available) {
+            ctx.state.animation = GeometryAnimation::None;
         }
         return;
     }
@@ -145,12 +162,22 @@ pub(crate) fn adjust_focused_split_ratio(state: &mut State, delta: f32) {
         return;
     }
     ensure_tile_tree(workspace);
-    let Some(tree) = workspace.tile_tree.as_mut() else {
+    let Some(tree) = workspace.tile_tree.as_ref() else {
         return;
     };
-    if adjust_tree_split_for_focused(tree, focused, delta, 0).is_some() {
-        state.animation = GeometryAnimation::None;
+    let Some((axis, available, _)) = innermost_split_for(tree, tile_bounds, tile_gap, focused)
+    else {
+        return;
+    };
+    let pixels = signed_step(grow, available);
+    if resize_tiled_split(workspace, tile_bounds, tile_gap, focused, axis, pixels) {
+        ctx.state.animation = GeometryAnimation::None;
     }
+}
+
+fn signed_step(grow: bool, available: f32) -> f32 {
+    let step = super::keyboard_step_cells(available);
+    if grow { step } else { -step }
 }
 
 /// Cycle the active workspace's layout, naming the new mode unless `show_toast` is false.
@@ -180,43 +207,38 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
     }
 }
 
-fn adjust_master_split_for_focused(workspace: &mut Workspace, focused: PaneId, delta: f32) -> bool {
-    let ids = workspace.tiled_ids();
-    if ids.len() < 2 || !ids.contains(&focused) {
-        return false;
-    }
-    let signed_delta = if ids.first() == Some(&focused) {
-        delta
-    } else {
-        -delta
-    };
-    if workspace.split_ratios.is_empty() {
-        workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
-    }
-    workspace.split_ratios[0] =
-        adjust_ratio_value(ratio_at(&workspace.split_ratios, 0), signed_delta);
-    true
-}
-
+/// Move the master/stack divider by `pixels`, positive when the focused pane grows.
+///
+/// Committed on a whole cell for the same reason a dwindle divider is: `allocate_master` renders
+/// the boundary by rounding `available * ratio`, so a ratio left mid-cell puts it on a rounding
+/// tie where a one-cell nudge may move it by none or by two.
 pub(super) fn resize_master_split_by_pixels(
     workspace: &mut Workspace,
     focused: PaneId,
     pixels: f32,
     available: f32,
 ) -> bool {
-    if pixels == 0.0 || available <= 0.0 {
+    let ids = workspace.tiled_ids();
+    if pixels == 0.0 || available <= 0.0 || ids.len() < 2 || !ids.contains(&focused) {
         return false;
     }
-    adjust_master_split_for_focused(workspace, focused, pixels / available.max(1.0))
+    // `split_ratios[0]` is the master's share, so a pane in the stack grows by pushing it back.
+    let toward_master = if ids.first() == Some(&focused) {
+        pixels
+    } else {
+        -pixels
+    };
+    if workspace.split_ratios.is_empty() {
+        workspace.split_ratios.push(crate::state::DEFAULT_RATIO);
+    }
+    let master_cells = (available * ratio_at(&workspace.split_ratios, 0)).round();
+    workspace.split_ratios[0] = cell_split_ratio(master_cells + toward_master, available);
+    true
 }
 
-pub(super) fn master_available_width(tile_bounds: FloatRect) -> f32 {
-    let gap = if tile_bounds.w > TILE_GAP {
-        TILE_GAP
-    } else {
-        0.0
-    };
-    (tile_bounds.w - gap).max(1.0)
+/// The width the master divider splits, matching what `allocate_master` lays panes out in.
+pub(super) fn master_available_width(tile_bounds: FloatRect, gap: TileGap) -> f32 {
+    usable_axis_extent(tile_bounds.w, crate::state::SplitAxis::Horizontal, gap).max(1.0)
 }
 
 /// Lift the focused pane out of its slot and re-insert it beside its directional neighbor,
@@ -439,12 +461,54 @@ mod tests {
     use crate::input::Action;
     use crate::layout::workspace_target_rects_excluding;
     use crate::ops::resize_move::test_util::{
-        TEST_VIEWPORT, in_test_stack, three_pane_stack_tree, three_pane_stack_workspace,
+        TEST_VIEWPORT, first_pane_extent, in_test_stack, steps, three_pane_stack_tree,
+        three_pane_stack_workspace, two_pane_backend,
     };
     use crate::state::{Pane, SplitAxis};
     use crate::tiling::DwindleTree;
     use crate::{HyprmuxApp, Msg};
     use tui_lipan::TestBackend;
+
+    /// Grow/shrink split steps whole cells too, and by the same amount each press.
+    ///
+    /// This is the one resize that never saw the layout at all: it added a flat `RATIO_STEP` to
+    /// the stored ratio, so how many cells a press was worth depended on the split's size and on
+    /// where the divider already sat.
+    #[test]
+    fn grow_and_shrink_split_step_the_divider_by_whole_cells() {
+        in_test_stack(|| {
+            for axis in [SplitAxis::Horizontal, SplitAxis::Vertical] {
+                let mut backend = two_pane_backend(axis);
+                let before = first_pane_extent(&mut backend, axis);
+                let mut extents = vec![before];
+                for _ in 0..4 {
+                    backend
+                        .dispatch(Msg::RunAction(Action::AdjustRatio(true)))
+                        .expect("grow split");
+                    extents.push(first_pane_extent(&mut backend, axis));
+                }
+
+                let grow_steps = steps(&extents);
+                let step = grow_steps[0];
+                assert!(step >= 1.0, "{axis:?}: a press must move at least one cell");
+                assert!(
+                    grow_steps.iter().all(|each| *each == step),
+                    "{axis:?}: uneven steps {grow_steps:?} from extents {extents:?}"
+                );
+
+                for _ in 0..4 {
+                    backend
+                        .dispatch(Msg::RunAction(Action::AdjustRatio(false)))
+                        .expect("shrink split");
+                }
+                assert_eq!(
+                    first_pane_extent(&mut backend, axis),
+                    before,
+                    "{axis:?}: shrinking back must land on the starting column"
+                );
+            }
+        });
+    }
 
     /// The two directional pane actions are different operations on the same neighbor: `Swap`
     /// trades slots and leaves the tree's shape alone, `Move` lifts the pane out and re-inserts it

@@ -26,7 +26,7 @@ use crate::config::HyprmuxConfig;
 use crate::input::Action;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
-    Mode, Pane, RATIO_STEP, SCRATCH_PANE_ID, State, cap_style_label,
+    Mode, Pane, SCRATCH_PANE_ID, State, cap_style_label,
 };
 use crate::{HyprmuxApp, Msg};
 
@@ -178,14 +178,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::AdjustRatio(RATIO_STEP),
+        action: Action::AdjustRatio(true),
         label: "Grow split",
         category: "Layout",
         default_keys: &["]", "=", "shift-="],
         palette: false,
     },
     BuiltinCommand {
-        action: Action::AdjustRatio(-RATIO_STEP),
+        action: Action::AdjustRatio(false),
         label: "Shrink split",
         category: "Layout",
         default_keys: &["minus", "shift-minus"],

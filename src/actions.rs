@@ -388,8 +388,8 @@ fn execute_action_inner(
             toggle_focused_split_axis(&mut ctx.state);
             Update::full()
         }
-        Action::AdjustRatio(delta) => {
-            adjust_focused_split_ratio(&mut ctx.state, delta);
+        Action::AdjustRatio(grow) => {
+            adjust_focused_split_ratio(ctx, grow);
             Update::full()
         }
         Action::EnterResizeMode => {

@@ -719,6 +719,40 @@ pub fn split_available_for_edge(
     Some((extent - usable_gap).max(1.0))
 }
 
+/// Axis, divided extent, and side of the innermost split holding `focused` - the divider between
+/// it and its immediate sibling, whichever way that one happens to be split.
+pub fn innermost_split_for(
+    tree: &DwindleTree,
+    rect: FloatRect,
+    gap: TileGap,
+    focused: PaneId,
+) -> Option<(SplitAxis, f32, bool)> {
+    let DwindleTree::Split {
+        axis,
+        ratio,
+        first,
+        second,
+    } = tree
+    else {
+        return None;
+    };
+
+    let (first_rect, second_rect) = split_float_rect(rect, *axis, *ratio, gap);
+    let (child, child_rect, focused_is_first) = if tree_contains(first, focused) {
+        (first.as_ref(), first_rect, true)
+    } else if tree_contains(second, focused) {
+        (second.as_ref(), second_rect, false)
+    } else {
+        return None;
+    };
+
+    if let Some(deeper) = innermost_split_for(child, child_rect, gap, focused) {
+        return Some(deeper);
+    }
+    let usable = usable_axis_extent(axis_extent(rect, *axis), *axis, gap).max(1.0);
+    Some((*axis, usable, focused_is_first))
+}
+
 pub fn focused_is_first_in_nearest_axis_split(
     tree: &DwindleTree,
     focused: PaneId,
@@ -910,7 +944,7 @@ fn resize_split_in_tree(
     let usable = usable_axis_extent(axis_extent(rect, axis), axis, gap);
     let before = axis_extent(first_rect, axis);
     let signed = if focused_is_first { pixels } else { -pixels };
-    *ratio = adjust_ratio_value(*ratio, signed / usable.max(1.0));
+    *ratio = cell_split_ratio(before + signed, usable);
     let (moved_first, moved_second) = split_float_rect(rect, axis, *ratio, gap);
     // Ratios are proportional, so the regions on either side of this divider would carry their own
     // nested dividers along as they grow and shrink - dragging one boundary would visibly move
@@ -929,9 +963,27 @@ fn axis_extent(rect: FloatRect, axis: SplitAxis) -> f32 {
     }
 }
 
+/// The ratio that puts a divider exactly `cells` into a `usable`-cell region.
+///
+/// A ratio is how a split is stored, but the cell is what it means: `split_float_rect` renders a
+/// divider by rounding `usable * ratio`, so a ratio landing mid-cell leaves the boundary on a
+/// rounding tie. With an odd `usable` and a ratio near 0.5 *every* whole-cell offset lands on one,
+/// and f32 representation error alone decides whether a one-cell nudge moves the divider by 0, 1,
+/// or 2. Committing the cell count and deriving the ratio from it keeps that product whole, so
+/// `round(usable * ratio) == cells` for anything a resize produces.
+///
+/// The ratio clamp is applied in cells for the same reason: clamping afterwards would put the
+/// divider back on a fraction at the two extremes.
+pub fn cell_split_ratio(cells: f32, usable: f32) -> f32 {
+    let usable = usable.max(1.0);
+    let lowest = (MIN_SPLIT_RATIO * usable).ceil();
+    let highest = (MAX_SPLIT_RATIO * usable).floor().max(lowest);
+    clamp_split_ratio(cells.round().clamp(lowest, highest) / usable)
+}
+
 /// The part of `extent` that a split actually divides: the gap between the two sides is taken off
 /// the top, exactly as `split_float_rect` does.
-fn usable_axis_extent(extent: f32, axis: SplitAxis, gap: TileGap) -> f32 {
+pub fn usable_axis_extent(extent: f32, axis: SplitAxis, gap: TileGap) -> f32 {
     let gap = gap.for_axis(axis);
     let usable_gap = if extent > gap { gap } else { 0.0 };
     (extent - usable_gap).max(0.0)
@@ -1285,12 +1337,14 @@ mod tests {
         ));
 
         // Only the grabbed root boundary moves: the nested 3|4 divider keeps its column.
+        // The boundary starts on column 25 - where `0.25` of 99 columns renders - so a 2.475
+        // column pull leaves it on 23, not on the 22 a purely proportional ratio would give.
         assert_eq!(
             dwindle_columns(&workspace, rect),
             vec![
-                (1, 0.0, 22.0),
-                (2, 23.0, 100.0),
-                (3, 23.0, 63.0),
+                (1, 0.0, 23.0),
+                (2, 24.0, 100.0),
+                (3, 24.0, 63.0),
                 (4, 64.0, 100.0)
             ]
         );

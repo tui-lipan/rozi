@@ -34,19 +34,12 @@ pub(super) fn ensure_tile_tree(workspace: &mut Workspace) {
     }
 }
 
-/// One keyboard step along a workspace axis of `available` cells. Proportional so it feels like
-/// the tiled `RATIO_STEP`, but snapped to whole cells: a floating pane's PTY is sized in cells, so
-/// a fractional step would drift the border without ever changing the terminal.
-fn float_keyboard_step(available: f32) -> f32 {
-    (state::RATIO_STEP * available).round().max(1.0)
-}
-
 fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
     match direction {
-        Direction::Left => (-float_keyboard_step(bounds.w), 0.0),
-        Direction::Right => (float_keyboard_step(bounds.w), 0.0),
-        Direction::Up => (0.0, -float_keyboard_step(bounds.h)),
-        Direction::Down => (0.0, float_keyboard_step(bounds.h)),
+        Direction::Left => (-super::keyboard_step_cells(bounds.w), 0.0),
+        Direction::Right => (super::keyboard_step_cells(bounds.w), 0.0),
+        Direction::Up => (0.0, -super::keyboard_step_cells(bounds.h)),
+        Direction::Down => (0.0, super::keyboard_step_cells(bounds.h)),
     }
 }
 
@@ -384,11 +377,12 @@ fn resize_pane_state(
         }) {
             return;
         }
+        let tile_gap = state.tile_gap();
         resize_master_split_by_pixels(
             state.active_workspace_mut(),
             id,
             f32::from(effective_dx),
-            master_available_width(tile_bounds),
+            master_available_width(tile_bounds, tile_gap),
         );
         state.animation = GeometryAnimation::None;
         return;

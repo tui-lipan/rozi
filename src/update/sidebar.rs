@@ -1120,6 +1120,33 @@ mod tests {
         }
     }
 
+    /// Open the Sessions tab with its auto-refresh loop disarmed, for a test that drives discovery
+    /// by hand.
+    ///
+    /// Armed, the loop kicks a *real* discovery sweep onto a background thread under the same
+    /// epoch the test dispatches, and whichever of the two lands last wins - so an assertion about
+    /// the resulting rows races the machine's actual sessions. Dropping the command link stops it:
+    /// `ensure_sessions_refresh_armed` and `request_sessions_refresh` both need one to send
+    /// through.
+    ///
+    /// The order matters. The mount delivers the link as a message, so it arrives during the first
+    /// dispatch and reinstalls itself - and `command_link_ready` kicks an immediate sweep when it
+    /// finds the tab already open. Settling the mount with the tab still closed is what makes the
+    /// link there to drop.
+    ///
+    /// Only for tests that assert on discovered rows. Anything exercising a flow that sends
+    /// through the link needs it left alone.
+    fn open_sessions_tab_unswept(backend: &mut TestBackend<HyprmuxApp>, epoch: u64) {
+        backend
+            .dispatch(crate::Msg::SidebarPointerMoved)
+            .expect("settle the mount");
+        let state = backend.state_mut();
+        state.sidebar_visible = true;
+        state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+        state.sidebar.sessions_epoch = epoch;
+        state.command_link = None;
+    }
+
     fn on_test_thread(test: impl FnOnce() + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1476,12 +1503,7 @@ mod tests {
     fn current_session_results_apply() {
         on_test_thread(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
-            {
-                let state = backend.state_mut();
-                state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
-                state.sidebar.sessions_epoch = 7;
-            }
+            open_sessions_tab_unswept(&mut backend, 7);
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 7,

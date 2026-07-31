@@ -1139,12 +1139,16 @@ mod tests {
                 state.current_mut().workspaces[0].panes[0].opening = false;
             }
             backend.render();
+            // Read the generation before closing: with animations off the prune delay is zero, so
+            // the scheduled `PruneClosed` can land on its own timer at any point after the close
+            // and take the pane out from under a later read.
+            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
             backend
                 .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
                 .expect("close pane");
 
-            // With animations off the prune delay is zero, but the message still drives removal.
-            let generation = backend.state().current().workspaces[0].panes[0].pty_generation;
+            // Whether the timer got there first or not, the message drives removal and the pane
+            // is gone either way.
             backend
                 .dispatch(crate::Msg::PruneClosed(
                     backend.state().runtime_epoch,

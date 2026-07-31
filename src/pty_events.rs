@@ -936,6 +936,22 @@ mod tests {
                     state.current_mut().shared = Some(shared);
                 }
                 backend.render();
+                // Pretend a flush is already armed. A real one is a 16 ms wall-clock timer, and
+                // everything asserted below is state that firing it drains - so left to run, how
+                // loaded the machine is decides the outcome. Arming it by hand keeps the flush in
+                // this test's hands instead of the clock's.
+                //
+                // What that gives up is the arming branch itself, which cannot be asserted either
+                // way: the flag is set synchronously and cleared 16 ms later, so any read of it
+                // races the same timer. What is left is the part worth pinning down - resizes
+                // coalesce into one pending size, and only a flush puts it on the wire.
+                backend
+                    .state_mut()
+                    .current_mut()
+                    .shared
+                    .as_mut()
+                    .expect("controller has shared state")
+                    .resize_flush_scheduled = true;
                 backend
                     .dispatch(Msg::PaneResize(1, 40, 12))
                     .expect("dispatch first resize");
@@ -945,6 +961,18 @@ mod tests {
                 assert!(
                     resizes(&controller_rx).is_empty(),
                     "debounced resizes are not sent until the flush"
+                );
+                assert_eq!(
+                    backend
+                        .state()
+                        .current()
+                        .shared
+                        .as_ref()
+                        .expect("controller has shared state")
+                        .pending_resizes
+                        .get(&1),
+                    Some(&(50, 20)),
+                    "both resizes coalesce into the latest pending size"
                 );
                 backend
                     .dispatch(Msg::FlushPaneResizes { epoch: 0 })

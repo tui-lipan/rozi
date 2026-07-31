@@ -27,6 +27,9 @@ pub(crate) struct PaneMerge {
     /// Title background of the same-row neighbor sharing the right seam cell, if any. Mirrors
     /// `seam_left_bg` for the right cap so either side of a seam renders the same split.
     pub seam_right_bg: Option<Paint>,
+    /// Dividers mode is carrying this pane's border/integrated title on the horizontal divider
+    /// above it, so the Frame must not also paint a header row below that divider.
+    pub title_on_divider: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +70,208 @@ pub(crate) fn pane_title_bg(
         theme.surface.element
     };
     app.chrome_color(ctx, pane_id, "title-bg", target)
+}
+
+/// Whether `pane` has another settled tile immediately above it across the dividers gap, so its
+/// border/integrated title can ride that divider instead of a Frame header below it.
+pub(crate) fn pane_has_divider_above(placements: &[PanePlacement], pane: PaneId, gap: f32) -> bool {
+    let Some(rect) = placements
+        .iter()
+        .find(|placement| placement.id == pane)
+        .map(|placement| placement.rect)
+    else {
+        return false;
+    };
+    let eps = 1.5;
+    placements.iter().any(|other| {
+        if other.id == pane {
+            return false;
+        }
+        let other_bottom = other.rect.y + other.rect.h;
+        (rect.y - (other_bottom + gap)).abs() < eps
+            && other.rect.x < rect.x + rect.w - eps
+            && rect.x < other.rect.x + other.rect.w - eps
+    })
+}
+
+/// Title content drawn into a horizontal divider above `pane` in dividers mode.
+///
+/// `border` embeds the icon and title in the line (like a Frame border header). `integrated`
+/// fills the whole divider row with the titlebar strip, replacing the line.
+pub(crate) fn divider_title_element(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    pane: &Pane,
+    focused_pane: Option<PaneId>,
+) -> Option<Element> {
+    if !ctx.state.config.pane.show_titles {
+        return None;
+    }
+    let titlebar = ctx.state.config.pane.titlebar;
+    if !matches!(
+        titlebar,
+        PaneTitlebarMode::Border | PaneTitlebarMode::Integrated
+    ) {
+        return None;
+    }
+
+    let theme = &ctx.state.theme;
+    let id = pane.id;
+    let focused = focused_pane == Some(id);
+    let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
+    let icon = if pane.fullscreen {
+        "󰊓"
+    } else if pane.floating {
+        "󰹙"
+    } else {
+        "󰖲"
+    };
+    let badge = if pane.fullscreen {
+        Some("fullscreen")
+    } else if pane.floating {
+        Some("floating")
+    } else {
+        None
+    };
+    let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
+    if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
+        title.push_str(&format!(" [exited {code}]"));
+    }
+    if pane.logging {
+        title.push_str(" [log]");
+    }
+
+    let title_bar_bg_target = if titlebar_focused {
+        theme.border_active
+    } else {
+        theme.surface.element
+    };
+    let frame_bg_target = crate::ops::theme::pane_frame_background(
+        theme,
+        focused,
+        ctx.state.config.pane.highlight_focused_background,
+    );
+    let title_fg_background = if titlebar == PaneTitlebarMode::Border {
+        frame_bg_target
+    } else {
+        title_bar_bg_target
+    };
+    let title_fg_default = if titlebar == PaneTitlebarMode::Border {
+        crate::ops::theme::pane_border_title_foreground(
+            theme,
+            titlebar_focused,
+            title_fg_background,
+        )
+    } else {
+        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
+    };
+    let title_bar_fg = app.chrome_color(ctx, id, "title-fg", title_fg_default);
+    let title_bar_bg = pane_title_bg(app, ctx, id, titlebar_focused);
+    let title_bar_fill_style = Style::new()
+        .bg(title_bar_bg)
+        .contrast_policy(ContrastPolicy::Off);
+    let text_style = if titlebar_focused {
+        Style::new()
+            .fg(title_bar_fg)
+            .bold()
+            .contrast_policy(ContrastPolicy::Off)
+    } else {
+        Style::new()
+            .fg(title_bar_fg)
+            .contrast_policy(ContrastPolicy::Off)
+    };
+
+    match titlebar {
+        PaneTitlebarMode::Border => {
+            let mut label = format!("{icon}  {title}");
+            if let Some(badge) = badge {
+                label.push_str(&format!("  · {badge}"));
+            }
+            Some(
+                Text::new(label)
+                    .style(text_style)
+                    .overflow(Overflow::Ellipsis)
+                    .height(Length::Px(1))
+                    .into(),
+            )
+        }
+        PaneTitlebarMode::Integrated => {
+            let title_text: Element = Text::new(format!("{icon}  {title}"))
+                .style(text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .into();
+            let badge_text: Option<Element> = badge.map(|badge| {
+                Text::new(format!(" {badge}"))
+                    .style(text_style)
+                    .height(Length::Px(1))
+                    .into()
+            });
+            let title_style = ctx.state.config.pane.title_style;
+            let caps = title_style.glyphs();
+            let frame_bg = app.chrome_color(ctx, id, "frame-bg", frame_bg_target);
+            let title_row: Element = match caps {
+                None => {
+                    let mut row = HStack::new()
+                        .style(title_bar_fill_style)
+                        .padding((0, 1))
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(title_text);
+                    if let Some(badge_text) = badge_text {
+                        row = row.child(badge_text);
+                    }
+                    row.into()
+                }
+                Some((left, right)) => {
+                    let mut middle = HStack::new()
+                        .style(title_bar_fill_style)
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(title_text);
+                    if let Some(badge_text) = badge_text {
+                        middle = middle.child(badge_text);
+                    }
+                    HStack::new()
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(
+                            Text::new(left)
+                                .style(
+                                    Style::new()
+                                        .fg(title_bar_bg)
+                                        .bg(frame_bg)
+                                        .contrast_policy(ContrastPolicy::Off),
+                                )
+                                .width(Length::Px(1))
+                                .height(Length::Px(1)),
+                        )
+                        .child(middle)
+                        .child(
+                            Text::new(right)
+                                .style(
+                                    Style::new()
+                                        .fg(title_bar_bg)
+                                        .bg(frame_bg)
+                                        .contrast_policy(ContrastPolicy::Off),
+                                )
+                                .width(Length::Px(1))
+                                .height(Length::Px(1)),
+                        )
+                        .into()
+                }
+            };
+            Some(
+                MouseRegion::new()
+                    .capture_click(true)
+                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
+                    .child(title_row)
+                    .into(),
+            )
+        }
+        PaneTitlebarMode::Bar => None,
+    }
 }
 
 /// A padded integrated titlebar owns the frame's top border row: the decoration paints the
@@ -414,7 +619,7 @@ pub(crate) fn pane_element(
         .focus_style(Style::default());
     if show_titles {
         match titlebar {
-            PaneTitlebarMode::Border => {
+            PaneTitlebarMode::Border if !merge.title_on_divider => {
                 let title = title.as_ref().expect("visible titlebar has a title");
                 let border_title = format!("{icon}  {title}");
                 let mut labels = BorderLabels::new()
@@ -426,7 +631,7 @@ pub(crate) fn pane_element(
                 }
                 body = body.header(labels);
             }
-            PaneTitlebarMode::Integrated => {
+            PaneTitlebarMode::Integrated if !merge.title_on_divider => {
                 let title_text: Element = Text::new(format!(
                     "{icon}  {}",
                     title.as_ref().expect("visible titlebar has a title")
@@ -527,6 +732,8 @@ pub(crate) fn pane_element(
                 }
             }
             PaneTitlebarMode::Bar => {}
+            // Title rides the divider above this pane - see `view::divider_title_element`.
+            PaneTitlebarMode::Border | PaneTitlebarMode::Integrated => {}
         }
     }
     let body: Element = body.child(terminal).into();
@@ -858,15 +1065,20 @@ fn resize_strip_hitboxes(
                     let x0 = a.x.max(b.x);
                     let x1 = (a.x + a.w).min(b.x + b.w);
                     if x1 - x0 > eps {
-                        // A separate titlebar gives the boundary a row of its own, and that bar is
-                        // the handle a pointer expects: grab it and nothing else, the way the
-                        // vertical strip leaves both side borders alone. Without one there is no
-                        // row between the panes to take - a stacked gap is zero even with separate
-                        // borders - so the strip straddles the two touching border rows instead.
-                        let (y, h) = if title_row {
-                            (b.y, 1.0)
+                        // Three shapes, depending on what sits between the panes:
+                        // - `titlebar = "bar"`: the lower pane's bar is the handle. When dividers
+                        //   mode leaves a gap above it, include that gap so the drawn divider is
+                        //   grabable with the bar rather than a dead cell.
+                        // - A positive gap with no bar (dividers + border/integrated/no titles):
+                        //   the gap itself is the handle - never the panes' content rows.
+                        // - Touching/overlapping borders: straddle both chrome rows.
+                        let gap_rows = (b.y - a_bottom).max(0.0);
+                        let (y, h, boundary) = if title_row {
+                            (a_bottom, gap_rows + 1.0, b.y)
+                        } else if gap_rows > 0.0 {
+                            (a_bottom, gap_rows, a_bottom)
                         } else {
-                            (a_bottom - 1.0, (b.y - a_bottom + 2.0).max(1.0))
+                            (a_bottom - 1.0, (b.y - a_bottom + 2.0).max(1.0), b.y)
                         };
                         horizontal_strips.push(ResizeStripHitbox {
                             rect: FloatRect {
@@ -877,7 +1089,7 @@ fn resize_strip_hitboxes(
                             },
                             pane_id: *a_id,
                             neighbor_id: *b_id,
-                            boundary: b.y,
+                            boundary,
                         });
                     }
                 }
@@ -1225,6 +1437,27 @@ mod tests {
     }
 
     #[test]
+    fn pane_has_divider_above_requires_a_gap_and_overlap() {
+        let placements = vec![
+            PanePlacement {
+                id: 1,
+                rect: rect(0.0, 0.0, 10.0, 10.0),
+            },
+            PanePlacement {
+                id: 2,
+                rect: rect(0.0, 11.0, 10.0, 10.0),
+            },
+            PanePlacement {
+                id: 3,
+                rect: rect(12.0, 11.0, 8.0, 10.0),
+            },
+        ];
+        assert!(pane_has_divider_above(&placements, 2, 1.0));
+        assert!(!pane_has_divider_above(&placements, 1, 1.0));
+        assert!(!pane_has_divider_above(&placements, 3, 1.0));
+    }
+
+    #[test]
     fn hint_mode_and_exit_state_withhold_the_cursor() {
         // The pane wearing the hint labels loses its caret; its neighbors keep theirs.
         assert!(!app_allows_cursor(Some(7), 7, false));
@@ -1368,13 +1601,7 @@ mod tests {
         );
     }
 
-    /// With a separate bar, merged borders keep a zero vertical gap, so the strip between stacked
-    /// panes covers two rows: the upper pane's bottom border and the lower pane's titlebar. The
-    /// strip draws above both panes, so it must route a pointer on the lower row to the lower
-    /// pane - otherwise no pane below the first row can be focused by its title.
-    /// `titlebar = "bar"` gives the lower pane a row of its own above its frame, and that bar is
-    /// the whole handle: the upper pane's bottom border is left alone, so a boundary offers one
-    /// unambiguous place to grab instead of two.
+    /// `titlebar = "bar"` with no gap (separate/merged): the lower pane's bar is the whole handle.
     #[test]
     fn a_titlebar_row_is_the_only_handle_on_a_stacked_boundary() {
         let gap = TileGap {
@@ -1398,6 +1625,49 @@ mod tests {
             strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, 10),
             2
         );
+    }
+
+    /// Dividers mode leaves a gap row above a bar titlebar for the drawn divider. Both that gap
+    /// and the bar must be grabable - otherwise the visible divider is a dead cell.
+    #[test]
+    fn a_divider_above_a_titlebar_is_grabable_with_it() {
+        let gap = TileGap {
+            horizontal: 1.0,
+            vertical: 1.0,
+        };
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(0.0, 11.0, 10.0, 10.0)),
+        ];
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, true);
+
+        assert_eq!(horizontal.len(), 1);
+        let strip = horizontal[0];
+        assert_eq!(strip.rect, rect(0.0, 10.0, 10.0, 2.0));
+        assert_eq!(strip.boundary, 11.0);
+
+        let boundary = strip.boundary as u16;
+        let owner = |y| strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, y);
+        assert_eq!(owner(10), 1, "the divider row focuses the upper pane");
+        assert_eq!(owner(11), 2, "the titlebar row focuses the lower pane");
+    }
+
+    /// Dividers without a bar: only the gap is the handle - never a content row of either pane.
+    #[test]
+    fn a_divider_gap_without_a_bar_is_the_only_handle() {
+        let gap = TileGap {
+            horizontal: 1.0,
+            vertical: 1.0,
+        };
+        let tiled = vec![
+            (1, rect(0.0, 0.0, 10.0, 10.0)),
+            (2, rect(0.0, 11.0, 10.0, 10.0)),
+        ];
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, false);
+
+        assert_eq!(horizontal.len(), 1);
+        assert_eq!(horizontal[0].rect, rect(0.0, 10.0, 10.0, 1.0));
+        assert_eq!(horizontal[0].boundary, 10.0);
     }
 
     #[test]

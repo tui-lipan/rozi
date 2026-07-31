@@ -11,7 +11,9 @@ pub use keys::{
     profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
     search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
 };
-pub(crate) use pane::{PaneKind, PaneMerge, pane_element};
+pub(crate) use pane::{
+    PaneKind, PaneMerge, divider_title_element, pane_element, pane_has_divider_above,
+};
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 
 use tui_lipan::prelude::*;
@@ -229,6 +231,15 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else {
             (None, None)
         };
+        let title_on_divider = divider_mode
+            && !pane.floating
+            && !pane.fullscreen
+            && ctx.state.config.pane.show_titles
+            && matches!(
+                ctx.state.config.pane.titlebar,
+                crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
+            )
+            && pane_has_divider_above(&placements, pane.id, tile_gap.vertical);
         let merge = PaneMerge {
             enabled: merge_layering
                 && !pane.floating
@@ -238,6 +249,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             left_seam,
             seam_left_bg,
             seam_right_bg,
+            title_on_divider,
         };
         let kind = if pane.fullscreen {
             PaneKind::Fullscreen
@@ -266,10 +278,37 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let divider_style = Style::new().fg(crate::ops::theme::pane_frame_foreground(
             theme, false, false,
         ));
+        let title_on_dividers = ctx.state.config.pane.show_titles
+            && matches!(
+                ctx.state.config.pane.titlebar,
+                crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
+            );
         for divider in internal_dividers_for(&placements, &divider_panes) {
             let element: Element = match divider.orientation {
-                Orientation::Horizontal => Divider::horizontal().style(divider_style).into(),
                 Orientation::Vertical => Divider::vertical().style(divider_style).into(),
+                Orientation::Horizontal => {
+                    let mut line = Divider::horizontal().style(divider_style);
+                    if title_on_dividers
+                        && let Some(below) = divider.below
+                        && let Some(pane) = workspace.panes.iter().find(|pane| pane.id == below)
+                        && let Some(label) = divider_title_element(app, ctx, pane, focused_pane)
+                    {
+                        line = match ctx.state.config.pane.titlebar {
+                            // Embed the title in the line, like a Frame border header.
+                            crate::state::PaneTitlebarMode::Border => line
+                                .label(label)
+                                .label_alignment(Align::Start)
+                                .label_padding(1),
+                            // Fill the whole gap row with the titlebar strip, replacing the line.
+                            crate::state::PaneTitlebarMode::Integrated => line
+                                .label(label)
+                                .label_alignment(Align::Stretch)
+                                .label_padding(0),
+                            crate::state::PaneTitlebarMode::Bar => line,
+                        };
+                    }
+                    line.into()
+                }
             };
             canvas = canvas.child_at(
                 canvas_rect_to_root(divider.rect, top_offset).to_rect(),
@@ -430,10 +469,13 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct InternalDivider {
     orientation: Orientation,
     rect: FloatRect,
+    /// Pane sitting immediately below a horizontal divider. Border/integrated titles in dividers
+    /// mode are drawn into this segment; vertical dividers leave it `None`.
+    below: Option<PaneId>,
 }
 
 /// Derive visible split separators from final pane adjacency. Extending each segment by one cell
@@ -481,18 +523,19 @@ fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
                         w: 1.0,
                         h: bottom - y,
                     },
+                    below: None,
                 };
                 push_internal_divider(&mut dividers, divider);
             }
 
-            let (top, bottom) = if first.rect.y <= second.rect.y {
-                (first.rect, second.rect)
+            let (top, bottom_rect, below) = if first.rect.y <= second.rect.y {
+                (first.rect, second.rect, second.id)
             } else {
-                (second.rect, first.rect)
+                (second.rect, first.rect, first.id)
             };
-            let overlap_left = top.x.max(bottom.x);
-            let overlap_right = (top.x + top.w).min(bottom.x + bottom.w);
-            if (top.y + top.h + 1.0 - bottom.y).abs() < 0.5 && overlap_right > overlap_left {
+            let overlap_left = top.x.max(bottom_rect.x);
+            let overlap_right = (top.x + top.w).min(bottom_rect.x + bottom_rect.w);
+            if (top.y + top.h + 1.0 - bottom_rect.y).abs() < 0.5 && overlap_right > overlap_left {
                 let x = (overlap_left - 1.0).max(min_x);
                 let right = (overlap_right + 1.0).min(max_x);
                 let divider = InternalDivider {
@@ -503,6 +546,7 @@ fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
                         w: right - x,
                         h: 1.0,
                     },
+                    below: Some(below),
                 };
                 push_internal_divider(&mut dividers, divider);
             }
@@ -536,7 +580,10 @@ fn push_internal_divider(dividers: &mut Vec<InternalDivider>, mut divider: Inter
                         && divider.rect.y <= existing.rect.y + existing.rect.h
                 }
                 Orientation::Horizontal => {
+                    // Keep per-lower-pane segments so a border/integrated title can ride the
+                    // divider above its own pane without being merged into a neighbor's span.
                     existing.orientation == Orientation::Horizontal
+                        && existing.below == divider.below
                         && (existing.rect.y - divider.rect.y).abs() < 0.5
                         && existing.rect.x <= divider.rect.x + divider.rect.w
                         && divider.rect.x <= existing.rect.x + existing.rect.w
@@ -798,6 +845,27 @@ mod divider_tests {
                 && divider.rect.y <= horizontal.rect.y
                 && divider.rect.y + divider.rect.h > horizontal.rect.y
         }));
+    }
+
+    #[test]
+    fn horizontal_dividers_remember_the_pane_below() {
+        let dividers = internal_dividers(&[
+            placement(1, 0.0, 0.0, 20.0, 9.0),
+            placement(2, 0.0, 10.0, 9.0, 10.0),
+            placement(3, 10.0, 10.0, 10.0, 10.0),
+        ]);
+        let below: Vec<_> = dividers
+            .iter()
+            .filter(|divider| divider.orientation == Orientation::Horizontal)
+            .map(|divider| divider.below)
+            .collect();
+        assert_eq!(
+            below.len(),
+            2,
+            "each lower pane keeps its own titled segment"
+        );
+        assert!(below.contains(&Some(2)));
+        assert!(below.contains(&Some(3)));
     }
 
     #[test]

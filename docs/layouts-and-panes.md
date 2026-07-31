@@ -30,9 +30,11 @@ dragging a divider with the mouse follows the pointer one cell per cell.
 Each boundary offers exactly one handle, and it is never a pane's own border — a side border
 carries the terminal's scrollbar, and clicking a border should reach the pane, not the divider.
 Left|right boundaries are grabbed by the gap column between the panes. Stacked boundaries are
-grabbed by the lower pane's titlebar row when `[pane] titlebar = "bar"` (the default); with the
-other titlebar modes there is no row between the panes, so the two touching border rows are the
-handle. Merged borders overlap, leaving the shared seam cell as the handle on either axis.
+grabbed by the lower pane's titlebar row when `[pane] titlebar = "bar"` (the default); with
+`border_mode = "dividers"` the drawn divider sitting above that bar is grabable with it. With the
+other titlebar modes there is no bar row between the panes, so the gap (or the two touching border
+rows) is the handle. Merged borders overlap, leaving the shared seam cell as the handle on either
+axis.
 
 ### Master
 
@@ -148,7 +150,10 @@ Set `[pane] show_titles = false` to hide the selected layout without losing it, 
 with the *Toggle pane titlebars* palette command. Set `[pane] highlight_focused_titlebar = false`
 to keep focused and unfocused titlebars styled identically across all three layouts.
 Border and integrated headers remain visible in frameless modes: tui-lipan gives them their own
-row when no frame edge exists.
+row when no frame edge exists. In `border_mode = "dividers"`, a border title embeds in the
+horizontal divider above the pane (like a Frame border header), and an integrated title fills that
+divider row in place of the line. Top-row panes still get a Frame header because nothing sits
+above them to carry the title.
 
 The displayed title uses this precedence:
 

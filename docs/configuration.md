@@ -76,7 +76,7 @@ split_width_multiplier = 2.3  # terminal cell height / width for dwindle splits 
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
 highlight_focused_background = false  # keep focused pane bg unchanged by default
-highlight_focused_border = true       # accent the focused pane border (default: true)
+highlight_focused_border = true       # accent focused frame / touching divider seams (default: true)
 highlight_focused_titlebar = true     # accent the focused pane titlebar (default: true)
 show_workbar = true           # workbar with workspace tabs and mode chips (default: true)
 workbar_gap = true            # 1-line gap between workbar and panes (default: true)
@@ -261,7 +261,7 @@ Pane focus and chrome behavior.
 | `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
 | `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. This governs panes with no launch command of their own (a plain shell you typed `exit` in); a pane launched with a command is governed by that command's `keep_open` instead, which replaces the dead PTY with a live shell rather than retaining a husk. |
 | `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. The palette toggle writes this back to config. |
-| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. This controls the frame border independently from the titlebar. The palette toggle writes this back to config. |
+| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. In `separate`/`merged` this accents the frame; in `dividers` it accents only the internal seams that touch the focused pane. The palette toggle writes this back to config. |
 | `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis for `bar`, `border`, and `integrated` layouts. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |

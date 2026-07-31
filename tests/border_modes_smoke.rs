@@ -121,7 +121,9 @@ fn titled_divider_segments_tee_instead_of_cornering() {
         backend.render();
         let lines = backend.capture_frame().to_fixed_grid_lines();
         assert!(
-            lines.iter().all(|line| !line.contains('┌') && !line.contains('┐')),
+            lines
+                .iter()
+                .all(|line| !line.contains('┌') && !line.contains('┐')),
             "titled horizontal segments meeting a split vertical must tee (┬/┼), not corner:\n{}",
             lines.join("\n")
         );

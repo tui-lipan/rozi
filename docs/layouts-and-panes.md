@@ -104,7 +104,8 @@ scratchpad; fullscreen panes always follow the global mode.
 - Clicking a pane or its titlebar focuses it. The focused pane gets an accent border and a
   highlighted titlebar when `[pane] highlight_focused_border` and
   `[pane] highlight_focused_titlebar` are enabled respectively (these color changes animate when
-  `focus_chrome` is enabled).
+  `focus_chrome` is enabled). In `border_mode = "dividers"`, focused-border accent recolors only
+  the internal seams that touch the focused pane - not a full ring and not unrelated splits.
 
 Set `[pane] border_mode` to `separate`, `merged`, `none`, or `dividers`. Separate mode draws a
 frame around every pane; merged mode fuses adjacent frame cells; none removes all pane chrome

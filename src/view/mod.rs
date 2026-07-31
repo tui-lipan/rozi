@@ -275,15 +275,33 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
 
     if divider_mode {
-        let divider_style = Style::new().fg(crate::ops::theme::pane_frame_foreground(
+        let highlight_focused = ctx.state.config.pane.highlight_focused_border;
+        let normal_style = Style::new().fg(crate::ops::theme::pane_frame_foreground(
             theme, false, false,
         ));
+        let focused_style = if highlight_focused {
+            let target = crate::ops::theme::pane_frame_foreground(theme, true, true);
+            let fg = focused_pane.map_or(Paint::Solid(target), |id| {
+                app.chrome_color(ctx, id, "divider-fg", target)
+            });
+            Style::new().fg(fg)
+        } else {
+            normal_style
+        };
         let title_on_dividers = ctx.state.config.pane.show_titles
             && matches!(
                 ctx.state.config.pane.titlebar,
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             );
-        for divider in internal_dividers_for(&placements, &divider_panes) {
+        // Unfocused seams first, focused contacts last so junction cells inherit the accent.
+        let mut dividers = internal_dividers_for(&placements, &divider_panes);
+        dividers.sort_by_key(|divider| {
+            focused_pane.is_some_and(|id| divider.touches_pane(id)) && highlight_focused
+        });
+        for divider in dividers {
+            let accent =
+                highlight_focused && focused_pane.is_some_and(|id| divider.touches_pane(id));
+            let divider_style = if accent { focused_style } else { normal_style };
             let element: Element = match divider.orientation {
                 Orientation::Vertical => Divider::vertical().style(divider_style).into(),
                 Orientation::Horizontal => {
@@ -303,13 +321,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                                     .iter()
                                     .find(|placement| placement.id == below)
                                     .map(|placement| placement.rect.x);
-                                let pad_left = if pane_left
-                                    .is_some_and(|x| divider.rect.x < x - 0.5)
-                                {
-                                    2
-                                } else {
-                                    1
-                                };
+                                let pad_left =
+                                    if pane_left.is_some_and(|x| divider.rect.x < x - 0.5) {
+                                        2
+                                    } else {
+                                        1
+                                    };
                                 line.label(label)
                                     .label_alignment(Align::Start)
                                     .label_padding_axes(pad_left, 0)
@@ -488,9 +505,24 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
 struct InternalDivider {
     orientation: Orientation,
     rect: FloatRect,
-    /// Pane sitting immediately below a horizontal divider. Border/integrated titles in dividers
-    /// mode are drawn into this segment; vertical dividers leave it `None`.
+    /// Pane above a horizontal divider. Vertical dividers leave it `None`.
+    above: Option<PaneId>,
+    /// Pane below a horizontal divider. Border/integrated titles in dividers mode are drawn into
+    /// this segment; vertical dividers leave it `None`.
     below: Option<PaneId>,
+    /// Pane left of a vertical divider. Horizontal dividers leave it `None`.
+    left: Option<PaneId>,
+    /// Pane right of a vertical divider. Horizontal dividers leave it `None`.
+    right: Option<PaneId>,
+}
+
+impl InternalDivider {
+    fn touches_pane(&self, pane: PaneId) -> bool {
+        self.above == Some(pane)
+            || self.below == Some(pane)
+            || self.left == Some(pane)
+            || self.right == Some(pane)
+    }
 }
 
 /// Derive visible split separators from final pane adjacency. Extending each segment by one cell
@@ -520,11 +552,13 @@ fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
 
     for (index, first) in placements.iter().enumerate() {
         for second in &placements[index + 1..] {
-            let (left, right) = if first.rect.x <= second.rect.x {
-                (first.rect, second.rect)
+            let (left_placement, right_placement) = if first.rect.x <= second.rect.x {
+                (first, second)
             } else {
-                (second.rect, first.rect)
+                (second, first)
             };
+            let left = left_placement.rect;
+            let right = right_placement.rect;
             let overlap_top = left.y.max(right.y);
             let overlap_bottom = (left.y + left.h).min(right.y + right.h);
             if (left.x + left.w + 1.0 - right.x).abs() < 0.5 && overlap_bottom > overlap_top {
@@ -538,16 +572,21 @@ fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
                         w: 1.0,
                         h: bottom - y,
                     },
+                    above: None,
                     below: None,
+                    left: Some(left_placement.id),
+                    right: Some(right_placement.id),
                 };
                 push_internal_divider(&mut dividers, divider);
             }
 
-            let (top, bottom_rect, below) = if first.rect.y <= second.rect.y {
-                (first.rect, second.rect, second.id)
+            let (top_placement, bottom_placement) = if first.rect.y <= second.rect.y {
+                (first, second)
             } else {
-                (second.rect, first.rect, first.id)
+                (second, first)
             };
+            let top = top_placement.rect;
+            let bottom_rect = bottom_placement.rect;
             let overlap_left = top.x.max(bottom_rect.x);
             let overlap_right = (top.x + top.w).min(bottom_rect.x + bottom_rect.w);
             if (top.y + top.h + 1.0 - bottom_rect.y).abs() < 0.5 && overlap_right > overlap_left {
@@ -561,7 +600,10 @@ fn internal_dividers(placements: &[PanePlacement]) -> Vec<InternalDivider> {
                         w: right - x,
                         h: 1.0,
                     },
-                    below: Some(below),
+                    above: Some(top_placement.id),
+                    below: Some(bottom_placement.id),
+                    left: None,
+                    right: None,
                 };
                 push_internal_divider(&mut dividers, divider);
             }
@@ -589,7 +631,11 @@ fn push_internal_divider(dividers: &mut Vec<InternalDivider>, mut divider: Inter
             .iter()
             .position(|existing| match divider.orientation {
                 Orientation::Vertical => {
+                    // Keep per left|right pair so a focused seam can accent only the contact that
+                    // touches the focused pane instead of the whole column.
                     existing.orientation == Orientation::Vertical
+                        && existing.left == divider.left
+                        && existing.right == divider.right
                         && (existing.rect.x - divider.rect.x).abs() < 0.5
                         && existing.rect.y <= divider.rect.y + divider.rect.h
                         && divider.rect.y <= existing.rect.y + existing.rect.h
@@ -598,6 +644,7 @@ fn push_internal_divider(dividers: &mut Vec<InternalDivider>, mut divider: Inter
                     // Keep per-lower-pane segments so a border/integrated title can ride the
                     // divider above its own pane without being merged into a neighbor's span.
                     existing.orientation == Orientation::Horizontal
+                        && existing.above == divider.above
                         && existing.below == divider.below
                         && (existing.rect.y - divider.rect.y).abs() < 0.5
                         && existing.rect.x <= divider.rect.x + divider.rect.w
@@ -863,24 +910,90 @@ mod divider_tests {
     }
 
     #[test]
-    fn horizontal_dividers_remember_the_pane_below() {
+    fn horizontal_dividers_remember_the_panes_above_and_below() {
         let dividers = internal_dividers(&[
             placement(1, 0.0, 0.0, 20.0, 9.0),
             placement(2, 0.0, 10.0, 9.0, 10.0),
             placement(3, 10.0, 10.0, 10.0, 10.0),
         ]);
-        let below: Vec<_> = dividers
+        let horizontal: Vec<_> = dividers
             .iter()
             .filter(|divider| divider.orientation == Orientation::Horizontal)
-            .map(|divider| divider.below)
             .collect();
         assert_eq!(
-            below.len(),
+            horizontal.len(),
             2,
             "each lower pane keeps its own titled segment"
         );
-        assert!(below.contains(&Some(2)));
-        assert!(below.contains(&Some(3)));
+        assert!(
+            horizontal
+                .iter()
+                .any(|d| d.above == Some(1) && d.below == Some(2))
+        );
+        assert!(
+            horizontal
+                .iter()
+                .any(|d| d.above == Some(1) && d.below == Some(3))
+        );
+    }
+
+    #[test]
+    fn vertical_dividers_remember_left_and_right_panes() {
+        let dividers = internal_dividers(&[
+            placement(1, 0.0, 0.0, 9.0, 20.0),
+            placement(2, 10.0, 0.0, 10.0, 9.0),
+            placement(3, 10.0, 10.0, 10.0, 10.0),
+        ]);
+        let vertical: Vec<_> = dividers
+            .iter()
+            .filter(|divider| divider.orientation == Orientation::Vertical)
+            .collect();
+        assert!(
+            vertical
+                .iter()
+                .any(|d| d.left == Some(1) && d.right == Some(2)),
+            "top-right contact keeps its own vertical segment: {vertical:?}"
+        );
+        assert!(
+            vertical
+                .iter()
+                .any(|d| d.left == Some(1) && d.right == Some(3)),
+            "bottom-right contact keeps its own vertical segment: {vertical:?}"
+        );
+        assert_eq!(
+            vertical.len(),
+            2,
+            "different neighbor pairs must not merge into one column"
+        );
+    }
+
+    #[test]
+    fn divider_touches_only_its_adjacent_panes() {
+        let dividers = internal_dividers(&[
+            placement(1, 0.0, 0.0, 9.0, 9.0),
+            placement(2, 10.0, 0.0, 10.0, 9.0),
+            placement(3, 0.0, 10.0, 9.0, 10.0),
+            placement(4, 10.0, 10.0, 10.0, 10.0),
+        ]);
+        let focus_2 = dividers
+            .iter()
+            .filter(|divider| divider.touches_pane(2))
+            .collect::<Vec<_>>();
+        assert!(
+            focus_2
+                .iter()
+                .any(|d| d.orientation == Orientation::Vertical
+                    && d.left == Some(1)
+                    && d.right == Some(2))
+        );
+        assert!(
+            focus_2
+                .iter()
+                .any(|d| d.orientation == Orientation::Horizontal
+                    && d.above == Some(2)
+                    && d.below == Some(4))
+        );
+        assert!(focus_2.iter().all(|d| !d.touches_pane(3)));
     }
 
     #[test]

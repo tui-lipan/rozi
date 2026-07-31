@@ -133,9 +133,14 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "titlebar layout",
             "titlebar mode",
             "title layout",
-            "bar",
-            "border",
-            "integrated",
+            // Qualify mode names so a bare "border"/"bar" query prefers the real border/workbar
+            // rows under Hybrid (exact alias otherwise outranks their label substrings).
+            "bar titlebar",
+            "border titlebar",
+            "titlebar border",
+            "frame titlebar",
+            "integrated titlebar",
+            "compact titlebar",
         ]),
         AppearanceAction::ToggleWorkbar => {
             alias_list(&["workbar", "top bar", "status bar", "bar", "show workbar"])

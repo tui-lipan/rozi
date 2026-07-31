@@ -780,7 +780,10 @@ pub(crate) fn tiled_resize_strips(
         .collect();
 
     let gap = ctx.state.tile_gap();
-    let (vertical_strips, horizontal_strips) = resize_strip_hitboxes(&tiled, gap, master);
+    let title_row =
+        ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_title_row();
+    let (vertical_strips, horizontal_strips) =
+        resize_strip_hitboxes(&tiled, gap, master, title_row);
     // Strip rects are canvas-space; every coordinate compared against a pointer event has to be
     // moved into root space first. A left sidebar shifts x exactly as the workbar shifts y.
     let top_offset = f32::from(ctx.state.content_top_offset());
@@ -812,6 +815,9 @@ fn resize_strip_hitboxes(
     tiled: &[(PaneId, FloatRect)],
     gap: TileGap,
     master: bool,
+    // Whether a stacked pane leads with a titlebar row of its own (`[pane] titlebar = "bar"`),
+    // which is then the only handle a horizontal boundary offers.
+    title_row: bool,
 ) -> (Vec<ResizeStripHitbox>, Vec<ResizeStripHitbox>) {
     let h_gap = gap.horizontal;
     let v_gap = gap.vertical;
@@ -846,21 +852,28 @@ fn resize_strip_hitboxes(
                 }
             }
             // Horizontal boundary → vertical (top|bottom) split. Not adjustable in master.
-            // Unlike a vertical boundary this keeps straddling both panes' chrome: the stacked
-            // gap is zero even with separate borders, so there is no row between them to grab,
-            // and no scrollbar rides a horizontal border.
             if !master {
                 let a_bottom = a.y + a.h;
                 if (b.y - (a_bottom + v_gap)).abs() < eps {
                     let x0 = a.x.max(b.x);
                     let x1 = (a.x + a.w).min(b.x + b.w);
                     if x1 - x0 > eps {
+                        // A separate titlebar gives the boundary a row of its own, and that bar is
+                        // the handle a pointer expects: grab it and nothing else, the way the
+                        // vertical strip leaves both side borders alone. Without one there is no
+                        // row between the panes to take - a stacked gap is zero even with separate
+                        // borders - so the strip straddles the two touching border rows instead.
+                        let (y, h) = if title_row {
+                            (b.y, 1.0)
+                        } else {
+                            (a_bottom - 1.0, (b.y - a_bottom + 2.0).max(1.0))
+                        };
                         horizontal_strips.push(ResizeStripHitbox {
                             rect: FloatRect {
                                 x: x0,
-                                y: a_bottom - 1.0,
+                                y,
                                 w: x1 - x0,
-                                h: (b.y - a_bottom + 2.0).max(1.0),
+                                h,
                             },
                             pane_id: *a_id,
                             neighbor_id: *b_id,
@@ -882,9 +895,11 @@ struct ResizeStripHitbox {
     pane_id: PaneId,
     /// The pane on the far side of the boundary (right or below).
     neighbor_id: PaneId,
-    /// Leading edge of `neighbor_id` on the strip's axis, in canvas coordinates. The strip covers
-    /// pane chrome on both sides of it (borders, and the far pane's separate titlebar row), so a plain
-    /// click or hover is routed to whichever pane owns the cell under the pointer.
+    /// Leading edge of `neighbor_id` on the strip's axis, in canvas coordinates. Where a strip
+    /// still covers pane chrome - a shared merged seam, or two touching border rows with no
+    /// titlebar between them - this routes a plain click or hover to whichever pane owns the cell
+    /// under the pointer. Canvas-space, so callers shift it into root space before comparing it
+    /// against a pointer.
     boundary: f32,
 }
 
@@ -1232,7 +1247,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(11.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
 
         assert!(horizontal.is_empty());
         assert_eq!(vertical.len(), 1);
@@ -1252,7 +1267,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(9.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false);
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false, false);
 
         assert_eq!(vertical.len(), 1);
         assert_eq!(vertical[0].rect, rect(9.0, 0.0, 1.0, 10.0));
@@ -1281,13 +1296,15 @@ mod tests {
         assert_eq!(strip_pointer_owner(near, far, boundary, 10 + sidebar), far);
     }
 
+    /// With no titlebar row there is nothing between the panes to grab - a stacked gap is zero
+    /// even with separate borders - so the strip straddles the two touching border rows.
     #[test]
     fn stacked_resize_strips_cover_both_touching_borders() {
         let tiled = vec![
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 10.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
 
         assert!(vertical.is_empty());
         assert_eq!(horizontal.len(), 1);
@@ -1302,7 +1319,7 @@ mod tests {
             (3, rect(0.0, 10.0, 10.0, 10.0)),
             (4, rect(11.0, 10.0, 10.0, 10.0)),
         ];
-        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false);
+        let (vertical, horizontal) = resize_strip_hitboxes(&tiled, TileGap::DEFAULT, false, false);
         let junctions = resize_junction_hitboxes(&vertical, &horizontal);
 
         assert_eq!(junctions.len(), 1, "coincident intersections must merge");
@@ -1355,8 +1372,11 @@ mod tests {
     /// panes covers two rows: the upper pane's bottom border and the lower pane's titlebar. The
     /// strip draws above both panes, so it must route a pointer on the lower row to the lower
     /// pane - otherwise no pane below the first row can be focused by its title.
+    /// `titlebar = "bar"` gives the lower pane a row of its own above its frame, and that bar is
+    /// the whole handle: the upper pane's bottom border is left alone, so a boundary offers one
+    /// unambiguous place to grab instead of two.
     #[test]
-    fn stacked_strip_routes_the_titlebar_row_to_the_lower_pane() {
+    fn a_titlebar_row_is_the_only_handle_on_a_stacked_boundary() {
         let gap = TileGap {
             horizontal: -1.0,
             vertical: 0.0,
@@ -1365,17 +1385,19 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(0.0, 10.0, 10.0, 10.0)),
         ];
-        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false);
+        let (_, horizontal) = resize_strip_hitboxes(&tiled, gap, false, true);
 
         assert_eq!(horizontal.len(), 1);
         let strip = horizontal[0];
-        assert_eq!(strip.rect, rect(0.0, 9.0, 10.0, 2.0));
+        assert_eq!(strip.rect, rect(0.0, 10.0, 10.0, 1.0));
         assert_eq!(strip.boundary, 10.0);
 
+        // Every cell of the strip is the lower pane's own bar, so a press there focuses it.
         let boundary = strip.boundary as u16;
-        let owner = |y| strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, y);
-        assert_eq!(owner(9), 1, "upper pane's bottom border stays with it");
-        assert_eq!(owner(10), 2, "lower pane's titlebar row focuses that pane");
+        assert_eq!(
+            strip_pointer_owner(strip.pane_id, strip.neighbor_id, boundary, 10),
+            2
+        );
     }
 
     #[test]
@@ -1388,7 +1410,7 @@ mod tests {
             (1, rect(0.0, 0.0, 10.0, 10.0)),
             (2, rect(9.0, 0.0, 10.0, 10.0)),
         ];
-        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false);
+        let (vertical, _) = resize_strip_hitboxes(&tiled, gap, false, true);
 
         assert_eq!(vertical.len(), 1);
         let strip = vertical[0];

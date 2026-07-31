@@ -27,6 +27,13 @@ Every resize lands on a whole cell. A keyboard step is 4% of the split it moves,
 cell and never less than one, so each press of a key moves a given divider by the same amount;
 dragging a divider with the mouse follows the pointer one cell per cell.
 
+Each boundary offers exactly one handle, and it is never a pane's own border — a side border
+carries the terminal's scrollbar, and clicking a border should reach the pane, not the divider.
+Left|right boundaries are grabbed by the gap column between the panes. Stacked boundaries are
+grabbed by the lower pane's titlebar row when `[pane] titlebar = "bar"` (the default); with the
+other titlebar modes there is no row between the panes, so the two touching border rows are the
+handle. Merged borders overlap, leaving the shared seam cell as the handle on either axis.
+
 ### Master
 
 The first tiled pane becomes the **master** on the left; the remaining tiled panes stack on

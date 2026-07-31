@@ -598,6 +598,35 @@ mod tests {
             (before, spans(&mut backend, axis))
         }
 
+        /// Root-space row a stacked boundary is grabbed on. With `titlebar = "bar"` - the default -
+        /// the handle is the *lower* pane's own titlebar row, not the upper pane's bottom border.
+        fn grab_row(tree: &DwindleTree, lower: PaneId) -> u16 {
+            let mut backend = backend_with(tree);
+            pane_leading_row(&mut backend, lower)
+        }
+
+        /// As `grab_row`, for a backend that is already set up.
+        fn pane_leading_row(backend: &mut TestBackend<HyprmuxApp>, pane: PaneId) -> u16 {
+            let top = backend.state_mut().content_top_offset();
+            let state = backend.state_mut();
+            let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
+            let top_gap = state.workspace_top_gap();
+            let gap = state.tile_gap();
+            let index = state.current().active_workspace;
+            let y = crate::layout::workspace_target_rects(
+                &state.current().workspaces[index],
+                bounds,
+                top_gap,
+                gap,
+            )
+            .iter()
+            .find(|placement| placement.id == pane)
+            .expect("pane placement")
+            .rect
+            .y;
+            y.round() as u16 + top
+        }
+
         /// Panes whose span along the drag axis changed, and by how much at each edge.
         fn shifted(before: &[Span], after: &[Span]) -> Vec<Span> {
             before
@@ -619,11 +648,16 @@ mod tests {
                     split(SplitAxis::Vertical, leaf(1), leaf(2)),
                     split(SplitAxis::Vertical, leaf(3), leaf(4)),
                 );
-                // Tile rows 1..29, so the mid-height divider sits at row 15.
-                let (before, after) = drag_divider(&tree, (70, 15), (0, 4), SplitAxis::Vertical);
+                let (before, after) =
+                    drag_divider(&tree, (70, grab_row(&tree, 4)), (0, 4), SplitAxis::Vertical);
                 assert_eq!(shifted(&before, &after), vec![(3, 0.0, 4.0), (4, 4.0, 0.0)]);
 
-                let (before, after) = drag_divider(&tree, (20, 15), (0, -4), SplitAxis::Vertical);
+                let (before, after) = drag_divider(
+                    &tree,
+                    (20, grab_row(&tree, 2)),
+                    (0, -4),
+                    SplitAxis::Vertical,
+                );
                 assert_eq!(
                     shifted(&before, &after),
                     vec![(1, 0.0, -4.0), (2, -4.0, 0.0)]
@@ -647,7 +681,7 @@ mod tests {
                     let (grab, delta, moved) = if vertical_divider {
                         ((50, 5), (6, 0), 6.0)
                     } else {
-                        ((20, 15), (0, 4), 4.0)
+                        ((20, grab_row(&tree, 3)), (0, 4), 4.0)
                     };
                     let (before, after) = drag_divider(&tree, grab, delta, axis(vertical_divider));
                     // Panes 1 and 2 straddle the *nested* divider, which is perpendicular here, so
@@ -672,7 +706,12 @@ mod tests {
                     let (inner_grab, main_grab, delta, moved) = if vertical_dividers {
                         ((25, 10), (50, 10), (6, 0), 6.0)
                     } else {
-                        ((50, 8), (50, 15), (0, 3), 3.0)
+                        (
+                            (50, grab_row(&tree, 2)),
+                            (50, grab_row(&tree, 3)),
+                            (0, 3),
+                            3.0,
+                        )
                     };
 
                     let (before, after) = drag_divider(&tree, inner_grab, delta, axis);
@@ -710,10 +749,7 @@ mod tests {
                     let (grab_x, grab_y) = if vertical_divider {
                         (start.round() as u16, 10)
                     } else {
-                        (
-                            50,
-                            start.round() as u16 + backend.state_mut().content_top_offset(),
-                        )
+                        (50, pane_leading_row(&mut backend, 2))
                     };
 
                     backend
@@ -747,8 +783,9 @@ mod tests {
         fn a_junction_drag_moves_one_divider_per_axis() {
             in_test_stack(|| {
                 let tree = balanced_grid_tree();
+                let row = grab_row(&tree, 2);
                 let mut backend = backend_with(&tree);
-                drag(&mut backend, 50, 15, 6, 4);
+                drag(&mut backend, 50, row, 6, 4);
 
                 let after = ratios(&mut backend);
                 let ratio = |path: &[bool]| {

@@ -207,13 +207,14 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // geometry animates it sweeps across settled panes, and Exact-merging every transient
         // overlap would smear junction glyphs along the way.
         let settled = rect_settled(animated_rect, target_rect);
+        // Dividers always use target layout placements, including panes mid-open or mid-reflow.
+        // Animating tiles still paint above the seams, so glyphs only show in emerging gaps
+        // instead of vanishing for the whole spawn/close geometry animation.
         if divider_mode
             && !pane.floating
             && !pane.fullscreen
-            && !pane.opening
             && !pane.closing
             && moving.is_none()
-            && settled
         {
             divider_panes.push(pane.id);
         }
@@ -1008,7 +1009,9 @@ mod divider_tests {
     }
 
     #[test]
-    fn unsettled_region_does_not_remove_unrelated_dividers() {
+    fn excluded_pane_does_not_remove_unrelated_dividers() {
+        // Closing/dragged panes stay out of the eligible set; their absence must not wipe seams
+        // among the remaining tiles.
         let placements = [
             placement(1, 0.0, 0.0, 9.0, 9.0),
             placement(2, 0.0, 10.0, 9.0, 10.0),

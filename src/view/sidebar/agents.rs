@@ -572,7 +572,7 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
         // Where the agent sits below its project root leads it: in a monorepo, `services/api` is
         // the only thing separating two rows that otherwise read identically, and the group header
         // can no longer say it now that it names the project rather than the directory.
-        .badge(
+        .badge_text(
             match row.subpath.as_deref() {
                 Some(subpath) => format!(
                     "{} · {}",

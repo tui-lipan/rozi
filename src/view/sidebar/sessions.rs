@@ -75,29 +75,20 @@ fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarR
     } else {
         entry.name.clone()
     };
-    let detail = session_detail(entry);
-    let clients = shared_client_count(entry, we_hold);
+    let muted = super::super::fg_only(&ctx.state.theme.muted);
+    let status = crate::view::session_status::session_connection_status(current, connection);
+    let styles = crate::view::session_status::SessionStatusStyles::from_theme(&ctx.state.theme);
     let mut row = Row::new(label)
         .active(current)
         .title_style(super::super::fg_only(&ctx.state.theme.primary));
-    if let Some(clients) = clients {
-        row = row.badge(
-            format!("󰍺 {clients}"),
-            super::super::fg_only(&ctx.state.theme.muted),
-        );
+    // Connection chrome+label owns the title-line badge when parked; otherwise a shared-client
+    // count can use that slot. Hover ✕ still replaces whichever badge is showing.
+    if let Some(badge) = crate::view::session_status::session_status_badge(status, styles) {
+        row = row.badge(badge);
+    } else if let Some(clients) = shared_client_count(entry, we_hold) {
+        row = row.badge_text(format!("󰍺 {clients}"), muted);
     }
-    let row = row.detail(
-        match (current, connection) {
-            // Attached but not the session on screen: our connection is kept in the background.
-            (false, Some(ConnectionState::Connected)) => format!("background · {detail}"),
-            (false, Some(ConnectionState::Connecting | ConnectionState::Reconnecting)) => {
-                format!("reconnecting · {detail}")
-            }
-            (false, Some(_)) => format!("offline · {detail}"),
-            _ => detail,
-        },
-        super::super::fg_only(&ctx.state.theme.muted),
-    );
+    let row = row.detail(session_detail(entry), muted);
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
     // the one on screen is fine; the UI hops onto a fresh ephemeral session rather than quitting.
     SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(
@@ -161,7 +152,7 @@ fn header_row(
     let mut target = RowTarget::Inert;
     if let Some((status, remote_target)) = remote {
         let (dot, text, color) = status_face(theme, status);
-        row = row.badge(format!("{dot} {text}"), color);
+        row = row.badge_text(format!("{dot} {text}"), color);
         let muted = super::super::fg_only(&theme.muted);
         let (description, description_style, row_target) = match status {
             HostStatus::Connected | HostStatus::Reachable => {

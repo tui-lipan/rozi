@@ -1,6 +1,7 @@
 mod keys;
 mod overlays;
 mod pane;
+pub(crate) mod session_status;
 pub(crate) mod sidebar;
 mod workbar;
 

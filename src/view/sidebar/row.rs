@@ -112,7 +112,7 @@ pub(crate) struct Row {
     glyph: Option<Element>,
     title: String,
     title_style: Style,
-    badge: Option<(String, Style)>,
+    badge: Option<Element>,
     detail: Vec<(String, Style)>,
 }
 
@@ -142,9 +142,16 @@ impl Row {
     }
 
     /// A short marker pinned to the right edge of the title line — a workspace number, a client
-    /// count. The title yields to it, so a long title truncates rather than pushing it off.
-    pub(super) fn badge(mut self, text: impl Into<String>, style: Style) -> Self {
-        self.badge = Some((text.into(), style));
+    /// count, session connection chrome. The title yields to it, so a long title truncates rather
+    /// than pushing it off.
+    pub(super) fn badge(mut self, badge: impl Into<Element>) -> Self {
+        self.badge = Some(badge.into());
+        self
+    }
+
+    /// Text badge helper for the common string + style case.
+    pub(super) fn badge_text(mut self, text: impl Into<String>, style: Style) -> Self {
+        self.badge = Some(Text::new(text.into()).style(style).into());
         self
     }
 
@@ -213,9 +220,7 @@ impl Row {
         // is the thing being aimed at, so in a column this narrow it gets the space.
         let trailing = match close {
             Some(close) => Some(close_affordance(ctx, close)),
-            None => self
-                .badge
-                .map(|(badge, style)| Text::new(badge).style(style).into()),
+            None => self.badge,
         };
         let title: Element = match trailing {
             None => Text::new(self.title).style(self.title_style).into(),

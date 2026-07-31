@@ -213,9 +213,10 @@ vanish from the list just because its link is down.
   credential; SSH handles authentication out of band), shown as muted *"N panes · last seen"* rows
   under an offline host; selecting one connects and attaches.
 - **Sharing stays compact.** A live session shared with other clients shows a right-aligned `󰍺 N`
-  badge beside its name, where `N` is the total attached-client count. Pane count,
-  background/reconnect state, and creation profile remain on the detail line, so narrow sidebars do
-  not spend that line spelling out "shared with N others".
+  badge beside its name, where `N` is the total attached-client count. A parked attachment instead
+  takes that badge slot as `○ background` / spinner + `reconnecting` / `× offline` — the same
+  chrome the session picker uses. Pane count and creation profile stay on the detail line, so
+  narrow sidebars do not spend that line spelling out "shared with N others".
 - **Create and connect from the list.** The local group and each online host end with a
   `+ New session`, and a `+ Connect a host…` row at the bottom opens the connect-remote-host prompt.
   Creating a session on a host parks the current session in the background and attaches the new one,

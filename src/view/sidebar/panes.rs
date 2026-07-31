@@ -31,7 +31,7 @@ pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                 .title_style(super::super::fg_only(&ctx.state.theme.primary));
             let row = match pane_location(pane) {
                 Some(location) => row
-                    .badge(program, super::super::fg_only(&ctx.state.theme.muted).dim())
+                    .badge_text(program, super::super::fg_only(&ctx.state.theme.muted).dim())
                     .detail(
                         row::truncate_start(
                             &location,

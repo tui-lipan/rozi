@@ -141,22 +141,19 @@ pub(crate) fn collaboration_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             ctx.link()
                 .callback(|query: Arc<str>| Msg::CollaborationQueryChanged(query.to_string())),
         )
-        .on_select(
-            ctx.link()
-                .callback(|event: SearchEvent<CollaboratorItem>| {
-                    Msg::CollaborationSelect(event.item.value.position)
-                }),
-        )
-        .on_activate(ctx.link().callback(
-            |event: SearchEvent<CollaboratorItem>| match event.item.value {
+        .on_select(ctx.link().callback(|event: SearchEvent<CollaboratorItem>| {
+            Msg::CollaborationSelect(event.item.value.position)
+        }))
+        .on_activate(ctx.link().callback(|event: SearchEvent<CollaboratorItem>| {
+            match event.item.value {
                 CollaboratorItem {
                     roster_index,
                     grantable: true,
                     ..
                 } => Msg::CollaborationGrant(roster_index),
                 CollaboratorItem { position, .. } => Msg::CollaborationSelect(position),
-            },
-        ));
+            }
+        }));
     if let Some(armed) = armed {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<CollaboratorItem>, _hl| {
             (item.value.client_id == armed).then(|| render_pending_kick_item(item, error_bg))
@@ -173,7 +170,11 @@ pub(crate) fn collaboration_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             hints = hints.child(hint_pill(&ctx.state.theme, "decline", "ctrl+d"));
         }
         if item.kickable {
-            let label = if armed.is_some() { "confirm kick" } else { "kick" };
+            let label = if armed.is_some() {
+                "confirm kick"
+            } else {
+                "kick"
+            };
             hints = hints.child(hint_pill(&ctx.state.theme, label, "ctrl+k"));
         }
         body = body.child(hints);
@@ -358,6 +359,10 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     row.into()
 }
 
+use crate::view::session_status::{
+    SessionConnectionStatus, session_connection_status, session_status_gutter,
+};
+
 fn session_picker_palette(
     ctx: &Context<HyprmuxApp>,
     picker: &SessionPickerState,
@@ -366,6 +371,21 @@ fn session_picker_palette(
     let query = picker.input.text().trim().to_ascii_lowercase();
     let current_name = ctx.state.current().session_name.as_deref();
     let current_host = ctx.state.current().remote_host.as_deref();
+    let current_remote_target = &ctx.state.current().remote_target;
+    let statuses: Vec<SessionConnectionStatus> = picker
+        .entries
+        .iter()
+        .map(|entry| {
+            let is_current = current_name == Some(entry.name.as_str())
+                && current_host == entry.host.as_deref()
+                && current_remote_target == &entry.remote_target;
+            let connection = ctx
+                .state
+                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+                .map(|attachment| attachment.connection);
+            session_connection_status(is_current, connection)
+        })
+        .collect();
     let ephemeral_entries = picker
         .entries
         .iter()
@@ -374,6 +394,7 @@ fn session_picker_palette(
         .collect::<Vec<_>>();
     let mut entries = Vec::new();
     let mut last_group: Option<Option<&str>> = None;
+    let mut reserve_discovered_gutter = false;
     for (index, entry) in picker.entries.iter().enumerate().filter(|(_, entry)| {
         query.is_empty()
             || entry.name.to_ascii_lowercase().contains(&query)
@@ -382,6 +403,7 @@ fn session_picker_palette(
                 .as_deref()
                 .is_some_and(|host| host.to_ascii_lowercase().contains(&query))
     }) {
+        reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
         let group = entry.host.as_deref();
         if last_group != Some(group) {
             if last_group.is_some() {
@@ -404,36 +426,9 @@ fn session_picker_palette(
             label.push('@');
             label.push_str(host);
         }
-        let is_current = current_name == Some(entry.name.as_str())
-            && current_host == entry.host.as_deref()
-            && ctx.state.current().remote_target == entry.remote_target;
-        let attachment = ctx
-            .state
-            .attachment_by_identity(&entry.name, entry.remote_target.as_ref());
-        let connection = attachment.map(|attachment| attachment.connection);
-        // We hold a live client connection to this session (current, or retained in the background).
-        let we_hold = attachment.is_some();
-        let is_connected = connection == Some(crate::state::ConnectionState::Connected);
-        if is_current {
-            label.push_str("  • current");
-        } else if is_connected {
-            // Attached but not on screen: our connection is retained in the background.
-            label.push_str("  • background");
-        } else if matches!(
-            connection,
-            Some(
-                crate::state::ConnectionState::Connecting
-                    | crate::state::ConnectionState::Reconnecting
-            )
-        ) {
-            label.push_str("  • reconnecting");
-        } else if connection.is_some() {
-            label.push_str("  • offline");
-        }
-        entries.push(
-            SearchEntry::item(label, index)
-                .description(session_description(entry, we_hold)),
-        );
+        let we_hold = !matches!(statuses[index], SessionConnectionStatus::Discovered);
+        entries
+            .push(SearchEntry::item(label, index).description(session_description(entry, we_hold)));
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
@@ -451,6 +446,7 @@ fn session_picker_palette(
     let description_style = fg_only(&theme.muted);
     let pending_accent = pending_kill.map(|_| error_bg);
     let selection_style = picker_selection_style(theme, pending_accent);
+    let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
 
     let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
@@ -475,7 +471,12 @@ fn session_picker_palette(
         .on_activate(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
-        );
+        )
+        // Leading space indents the marker; list item left padding is the gap before the label.
+        .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            let status = *statuses.get(item.value)?;
+            session_status_gutter(status, status_styles, reserve_discovered_gutter)
+        }));
     if pending_kill.is_some() || !ephemeral_entries.is_empty() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             if pending_kill == Some(item.value) {

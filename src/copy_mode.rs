@@ -40,17 +40,23 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     };
 
     let mut copied_selection = None;
-    if copy
-        && let Some(selection) = state.navigation.selection()
-        && let Some(pane) = find_pane_mut(&mut ctx.state, state.target)
-    {
-        let text =
-            pane.terminal
-                .snapshot()
-                .selection_text(&selection, SelectionEnd::Inclusive, true);
-        if !text.is_empty() {
+    if copy {
+        let prepared = find_pane_mut(&mut ctx.state, state.target).and_then(|pane| {
+            let total = pane.terminal.total_scrollback_rows();
+            let selection = state.navigation.selection(total)?;
+            let text =
+                pane.terminal
+                    .selection_display_text(&selection, SelectionEnd::Inclusive, true);
+            if text.is_empty() {
+                return None;
+            }
+            let offset = pane.terminal.scrollback_offset();
+            let viewport_rows = usize::from(pane.terminal.rows);
+            Some((text, to_viewport(&selection, offset, total, viewport_rows)))
+        });
+        if let Some((text, projected)) = prepared {
             match ctx.clipboard().copy(&text) {
-                Ok(()) => copied_selection = Some(selection),
+                Ok(()) => copied_selection = projected,
                 Err(err) => {
                     crate::pty_events::notify_error(ctx, "Copy failed", err.to_string());
                 }
@@ -252,13 +258,26 @@ mod tests {
     #[test]
     fn framework_navigation_selection_keeps_the_cursor_cell_as_endpoint() {
         let mut navigation = TerminalCopyMode::new(2, 4, 0);
-        navigation.toggle_anchor();
+        let grid = CopyModeGrid {
+            rows: 5,
+            cols: 20,
+            total_scrollback_rows: 0,
+            cursor_row_text: "",
+            prompt_lines: &[],
+        };
+        let _ = navigation.handle_key(
+            KeyEvent {
+                code: KeyCode::Char('v'),
+                mods: KeyMods::NONE,
+            },
+            grid,
+        );
         navigation.goto(1, 2, 0);
         let selection = navigation
-            .selection()
+            .selection(0)
             .expect("anchor should create a selection");
-        assert_eq!((selection.anchor.row, selection.anchor.col), (2, 4));
-        assert_eq!((selection.cursor.row, selection.cursor.col), (1, 2));
+        assert_eq!((selection.anchor.line, selection.anchor.col), (2, 4));
+        assert_eq!((selection.cursor.line, selection.cursor.col), (1, 2));
     }
 
     #[test]

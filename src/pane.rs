@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use tui_lipan::prelude::*;
-use tui_lipan::utils::{GridPos, GridSelection};
 
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
@@ -390,22 +389,16 @@ impl TerminalPane {
             .to_string()
     }
 
-    /// Extract the text covered by a selection from the current snapshot grid. `anchor` and
-    /// `cursor` are `(row, display_col)` in visible-viewport coordinates; ordering is normalized.
-    /// Trailing whitespace is trimmed per line and lines are joined with `\n`.
-    pub fn extract_text(&self, anchor: (usize, usize), cursor: (usize, usize)) -> String {
-        let selection = GridSelection {
-            anchor: GridPos {
-                row: anchor.0,
-                col: anchor.1,
-            },
-            cursor: GridPos {
-                row: cursor.0,
-                col: cursor.1,
-            },
-        };
-        self.snapshot()
-            .selection_text(&selection, SelectionEnd::Inclusive, true)
+    /// Extract selected text across retained scrollback using display columns.
+    pub fn selection_display_text(
+        &self,
+        sel: &TerminalSelection,
+        endpoint: SelectionEnd,
+        trim_row_end: bool,
+    ) -> String {
+        self.screen
+            .borrow()
+            .selection_display_text(sel, endpoint, trim_row_end)
     }
 }
 
@@ -570,6 +563,7 @@ pub(crate) fn sanitize_terminal_title(title: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::utils::{GridPos, GridSelection};
 
     #[test]
     fn shell_title_parser_is_narrow_and_preserves_the_user_and_cwd() {
@@ -781,12 +775,30 @@ mod tests {
     }
 
     #[test]
-    fn extract_text_uses_display_columns_for_wide_cells() {
+    fn selection_display_text_spans_history_and_uses_display_columns() {
         let mut pane = TerminalPane::new(20);
-        pane.apply_server_resize(20, 1);
-        pane.process_server_output("a你b".as_bytes());
+        pane.apply_server_resize(20, 2);
+        pane.process_server_output("a你b\r\n".as_bytes());
+        pane.process_server_output("line-2\r\n".as_bytes());
+        pane.process_server_output("line-3\r\n".as_bytes());
 
-        assert_eq!(pane.extract_text((0, 0), (0, 2)), "a你");
+        let wide = TerminalSelection {
+            anchor: TerminalPos { line: 0, col: 0 },
+            cursor: TerminalPos { line: 0, col: 2 },
+        };
+        assert_eq!(
+            pane.selection_display_text(&wide, SelectionEnd::Inclusive, true),
+            "a你"
+        );
+
+        let spanning = TerminalSelection {
+            anchor: TerminalPos { line: 1, col: 0 },
+            cursor: TerminalPos { line: 2, col: 5 },
+        };
+        assert_eq!(
+            pane.selection_display_text(&spanning, SelectionEnd::Inclusive, true),
+            "line-2\nline-3"
+        );
     }
 
     /// A pane decodes the kitty graphics the child writes, and sizes the result against the host

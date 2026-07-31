@@ -1,5 +1,5 @@
 use tui_lipan::prelude::*;
-use tui_lipan::utils::GridSelection;
+use tui_lipan::style::ThemeRole;
 
 use crate::state::{
     LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
@@ -380,6 +380,17 @@ pub(crate) fn pane_element(
             .on_mouse_forward(ctx.link().callback(move |bytes| Msg::PaneMouse(id, bytes)));
     }
     if let Some(selection) = copy_mode_selection(ctx, id) {
+        // Navigation cursor (no range yet) uses accent so it stays distinct from
+        // `text_selection`; an anchored range keeps the selection style.
+        if copy_mode_is_cursor_only(ctx, id)
+            && let Some(accent) = theme
+                .role(ThemeRole::Accent)
+                .resolved_fg()
+                .filter(|color| !color.is_sentinel())
+        {
+            terminal_widget =
+                terminal_widget.selection_style(Style::new().bg(accent).fg(frame_bg));
+        }
         terminal_widget = terminal_widget.selection(Some(selection));
     }
     let terminal: Element = terminal_widget.into();
@@ -1118,20 +1129,35 @@ fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<Terminal
         .copy_mode
         .as_ref()
         .filter(|copy| copy.target == id)?;
-    let selection = copy.navigation.selection().unwrap_or_else(|| {
+    let total = crate::pane_lifecycle::find_pane(&ctx.state, id)
+        .map(|pane| pane.terminal.total_scrollback_rows())
+        .unwrap_or(0);
+    let selection = copy.navigation.selection(total).unwrap_or_else(|| {
         let (row, col) = copy.navigation.cursor();
-        GridSelection::new(tui_lipan::utils::GridPos { row, col })
+        let offset = copy.navigation.scrollback_offset();
+        TerminalSelection::new(TerminalPos {
+            line: absolute_line(total, offset, row),
+            col,
+        })
     });
     Some(selection_for_render(&selection))
 }
 
-fn selection_for_render(selection: &GridSelection) -> TerminalSelection {
+fn copy_mode_is_cursor_only(ctx: &Context<HyprmuxApp>, id: PaneId) -> bool {
+    ctx.state
+        .copy_mode
+        .as_ref()
+        .filter(|copy| copy.target == id)
+        .is_some_and(|copy| copy.navigation.anchor().is_none())
+}
+
+fn selection_for_render(selection: &TerminalSelection) -> TerminalSelection {
     let (start, end) = selection.normalized();
     TerminalSelection {
         anchor: start,
         // Exclusive end column so the cursor/anchor cell is included in the highlight.
-        cursor: tui_lipan::utils::GridPos {
-            row: end.row,
+        cursor: TerminalPos {
+            line: end.line,
             col: end.col.saturating_add(1),
         },
     }

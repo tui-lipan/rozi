@@ -89,7 +89,9 @@ The mouse scroll wheel over a pane scrolls its terminal scrollback.
 ## Text selection and clipboard
 
 - **Selection** - drag to select terminal text; the selection is styled with the theme's
-  selection color.
+  selection color. Anchors are absolute scrollback lines (not viewport rows), so the highlight
+  stays on its text while you wheel-scroll, and dragging past the top/bottom edge autoscrolls
+  into history. Ctrl+C copies the full absolute range, including lines that scrolled out of view.
 - **OSC52 clipboard** - programs running in a pane can set the system clipboard via the OSC52
   escape sequence. This is enabled by default and can be turned off with
   `[clipboard].enable_osc52 = false` in the [config](configuration.md#clipboard). Under
@@ -117,8 +119,9 @@ cancels back to copy mode, and `n`/`N` cycle later matches while keeping any sel
 With shell integration, `[`/`]` jump between prompt marks and `o` copies the last command's
 output. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
 system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar shows a **COPY**
-indicator while active, and the selection is highlighted with the theme's selection color. Yank
-uses the system clipboard, reaching it over SSH via OSC52 when enabled.
+indicator while active. The navigation cursor is painted with the theme accent color; an active
+selection uses the theme's selection color. Yank uses the system clipboard, reaching it over
+SSH via OSC52 when enabled.
 
 *Copy last command output* is also available from the command palette / `copy-last-output`
 action and as `hyprmux capture-pane --last-output` for automation. Without shell

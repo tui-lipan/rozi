@@ -151,7 +151,8 @@ with the *Toggle pane titlebars* palette command. Set `[pane] highlight_focused_
 to keep focused and unfocused titlebars styled identically across all three layouts.
 Border and integrated headers remain visible in frameless modes: tui-lipan gives them their own
 row when no frame edge exists. In `border_mode = "dividers"`, a border title embeds in the
-horizontal divider above the pane (like a Frame border header), and an integrated title fills that
+horizontal divider above the pane (like a Frame border header: `├─title────`, with a leading
+dash after the junction and no trailing gap before the line continues), and an integrated title fills that
 divider row in place of the line. Top-row panes still get a Frame header because nothing sits
 above them to carry the title.
 

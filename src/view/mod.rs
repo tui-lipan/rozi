@@ -294,11 +294,26 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                         && let Some(label) = divider_title_element(app, ctx, pane, focused_pane)
                     {
                         line = match ctx.state.config.pane.titlebar {
-                            // Embed the title in the line, like a Frame border header.
-                            crate::state::PaneTitlebarMode::Border => line
-                                .label(label)
-                                .label_alignment(Align::Start)
-                                .label_padding(1),
+                            // Embed the title in the line, like a Frame border header: one leading
+                            // `─` after any `├` junction, and no trailing gap before the line
+                            // continues. Horizontal dividers extend one cell into a vertical for
+                            // that junction, so inset past the junction cell when present.
+                            crate::state::PaneTitlebarMode::Border => {
+                                let pane_left = placements
+                                    .iter()
+                                    .find(|placement| placement.id == below)
+                                    .map(|placement| placement.rect.x);
+                                let pad_left = if pane_left
+                                    .is_some_and(|x| divider.rect.x < x - 0.5)
+                                {
+                                    2
+                                } else {
+                                    1
+                                };
+                                line.label(label)
+                                    .label_alignment(Align::Start)
+                                    .label_padding_axes(pad_left, 0)
+                            }
                             // Fill the whole gap row with the titlebar strip, replacing the line.
                             crate::state::PaneTitlebarMode::Integrated => line
                                 .label(label)

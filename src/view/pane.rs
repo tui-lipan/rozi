@@ -991,23 +991,17 @@ pub(crate) fn tiled_resize_strips(
         ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_title_row();
     let (vertical_strips, horizontal_strips) =
         resize_strip_hitboxes(&tiled, gap, master, title_row);
-    // Strip rects are canvas-space; every coordinate compared against a pointer event has to be
-    // moved into root space first. A left sidebar shifts x exactly as the workbar shifts y.
+    // Junction segment lookup compares the drag origin against canvas-space starts, so shift by
+    // the chrome offsets the same way event coordinates are rooted.
     let top_offset = f32::from(ctx.state.content_top_offset());
     let left_offset = f32::from(ctx.state.terminal_content_left_offset(ctx.viewport()));
 
     let mut strips = Vec::new();
     for strip in &vertical_strips {
-        strips.push((
-            strip.rect,
-            resize_strip_element(ctx, strip, true, strip.boundary + left_offset),
-        ));
+        strips.push((strip.rect, resize_strip_element(ctx, strip, true)));
     }
     for strip in &horizontal_strips {
-        strips.push((
-            strip.rect,
-            resize_strip_element(ctx, strip, false, strip.boundary + top_offset),
-        ));
+        strips.push((strip.rect, resize_strip_element(ctx, strip, false)));
     }
     for junction in resize_junction_hitboxes(&vertical_strips, &horizontal_strips) {
         strips.push((
@@ -1232,35 +1226,21 @@ fn strip_pointer_owner(near: PaneId, far: PaneId, boundary: u16, along: u16) -> 
     if along >= boundary { far } else { near }
 }
 
-/// A resize strip sits *above* the panes it separates, so it also swallows pointer events over the
-/// pane chrome beneath it. With a separate bar a horizontal strip is two rows - the upper pane's
-/// bottom border and the lower pane's whole titlebar - so without this the titlebar of every pane
-/// below the first row is unclickable. Focus clicks and hover-focus are re-issued here for
-/// whichever pane owns the cell under the pointer; drags still resize the split.
+/// A resize strip sits *above* the panes it separates. Clicks and hover leave focus alone - a
+/// press on a divider is almost always the start of a drag, not a request to select the pane
+/// under it - so only a drag resizes the split.
 fn resize_strip_element(
     ctx: &Context<HyprmuxApp>,
     strip: &ResizeStripHitbox,
     horizontal_split: bool,
-    boundary: f32,
 ) -> Element {
-    let near = strip.pane_id;
-    let far = strip.neighbor_id;
-    let pane_id = near;
-    let boundary = boundary.round().max(0.0) as u16;
-    let owner = move |x: u16, y: u16| {
-        let along = if horizontal_split { x } else { y };
-        strip_pointer_owner(near, far, boundary, along)
-    };
+    let pane_id = strip.pane_id;
 
-    let mut region = MouseRegion::new()
+    MouseRegion::new()
         // A divider has no click gesture to tell a drag apart from, so it tracks the pointer from
         // its first cell. On the default threshold a left/right drag ignored two columns and then
         // arrived three out at once, which reads as a dead zone followed by a jump.
         .drag_threshold(1, 1)
-        .on_mouse_down(
-            ctx.link()
-                .callback(move |event: MouseEvent| Msg::FocusPane(owner(event.x, event.y))),
-        )
         .on_drag_start(ctx.link().callback(move |event: MouseDragEvent| {
             Msg::BeginResizeSplit(pane_id, horizontal_split, event.from_x, event.from_y)
         }))
@@ -1274,17 +1254,7 @@ fn resize_strip_element(
                 event.y,
             )
         }))
-        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit));
-
-    if ctx.state.config.pane.focus_on_hover {
-        region =
-            region
-                .on_mouse_move(ctx.link().callback(move |event: MouseMoveEvent| {
-                    Msg::HoverPane(owner(event.x, event.y))
-                }));
-    }
-
-    region
+        .on_drag_end(ctx.link().callback(move |_| Msg::EndResizeSplit))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into()
 }

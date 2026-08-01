@@ -98,6 +98,8 @@ pub struct ServerSettings {
     /// [`crate::config::HyprmuxSessionConfig::allow_takeover`], including its `true` default, so a
     /// server started without a config behaves like one started from the default config.
     pub allow_takeover: bool,
+    /// Scrollback retained by each server-side terminal parser.
+    pub scrollback: usize,
     /// Resolved interactive-shell/command-runner argv used only for snapshot restore ([`resurrect::restore`]),
     /// which respawns panes with no controlling client yet connected to resolve them - the
     /// server's own config load is the only launch-policy source available at that point. Empty
@@ -120,6 +122,7 @@ impl Default for ServerSettings {
             snapshot_interval: Duration::from_secs(30),
             heartbeat_timeout: DEFAULT_HEARTBEAT_TIMEOUT,
             allow_takeover: true,
+            scrollback: DEFAULT_SCROLLBACK,
             shell: Vec::new(),
             command_shell: Vec::new(),
         }
@@ -577,6 +580,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
             log_dir: loaded.config.logging.dir,
             resurrect: loaded.config.session.resurrect,
             allow_takeover: loaded.config.session.allow_takeover,
+            scrollback: loaded.config.scrollback,
             shell,
             command_shell,
             ..ServerSettings::default()

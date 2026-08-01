@@ -115,7 +115,7 @@ impl SessionServer {
         self.next_generation = self.next_generation.max(generation.saturating_add(1));
         // Pre-17 clients report no cell size; the PTY's own default stands in until one resizes.
         let cell = request.cell.unwrap_or_default();
-        let mut screen = TerminalScreen::new(rows.max(1), cols.max(1), DEFAULT_SCROLLBACK);
+        let mut screen = TerminalScreen::new(rows.max(1), cols.max(1), self.settings.scrollback);
         screen.set_cell_size(cell);
         // Seed the palette before the PTY spawns so the child's startup OSC 4/10/11 color queries
         // are answered against the theme palette instead of the screen default.

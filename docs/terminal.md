@@ -156,6 +156,11 @@ Each pane keeps a scrollback buffer (`scrollback` lines, default 5000 - see
 [Configuration](configuration.md)). Scroll it with the mouse wheel. Typing a key snaps the
 view back to the live bottom of the buffer.
 
+The session server retains a terminal screen for detach/reattach, and each attached client retains
+its own screen for rendering. Memory therefore scales with pane width, populated history, and the
+number of attached clients. Set `scrollback = 1000` (or another smaller limit) when memory matters
+more than deep history.
+
 ## Scrollback search
 
 Press `/` (or *Search scrollback* in the palette) to search the focused pane's scrollback:

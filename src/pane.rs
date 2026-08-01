@@ -52,6 +52,7 @@ pub struct TerminalPane {
     pub runtime_sequence: u64,
     pub last_palette: Option<TerminalColorPalette>,
     seen_bell_count: u64,
+    scrollback_limit: usize,
     /// Behind a `RefCell` so [`TerminalPane::snapshot`] can rebuild through a shared reference:
     /// the render snapshot is pulled by the view (which only ever holds `&State`), and rebuilding
     /// it at read time rather than at write time is what collapses a burst of output messages into
@@ -131,6 +132,7 @@ impl TerminalPane {
             runtime_sequence: 0,
             last_palette: None,
             seen_bell_count: 0,
+            scrollback_limit: scrollback,
             screen: Rc::new(RefCell::new(screen)),
         }
     }
@@ -179,7 +181,7 @@ impl TerminalPane {
         self.bind_session(pane_id, generation);
         self.runtime_sequence = 0;
         let mut screen = self.screen.borrow_mut();
-        *screen = TerminalScreen::new(self.rows, self.cols, 5000);
+        *screen = TerminalScreen::new(self.rows, self.cols, self.scrollback_limit);
         screen.set_cell_size(tui_lipan::host_cell_size());
         self.seen_bell_count = screen.bell_count();
         if let Some(palette) = self.last_palette {
@@ -198,13 +200,14 @@ impl TerminalPane {
     /// Feed raw PTY bytes broadcast by the server into the client-side parser. Query responses
     /// (DA/DSR/OSC) are discarded here: the server's own screen already answered them.
     pub fn process_server_output(&mut self, bytes: &[u8]) -> OutputFrame {
-        self.screen.borrow_mut().process_bytes(bytes);
-        let _ = self.screen.borrow_mut().drain_responses();
-        let title = self
-            .screen
-            .borrow()
-            .title()
-            .and_then(sanitize_terminal_title);
+        let mut screen = self.screen.borrow_mut();
+        screen.process_bytes(bytes);
+        let _ = screen.drain_responses();
+        // Runtime metadata comes from the server. Keep the screen's bounded semantic marks, but do
+        // not retain a second, unbounded client-side copy of every OSC 7/133 event.
+        let _ = screen.drain_semantic_events();
+        let title = screen.title().and_then(sanitize_terminal_title);
+        drop(screen);
         if self.original_user.is_none() {
             self.original_user = title
                 .as_deref()
@@ -655,6 +658,27 @@ mod tests {
         pane.process_server_output(b"\x07");
         assert!(pane.take_bell());
         assert!(!pane.take_bell());
+    }
+
+    #[test]
+    fn client_discards_semantic_events_after_recording_marks() {
+        let mut pane = TerminalPane::new(100);
+        pane.process_server_output(b"\x1b]133;A\x07");
+
+        assert!(pane.screen.borrow_mut().drain_semantic_events().is_empty());
+        assert!(!pane.semantic_marks().is_empty());
+    }
+
+    #[test]
+    fn binding_server_backend_preserves_configured_scrollback_limit() {
+        let mut pane = TerminalPane::new(3);
+        pane.bind_server_backend(1, 1);
+        pane.apply_server_resize(20, 5);
+        for i in 0..20 {
+            pane.process_server_output(format!("line-{i}\r\n").as_bytes());
+        }
+
+        assert!(pane.screen.borrow_mut().total_text_lines() <= 8);
     }
 
     #[test]

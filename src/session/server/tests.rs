@@ -167,6 +167,24 @@ fn first_attacher_is_granted_control() {
     assert_eq!(server.controller, Some(id));
 }
 
+#[test]
+fn controller_kill_reclaims_server_pane_state() {
+    let mut server = SessionServer::new_named("dev");
+    let (client, _stream) = attach_client(&mut server);
+    server.panes.insert(7, status_test_pane(3, Some(0)));
+
+    server.handle_message(
+        client,
+        ClientMessage::Kill {
+            pane_id: 7,
+            generation: 3,
+        },
+    );
+
+    assert!(!server.panes.contains_key(&7));
+    assert!(server.dirty);
+}
+
 /// The scenario the parked flag exists for: one client keeps `dev` open in the background while it
 /// works elsewhere. The next client to attach must get control of `dev` outright, not join as a
 /// follower of a connection nobody is looking at.

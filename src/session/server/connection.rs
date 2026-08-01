@@ -294,10 +294,16 @@ impl SessionServer {
                 if !self.is_controller(client_id) {
                     return Vec::new();
                 }
-                if let Some(pane) = self.live_pane_mut(pane_id, generation)
-                    && let Some(pty) = &pane.pty
+                if self
+                    .panes
+                    .get(&pane_id)
+                    .is_some_and(|pane| pane.generation == generation)
+                    && let Some(pane) = self.panes.remove(&pane_id)
                 {
-                    let _ = pty.kill();
+                    if let Some(pty) = &pane.pty {
+                        let _ = pty.kill();
+                    }
+                    self.dirty = true;
                 }
                 Vec::new()
             }

@@ -17,6 +17,68 @@ const MAX_PROC_BYTES: u64 = 64 * 1024;
 const MAX_ARG_COUNT: usize = 128;
 const MAX_ARG_CHARS: usize = 4096;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SmapsSummary {
+    pub rss_kib: u64,
+    pub pss_kib: u64,
+    pub pss_anon_kib: u64,
+    pub pss_file_kib: u64,
+    pub pss_shmem_kib: u64,
+    pub private_clean_kib: u64,
+    pub private_dirty_kib: u64,
+    pub anonymous_kib: u64,
+    pub swap_kib: u64,
+}
+
+impl SmapsSummary {
+    pub fn private_kib(self) -> u64 {
+        self.private_clean_kib
+            .saturating_add(self.private_dirty_kib)
+    }
+}
+
+/// Parse aggregate fields from Linux `smaps_rollup` or full `smaps` content.
+/// Unknown kernel-version-specific fields are intentionally ignored.
+pub fn parse_smaps(input: &str) -> Result<SmapsSummary, String> {
+    let mut summary = SmapsSummary::default();
+    let mut saw_rss = false;
+    for line in input.lines() {
+        let Some((name, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let target = match name {
+            "Rss" => {
+                saw_rss = true;
+                &mut summary.rss_kib
+            }
+            "Pss" => &mut summary.pss_kib,
+            "Pss_Anon" => &mut summary.pss_anon_kib,
+            "Pss_File" => &mut summary.pss_file_kib,
+            "Pss_Shmem" => &mut summary.pss_shmem_kib,
+            "Private_Clean" => &mut summary.private_clean_kib,
+            "Private_Dirty" => &mut summary.private_dirty_kib,
+            "Anonymous" => &mut summary.anonymous_kib,
+            "Swap" => &mut summary.swap_kib,
+            _ => continue,
+        };
+        let mut fields = rest.split_whitespace();
+        let value = fields
+            .next()
+            .ok_or_else(|| format!("missing value for {name}"))?
+            .parse::<u64>()
+            .map_err(|_| format!("invalid value for {name}"))?;
+        if fields.next() != Some("kB") || fields.next().is_some() {
+            return Err(format!("invalid unit for {name}"));
+        }
+        *target = target
+            .checked_add(value)
+            .ok_or_else(|| format!("overflow while summing {name}"))?;
+    }
+    saw_rss
+        .then_some(summary)
+        .ok_or_else(|| "smaps input contains no Rss field".to_string())
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxProcessInspector;
 
@@ -246,5 +308,40 @@ mod tests {
             parse_agent_hint(b"PATH=/bin\0HERDR_AGENT=opencode\0"),
             Some("opencode".into())
         );
+    }
+
+    #[test]
+    fn smaps_parser_reads_rollup_fixture() {
+        let summary = parse_smaps(include_str!(
+            "../../../tests/fixtures/proc/smaps_rollup.txt"
+        ))
+        .expect("fixture parses");
+
+        assert_eq!(summary.rss_kib, 12_000);
+        assert_eq!(summary.pss_kib, 8_000);
+        assert_eq!(summary.pss_anon_kib, 5_500);
+        assert_eq!(summary.pss_file_kib, 2_400);
+        assert_eq!(summary.pss_shmem_kib, 100);
+        assert_eq!(summary.private_kib(), 6_200);
+        assert_eq!(summary.anonymous_kib, 5_600);
+    }
+
+    #[test]
+    fn smaps_parser_aggregates_full_smaps_fixture() {
+        let summary = parse_smaps(include_str!("../../../tests/fixtures/proc/smaps.txt"))
+            .expect("fixture parses");
+
+        assert_eq!(summary.rss_kib, 14);
+        assert_eq!(summary.pss_kib, 9);
+        assert_eq!(summary.private_kib(), 8);
+        assert_eq!(summary.anonymous_kib, 6);
+    }
+
+    #[test]
+    fn smaps_parser_rejects_malformed_recognized_fields() {
+        assert!(parse_smaps("Rss: nope kB\n").is_err());
+        assert!(parse_smaps("Rss: 1 MB\n").is_err());
+        assert!(parse_smaps("VmFlags: rd wr\n").is_err());
+        assert!(parse_smaps("Rss: 18446744073709551615 kB\nRss: 1 kB\n").is_err());
     }
 }

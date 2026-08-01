@@ -1,0 +1,16 @@
+00400000-7fffffffffff ---p 00000000 00:00 0                          [rollup]
+Rss:               12000 kB
+Pss:                8000 kB
+Pss_Anon:           5500 kB
+Pss_File:           2400 kB
+Pss_Shmem:           100 kB
+Shared_Clean:       4000 kB
+Shared_Dirty:          0 kB
+Private_Clean:       700 kB
+Private_Dirty:      5500 kB
+Referenced:        11900 kB
+Anonymous:          5600 kB
+Swap:                 40 kB
+SwapPss:              20 kB
+Locked:                0 kB
+VmFlags: rd wr mr mw me ac sd

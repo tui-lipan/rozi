@@ -39,6 +39,43 @@ cargo bench --bench terminal_ingest -- --list
 
 Criterion writes reports and measurements below `target/criterion/`. Do not commit them.
 
+## Linux process memory matrix
+
+`tools/memory-matrix.sh` is an opt-in process benchmark for release builds on Linux. It measures
+proportional set size (PSS) rather than attributing every shared mapping to every process. The quick
+matrix covers 80x24 and 253x64 viewports, 1/4/8 panes, empty or 1000-line histories, and plain or
+styled output. The full matrix adds 16 panes, 5000-line histories, two clients, pane closing, and a
+parked named session:
+
+```bash
+tools/memory-matrix.sh --quick
+tools/memory-matrix.sh --full --output target/memory-matrix/full
+```
+
+Use `--smoke` before a long run to check local PTY, control-socket, `/proc`, and shutdown support.
+The runner requires `bash`, `python3`, util-linux `script`, and Linux `smaps_rollup`. It builds
+`target/release/hyprmux`, creates private temporary `HOME` and XDG config/state/cache/runtime
+directories per scenario, and passes every control command an explicit isolated socket. It never
+discovers or connects to the user's normal sessions.
+
+Each pane emits deterministic output and a final marker. After the marker appears, the runner waits
+two seconds, takes five `/proc/<pid>/smaps_rollup` and `/proc/<pid>/status` samples 200 ms apart, and
+reports the median. Results include separate client, server, and child-process groups; RSS, PSS,
+anonymous, private, and file-backed memory; current/high-water RSS; thread/process counts; and
+per-pane application-PSS deltas. It writes both `results.json` and `results.md` below the selected
+output directory. Probe clients detach and the server receives a protocol shutdown before the
+private directory is removed; a trap targets only the PIDs owned by the runner if normal shutdown
+fails.
+
+Memory numbers vary with the kernel, allocator, linked libraries, terminal dimensions, and host
+load. Compare two runs made from the same build on an otherwise idle machine. Scenario PSS within
+the larger of 5% or 2 MiB is considered comparable; investigate larger movement, but do not turn
+that tolerance into a CI threshold. The matrix is never run by CI.
+
+The harness changes no memory behavior by itself. Empty panes allocate history lazily, so the
+scrollback cases matter only after output fills history. Queue limits likewise should not lower
+normal idle RSS; their expected result is a plateau when a writer or client is stalled.
+
 ## Comparing a baseline
 
 Criterion 0.8 can save a named baseline and compare a later run against it. Keep the toolchain,

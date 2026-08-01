@@ -1,0 +1,14 @@
+00400000-00401000 r--p 00000000 00:01 1 /tmp/hyprmux
+Rss:                   6 kB
+Pss:                   4 kB
+Private_Clean:         2 kB
+Private_Dirty:         1 kB
+Anonymous:             2 kB
+VmFlags: rd mr mw me dw
+00600000-00602000 rw-p 00000000 00:00 0 [heap]
+Rss:                   8 kB
+Pss:                   5 kB
+Private_Clean:         0 kB
+Private_Dirty:         5 kB
+Anonymous:             4 kB
+Future_Kernel_Field: 999 kB

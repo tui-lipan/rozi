@@ -821,8 +821,9 @@ save-profile = ["ctrl-a z", "alt-z"] # literal replacement
 scratchpad = []
 ```
 
-The parser is tui-lipan's `KeyBinding` parser. Use names like `shift-=`, not a bare `+`, for
-the plus shortcut because `+` is a modifier separator.
+The parser is tui-lipan's `KeyBinding` parser. A bare `+` works as a chord step for the plus
+key (also accept the name `plus`), but `+` inside a mixed step is still a modifier separator
+(`ctrl+c`).
 
 Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,

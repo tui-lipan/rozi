@@ -178,8 +178,8 @@ mappings.
 | Command | Keys |
 | --- | --- |
 | Flip focused split axis | `Space` |
-| Grow split | `]` or `+` |
-| Shrink split | `-` or `_` |
+| Grow split | `=` |
+| Shrink split | `-` |
 | Enter resize mode | `r` |
 | Cycle layout (dwindle → master → grid → monocle) | `m` |
 

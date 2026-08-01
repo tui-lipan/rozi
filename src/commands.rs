@@ -181,14 +181,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::AdjustRatio(true),
         label: "Grow split",
         category: "Layout",
-        default_keys: &["]", "=", "shift-="],
+        default_keys: &["="],
         palette: false,
     },
     BuiltinCommand {
         action: Action::AdjustRatio(false),
         label: "Shrink split",
         category: "Layout",
-        default_keys: &["minus", "shift-minus"],
+        default_keys: &["-"],
         palette: false,
     },
     BuiltinCommand {

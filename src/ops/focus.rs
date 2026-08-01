@@ -758,6 +758,16 @@ pub(crate) fn choose_fallback_focus_near(
         return;
     }
 
+    if let Some(focused) = workspace.focused_pane
+        && workspace
+            .panes
+            .iter()
+            .any(|pane| pane.id == focused && !pane.closing)
+    {
+        state.current_mut().focused_pane = Some(focused);
+        return;
+    }
+
     let focus = reference_id
         .and_then(|reference_id| {
             focus_near_pane_in_workspace(state, workspace, reference_id, reference_rect)
@@ -1405,6 +1415,36 @@ mod tests {
                 .iter()
                 .any(|pane| pane.id == 2)
         );
+    }
+
+    #[test]
+    fn switching_workspaces_restores_each_workspaces_focused_pane() {
+        let mut state = state_with_tiled(&[1, 2]);
+        focus_pane(&mut state, 2);
+
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        for id in [3, 4] {
+            state.current_mut().workspaces[1]
+                .panes
+                .push(Pane::new(id, 100, rect));
+            append_tiled_window(&mut state.current_mut().workspaces[1], id);
+        }
+        state.current_mut().workspaces[1].focused_pane = Some(4);
+
+        switch_workspace(&mut state, 1);
+        assert_eq!(state.current().focused_pane, Some(4));
+
+        focus_pane(&mut state, 3);
+        switch_workspace(&mut state, 0);
+        assert_eq!(state.current().focused_pane, Some(2));
+
+        switch_workspace(&mut state, 1);
+        assert_eq!(state.current().focused_pane, Some(3));
     }
 
     #[test]

@@ -180,7 +180,8 @@ one that originally launched the pane, the changed account remains visible, for 
 There are **9 workspaces**. Switch with `1`–`9`; move the focused pane to a workspace with
 `Shift+1`–`Shift+9`. The workbar renders a tab per workspace (at least 5 shown, growing to
 include the highest occupied one and the active one), each labeled with its number and live
-pane count. Tabs are clickable.
+pane count. Tabs are clickable. Each workspace remembers its focused pane and restores it when you
+return, including after switching away from and back to a retained session.
 
 When a workspace empties, it shows an "Empty workspace" panel prompting you to spawn a shell.
 The app keeps running until you detach or quit explicitly.

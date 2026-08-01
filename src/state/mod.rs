@@ -695,6 +695,12 @@ mod retention_tests {
         let mut state = state();
         state.current_mut().session_name = Some("dev".to_string());
         state.current_mut().session_attached = true;
+        let rect = state.current().workspaces[0].panes[0].floating_rect;
+        state.current_mut().workspaces[0]
+            .panes
+            .push(Pane::new(2, 100, rect));
+        state.current_mut().workspaces[0].focused_pane = Some(2);
+        state.current_mut().focused_pane = Some(2);
         state.runtime_epoch = 5;
 
         // Park the current session; a fresh empty attachment takes its place.
@@ -709,6 +715,8 @@ mod retention_tests {
         // Switch back: the parked "dev" returns as current, the fresh one parks under epoch 6.
         assert_eq!(state.unpark(5, state.runtime_epoch), Some(5));
         assert_eq!(state.current().session_name.as_deref(), Some("dev"));
+        assert_eq!(state.current().focused_pane, Some(2));
+        assert_eq!(state.current().workspaces[0].focused_pane, Some(2));
         assert!(state.background.contains_key(&6));
         assert!(!state.background.contains_key(&5));
     }

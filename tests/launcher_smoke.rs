@@ -44,6 +44,12 @@ fn a_sessionless_client_renders_the_launcher_panel() {
                 lines.iter().any(|line| line.contains("start a shell")),
                 "the launcher must say how to start a session, got {lines:#?}"
             );
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.contains("Ctrl+A d") && line.contains("detach")),
+                "the launcher must say how to leave, got {lines:#?}"
+            );
             // The launcher claims a bare Enter (`key_routing::launcher_start_key`); advertising
             // only the spawn binding here is what made the state look like a dead end.
             assert!(

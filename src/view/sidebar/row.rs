@@ -191,7 +191,7 @@ impl Row {
         }
 
         let lines = if self.detail.is_empty() { 1 } else { 2 };
-        let marker = if self.active { "▎" } else { " " };
+        let marker = if self.active { "▍" } else { " " };
         // The marker repeats down the row so a two-line entry gets a full-height bar rather than a
         // tick beside its first line.
         let marker_style = super::super::fg_only(&theme.accent);

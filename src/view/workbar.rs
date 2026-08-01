@@ -738,6 +738,14 @@ fn workspace_tab_count(state: &crate::state::State) -> usize {
 
 pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Element {
     let prefix = input.prefix.to_string();
+    let spawn_hint = if input.modifier_shortcuts {
+        format!(
+            "Press {}+Enter or {prefix} Enter to spawn a shell.",
+            input.modifier.label(),
+        )
+    } else {
+        format!("Press {prefix} Enter to spawn a shell.")
+    };
     Frame::new()
         .header_left("Empty workspace")
         .header_padding(1)
@@ -753,18 +761,15 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
             VStack::new()
                 .gap(1)
                 .child(Text::new("No panes here yet."))
-                .child(Text::new(format!(
-                    "Press {}+Enter or {prefix} Enter to spawn a shell.",
-                    input.modifier.label(),
-                ))),
+                .child(Text::new(spawn_hint)),
         )
         .into()
 }
 
 /// Shown in the pane area when the client has no session at all: the startup picker was dismissed,
 /// or the last session was killed. Distinct from the empty-workspace hint, which talks about
-/// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the two ways
-/// out: pick a session, or start a shell.
+/// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the ways
+/// out: pick a session, start a shell, or detach.
 ///
 /// A bare `Enter` starts the shell here (`key_routing::launcher_start_key`) because no pane is
 /// competing for it; the ordinary `spawn` binding is listed beside it, since that is what works
@@ -773,14 +778,16 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// spelling would be the same binding said twice — and it is the spelling that disappears when
 /// `[input] modifier_shortcuts` is off, while the prefix route always exists.
 ///
-/// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x8, which
-/// leaves four content rows, and a prose spelling of the shortcuts does not survive the wrap. The
-/// key column is measured rather than fixed so a long custom prefix still aligns.
+/// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x9, which
+/// leaves room for the headline plus three shortcut rows, and a prose spelling of the shortcuts
+/// does not survive the wrap. The key column is measured rather than fixed so a long custom prefix
+/// still aligns.
 pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
     let prefix = input.prefix.to_string();
     let rows = [
         (format!("Enter / {prefix} Enter"), "start a shell"),
         (format!("{prefix} s"), "pick a session"),
+        (format!("{prefix} d"), "detach"),
     ];
     let key_width = rows
         .iter()

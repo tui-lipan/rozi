@@ -98,9 +98,9 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             };
 
             assert!(lines[row("LOCAL")].starts_with(" LOCAL"));
-            assert!(lines[row("▎ dev")].starts_with("▎ dev"));
-            assert!(lines[row("▎ dev")].contains("󰍺 2"));
-            assert!(lines[row("2 panes")].starts_with("▎ 2 panes"));
+            assert!(lines[row("▍ dev")].starts_with("▍ dev"));
+            assert!(lines[row("▍ dev")].contains("󰍺 2"));
+            assert!(lines[row("2 panes")].starts_with("▍ 2 panes"));
             assert!(!lines[row("2 panes")].contains("shared"));
             assert!(lines[row("test")].starts_with("  test"));
             assert!(lines[row("3 panes")].starts_with("  3 panes"));

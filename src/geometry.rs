@@ -36,7 +36,7 @@ pub fn viewport_bounds(viewport: Rect) -> FloatRect {
 
 pub fn empty_workspace_rect(bounds: FloatRect) -> FloatRect {
     let w = bounds.w.min(46.0).max(bounds.w.min(18.0));
-    let h = bounds.h.min(8.0).max(bounds.h.min(4.0));
+    let h = bounds.h.min(9.0).max(bounds.h.min(4.0));
     FloatRect {
         x: bounds.x + ((bounds.w - w) / 2.0).max(0.0),
         y: bounds.y + ((bounds.h - h) / 2.0).max(0.0),

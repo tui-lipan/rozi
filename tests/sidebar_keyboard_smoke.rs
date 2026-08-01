@@ -285,7 +285,7 @@ fn keyboard_row_navigation_scrolls_the_cursor_into_view() {
         .expect("row visibility completes");
 }
 
-/// The active row's accent bar runs the full height of the row. A two-line entry gets `▎` on both
+/// The active row's accent bar runs the full height of the row. A two-line entry gets `▍` on both
 /// its title and its detail line, not a tick beside the first one.
 #[test]
 fn the_active_row_marker_spans_every_line_of_the_row() {
@@ -299,7 +299,7 @@ fn the_active_row_marker_spans_every_line_of_the_row() {
             let marked: Vec<usize> = lines
                 .iter()
                 .enumerate()
-                .filter(|(_, line)| line.starts_with('▎'))
+                .filter(|(_, line)| line.starts_with('▍'))
                 .map(|(index, _)| index)
                 .collect();
             assert_eq!(
@@ -524,7 +524,7 @@ fn hover_still_reads_on_active_and_selected_rows() {
             let lines = backend.capture_frame().to_fixed_grid_lines();
             let active_row = lines
                 .iter()
-                .position(|line| line.starts_with('▎'))
+                .position(|line| line.starts_with('▍'))
                 .expect("the focused pane's row is on screen") as u16;
             let resting = backend.capture_frame().cell(4, active_row).bg;
 
@@ -574,7 +574,7 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
                 let lines = backend.capture_frame().to_fixed_grid_lines();
                 let row = lines
                     .iter()
-                    .position(|line| line.starts_with('▎'))
+                    .position(|line| line.starts_with('▍'))
                     .expect("the focused pane's row is on screen") as u16;
                 let resting = backend.capture_frame().cell(4, row).bg;
 

@@ -130,7 +130,7 @@ fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
                 .capture_frame()
                 .to_fixed_grid_lines()
                 .iter()
-                .position(|line| line.starts_with('▎'))
+                .position(|line| line.starts_with('▍'))
                 .expect("the active pane's row, marked in the gutter") as u16;
 
             // Park the pointer on the row body: that is what reveals the ✕ and what the row's own

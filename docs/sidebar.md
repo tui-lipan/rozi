@@ -35,8 +35,8 @@ A row names the pane, badges the current foreground program on the right, and sh
 directory beneath:
 
 ```text
-▎ hyprmux                  bash
-▎ ~/Work/Projects/hyprmux
+▍ hyprmux                  bash
+▍ ~/Work/Projects/hyprmux
   nvim src/view/sidebar/p… nvim
   ~/Work/Projects/hyprmux
   service                  psql

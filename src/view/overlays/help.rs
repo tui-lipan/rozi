@@ -1,7 +1,14 @@
 pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let prefix = ctx.state.config.input.prefix.to_string();
-    let modifier = ctx.state.config.input.modifier.label();
+    let intro = if ctx.state.config.input.modifier_shortcuts {
+        let modifier = ctx.state.config.input.modifier.label();
+        format!(
+            "Prefix keys with {prefix}, or hold {modifier} with any listed key. Scroll for more · Esc closes."
+        )
+    } else {
+        format!("Prefix keys with {prefix}. Scroll for more · Esc closes.")
+    };
 
     // Group commands by category (first-seen order), so a category with non-contiguous
     // entries still gets a single header - matching the command palette. Commands (labels,
@@ -104,12 +111,10 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 
     let body = VStack::new()
         .child(
-            Text::new(format!(
-                "Prefix keys with {prefix}, or hold {modifier} with any listed key. Scroll for more · Esc closes."
-            ))
-            .style(theme.muted)
-            .overflow(Overflow::Wrap)
-            .height(Length::Auto),
+            Text::new(intro)
+                .style(theme.muted)
+                .overflow(Overflow::Wrap)
+                .height(Length::Auto),
         )
         .child(Text::new("").height(Length::Px(1)))
         .child(

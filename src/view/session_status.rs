@@ -88,7 +88,7 @@ pub(crate) fn session_status_gutter(
     }
 }
 
-/// Sidebar title-line badge: chrome + word. Omitted for current (▎ already marks it) and discovered.
+/// Sidebar title-line badge: chrome + word. Omitted for current (▍ already marks it) and discovered.
 pub(crate) fn session_status_badge(
     status: SessionConnectionStatus,
     styles: SessionStatusStyles,

@@ -1785,16 +1785,12 @@ mod tests {
         });
     }
 
-    /// Disconnecting the host the *current* session lives on has to land the client somewhere
-    /// usable. It lands on the session used before this one, whose screens are already live, rather
-    /// than minting a fresh ephemeral and paying for an attach.
-    ///
-    /// The regression underneath: the sidebar dropped the update `disconnect_host` returns, so the
-    /// hop's command never ran. The client was left on an attachment marked `Connecting` with a
-    /// pending attach nothing would complete — an empty workspace with a phantom pane, and every
-    /// later session activation refused as "attach already in progress".
+    /// Disconnecting the host the *current* session lives on must not quit and must not auto-attach.
+    /// A parked local session remains as a choice, so the client lands sessionless with the picker
+    /// open. The regression underneath: the sidebar dropped the update `disconnect_host` returns,
+    /// so a hop command never ran and left a pending attach nothing would complete.
     #[test]
-    fn disconnecting_the_current_host_lands_on_the_last_used_session() {
+    fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
         on_test_thread(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
@@ -1823,8 +1819,7 @@ mod tests {
                 state.current_mut().session_name = Some("dev".to_string());
                 state.current_mut().session_attached = true;
                 // Settled, not mid-connect: the launch attach this test never completes would
-                // otherwise leave it pending, and a pending attachment is deliberately not a
-                // landing spot — it has nothing on screen to come back to.
+                // otherwise leave it pending.
                 state.current_mut().pending_session_attach = None;
                 state.current_mut().connection = crate::state::ConnectionState::Connected;
                 let parked_epoch = state.runtime_epoch;
@@ -1843,27 +1838,32 @@ mod tests {
                 .expect("confirm disconnect");
 
             let state = backend.state();
-            assert_eq!(
-                state.current().session_name.as_deref(),
-                Some("dev"),
-                "the client lands on the session used before the disconnected one"
+            assert!(
+                state.is_launcher(),
+                "disconnecting the active host leaves the foreground sessionless"
             );
             assert!(
-                state.current().remote_target.is_none(),
-                "the surviving session is the local one, not another on the dead host"
+                state.show_session_picker,
+                "the parked local session remains as a choice, so the picker opens"
+            );
+            assert!(
+                state.background.values().any(|attachment| {
+                    attachment.session_name.as_deref() == Some("dev")
+                        && attachment.remote_target.is_none()
+                }),
+                "the local parked session stays retained for an explicit picker choice"
             );
             assert!(
                 state.current().pending_session_attach.is_none(),
-                "landing on a live parked session needs no attach, so nothing is left pending — \
-                 a pending attach nothing completes is what refused every later activation"
+                "nothing auto-attaches after a disconnect"
             );
         });
     }
 
-    /// Killing the session on screen must not drop the user onto an empty new ephemeral while live
-    /// sessions sit parked behind it. The killed one is gone; the ones behind it are not.
+    /// Killing the session on screen must not auto-attach a parked session and must not mint a
+    /// fresh ephemeral. The killed one is gone; other choices stay available via the picker.
     #[test]
-    fn killing_the_current_session_lands_on_a_parked_one_not_a_fresh_ephemeral() {
+    fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
         on_test_thread(|| {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             {
@@ -1903,14 +1903,24 @@ mod tests {
                 .dispatch(crate::Msg::SidebarRowClose(1))
                 .expect("confirm the kill");
 
-            assert_eq!(
-                backend.state().current().session_name.as_deref(),
-                Some("dev"),
-                "the kill lands on the parked session, not a fresh ephemeral"
+            let state = backend.state();
+            assert!(
+                state.is_launcher(),
+                "killing the active session leaves the foreground sessionless"
             );
             assert!(
-                backend.state().current().pending_session_attach.is_none(),
-                "a live parked session needs no attach round-trip"
+                state.show_session_picker,
+                "a parked session remains as a choice, so the picker opens"
+            );
+            assert!(
+                state.background.values().any(|attachment| {
+                    attachment.session_name.as_deref() == Some("dev")
+                }),
+                "the parked session stays retained for an explicit picker choice"
+            );
+            assert!(
+                state.current().pending_session_attach.is_none(),
+                "nothing auto-attaches after a kill"
             );
         });
     }

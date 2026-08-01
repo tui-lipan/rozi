@@ -206,11 +206,14 @@ pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize)
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.selected = index.min(picker.entries.len().saturating_sub(1));
     }
-    // Moving the highlight off an armed kill row cancels its confirmation.
+    // Moving the highlight off an armed kill/restart row cancels its confirmation.
     let moved_off_armed = ctx.state.session_picker.as_ref().is_some_and(|picker| {
         picker
             .pending_kill
             .is_some_and(|index| index != picker.selected)
+            || picker
+                .pending_restart
+                .is_some_and(|index| index != picker.selected)
     });
     if moved_off_armed {
         crate::ops::session::clear_pending_session_arms(ctx);
@@ -226,16 +229,16 @@ pub(super) fn session_picker_create_from_query(ctx: &mut Context<HyprmuxApp>) ->
     crate::ops::session::open_create_session(ctx)
 }
 
-pub(super) fn session_picker_detach_current(ctx: &mut Context<HyprmuxApp>) -> Update {
-    crate::ops::session::detach_current_session(ctx)
-}
-
 pub(super) fn session_picker_kill_selected(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::session::kill_selected_session(ctx)
 }
 
-pub(super) fn session_picker_close_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
-    crate::ops::session::close_selected_attachment(ctx)
+pub(super) fn session_picker_restart_selected(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::session::restart_selected_session(ctx)
+}
+
+pub(super) fn session_picker_disconnect_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
+    crate::ops::session::disconnect_selected_attachment(ctx)
 }
 
 pub(super) fn session_picker_disconnect_host(ctx: &mut Context<HyprmuxApp>) -> Update {

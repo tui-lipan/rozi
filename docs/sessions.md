@@ -105,17 +105,22 @@ rejected with an error toast.
 
 ## Switching sessions in-app (the picker)
 
-Open the session picker (*Sessions…* in the command palette). The picker always switches you to a
-**separate** session - it never renames the one you're in:
+Open the session picker (*Sessions…* in the command palette). The picker always moves you to a
+**separate** session - it never renames the one you're in. Footer hints use connection vocabulary:
 
-- Highlight an existing session and press `Enter` to attach to it.
+- **Connect** (`Enter` on a session you are not connected to) — establish the connection and make
+  it active immediately.
+- **Switch** (`Enter` on a background-connected session) — make that already-live attachment active.
 - Type a new name and press `Ctrl+N` to create a fresh empty session under that name. The filter
   text carries into the create prompt, so a search that matched nothing becomes the name of the
   session you make instead — no retyping. Creation is explicit and fails if the name is already
   running.
-- Press `Ctrl+D` to detach the current named session and exit the client, leaving its server running
-  for later reattach.
-- Press `Ctrl+K` twice to kill the highlighted named session or reset a highlighted ephemeral one.
+- **Disconnect** (`Ctrl+W`) — close this client's connection to a background session; the server
+  keeps running for later reconnect. Does not apply to the current session.
+- **Kill** (`Ctrl+K` twice) — destroy the highlighted session for everyone. Ephemeral sessions are
+  removed completely.
+- **Restart** (`Ctrl+E` twice) — shut the highlighted session down and recreate it as the active
+  session, with fresh panes.
 
 Switching retains the current attachment in the background. Its client, screens, scrollback,
 layout, and focus remain live, and background output continues to be parsed. Selecting it again is
@@ -138,23 +143,28 @@ session you were on stays live and is one selection away.
 
 Killing the **current** session is allowed, either with `Ctrl+K` in the picker or with *Kill
 session* in the command palette: its server is shut down (its PTYs die) and the client stays alive
-rather than quitting. See [Where the client lands](#where-the-client-lands) for what it hops onto.
+rather than quitting. See [Where the client lands](#where-the-client-lands) for what comes next.
+*Restart session* (`Ctrl+E` in the picker, or the command palette) shuts the server down and
+immediately recreates it, keeping the client attached.
 
 ### Where the Client Lands
 
 When the session on screen is taken away rather than left — killed, or the host it lives on
-disconnected — the client hops to the first of these that applies:
+disconnected — the client does **not** quit and does **not** auto-attach elsewhere. It lands on the
+first of these that applies:
 
-1. The **most recently used** session still retained in the background. Its client and screens are
-   already live, so the switch is instant and lands on real work.
-2. The next background session after that, in order of when each was last used, if the first cannot
-   be switched to.
-3. The **launcher** — no session at all, with the picker up — when none survives. Killing a
-   session is not a request for a replacement, so nothing is created in its place.
+1. The **session picker**, when another meaningful choice remains: a local or remote running
+   session, a parked background attachment, a restorable snapshot, or a cached remote host session.
+   The user picks what to open next.
+2. The **launcher** — no session at all, picker closed — when nothing remains to choose from.
+   Killing a session is not a request for a replacement, so nothing is created in its place.
 
-A background session still mid-connect is skipped: it has nothing on screen to come back to, so
-landing on one would trade an empty session for another empty session. Detaching and quitting are
-unaffected — those are deliberate exits, not the current session being taken away.
+Killing a **background** session leaves the active session unchanged. Killing from the open picker
+keeps the picker up, drops the killed row, and keeps the nearest selection; if the list empties and
+no other candidates remain, the picker closes into the launcher.
+
+Detaching and quitting are unaffected — those are deliberate exits, not the current session being
+taken away.
 
 The picker auto-refreshes while it is open (sessions started or killed by other UIs appear and
 disappear on their own), so there is no manual refresh key. A session row also reports other clients
@@ -175,8 +185,8 @@ snapshot, or a remote host with cached sessions. With nothing to choose from, th
 through to an ephemeral session, which is the only thing it could have offered anyway.
 
 Dismissing the picker with `Esc` leaves the client in the **launcher**: attached to nothing, with a
-panel saying how to start a shell or reopen the picker. A client with no session is a normal state -
-the launcher is also where killing your last session lands you.
+panel saying how to start a shell, reopen the picker, or detach. A client with no session is a
+normal state - the launcher is also where killing your last session lands you.
 
 Starting a shell there gives you an ephemeral session with whatever layout the launch had prepared.
 Because no pane is competing for the keyboard in the launcher, a bare `Enter` does it; the ordinary
@@ -392,7 +402,8 @@ ATTACHED-EPHEMERAL: leave, unused        ⇒ Shutdown ⇒ server exits (held not
                     leave, used          ⇒ prompt: name it (keep) or empty ×2 (close)
                     Rename / name on exit⇒ ATTACHED-NAMED (same server, same panes)
                     attach-elsewhere     ⇒ parked if used, otherwise Shutdown (disposable)
-                    kill-session         ⇒ Shutdown ⇒ client lands on a parked session or the launcher
+                    kill-session         ⇒ Shutdown ⇒ picker if choices remain, else launcher
+                    restart-session      ⇒ Shutdown ⇒ recreate and stay attached
                     UI crash             ⇒ ORPHAN-EPHEMERAL
 ORPHAN-EPHEMERAL:   reattach ⇒ ATTACHED-EPHEMERAL
                     no client for grace period ⇒ server exits (any pane state)

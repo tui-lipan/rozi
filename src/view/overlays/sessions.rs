@@ -156,7 +156,9 @@ pub(crate) fn collaboration_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         }));
     if let Some(armed) = armed {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<CollaboratorItem>, _hl| {
-            (item.value.client_id == armed).then(|| render_pending_kick_item(item, error_bg))
+            (item.value.client_id == armed).then(|| {
+                render_pending_confirm_item(item.label.as_ref(), error_bg, "again to confirm", true)
+            })
         }));
     }
 
@@ -227,18 +229,6 @@ fn self_tag(shared: &crate::state::SharedSessionState) -> String {
     format!("{label} · {role}")
 }
 
-/// The row of a client awaiting its confirming second press: struck through in the error color,
-/// worded exactly like an armed session kill in the session picker.
-fn render_pending_kick_item(item: &SearchItem<CollaboratorItem>, error_bg: Color) -> ListItem {
-    let fg = readable_text_color(None, error_bg);
-    ListItem::from_spans(vec![
-        Span::new(item.label.as_ref()).style(Style::new().fg(fg).strikethrough()),
-    ])
-    .description("again to confirm")
-    .description_style(Style::new().fg(fg).italic())
-    .style(Style::new().bg(error_bg).fg(fg))
-}
-
 /// The choice offered when an attach lands on a session another client is driving.
 pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     let Some(prompt) = ctx.state.follow_prompt.as_ref() else {
@@ -295,8 +285,9 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 }
 
 /// The footer hint row only advertises keys that would actually act on the current state, so a
-/// hint never lies: `detach` appears only for an attached named session, `kill`/`reset` for a
-/// selectable session, and `open` only for a selectable non-current session.
+/// hint never lies. Enter is **switch** for a background-connected session and **connect** when
+/// establishing a connection; **disconnect** closes this client's attachment; **kill** destroys the
+/// session; **restart** recreates it.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
@@ -305,6 +296,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let query = picker.input.text().trim();
     let query_lower = query.to_ascii_lowercase();
     let current = ctx.state.current().session_name.as_deref();
+    let current_remote = &ctx.state.current().remote_target;
     let visible = |entry: &crate::session::discovery::DiscoveredSession| {
         query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
     };
@@ -312,40 +304,44 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         .entries
         .get(picker.selected)
         .filter(|entry| visible(entry));
-    // Opening (attaching to) the session you are already on is a no-op, so only offer it for some
-    // other session. Killing the current session is allowed - it shuts the server down and hops the
-    // UI onto a fresh ephemeral - so its hint follows any selection.
-    let selected_actionable = selected.is_some_and(|entry| current != Some(entry.name.as_str()));
 
     let mut row = hint_row();
-    if selected_actionable {
-        row = row.child(hint_pill(theme, "open", "enter"));
+    if let Some(entry) = selected {
+        let is_current = current == Some(entry.name.as_str())
+            && current_remote == &entry.remote_target;
+        if !is_current {
+            let held = ctx
+                .state
+                .attachment_by_identity(&entry.name, entry.remote_target.as_ref())
+                .map(|attachment| attachment.connection);
+            let label = match held {
+                Some(crate::state::ConnectionState::Connected) => "switch",
+                _ => "connect",
+            };
+            row = row.child(hint_pill(theme, label, "enter"));
+        }
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
-    row = row.child(hint_pill(theme, "connect host", "ctrl+r"));
-    if ctx.state.current().session_attached && !ctx.state.is_ephemeral_session() {
-        row = row.child(hint_pill(theme, "detach", "ctrl+d"));
-    }
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));
     }
+    row = row.child(hint_pill(theme, "connect host", "ctrl+r"));
     if let Some(entry) = selected {
-        let label = if entry.ephemeral { "reset" } else { "kill" };
-        row = row.child(hint_pill(theme, label, "ctrl+k"));
+        let is_current = current == Some(entry.name.as_str())
+            && current_remote == &entry.remote_target;
+        if !is_current
+            && ctx
+                .state
+                .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
+                .is_some()
+        {
+            row = row.child(hint_pill(theme, "disconnect", "ctrl+w"));
+        }
     }
-    // A session retained in the background can have its client attachment closed (the server keeps
-    // running); offer it only for such a parked row, never the current session.
-    if let Some(entry) = selected
-        && current != Some(entry.name.as_str())
-        && ctx
-            .state
-            .parked_attachment_id(&entry.name, entry.remote_target.as_ref())
-            .is_some()
-    {
-        row = row.child(hint_pill(theme, "close", "ctrl+w"));
+    if selected.is_some() {
+        row = row.child(hint_pill(theme, "restart", "ctrl+e"));
+        row = row.child(hint_pill(theme, "kill", "ctrl+k"));
     }
-    // Disconnecting a host closes every attachment to it; offer it when the selected row is a remote
-    // session we currently hold at least one attachment to.
     if let Some(target) = selected.and_then(|entry| entry.remote_target.as_ref())
         && (ctx.state.current().remote_target.as_ref() == Some(target)
             || ctx
@@ -441,10 +437,18 @@ fn session_picker_palette(
     };
 
     let pending_kill = picker.pending_kill;
+    let pending_restart = picker.pending_restart;
     let error_bg = theme.status.error;
+    let warn_bg = theme.status.warning;
     let ephemeral_style = fg_only(&theme.primary).italic();
     let description_style = fg_only(&theme.muted);
-    let pending_accent = pending_kill.map(|_| error_bg);
+    let pending_accent = if pending_kill.is_some() {
+        Some(error_bg)
+    } else if pending_restart.is_some() {
+        Some(warn_bg)
+    } else {
+        None
+    };
     let selection_style = picker_selection_style(theme, pending_accent);
     let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
 
@@ -477,10 +481,22 @@ fn session_picker_palette(
             let status = *statuses.get(item.value)?;
             session_status_gutter(status, status_styles, reserve_discovered_gutter)
         }));
-    if pending_kill.is_some() || !ephemeral_entries.is_empty() {
+    if pending_kill.is_some() || pending_restart.is_some() || !ephemeral_entries.is_empty() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             if pending_kill == Some(item.value) {
-                Some(render_pending_delete_item(item, error_bg))
+                Some(render_pending_confirm_item(
+                    item.label.as_ref(),
+                    error_bg,
+                    "again to kill",
+                    true,
+                ))
+            } else if pending_restart == Some(item.value) {
+                Some(render_pending_confirm_item(
+                    item.label.as_ref(),
+                    warn_bg,
+                    "again to restart",
+                    false,
+                ))
             } else if ephemeral_entries.contains(&item.value) {
                 Some(render_ephemeral_session_item(
                     item,
@@ -539,12 +555,6 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             Some(Msg::CloseSessionPicker)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
             Some(Msg::SessionPickerCreateFromQuery)
-        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D')) {
-            if !is_ephemeral {
-                Some(Msg::SessionPickerDetachCurrent)
-            } else {
-                None
-            }
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
             if is_attached && is_ephemeral {
                 Some(Msg::SessionPickerNameCurrent)
@@ -553,8 +563,10 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             }
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
+        } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {
+            Some(Msg::SessionPickerRestartSelected)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W')) {
-            Some(Msg::SessionPickerCloseAttachment)
+            Some(Msg::SessionPickerDisconnectAttachment)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('x') | KeyCode::Char('X')) {
             Some(Msg::SessionPickerDisconnectHost)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {

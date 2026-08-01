@@ -49,6 +49,7 @@ fn clear_all(ctx: &mut Context<HyprmuxApp>) -> Update {
     cleared |= ctx.state.sidebar.pending_host_disconnect.take().is_some();
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         cleared |= picker.pending_kill.take().is_some();
+        cleared |= picker.pending_restart.take().is_some();
     }
     if let Some(picker) = ctx.state.profile_picker.as_mut() {
         cleared |= picker.pending_delete.take().is_some();

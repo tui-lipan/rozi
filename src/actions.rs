@@ -442,6 +442,9 @@ fn execute_action_inner(
         Action::KillSession => {
             crate::ops::exit::kill_session_with_confirmation(ctx, confirmations_enabled)
         }
+        Action::RestartSession => {
+            crate::ops::exit::restart_session_with_confirmation(ctx, confirmations_enabled)
+        }
         Action::OpenThemePicker => open_theme_picker(ctx),
         Action::OpenAppearance => {
             ctx.state.pane_padding_editor = None;

@@ -31,8 +31,11 @@ pub struct SessionPickerState {
     pub input: TextInput,
     pub selected: usize,
     /// Entry index awaiting a second Ctrl+K to confirm its kill. The armed state is shown inline on
-    /// the row itself (struck through in the error color), so no separate confirm toast is needed.
+    /// the row itself (struck through in the error color with `again to kill`), so no separate
+    /// confirm toast is needed.
     pub pending_kill: Option<usize>,
+    /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
+    pub pending_restart: Option<usize>,
 }
 
 /// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
@@ -134,6 +137,7 @@ pub enum PendingDestructive {
     ClosePane(PaneId),
     KillWorkspace(usize),
     KillSession,
+    RestartSession,
     NewTemporarySession,
 }
 
@@ -166,6 +170,7 @@ impl SessionPickerState {
             input: TextInput::new(""),
             selected: 0,
             pending_kill: None,
+            pending_restart: None,
         }
     }
 }

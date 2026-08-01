@@ -151,23 +151,32 @@ fn profile_picker_palette(
 
     if pending_delete.is_some() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
-            if pending_delete == Some(item.value) {
-                Some(render_pending_delete_item(item, error_bg))
-            } else {
-                None
-            }
+            (pending_delete == Some(item.value)).then(|| {
+                render_pending_confirm_item(item.label.as_ref(), error_bg, "again to confirm", true)
+            })
         }));
     }
     if pending_open.is_some() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
-            (pending_open == Some(item.value)).then(|| render_pending_open_item(item, warn_bg))
+            (pending_open == Some(item.value)).then(|| {
+                render_pending_confirm_item(
+                    item.label.as_ref(),
+                    warn_bg,
+                    "again to confirm (ends ephemeral)",
+                    false,
+                )
+            })
         }));
     }
     if pending_apply.is_some() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             (pending_apply == Some(item.value)).then(|| {
-                render_pending_open_item(item, warn_bg)
-                    .description("again to confirm (replaces ephemeral)")
+                render_pending_confirm_item(
+                    item.label.as_ref(),
+                    warn_bg,
+                    "again to confirm (replaces ephemeral)",
+                    false,
+                )
             })
         }));
     }
@@ -212,28 +221,26 @@ fn picker_selection_style(theme: &Theme, pending_accent: Option<Color>) -> Style
     }
 }
 
-fn render_pending_delete_item(item: &SearchItem<usize>, error_bg: Color) -> ListItem {
-    let fg = readable_text_color(None, error_bg);
-    ListItem::from_spans(vec![
-        Span::new(item.label.as_ref()).style(Style::new().fg(fg).strikethrough()),
-    ])
-    .description("again to confirm")
-    .description_style(Style::new().fg(fg).italic())
-    .style(Style::new().bg(error_bg).fg(fg))
-}
-
-/// The target row while an open awaits its confirming second Enter. Unlike a pending kill (which
-/// strikes the row through, since the row itself is going away), the target survives - the cost is
-/// to the *current* ephemeral session - so it reads as a warning-colored highlight whose hint spells
-/// out the trade rather than a deletion.
-fn render_pending_open_item(item: &SearchItem<usize>, warn_bg: Color) -> ListItem {
-    let fg = readable_text_color(None, warn_bg);
-    ListItem::from_spans(vec![
-        Span::new(item.label.as_ref()).style(Style::new().fg(fg).bold()),
-    ])
-    .description("again to confirm (ends ephemeral)")
-    .description_style(Style::new().fg(fg).italic())
-    .style(Style::new().bg(warn_bg).fg(fg))
+/// Armed second-press row for session/profile/collaborator pickers.
+///
+/// `strike` marks destructive removal (kill/delete/kick): error/warning fill with a struck label.
+/// Without it the row survives the confirm (restart/open) and reads as a bold warning highlight.
+fn render_pending_confirm_item(
+    label: &str,
+    accent: Color,
+    cue: &str,
+    strike: bool,
+) -> ListItem {
+    let fg = readable_text_color(None, accent);
+    let label_style = if strike {
+        Style::new().fg(fg).strikethrough()
+    } else {
+        Style::new().fg(fg).bold()
+    };
+    ListItem::from_spans(vec![Span::new(label).style(label_style)])
+        .description(cue)
+        .description_style(Style::new().fg(fg).italic())
+        .style(Style::new().bg(accent).fg(fg))
 }
 
 fn render_ephemeral_session_item(

@@ -317,6 +317,45 @@ pub(crate) fn kill_session_with_confirmation(
     crate::ops::session::kill_current_session(ctx, session_name)
 }
 
+pub(crate) fn restart_session_with_confirmation(
+    ctx: &mut Context<HyprmuxApp>,
+    confirmations_enabled: bool,
+) -> Update {
+    if !ctx.state.current().session_attached {
+        crate::pty_events::notify_info(ctx, "Not attached to a session");
+        return Update::full();
+    }
+    if !ctx.state.is_controller() {
+        crate::ops::session::nudge_if_follower(ctx);
+        return Update::full();
+    }
+
+    let session_name = ctx
+        .state
+        .current()
+        .session_name
+        .clone()
+        .unwrap_or_else(|| "session".to_string());
+
+    if confirmations_enabled
+        && ctx.state.config.confirm.kill_session
+        && !confirm_second_press(
+            ctx,
+            PendingDestructive::RestartSession,
+            confirm_toast(
+                &ctx.state.theme,
+                ctx.state.config.pane.toast_opacity,
+                format!("Again to restart session `{session_name}`"),
+            ),
+        )
+    {
+        return Update::full();
+    }
+
+    clear_pending(ctx);
+    crate::ops::session::restart_current_session(ctx)
+}
+
 pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bool {
     let pending = PendingDestructive::NewTemporarySession;
     let toast = confirm_toast(

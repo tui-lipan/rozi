@@ -90,7 +90,7 @@ fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarR
     }
     let row = row.detail(session_detail(entry), muted);
     // The ✕ kills the session — shuts its server down, the same as the picker's `Ctrl+K`. Killing
-    // the one on screen is fine; the UI hops onto a fresh ephemeral session rather than quitting.
+    // the one on screen is fine; the UI lands on the picker or launcher rather than quitting.
     SidebarRow::item(row, RowTarget::Session(Box::new(entry.clone()))).closable(
         crate::state::SidebarClose::Session {
             name: entry.name.clone(),

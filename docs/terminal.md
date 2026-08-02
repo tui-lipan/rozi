@@ -161,6 +161,12 @@ its own screen for rendering. Memory therefore scales with pane width, populated
 number of attached clients. Set `scrollback = 1000` (or another smaller limit) when memory matters
 more than deep history.
 
+The limit is fixed when each terminal screen is created. Reloading configuration does not resize
+existing history in place: new client panes use the new value, while a named server must be
+restarted for its existing screens to be reconstructed with that value. Server and client screens
+apply the same config independently, so clients started from different configs may retain different
+local depths without changing the server's retained replay.
+
 Transport buffering is separately bounded: PTY readers apply backpressure after 4 MiB is waiting
 for the server, and each client's steady-state inbound and outbound backlog is capped at 8 MiB.
 Terminal output is never discarded. A child producing faster than the server can consume blocks in

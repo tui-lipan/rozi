@@ -4,6 +4,7 @@ use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use hyprmux::pane::TerminalPane;
 use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
 use hyprmux::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
@@ -34,7 +35,11 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     fs::create_dir_all(&state_base).expect("create state base");
     fs::create_dir_all(&config_base).expect("create config base");
     let config_path = config_base.join("hyprmux.toml");
-    fs::write(&config_path, "[session]\nresurrect = true\n").expect("write test config");
+    fs::write(
+        &config_path,
+        "scrollback = 100\n\n[session]\nresurrect = true\n",
+    )
+    .expect("write test config");
     let endpoint = subprocess_endpoint(&runtime_base, &session);
 
     let child = spawn_server(
@@ -87,11 +92,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_control(&ClientMessage::SetSessionOrigin {
         profile: "work".into(),
     });
-    client.write_pane_input(
-        PANE_ID,
-        PANE_GENERATION,
-        b"echo hyprmux-resurrect-replay-marker\r",
-    );
+    client.write_pane_input(PANE_ID, PANE_GENERATION, b"i=0; while [ $i -lt 40 ]; do printf 'resurrect-line-%03d\\n' $i; i=$((i+1)); done; printf 'hyprmux-resurrect-%s\\n' 'replay-marker'\r");
     let mut live_output = Vec::new();
     read_until(&mut client, |frame| {
         if let Frame::PaneBytes { bytes, .. } = frame {
@@ -116,16 +117,24 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
 
     let snapshot = state_base.join("hyprmux").join("sessions").join(&session);
     wait_for_snapshot(&snapshot);
+    let snapshot_replay = fs::read(snapshot.join("panes").join(format!("{PANE_ID}.replay")))
+        .expect("read replay snapshot");
     assert!(
-        contains(
-            &fs::read(snapshot.join("panes").join(format!("{PANE_ID}.replay")))
-                .expect("read replay snapshot"),
-            REPLAY_MARKER,
-        ),
+        contains(&snapshot_replay, REPLAY_MARKER),
         "snapshot replay omitted marker"
     );
+    let mut before_restart = TerminalPane::new(100);
+    before_restart.apply_server_resize(80, 24);
+    before_restart.bind_server_backend(PANE_ID, PANE_GENERATION);
+    before_restart.process_server_output(&snapshot_replay);
+    assert!(before_restart.total_scrollback_rows() > 3);
 
     server.kill_for_restart();
+    fs::write(
+        &config_path,
+        "scrollback = 3\n\n[session]\nresurrect = true\n",
+    )
+    .expect("lower scrollback before restart");
     let restarted = spawn_server(
         &session,
         &runtime_base,
@@ -163,7 +172,14 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     assert_eq!(restored_layout.workspaces.len(), 1);
     assert!(panes.iter().any(|pane| pane.pane_id == PANE_ID));
 
-    let mut replay = Vec::new();
+    let generation = panes
+        .iter()
+        .find(|pane| pane.pane_id == PANE_ID)
+        .expect("restored pane metadata")
+        .generation;
+    let mut replay = TerminalPane::new(100);
+    replay.apply_server_resize(80, 24);
+    replay.bind_server_backend(PANE_ID, generation);
     read_until(&mut restored, |frame| {
         if let Frame::PaneBytes {
             pane_id: PANE_ID,
@@ -171,10 +187,18 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
             ..
         } = frame
         {
-            replay.extend_from_slice(bytes);
+            replay.process_server_output(bytes);
         }
-        contains(&replay, REPLAY_MARKER)
+        replay
+            .capture_scrollback_text(None)
+            .contains("hyprmux-resurrect-replay-marker")
     });
+    assert!(replay.total_scrollback_rows() <= 3);
+    assert!(
+        !replay
+            .capture_scrollback_text(None)
+            .contains("resurrect-line-000")
+    );
 
     restored.write_control(&ClientMessage::Shutdown);
     drop(restored);

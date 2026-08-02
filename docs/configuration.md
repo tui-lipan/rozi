@@ -175,7 +175,7 @@ close = "ctrl-a q"
 | `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). Profile commands are typed into the pane's interactive shell instead. |
 | `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
-| `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). |
+| `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). Applies when a terminal screen is created. Existing screens keep their current capacity; restart a named server (or create new panes) after changing it. |
 
 Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
 historical form) or an argument-preserving array whose first element is the program, e.g.

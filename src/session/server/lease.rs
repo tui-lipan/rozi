@@ -420,7 +420,6 @@ impl SessionServer {
     }
 
     pub(super) fn flush_clients(&mut self) {
-        let default_cap = self.max_backlog;
         let mut dead: Vec<ClientId> = Vec::new();
         for client in &mut self.clients {
             let mut disconnect = false;
@@ -458,9 +457,6 @@ impl SessionServer {
                 if client.close_after_flush {
                     disconnect = true;
                 }
-            } else if client.outbox_bytes > client.backlog_cap(default_cap) {
-                // A client backed up past its cap is a liability; drop it so broadcasts never stall.
-                disconnect = true;
             }
             if disconnect {
                 dead.push(client.id);
@@ -475,15 +471,23 @@ impl SessionServer {
         let Some(bytes) = encode_control(&message) else {
             return;
         };
+        let max_backlog = self.max_backlog;
         match target {
             Target::Sender => {
-                if let Some(client) = self.client_mut(sender_id) {
-                    client.push(bytes);
+                let accepted = self
+                    .client_mut(sender_id)
+                    .is_some_and(|client| client.try_push(bytes, max_backlog));
+                if !accepted {
+                    self.remove_client(sender_id);
                 }
             }
             Target::Client(id) => {
-                if let Some(client) = self.client_mut(id).filter(|client| client.attached) {
-                    client.push(bytes);
+                let accepted = self
+                    .client_mut(id)
+                    .filter(|client| client.attached)
+                    .is_none_or(|client| client.try_push(bytes, max_backlog));
+                if !accepted {
+                    self.remove_client(id);
                 }
             }
             Target::Broadcast => {
@@ -496,15 +500,26 @@ impl SessionServer {
     pub(super) fn push_to_attached(&mut self, bytes: Vec<u8>) {
         let last = self.clients.iter().rposition(|client| client.attached);
         let Some(last) = last else { return };
+        let mut slow = Vec::new();
+        let mut bytes = Some(bytes);
         for (index, client) in self.clients.iter_mut().enumerate() {
             if !client.attached {
                 continue;
             }
-            if index == last {
-                client.push(bytes);
-                return;
+            let frame = if index == last {
+                bytes.take().expect("last attached client receives frame")
+            } else {
+                bytes
+                    .as_ref()
+                    .expect("last attached client not reached")
+                    .clone()
+            };
+            if !client.try_push(frame, self.max_backlog) {
+                slow.push(client.id);
             }
-            client.push(bytes.clone());
+        }
+        for id in slow {
+            self.remove_client(id);
         }
     }
 
@@ -533,22 +548,34 @@ impl SessionServer {
     /// Queue the initial replay seed for a freshly attached client: the exported screen of every
     /// live pane, in 256 KiB chunks, right after `Attached` and before any subsequent live output.
     pub(super) fn enqueue_attach_seeds(&mut self, id: ClientId) {
-        let mut seeds: Vec<Vec<u8>> = Vec::new();
-        for (pane_id, pane) in &mut self.panes {
-            if pane.exited.is_some() {
-                continue;
-            }
-            let bytes = pane.screen.export_replay_bytes();
-            for chunk in bytes.chunks(SEED_CHUNK) {
-                if let Some(frame) = encode_pane_output(*pane_id, pane.generation, chunk) {
-                    seeds.push(frame);
-                }
-            }
-        }
         if let Some(client) = self.client_mut(id) {
             client.seeding = true;
-            for frame in seeds {
-                client.push(frame);
+        }
+        let panes: Vec<_> = self
+            .panes
+            .iter()
+            .filter(|(_, pane)| pane.exited.is_none())
+            .map(|(pane_id, pane)| (*pane_id, pane.generation))
+            .collect();
+        for (pane_id, generation) in panes {
+            let bytes = self
+                .panes
+                .get_mut(&pane_id)
+                .expect("pane id came from map")
+                .screen
+                .export_replay_bytes();
+            for chunk in bytes.chunks(SEED_CHUNK) {
+                let Some(frame) = encode_pane_output(pane_id, generation, chunk) else {
+                    continue;
+                };
+                let max_backlog = self.max_backlog;
+                let accepted = self
+                    .client_mut(id)
+                    .is_some_and(|client| client.try_push(frame, max_backlog));
+                if !accepted {
+                    self.remove_client(id);
+                    return;
+                }
             }
         }
     }

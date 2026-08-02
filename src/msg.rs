@@ -202,6 +202,10 @@ pub enum Msg {
         epoch: u64,
         name: String,
     },
+    DrainSessionFrames {
+        epoch: u64,
+        mailbox: std::sync::Arc<session::client::InboundMailbox>,
+    },
     SessionAttachFailed {
         epoch: u64,
         message: String,

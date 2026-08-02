@@ -115,6 +115,47 @@ fn session_socket_path_rejects_invalid_names() {
 }
 
 #[test]
+fn slow_client_is_disconnected_at_exact_backlog_boundary() {
+    let mut server = SessionServer::new_named("dev");
+    server.max_backlog = 32;
+    let (id, _stream) = attach_client(&mut server);
+    let client = server.client_mut(id).unwrap();
+    client.outbox.clear();
+    client.outbox_bytes = 0;
+
+    server.push_to_attached(vec![0; 32]);
+    assert!(server.client_attached(id));
+    assert_eq!(server.client_mut(id).unwrap().outbox_bytes, 32);
+    server.push_to_attached(vec![1]);
+    assert!(!server.client_attached(id));
+}
+
+#[test]
+fn pty_ingress_coalesces_only_adjacent_output_for_the_same_pane() {
+    let queue = ByteQueue::new(64);
+    let first = ServerEvent::Pty(1, 2, TerminalPtyEvent::Output(Arc::from(&b"abc"[..])));
+    queue
+        .try_push_with(first, 3, ServerEvent::coalesce_output)
+        .unwrap();
+    let second = ServerEvent::Pty(1, 2, TerminalPtyEvent::Output(Arc::from(&b"def"[..])));
+    queue
+        .try_push_with(second, 3, ServerEvent::coalesce_output)
+        .unwrap();
+    queue
+        .try_push(ServerEvent::Pty(1, 2, TerminalPtyEvent::Exited(0)), 0)
+        .unwrap();
+
+    let ServerEvent::Pty(_, _, TerminalPtyEvent::Output(bytes)) = queue.try_pop().unwrap() else {
+        panic!("expected output")
+    };
+    assert_eq!(&*bytes, b"abcdef");
+    assert!(matches!(
+        queue.try_pop(),
+        Some(ServerEvent::Pty(1, 2, TerminalPtyEvent::Exited(0)))
+    ));
+}
+
+#[test]
 fn cursor_position_report_detection_is_strict() {
     assert!(super::panes::is_cursor_position_report(b"\x1b[1;1R"));
     assert!(super::panes::is_cursor_position_report(b"\x1b[24;120R"));
@@ -1463,7 +1504,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_exit_broadcast = false;
     while Instant::now() < deadline {
-        while let Ok(event) = server.event_rx.try_recv() {
+        while let Some(event) = server.events.try_pop() {
             if let Some(outbound) = server.handle_event(event) {
                 if matches!(
                 &outbound,
@@ -1540,7 +1581,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut saw_exit = false;
     while Instant::now() < deadline {
-        while let Ok(event) = server.event_rx.try_recv() {
+        while let Some(event) = server.events.try_pop() {
             if let Some(outbound) = server.handle_event(event) {
                 saw_exit |= matches!(
                 &outbound,

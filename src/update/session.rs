@@ -56,6 +56,16 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
     crate::ops::session::reconnect_current_session(ctx)
 }
 
+pub(super) fn transport_failed(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    name: String,
+    message: String,
+) -> Update {
+    crate::pty_events::notify_error(ctx, "Session transport", message);
+    disconnected(ctx, epoch, name)
+}
+
 pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
     let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();

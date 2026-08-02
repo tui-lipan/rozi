@@ -1,7 +1,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -12,12 +13,21 @@ use crate::session::protocol::Frame;
 use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
+use crate::session::queue::ByteQueue;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
+const MAX_CLIENT_INBOUND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_CLIENT_OUTBOUND_BYTES: usize = 8 * 1024 * 1024;
+const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
+
 #[derive(Clone)]
 pub struct SessionClient {
-    tx: mpsc::Sender<ClientOutbound>,
+    outbound: Arc<ByteQueue<ClientOutbound>>,
+    transport_failed: Arc<AtomicBool>,
+    inbound: Option<Arc<InboundMailbox>>,
+    #[cfg(test)]
+    test_observer: Option<mpsc::Sender<ClientOutbound>>,
     server_pid: Option<u32>,
     /// Wire version agreed with this server. Gates messages added after the minimum supported
     /// version so an older server never receives a variant it cannot deserialize.
@@ -48,15 +58,19 @@ pub(crate) enum ClientOutbound {
 impl SessionClient {
     #[cfg(test)]
     pub(crate) fn test_channel() -> (Self, mpsc::Receiver<ClientOutbound>) {
-        let (tx, rx) = mpsc::channel();
+        let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));
+        let (test_tx, test_rx) = mpsc::channel();
         (
             Self {
-                tx,
+                outbound: Arc::clone(&outbound),
+                transport_failed: Arc::new(AtomicBool::new(false)),
+                inbound: None,
+                test_observer: Some(test_tx),
                 cell: tui_lipan::TerminalCellSize::default(),
                 server_pid: None,
                 effective_protocol: PROTOCOL_VERSION,
             },
-            rx,
+            test_rx,
         )
     }
 
@@ -93,6 +107,48 @@ impl SessionClient {
         inbound: mpsc::Sender<Frame<ServerMessage>>,
         read_only: bool,
     ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_target(
+            stream,
+            session,
+            InboundTarget::Channel(inbound),
+            read_only,
+        )
+    }
+
+    pub(crate) fn connect_attached_mailbox(
+        endpoint: &IpcEndpoint,
+        session: impl Into<String>,
+        inbound: Arc<InboundMailbox>,
+        read_only: bool,
+    ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_target(
+            endpoint.connect()?,
+            session,
+            InboundTarget::Mailbox(inbound),
+            read_only,
+        )
+    }
+
+    pub(crate) fn from_stream_attached_mailbox(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: Arc<InboundMailbox>,
+        read_only: bool,
+    ) -> io::Result<(Self, ServerMessage)> {
+        Self::from_stream_attached_target(
+            stream,
+            session,
+            InboundTarget::Mailbox(inbound),
+            read_only,
+        )
+    }
+
+    fn from_stream_attached_target(
+        stream: IpcConnection,
+        session: impl Into<String>,
+        inbound: InboundTarget,
+        read_only: bool,
+    ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
         let mut reader = stream.try_clone()?;
@@ -112,9 +168,12 @@ impl SessionClient {
         // its sibling, delaying both keys and heartbeat pongs. Polling keeps the duplex path live.
         reader.set_nonblocking(true)?;
         let effective_protocol = validate_attached(&attached)?;
-        let (tx, rx) = mpsc::channel::<ClientOutbound>();
+        let outbound = Arc::new(ByteQueue::<ClientOutbound>::new(MAX_CLIENT_OUTBOUND_BYTES));
+        let client_inbound = inbound.mailbox();
+        let writer_outbound = Arc::clone(&outbound);
+        let writer_inbound = client_inbound.clone();
         thread::spawn(move || {
-            for message in rx {
+            while let Some(message) = writer_outbound.pop_blocking() {
                 let result = match message {
                     ClientOutbound::Control(message) => {
                         protocol::write_frame(&mut stream, &message)
@@ -126,15 +185,27 @@ impl SessionClient {
                     } => protocol::write_pane_input_frame(&mut stream, pane_id, generation, &bytes),
                 };
                 if result.is_err() {
+                    if let Some(inbound) = &writer_inbound {
+                        inbound.fail("session writer disconnected".to_string());
+                    }
                     break;
                 }
             }
+            writer_outbound.close();
         });
-        let heartbeat_tx = tx.clone();
-        thread::spawn(move || forward_inbound(&mut reader, &inbound, Some(&heartbeat_tx)));
+        let heartbeat_outbound = Arc::clone(&outbound);
+        let reader_outbound = Arc::clone(&outbound);
+        thread::spawn(move || {
+            forward_inbound(&mut reader, &inbound, Some(&heartbeat_outbound));
+            reader_outbound.close();
+        });
         Ok((
             Self {
-                tx,
+                outbound,
+                transport_failed: Arc::new(AtomicBool::new(false)),
+                inbound: client_inbound,
+                #[cfg(test)]
+                test_observer: None,
                 server_pid,
                 effective_protocol,
                 cell: tui_lipan::host_cell_size(),
@@ -329,7 +400,196 @@ impl SessionClient {
     }
 
     fn send(&self, message: ClientOutbound) {
-        let _ = self.tx.send(message);
+        #[cfg(test)]
+        if let Some(observer) = &self.test_observer {
+            let _ = observer.send(message);
+            return;
+        }
+        if self.transport_failed.load(Ordering::Acquire) {
+            return;
+        }
+        let bytes = message.wire_bytes();
+        if self.outbound.try_push(message, bytes).is_err() {
+            self.transport_failed.store(true, Ordering::Release);
+            self.outbound.close();
+            if let Some(inbound) = &self.inbound {
+                inbound.fail("session outbound queue exceeded 8 MiB".to_string());
+            }
+        }
+    }
+}
+
+enum InboundTarget {
+    Channel(mpsc::Sender<Frame<ServerMessage>>),
+    Mailbox(Arc<InboundMailbox>),
+}
+
+impl InboundTarget {
+    fn mailbox(&self) -> Option<Arc<InboundMailbox>> {
+        match self {
+            Self::Channel(_) => None,
+            Self::Mailbox(mailbox) => Some(Arc::clone(mailbox)),
+        }
+    }
+
+    fn send(&self, frame: Frame<ServerMessage>) -> std::result::Result<(), ()> {
+        match self {
+            Self::Channel(channel) => channel.send(frame).map_err(|_| ()),
+            Self::Mailbox(mailbox) => mailbox.push(frame),
+        }
+    }
+
+    fn disconnected(&self) {
+        if let Self::Mailbox(mailbox) = self {
+            mailbox.disconnected();
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum InboundEvent {
+    Frame(Box<Frame<ServerMessage>>),
+    Disconnected,
+    Failed(String),
+}
+
+pub struct InboundMailbox {
+    queue: ByteQueue<InboundEvent>,
+    scheduled: AtomicBool,
+    active: AtomicBool,
+    ended: AtomicBool,
+    epoch: u64,
+    session_name: String,
+    link: CommandLink<crate::Msg>,
+}
+
+impl InboundMailbox {
+    pub(crate) fn new(
+        epoch: u64,
+        session_name: String,
+        link: CommandLink<crate::Msg>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            queue: ByteQueue::new(MAX_CLIENT_INBOUND_BYTES),
+            scheduled: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            ended: AtomicBool::new(false),
+            epoch,
+            session_name,
+            link,
+        })
+    }
+
+    fn push(self: &Arc<Self>, frame: Frame<ServerMessage>) -> std::result::Result<(), ()> {
+        let bytes = inbound_frame_bytes(&frame);
+        let result =
+            self.queue
+                .try_push_with(InboundEvent::Frame(Box::new(frame)), bytes, |back, next| {
+                    coalesce_inbound(back, next)
+                });
+        if result.is_err() {
+            self.fail("session inbound queue exceeded 8 MiB".to_string());
+            return Err(());
+        }
+        self.schedule();
+        Ok(())
+    }
+
+    pub(crate) fn activate(self: &Arc<Self>) {
+        self.active.store(true, Ordering::Release);
+        self.schedule();
+    }
+
+    pub(crate) fn pop(&self) -> Option<InboundEvent> {
+        self.queue.try_pop()
+    }
+
+    pub(crate) fn session_name(&self) -> String {
+        self.session_name.clone()
+    }
+
+    pub(crate) fn finish_drain(self: &Arc<Self>) {
+        self.scheduled.store(false, Ordering::Release);
+        if self.queue.stats().len > 0 {
+            self.schedule();
+        }
+    }
+
+    fn disconnected(self: &Arc<Self>) {
+        if !self.ended.swap(true, Ordering::AcqRel) {
+            let _ = self.queue.try_push(InboundEvent::Disconnected, 0);
+            self.schedule();
+        }
+    }
+
+    pub(crate) fn fail(self: &Arc<Self>, message: String) {
+        if !self.ended.swap(true, Ordering::AcqRel) {
+            let _ = self.queue.try_push(InboundEvent::Failed(message), 0);
+            self.schedule();
+        }
+    }
+
+    fn schedule(self: &Arc<Self>) {
+        if self.active.load(Ordering::Acquire)
+            && self
+                .scheduled
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            self.link.send(crate::Msg::DrainSessionFrames {
+                epoch: self.epoch,
+                mailbox: Arc::clone(self),
+            });
+        }
+    }
+}
+
+fn inbound_frame_bytes(frame: &Frame<ServerMessage>) -> usize {
+    match frame {
+        Frame::PaneBytes { bytes, .. } => bytes.len().saturating_add(17),
+        Frame::Control(message) => serde_json::to_vec(message)
+            .map(|bytes| bytes.len().saturating_add(5))
+            .unwrap_or(5),
+    }
+}
+
+fn coalesce_inbound(back: &mut InboundEvent, next: &InboundEvent) -> bool {
+    let (InboundEvent::Frame(back), InboundEvent::Frame(next)) = (back, next) else {
+        return false;
+    };
+    let (
+        Frame::PaneBytes {
+            pane_id,
+            generation,
+            bytes,
+        },
+        Frame::PaneBytes {
+            pane_id: next_pane,
+            generation: next_generation,
+            bytes: next_bytes,
+        },
+    ) = (back.as_mut(), next.as_ref())
+    else {
+        return false;
+    };
+    if pane_id != next_pane
+        || generation != next_generation
+        || bytes.len().saturating_add(next_bytes.len()) > MAX_COALESCED_PANE_BYTES
+    {
+        return false;
+    }
+    bytes.extend_from_slice(next_bytes);
+    true
+}
+
+impl ClientOutbound {
+    fn wire_bytes(&self) -> usize {
+        match self {
+            Self::Control(message) => serde_json::to_vec(message)
+                .map(|bytes| bytes.len().saturating_add(5))
+                .unwrap_or(5),
+            Self::PaneInput { bytes, .. } => bytes.len().saturating_add(17),
+        }
     }
 }
 
@@ -376,11 +636,11 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
 
 fn forward_inbound<R: std::io::Read>(
     reader: &mut R,
-    inbound: &mpsc::Sender<Frame<ServerMessage>>,
-    outbound: Option<&mpsc::Sender<ClientOutbound>>,
+    inbound: &InboundTarget,
+    outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
-    loop {
+    'read: loop {
         let would_block = match decoder.read_from_status(reader) {
             Ok(protocol::FrameReadStatus::Eof) => break,
             Ok(protocol::FrameReadStatus::Read(_)) => false,
@@ -393,26 +653,26 @@ fn forward_inbound<R: std::io::Read>(
                     if let Frame::Control(ServerMessage::Ping { seq }) = frame
                         && let Some(outbound) = outbound
                     {
-                        if outbound
-                            .send(ClientOutbound::Control(ClientMessage::Pong { seq }))
-                            .is_err()
-                        {
-                            return;
+                        let pong = ClientOutbound::Control(ClientMessage::Pong { seq });
+                        let bytes = pong.wire_bytes();
+                        if outbound.try_push(pong, bytes).is_err() {
+                            break 'read;
                         }
                         continue;
                     }
                     if inbound.send(frame).is_err() {
-                        return;
+                        break 'read;
                     }
                 }
                 Ok(None) => break,
-                Err(_) => return,
+                Err(_) => break 'read,
             }
         }
         if would_block {
             thread::sleep(Duration::from_millis(1));
         }
     }
+    inbound.disconnected();
 }
 
 #[cfg(test)]
@@ -450,7 +710,11 @@ mod tests {
         });
 
         let (inbound_tx, inbound_rx) = mpsc::channel();
-        forward_inbound(&mut client_stream, &inbound_tx, None);
+        forward_inbound(
+            &mut client_stream,
+            &InboundTarget::Channel(inbound_tx),
+            None,
+        );
         assert_eq!(
             inbound_rx
                 .recv_timeout(Duration::from_secs(1))
@@ -488,16 +752,16 @@ mod tests {
         let mut bytes = Vec::new();
         protocol::write_frame(&mut bytes, &ServerMessage::Ping { seq: 42 }).unwrap();
         let (inbound_tx, inbound_rx) = mpsc::channel();
-        let (outbound_tx, outbound_rx) = mpsc::channel();
+        let outbound = Arc::new(ByteQueue::new(MAX_CLIENT_OUTBOUND_BYTES));
 
         forward_inbound(
             &mut std::io::Cursor::new(bytes),
-            &inbound_tx,
-            Some(&outbound_tx),
+            &InboundTarget::Channel(inbound_tx),
+            Some(&outbound),
         );
 
         assert_eq!(
-            outbound_rx.try_recv().unwrap(),
+            outbound.try_pop().unwrap(),
             ClientOutbound::Control(ClientMessage::Pong { seq: 42 })
         );
         assert!(inbound_rx.try_recv().is_err());
@@ -521,6 +785,56 @@ mod tests {
                 reason: Some("needs approval".to_string()),
             })
         );
+    }
+
+    #[test]
+    fn large_paste_counts_bytes_and_overflow_fails_transport_explicitly() {
+        let capacity = 64;
+        let outbound = Arc::new(ByteQueue::new(capacity));
+        let client = SessionClient {
+            outbound: Arc::clone(&outbound),
+            transport_failed: Arc::new(AtomicBool::new(false)),
+            inbound: None,
+            test_observer: None,
+            server_pid: None,
+            effective_protocol: PROTOCOL_VERSION,
+            cell: tui_lipan::TerminalCellSize::default(),
+        };
+
+        client.send_input(1, 1, vec![b'x'; capacity - 17]);
+        assert_eq!(outbound.stats().bytes, capacity);
+        assert!(!client.transport_failed.load(Ordering::Acquire));
+        client.send_input(1, 1, vec![b'y']);
+        assert!(client.transport_failed.load(Ordering::Acquire));
+        assert!(outbound.stats().closed);
+        assert_eq!(outbound.stats().high_water_bytes, capacity);
+    }
+
+    #[test]
+    fn inbound_coalescing_preserves_transcript_and_control_boundaries() {
+        let mut output = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+            pane_id: 1,
+            generation: 2,
+            bytes: b"alpha".to_vec(),
+        }));
+        let continuation = InboundEvent::Frame(Box::new(Frame::PaneBytes {
+            pane_id: 1,
+            generation: 2,
+            bytes: b"beta".to_vec(),
+        }));
+        assert!(coalesce_inbound(&mut output, &continuation));
+        assert_eq!(
+            output,
+            InboundEvent::Frame(Box::new(Frame::PaneBytes {
+                pane_id: 1,
+                generation: 2,
+                bytes: b"alphabeta".to_vec(),
+            }))
+        );
+        assert!(!coalesce_inbound(
+            &mut output,
+            &InboundEvent::Frame(Box::new(Frame::Control(ServerMessage::Ping { seq: 1 })))
+        ));
     }
 
     #[test]

@@ -199,6 +199,26 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             client,
         } => session::connected(ctx, epoch, name, client),
         Msg::SessionDisconnected { epoch, name } => session::disconnected(ctx, epoch, name),
+        Msg::DrainSessionFrames { epoch, mailbox } => {
+            let event = mailbox.pop();
+            mailbox.finish_drain();
+            match event {
+                Some(crate::session::client::InboundEvent::Frame(frame)) => {
+                    return handle_msg(
+                        _app,
+                        crate::session::bootstrap::server_message_to_msg(epoch, *frame),
+                        ctx,
+                    );
+                }
+                Some(crate::session::client::InboundEvent::Disconnected) => {
+                    session::disconnected(ctx, epoch, mailbox.session_name())
+                }
+                Some(crate::session::client::InboundEvent::Failed(message)) => {
+                    session::transport_failed(ctx, epoch, mailbox.session_name(), message)
+                }
+                None => Update::none(),
+            }
+        }
         Msg::SessionAttachFailed { epoch, message } => session::attach_failed(ctx, epoch, message),
         Msg::SessionAttached {
             epoch,

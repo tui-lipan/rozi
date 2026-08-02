@@ -99,7 +99,6 @@ fn attach_session_client_with_profile(
     reconnect: bool,
     link: CommandLink<Msg>,
 ) {
-    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     if let Some((target, remote_config)) = remote {
@@ -128,9 +127,13 @@ fn attach_session_client_with_profile(
     let mut spawned = false;
     let mut server_child: Option<std::process::Child> = None;
     loop {
-        let (tx, rx) = mpsc::channel();
-        match super::client::SessionClient::connect_attached(&endpoint, name.clone(), tx, read_only)
-        {
+        let mailbox = super::client::InboundMailbox::new(epoch, name.clone(), link.clone());
+        match super::client::SessionClient::connect_attached_mailbox(
+            &endpoint,
+            name.clone(),
+            std::sync::Arc::clone(&mailbox),
+            read_only,
+        ) {
             Ok((client, attached)) => {
                 if create_only && !spawned {
                     client.detach();
@@ -157,10 +160,7 @@ fn attach_session_client_with_profile(
                     client,
                 });
                 link.send(server_message_to_msg(epoch, Frame::Control(attached)));
-                for message in rx {
-                    link.send(server_message_to_msg(epoch, message));
-                }
-                link.send(Msg::SessionDisconnected { epoch, name });
+                mailbox.activate();
                 return;
             }
             Err(err) => {
@@ -402,9 +402,7 @@ fn try_attach_remote(
     remote_config: &crate::config::HyprmuxRemoteConfig,
     link: &CommandLink<Msg>,
 ) -> AttachRemoteOutcome {
-    use std::sync::mpsc;
-
-    let (tx, rx) = mpsc::channel();
+    let mailbox = super::client::InboundMailbox::new(epoch, name.to_string(), link.clone());
     match super::remote::connect_remote(target, name, remote_config) {
         Ok((stream, preamble)) => {
             if create_only && !preamble.server_started {
@@ -413,10 +411,10 @@ fn try_attach_remote(
                     "Session `{name}` is already running on the remote host"
                 ));
             }
-            match super::client::SessionClient::from_stream_attached(
+            match super::client::SessionClient::from_stream_attached_mailbox(
                 stream,
                 name.to_string(),
-                tx,
+                std::sync::Arc::clone(&mailbox),
                 read_only,
             ) {
                 Ok((client, attached)) => {
@@ -426,13 +424,7 @@ fn try_attach_remote(
                         client,
                     });
                     link.send(server_message_to_msg(epoch, Frame::Control(attached)));
-                    for message in rx {
-                        link.send(server_message_to_msg(epoch, message));
-                    }
-                    link.send(Msg::SessionDisconnected {
-                        epoch,
-                        name: name.to_string(),
-                    });
+                    mailbox.activate();
                     AttachRemoteOutcome::Done
                 }
                 Err(err) => {
@@ -470,7 +462,7 @@ fn is_handshake_rejected(err: &std::io::Error) -> bool {
     err.kind() == std::io::ErrorKind::InvalidData
 }
 
-fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
+pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> Msg {
     match frame {
         Frame::PaneBytes {
             pane_id,

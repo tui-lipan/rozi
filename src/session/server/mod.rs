@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tui_lipan::prelude::*;
@@ -13,6 +13,7 @@ use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
 };
+use crate::session::queue::ByteQueue;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
@@ -41,6 +42,8 @@ const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// client heartbeat deadlines because the server itself could not exchange heartbeat frames.
 const HEARTBEAT_STALL_THRESHOLD: Duration = Duration::from_millis(100);
 const MAX_PTY_EVENTS_PER_TICK: usize = 256;
+const MAX_PTY_INGRESS_BYTES: usize = 4 * 1024 * 1024;
+const MAX_COALESCED_PANE_BYTES: usize = 64 * 1024;
 /// Minimum spacing between control-request notifications to the controller from the same requester,
 /// so a held `request-control` key raises one toast rather than a stream (the roster badge is sticky
 /// regardless).
@@ -66,8 +69,7 @@ pub struct SessionServer {
     clients: Vec<ClientConn>,
     next_client_id: ClientId,
     max_backlog: usize,
-    event_rx: mpsc::Receiver<ServerEvent>,
-    event_tx: mpsc::Sender<ServerEvent>,
+    events: Arc<ByteQueue<ServerEvent>>,
     shutdown: bool,
     forget_snapshot: bool,
     dirty: bool,
@@ -257,9 +259,13 @@ impl ClientConn {
         }
     }
 
-    fn push(&mut self, bytes: Vec<u8>) {
+    fn try_push(&mut self, bytes: Vec<u8>, default_cap: usize) -> bool {
+        if self.outbox_bytes.saturating_add(bytes.len()) > self.backlog_cap(default_cap) {
+            return false;
+        }
         self.outbox_bytes += bytes.len();
         self.outbox.push_back(bytes);
+        true
     }
 
     fn backlog_cap(&self, default: usize) -> usize {
@@ -271,8 +277,39 @@ impl ClientConn {
     }
 }
 
+#[derive(Debug)]
 enum ServerEvent {
     Pty(PaneId, u64, TerminalPtyEvent),
+}
+
+impl ServerEvent {
+    fn payload_bytes(&self) -> usize {
+        match self {
+            Self::Pty(_, _, TerminalPtyEvent::Output(bytes)) => bytes.len(),
+            Self::Pty(_, _, TerminalPtyEvent::Exited(_) | TerminalPtyEvent::Error(_)) => 0,
+        }
+    }
+
+    fn coalesce_output(&mut self, next: &Self) -> bool {
+        let (
+            Self::Pty(id, generation, TerminalPtyEvent::Output(bytes)),
+            Self::Pty(next_id, next_generation, TerminalPtyEvent::Output(next_bytes)),
+        ) = (self, next)
+        else {
+            return false;
+        };
+        if id != next_id
+            || generation != next_generation
+            || bytes.len().saturating_add(next_bytes.len()) > MAX_COALESCED_PANE_BYTES
+        {
+            return false;
+        }
+        let mut combined = Vec::with_capacity(bytes.len() + next_bytes.len());
+        combined.extend_from_slice(bytes);
+        combined.extend_from_slice(next_bytes);
+        *bytes = Arc::from(combined);
+        true
+    }
 }
 
 enum ServerOutbound {
@@ -314,7 +351,7 @@ impl SessionServer {
         settings: ServerSettings,
     ) -> Self {
         let session_name = session_name.into();
-        let (event_tx, event_rx) = mpsc::channel();
+        let events = Arc::new(ByteQueue::new(MAX_PTY_INGRESS_BYTES));
         Self {
             panes: HashMap::new(),
             next_generation: 1,
@@ -328,8 +365,7 @@ impl SessionServer {
             clients: Vec::new(),
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
-            event_rx,
-            event_tx,
+            events,
             shutdown: false,
             forget_snapshot: false,
             dirty: false,
@@ -371,7 +407,7 @@ impl SessionServer {
             self.accept_new(&listener)?;
 
             for _ in 0..MAX_PTY_EVENTS_PER_TICK {
-                let Ok(event) = self.event_rx.try_recv() else {
+                let Some(event) = self.events.try_pop() else {
                     break;
                 };
                 if let Some(outbound) = self.handle_event(event) {
@@ -421,6 +457,12 @@ impl SessionServer {
             }
         }
         Ok(())
+    }
+}
+
+impl Drop for SessionServer {
+    fn drop(&mut self) {
+        self.events.close();
     }
 }
 

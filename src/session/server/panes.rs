@@ -138,9 +138,11 @@ impl SessionServer {
         for (key, value) in &request.env {
             config = config.env(key.clone(), value.clone());
         }
-        let tx = self.event_tx.clone();
+        let events = Arc::clone(&self.events);
         match TerminalPty::spawn(config, move |event| {
-            let _ = tx.send(ServerEvent::Pty(id, generation, event));
+            let event = ServerEvent::Pty(id, generation, event);
+            let bytes = event.payload_bytes();
+            let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
         }) {
             Ok(pty) => {
                 let pid = pty.pid();
@@ -400,9 +402,11 @@ impl SessionServer {
         for (key, value) in &pane.env {
             config = config.env(key.clone(), value.clone());
         }
-        let tx = self.event_tx.clone();
+        let events = Arc::clone(&self.events);
         let spawned = TerminalPty::spawn(config, move |event| {
-            let _ = tx.send(ServerEvent::Pty(id, generation, event));
+            let event = ServerEvent::Pty(id, generation, event);
+            let bytes = event.payload_bytes();
+            let _ = events.push_blocking_with(event, bytes, ServerEvent::coalesce_output);
         });
 
         let pane = self.panes.get_mut(&id)?;

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 MODE=quick
+CUSTOM_CASE=()
 OUTPUT_DIR="target/memory-matrix/$(date -u +%Y%m%dT%H%M%SZ)"
 SETTLE_SECONDS=2
 SAMPLE_COUNT=5
@@ -9,7 +10,7 @@ SAMPLE_INTERVAL=0.2
 
 usage() {
   cat <<'EOF'
-Usage: tools/memory-matrix.sh [--quick|--full|--smoke] [--output DIR]
+Usage: tools/memory-matrix.sh [--quick|--full|--smoke] [--case ROWS COLS PANES HISTORY CONTENT CLIENTS] [--output DIR]
 
 Linux-only, opt-in PSS benchmark. --quick is the default; --smoke runs one
 scenario to validate the local dependencies and lifecycle without measuring a matrix.
@@ -19,6 +20,12 @@ EOF
 while (($#)); do
   case "$1" in
     --quick|--full|--smoke) MODE=${1#--}; shift ;;
+    --case)
+      (($# >= 7)) || { echo "--case requires ROWS COLS PANES HISTORY CONTENT CLIENTS" >&2; exit 2; }
+      MODE=case
+      CUSTOM_CASE=("$2" "$3" "$4" "$5" "$6" "$7")
+      shift 7
+      ;;
     --output) OUTPUT_DIR=${2:?--output requires a directory}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -106,6 +113,8 @@ wait_for_marker() {
     fi
     sleep 0.05
   done
+  "$BIN" --socket "$socket" list-panes >&2 || true
+  "$BIN" --socket "$socket" capture-pane --target "$pane" --scrollback full >&2 || true
   echo "timed out waiting for pane $pane marker $marker" >&2
   return 1
 }
@@ -143,11 +152,11 @@ start_client() {
 }
 
 pane_command() {
-  local history=$1 content=$2 marker=$3
+  local history=$1 content=$2 marker=$3 marker_suffix=${3#M}
   if [[ $content == styled ]]; then
-    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmhyprmux-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf '%s\\n'; while :; do sleep 3600; done" "$history" "$marker"
+    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmhyprmux-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   else
-    printf "i=0; while [ \$i -lt %s ]; do printf 'hyprmux-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf '%s\\n'; while :; do sleep 3600; done" "$history" "$marker"
+    printf "i=0; while [ \$i -lt %s ]; do printf 'hyprmux-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   fi
 }
 
@@ -285,13 +294,13 @@ EOF
   local client
   for ((client=0; client<clients; client++)); do start_client "$rows" "$cols"; done
   local control=${CONTROL_SOCKETS[0]} command marker response pane id
-  marker="HYPRMUX_MEMORY_${RANDOM}_1"
+  marker=M01
   command=$(pane_command "$history" "$content" "$marker")
   send_when_ready "$control" "$command"$'\n'
   wait_for_marker "$control" 1 "$marker"
   PANE_IDS=(1)
   for ((pane=2; pane<=panes; pane++)); do
-    marker="HYPRMUX_MEMORY_${RANDOM}_$pane"
+    printf -v marker 'M%02d' "$pane"
     command=$(pane_command "$history" "$content" "$marker")
     response=$("$BIN" --socket "$control" new-pane "$command")
     id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<<"$response")
@@ -319,7 +328,9 @@ EOF
   cleanup_scenario
 }
 
-if [[ $MODE == smoke ]]; then
+if [[ $MODE == case ]]; then
+  run_scenario "${CUSTOM_CASE[@]}"
+elif [[ $MODE == smoke ]]; then
   run_scenario 24 80 1 10 plain 1
 else
   viewports=("24 80" "64 253")

@@ -53,6 +53,7 @@ tools/memory-matrix.sh --full --output target/memory-matrix/full
 ```
 
 Use `--smoke` before a long run to check local PTY, control-socket, `/proc`, and shutdown support.
+Use `--case ROWS COLS PANES HISTORY CONTENT CLIENTS` to reproduce one failed or noisy scenario.
 The runner requires `bash`, `python3`, util-linux `script`, and Linux `smaps_rollup`. It builds
 `target/release/hyprmux`, creates private temporary `HOME` and XDG config/state/cache/runtime
 directories per scenario, and passes every control command an explicit isolated socket. It never

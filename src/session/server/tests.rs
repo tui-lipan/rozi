@@ -123,11 +123,40 @@ fn slow_client_is_disconnected_at_exact_backlog_boundary() {
     client.outbox.clear();
     client.outbox_bytes = 0;
 
-    server.push_to_attached(vec![0; 32]);
+    server.push_to_attached(Arc::from(vec![0; 32]));
     assert!(server.client_attached(id));
     assert_eq!(server.client_mut(id).unwrap().outbox_bytes, 32);
-    server.push_to_attached(vec![1]);
+    server.push_to_attached(Arc::from(vec![1]));
     assert!(!server.client_attached(id));
+}
+
+#[test]
+fn two_client_broadcast_shares_one_encoded_allocation() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, _first_stream) = attach_client(&mut server);
+    let (second, _second_stream) = attach_client(&mut server);
+    for client in &mut server.clients {
+        client.outbox.clear();
+        client.outbox_bytes = 0;
+    }
+
+    server.broadcast_control(&ServerMessage::Ping { seq: 9 });
+
+    let first_frame = server
+        .client_mut(first)
+        .unwrap()
+        .outbox
+        .front()
+        .unwrap()
+        .clone();
+    let second_frame = server
+        .client_mut(second)
+        .unwrap()
+        .outbox
+        .front()
+        .unwrap()
+        .clone();
+    assert!(Arc::ptr_eq(&first_frame, &second_frame));
 }
 
 #[test]

@@ -496,25 +496,15 @@ impl SessionServer {
         }
     }
 
-    /// Queue `bytes` on every attached client, cloning for all but the last recipient.
-    pub(super) fn push_to_attached(&mut self, bytes: Vec<u8>) {
-        let last = self.clients.iter().rposition(|client| client.attached);
-        let Some(last) = last else { return };
+    /// Queue one shared encoded frame on every attached client. Each client retains its own write
+    /// offset, while the immutable payload allocation is shared.
+    pub(super) fn push_to_attached(&mut self, bytes: Arc<[u8]>) {
         let mut slow = Vec::new();
-        let mut bytes = Some(bytes);
-        for (index, client) in self.clients.iter_mut().enumerate() {
+        for client in &mut self.clients {
             if !client.attached {
                 continue;
             }
-            let frame = if index == last {
-                bytes.take().expect("last attached client receives frame")
-            } else {
-                bytes
-                    .as_ref()
-                    .expect("last attached client not reached")
-                    .clone()
-            };
-            if !client.try_push(frame, self.max_backlog) {
+            if !client.try_push(Arc::clone(&bytes), self.max_backlog) {
                 slow.push(client.id);
             }
         }

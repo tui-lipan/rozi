@@ -207,7 +207,7 @@ struct ClientConn {
     id: ClientId,
     stream: IpcConnection,
     decoder: protocol::FrameDecoder,
-    outbox: VecDeque<Vec<u8>>,
+    outbox: VecDeque<Arc<[u8]>>,
     outbox_bytes: usize,
     /// Bytes of `outbox.front()` already written (non-blocking writes can be partial).
     front_offset: usize,
@@ -259,7 +259,7 @@ impl ClientConn {
         }
     }
 
-    fn try_push(&mut self, bytes: Vec<u8>, default_cap: usize) -> bool {
+    fn try_push(&mut self, bytes: Arc<[u8]>, default_cap: usize) -> bool {
         if self.outbox_bytes.saturating_add(bytes.len()) > self.backlog_cap(default_cap) {
             return false;
         }
@@ -466,16 +466,18 @@ impl Drop for SessionServer {
     }
 }
 
-fn encode_control(message: &ServerMessage) -> Option<Vec<u8>> {
+fn encode_control(message: &ServerMessage) -> Option<Arc<[u8]>> {
     let mut buf = Vec::new();
-    protocol::write_frame(&mut buf, message).ok().map(|()| buf)
+    protocol::write_frame(&mut buf, message)
+        .ok()
+        .map(|()| Arc::from(buf))
 }
 
-fn encode_pane_output(pane_id: PaneId, generation: u64, bytes: &[u8]) -> Option<Vec<u8>> {
+fn encode_pane_output(pane_id: PaneId, generation: u64, bytes: &[u8]) -> Option<Arc<[u8]>> {
     let mut buf = Vec::new();
     protocol::write_pane_output_frame(&mut buf, pane_id, generation, bytes)
         .ok()
-        .map(|()| buf)
+        .map(|()| Arc::from(buf))
 }
 
 struct SpawnRequest {

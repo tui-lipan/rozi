@@ -1,7 +1,7 @@
 # Sidebar
 
-hyprmux can reserve a fixed-width column on either side of the app for local navigation. The
-sidebar is hidden by default and is composed from ordinary tui-lipan tabs, frames, scrolling rows,
+hyprmux can reserve a resizable column on either side of the app for local navigation. The sidebar
+is hidden by default and is composed from tui-lipan draggable tab bars, splitters, scrolling rows,
 and mouse regions. It does not become part of the shared layout document.
 
 ## Configure
@@ -16,13 +16,38 @@ tabs = ["agents", "panes", "sessions"]
 
 `width` is clamped to 16-80 columns. The effective width may be smaller on narrow terminals: the
 sidebar yields space before the pane canvas is allowed to fall below its minimum, and always leaves
-at least one canvas column. `position` is `left` or `right`.
+at least one canvas column. `position` is `left` or `right`. The outer divider moves the sidebar,
+pane canvas, and PTYs live through the normal resize debounce; releasing it writes the final width
+back to this key.
+
+`tabs` is the catalog of available tab definitions. `panels` is a separate placement recipe made
+only of those tabs' stable IDs, so persisting a drag never rewrites a custom tab definition. Enable
+the split to render the two saved panel groups vertically:
+
+```toml
+panels = [["agents"], ["panes", "sessions"]]
+split = true
+split_ratio = 0.5
+```
+
+With two `panels` arrays, `split` defaults to `true`; spelling it out makes the presentation choice
+explicit. Set it to `false` to keep the recipe while showing one bar.
+
+Both tab bars share a drag group, so tabs reorder live within one bar and move between bars. The
+panel divider is also draggable. Dragging its junction with the outer divider resizes both axes at
+once; the junction ends at the sidebar gutter and does not extend onto pane borders. Tab
+order/assignment and both splitter sizes persist to `hyprmux.toml` and remain live-editable there.
+Disabling `split` temporarily presents the saved groups as one tab bar; it does not merge or erase
+the `panels` recipe, so enabling it again restores the previous groups.
 
 The built-in IDs are `agents`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine
 identities used for selection and reload reconciliation, while custom `label` values are
 display-only. Duplicate IDs are skipped after the first. See
 [Configuration](configuration.md#sidebar) for file tree options and for custom launcher and
 command-backed table syntax.
+
+A complete two-panel configuration with built-in, launcher, and command tabs lives at
+[`examples/sidebar.toml`](../examples/sidebar.toml).
 
 ## Built-in Tabs
 
@@ -339,10 +364,16 @@ keyboard away from a running command by accident.
 | Key | Action |
 | --- | --- |
 | `↑` / `↓` | Move the cursor. Section headers are skipped, never selected. |
-| `PageUp` / `PageDown` | Move by a screenful. |
+| `PageUp` / `PageDown` | Move by one visible page of selectable rows. |
 | `Enter` | Activate the row — the same action a click on it would run. |
-| `←` / `→` | Collapse and expand directories in the Files and Git tabs. |
 | `Tab` / `Shift-Tab` | Cycle sidebar tabs. |
+| `←` / `h`, `→` / `l` / `Space` | Collapse, expand, or toggle directories in the Files and Git tabs. |
+| `Ctrl+Shift+←` / `Ctrl+Shift+→` | Reorder the active tab within its panel. |
+| `Ctrl+↑` / `Ctrl+↓` | Move keyboard focus to the top or bottom panel. |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the active tab to the top or bottom panel and follow it. Moving down from a single panel creates the split. |
+| `Shift+←` / `Shift+→` | Move the outer splitter left or right, resizing the sidebar. |
+| `Shift+↑` / `Shift+↓` | Move the panel splitter up or down. |
+| `s` | Split the sidebar, or merge a split sidebar back into one panel. |
 | `Esc` | Leave the sidebar and give the keyboard back to the focused pane. |
 
 A ` SIDEBAR ` badge appears in the workbar while the sidebar holds the keyboard, alongside the
@@ -359,23 +390,32 @@ can be visible at once, and on the same row.
 - `toggle-sidebar` shows or hides the sidebar for this client. Bound to `<prefix> b` / `Alt+b`.
 - `focus-sidebar` moves the keyboard into the row list, revealing the sidebar first if needed.
   Bound to `<prefix> B` / `Alt+Shift+B`.
-- `sidebar-next-tab` and `sidebar-prev-tab` cycle configured tabs while visible.
+- `toggle-sidebar-split` shows the saved panel recipe as one or two panels without discarding either
+  panel's tab assignment. Bound to `<prefix> \` / `Alt+\`; while the sidebar is focused, `s` is
+  also a local alias.
+- `sidebar-next-tab` and `sidebar-prev-tab` cycle configured tabs while visible. Bound to
+  `<prefix> PageDown` / `Alt+PageDown` and `<prefix> PageUp` / `Alt+PageUp` respectively.
 - `focus-next-blocked-pane` scans all workspaces in pane order, wraps after the focused pane, and
   focuses the next pane whose reported status is `blocked`. It skips closing and special panes and
   does nothing when the current pane is the only blocked pane.
-- `focus-next-blocked-pane` and the two tab-cycling actions are unbound by default. All five can be
-  rebound under `[keys]` or invoked with `hyprmux run-action <id>`.
+- `focus-next-blocked-pane` is unbound by default. All six sidebar actions can be rebound under
+  `[keys]` or invoked with `hyprmux run-action <id>`.
 
-Visibility and the active tab are local runtime state. A config reload reapplies `visible` and
-reconciles the selected tab by stable ID; if that tab was removed, the first configured tab becomes
-active. Runtime toggles are not written to disk. `toggle-sidebar` remains usable while the
-scratchpad is open. Closing the sidebar, changing tabs, attaching or detaching, and reloading config
-invalidate in-flight session discovery so an old result cannot repopulate or restart the tab.
-The same epoch policy applies independently to command-tab polling.
+Visibility, active tabs, focused panel, cursors, and caches are local runtime state. A config reload
+reapplies `visible`, panel assignment, split mode, split ratio, and width, then reconciles selected
+tabs by stable ID. If a selected tab was removed, the first tab in that panel becomes active.
+Visibility toggles and active selections are not written to disk. Tab drag/reorder, split mode,
+outer resize, and panel
+resize are preferences and update `panels`, `split`, `width`, or `split_ratio` in `hyprmux.toml`.
+Self-writes are ignored by the live-reload watcher, while later external edits remain authoritative.
+`toggle-sidebar` remains usable while the scratchpad is open. Closing the sidebar, changing tabs,
+attaching or detaching, and reloading config invalidate in-flight session discovery so an old result
+cannot repopulate or restart the tab. The same epoch policy applies independently to command-tab
+polling, including when command tabs are active in both panels.
 
 ## Shared Sessions
 
-The sidebar itself, its dock, width, visibility, selection, and caches are never serialized into
+The sidebar itself, its dock, width, panel layout, visibility, selection, and caches are never serialized into
 `SharedLayout`. The controller's effective content area is nevertheless the canonical pane canvas:
 showing or hiding the controller sidebar changes that width and causes the normal shared layout and
 PTY resize flow. Showing or hiding a follower sidebar is purely local and emits no layout commit or

@@ -135,7 +135,14 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                         on_click: None,
                     },
                 ];
-                state.sidebar.active_tab = Some(SidebarTab::Panes.id());
+                state.sidebar.panels[0].tabs = state
+                    .config
+                    .sidebar
+                    .tabs
+                    .iter()
+                    .map(SidebarTab::id)
+                    .collect();
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
                 state.sidebar.command_output.insert(
                     files.clone(),
                     SidebarCommandOutput {
@@ -155,7 +162,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
             assert!(!backend.capture_frame().to_fixed_grid().contains("file-row"));
 
             backend
-                .dispatch(HyprmuxMsg::SidebarTabSelected(files))
+                .dispatch(HyprmuxMsg::SidebarTabSelected { panel: 0, index: 1 })
                 .expect("select command tab");
 
             assert!(backend.capture_frame().to_fixed_grid().contains("file-row"));
@@ -191,7 +198,14 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
                     launcher("sessions-long", "Sessions"),
                     launcher("deployment", "Deployment"),
                 ];
-                state.sidebar.active_tab = Some(SidebarTab::Panes.id());
+                state.sidebar.panels[0].tabs = state
+                    .config
+                    .sidebar
+                    .tabs
+                    .iter()
+                    .map(SidebarTab::id)
+                    .collect();
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
             }
             backend.render();
 
@@ -211,18 +225,52 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
 
             click_label(&mut backend, "Build");
             assert_eq!(
-                backend.state().sidebar.active_tab,
-                Some(SidebarTabId::new("build"))
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("build"))
             );
 
             scroll(&mut backend, MouseKind::ScrollDown);
             click_label(&mut backend, "Deployment");
             assert_eq!(
-                backend.state().sidebar.active_tab,
-                Some(SidebarTabId::new("deployment"))
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("deployment"))
             );
         })
         .expect("spawn sidebar tab interaction thread")
         .join()
         .expect("sidebar tab interaction completes");
+}
+
+#[test]
+fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            {
+                let state = backend.state_mut();
+                state.config.sidebar.tabs = vec![SidebarTab::Agents];
+                state.sidebar.panels = vec![
+                    hyprmux::state::SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("agents")],
+                        active_tab: Some(SidebarTabId::new("agents")),
+                        ..Default::default()
+                    },
+                    hyprmux::state::SidebarPanelState::default(),
+                ];
+                assert!(state.sidebar.transfer_tab(0, 1, 0, 0));
+            }
+
+            backend
+                .dispatch(HyprmuxMsg::SidebarTabSelected { panel: 1, index: 0 })
+                .expect("destination change follows transfer");
+            assert_eq!(
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("agents"))
+            );
+            assert_eq!(backend.state().sidebar.active_panel, 1);
+        })
+        .expect("spawn transfer selection thread")
+        .join()
+        .expect("transfer selection completes");
 }

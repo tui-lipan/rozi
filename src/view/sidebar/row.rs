@@ -93,6 +93,8 @@ impl SidebarRow {
 /// neither hovered nor armed.
 #[derive(Clone, Copy)]
 pub(super) struct CloseAffordance {
+    /// Sidebar panel containing the row.
+    pub panel: usize,
     /// Row index, so the click resolves the same way `SidebarRowActivate` does.
     pub index: usize,
     /// Armed for the confirming second click.
@@ -283,15 +285,23 @@ impl Row {
 /// hover resolves to a single innermost node, so without this the pointer reaching the ✕ would read
 /// as leaving the row and take the ✕ away with it.
 fn close_affordance(ctx: &Context<HyprmuxApp>, close: CloseAffordance) -> Element {
+    let panel = close.panel;
     let index = close.index;
     let style = super::super::fg_only(&ctx.state.theme.muted);
     let region: Element = MouseRegion::new()
-        .on_click(ctx.link().callback(move |_| Msg::SidebarRowClose(index)))
-        .on_mouse_move(ctx.link().callback(|_| Msg::SidebarPointerMoved))
-        .on_hover_change(
+        .on_click(
             ctx.link()
-                .callback(move |hovered| Msg::SidebarRowHover { index, hovered }),
+                .callback(move |_| Msg::SidebarRowClose { panel, index }),
         )
+        .on_mouse_move(
+            ctx.link()
+                .callback(move |_| Msg::SidebarPointerMoved(panel)),
+        )
+        .on_hover_change(ctx.link().callback(move |hovered| Msg::SidebarRowHover {
+            panel,
+            index,
+            hovered,
+        }))
         .hover_effect(VisualEffect::transform_fg(ColorTransform::Tint(
             ctx.state.theme.status.error,
             1.0,
@@ -306,13 +316,13 @@ fn close_affordance(ctx: &Context<HyprmuxApp>, close: CloseAffordance) -> Elemen
                 .child(Text::new("✕").style(style).height(Length::Px(1))),
         )
         .into();
-    region.key(close_hover_key(index))
+    region.key(close_hover_key(panel, index))
 }
 
 /// Stable identity for the nested close region, allowing the parent row to compose its own hover
 /// effect while this child is the framework's single hover owner.
-pub(super) fn close_hover_key(index: usize) -> String {
-    format!("sidebar-row-close-{index}")
+pub(super) fn close_hover_key(panel: usize, index: usize) -> String {
+    format!("sidebar-{panel}-row-close-{index}")
 }
 
 /// One-line section header, aligned with the glyph column so headed rows read as a tree.
@@ -380,12 +390,4 @@ pub(super) fn truncate(value: &str, max_chars: usize) -> String {
         .collect::<String>();
     short.push('…');
     short
-}
-
-/// The muted "nothing here" body a tab shows in place of rows.
-pub(super) fn empty(ctx: &Context<HyprmuxApp>, text: &str) -> Element {
-    VStack::new()
-        .padding((0, 0, 0, 1))
-        .child(Text::new(text.to_string()).style(super::super::fg_only(&ctx.state.theme.muted)))
-        .into()
 }

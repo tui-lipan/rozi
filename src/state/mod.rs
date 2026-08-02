@@ -599,9 +599,15 @@ impl State {
     pub fn effective_sidebar_width(&self, terminal_viewport: Rect) -> u16 {
         crate::geometry::effective_sidebar_width(
             terminal_viewport.w,
-            self.config.sidebar.width,
+            self.sidebar_requested_width(),
             self.sidebar_visible,
         )
+    }
+
+    pub fn sidebar_requested_width(&self) -> u16 {
+        self.sidebar
+            .width_preview
+            .unwrap_or(self.config.sidebar.width)
     }
 
     /// Terminal-space x offset of app content. Nested Canvas placements remain content-local.

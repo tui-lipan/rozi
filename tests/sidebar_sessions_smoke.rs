@@ -49,7 +49,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.sidebar.tabs = vec![SidebarTab::Sessions];
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state
                     .config
                     .remote

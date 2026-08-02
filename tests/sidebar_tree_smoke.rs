@@ -63,7 +63,8 @@ fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
                     view,
                     config: SidebarTreeConfig::for_view(view),
                 };
-                state.sidebar.active_tab = Some(tab.id());
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
                 let pane = state.current().workspaces[0].panes[0].id;
                 state.current_mut().focused_pane = Some(pane);
@@ -161,7 +162,8 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
                     view: SidebarTreeView::Changes,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Changes),
                 };
-                state.sidebar.active_tab = Some(tab.id());
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
                 let pane = state.current().workspaces[0].panes[0].id;
                 state.current_mut().focused_pane = Some(pane);
@@ -229,7 +231,8 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                     let state = backend.state_mut();
                     state.sidebar_visible = true;
                     state.config.sidebar.width = 34;
-                    state.sidebar.active_tab = Some(tab.id());
+                    state.sidebar.panels[0].tabs = vec![tab.id()];
+                    state.sidebar.panels[0].active_tab = Some(tab.id());
                     state.config.sidebar.tabs = vec![tab];
                     let pane = state.current().workspaces[0].panes[0].id;
                     state.current_mut().focused_pane = Some(pane);
@@ -305,7 +308,8 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                     view: SidebarTreeView::Files,
                     config: SidebarTreeConfig::for_view(SidebarTreeView::Files),
                 };
-                state.sidebar.active_tab = Some(tab.id());
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
                 let pane = state.current().workspaces[0].panes[0].id;
                 state.current_mut().focused_pane = Some(pane);

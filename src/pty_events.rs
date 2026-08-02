@@ -983,6 +983,18 @@ mod tests {
                     "flush sends only the latest size per pane"
                 );
 
+                // A live sidebar drag follows the same debounce path as every other geometry
+                // change. Preview state must not hold PTY resizes until pointer release.
+                backend.state_mut().sidebar.width_preview = Some(40);
+                backend
+                    .dispatch(Msg::PaneResize(1, 60, 22))
+                    .expect("dispatch preview resize");
+                backend
+                    .dispatch(Msg::FlushPaneResizes { epoch: 0 })
+                    .expect("dispatch flush during preview");
+                assert_eq!(resizes(&controller_rx), vec![(60, 22)]);
+                backend.state_mut().sidebar.width_preview = None;
+
                 // A flush with no client must hold the size rather than discard it: nothing
                 // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
                 // happens to change again.

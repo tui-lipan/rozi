@@ -12,89 +12,38 @@ use tui_lipan::prelude::*;
 use crate::config::SidebarTab;
 use crate::{HyprmuxApp, Msg};
 
-pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
-    let tabs = &ctx.state.config.sidebar.tabs;
-    let active = ctx
-        .state
-        .sidebar
-        .active_tab
-        .as_ref()
-        .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
-        .unwrap_or(0);
+pub(super) fn sidebar(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
-    let tab_caps = ctx
-        .state
-        .config
-        .pane
-        .workbar_tab_style
-        .glyphs()
-        .and_then(|(left, right)| Some((left.chars().next()?, right.chars().next()?)));
-    let tab_bar = tabs.iter().fold(Tabs::new(), |bar, tab| {
-        bar.tab(Tab::new(tab.label().to_string()))
-    });
-    let tab_ids: Vec<_> = tabs.iter().map(SidebarTab::id).collect();
-    let active_tab_start = tabs
-        .iter()
-        .take(active)
-        .map(|tab| {
-            RichText::from(tab.label().to_string())
-                .width()
-                .saturating_add(3)
-        })
-        .sum::<usize>();
-    let active_tab_end = active_tab_start.saturating_add(
-        tabs.get(active)
-            .map(|tab| {
-                RichText::from(tab.label().to_string())
-                    .width()
-                    .saturating_add(2)
-            })
-            .unwrap_or(0),
-    );
-    // Selection presentation matches the workbar's workspace tabs so the two strips read as one
-    // system; the sidebar sits on the element surface rather than the panel, so the resting and
-    // hover backgrounds follow that surface instead.
-    let tab_bar = tab_bar
-        .active(active)
-        .focusable(false)
-        .width(Length::Auto)
-        .height(Length::Px(1))
-        .divider(' ')
-        .caps(tab_caps)
-        .style(
-            Style::new()
-                .fg(theme.surface.menu)
-                .bg(theme.surface.element),
-        )
-        .active_style(
-            Style::new()
-                .fg(theme.surface.backdrop)
-                .bg(theme.border_active)
-                .bold(),
-        )
-        .tab_hover_style(
-            Style::new()
-                .fg(theme.surface.menu)
-                .bg(theme.surface.element.elevate(0.08)),
-        )
-        .on_change(ctx.link().callback(move |event: TabsEvent| {
-            Msg::SidebarTabSelected(tab_ids[event.index].clone())
-        }));
-    let tab_scroll = ScrollView::new()
-        .axis(ScrollAxis::Horizontal)
-        .h_scrollbar(false)
-        .height(Length::Px(1))
-        .reveal_horizontal_range(active_tab_start, active_tab_end)
-        .child(tab_bar);
-
-    let active_tab = tabs.get(active);
-    // The file tree is its own focusable widget; every other tab is a `List` built from the shared
-    // row grammar. Both are keyboard-navigable and both distinguish a focused cursor from a resting
-    // one, so the sidebar behaves the same way whichever tab is up.
-    let body: Element = match active_tab {
-        None => placeholder(ctx, "No sidebar tabs configured"),
-        Some(SidebarTab::Tree { view, config }) => tree::tree_tab(ctx, *view, config),
-        Some(tab) => row_list(ctx, tab),
+    let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
+        let divider_style = Style::new()
+            .fg(theme.surface.element.elevate(0.15))
+            .bg(theme.surface.element);
+        Splitter::horizontal()
+            .split_id("hyprmux-sidebar-panels")
+            .weights(vec![
+                ctx.state.config.sidebar.split_ratio,
+                1.0 - ctx.state.config.sidebar.split_ratio,
+            ])
+            .weights_nonce(ctx.state.sidebar.panel_splitter_nonce(
+                ctx.state.sidebar.panels.len(),
+                ctx.state.config.sidebar.split_ratio,
+            ))
+            .min_size(3)
+            .handle_symbol('─')
+            .handle_style(divider_style)
+            .handle_hover_style(divider_style)
+            .handle_active_style(
+                Style::new()
+                    .fg(theme.border_active)
+                    .bg(theme.surface.element)
+                    .bold(),
+            )
+            .on_resize(ctx.link().callback(Msg::SidebarPanelsResized))
+            .child(panel(ctx, 0))
+            .child(panel(ctx, 1))
+            .into()
+    } else {
+        panel(ctx, 0)
     };
 
     Frame::new()
@@ -111,32 +60,110 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>, width: u16) -> Element {
                 .primary
                 .patch(Style::new().bg(ctx.state.theme.surface.element)),
         )
-        .width(Length::Px(width))
+        .width(Length::Flex(1))
         .height(Length::Flex(1))
+        .child(panels)
+        .into()
+}
+
+fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
+    let tabs = panel_tabs(&ctx.state, panel);
+    let active_id = ctx.state.sidebar.active_tab_in(panel);
+    let active = active_id
+        .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
+        .unwrap_or(0);
+    let bar_id = panel_bar_id(panel);
+    let tab_bar = DraggableTabBar::new()
+        .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
+        .active(active)
+        .bar_id(bar_id)
+        .drag_group("hyprmux-sidebar-tabs")
+        .reorder_mode(DragReorderMode::Live)
+        .border(false)
+        .divider(' ')
+        .show_close_buttons(false)
+        .show_overflow_controls(false)
+        .focusable(false)
+        .height(Length::Px(1))
+        .style(
+            Style::new()
+                .fg(ctx.state.theme.surface.menu)
+                .bg(ctx.state.theme.surface.element),
+        )
+        .active_style(
+            Style::new()
+                .fg(ctx.state.theme.surface.backdrop)
+                .bg(ctx.state.theme.border_active)
+                .bold(),
+        )
+        .tab_hover_style(
+            Style::new().fg(ctx.state.theme.surface.menu).bg(ctx
+                .state
+                .theme
+                .surface
+                .element
+                .elevate(0.08)),
+        )
+        .on_change(
+            ctx.link()
+                .callback(move |event: TabsEvent| Msg::SidebarTabSelected {
+                    panel,
+                    index: event.index,
+                }),
+        )
+        .on_reorder(
+            ctx.link()
+                .callback(move |event| Msg::SidebarTabReordered { panel, event }),
+        )
+        .on_transfer(ctx.link().callback(Msg::SidebarTabTransferred));
+
+    let body = match tabs.get(active).copied() {
+        None => empty_body(ctx, panel, "No tabs in this panel"),
+        Some(SidebarTab::Tree { view, config }) => tree::tree_tab(ctx, panel, *view, config),
+        Some(tab) => row_list(ctx, panel, tab),
+    };
+
+    VStack::new()
+        .gap(0)
+        .width(Length::Flex(1))
+        .height(Length::Flex(1))
+        .child(tab_bar)
         .child(
-            HStack::new()
-                .child(
-                    VStack::new()
-                        .gap(0)
-                        .width(Length::Flex(1))
-                        .child(tab_scroll)
-                        .child(
-                            // Top inset sits outside the scroll so it stays under the tab bar
-                            // instead of scrolling away with the first row.
-                            VStack::new()
-                                .gap(0)
-                                .padding((1, 0, 0, 0))
-                                .width(Length::Flex(1))
-                                .height(Length::Flex(1))
-                                .child(body),
-                        ),
-                )
-                .child(
-                    Divider::vertical()
-                        .style(Style::new().fg(ctx.state.theme.surface.element.elevate(0.15))),
-                ),
+            VStack::new()
+                .gap(0)
+                .padding((1, 0, 0, 0))
+                .width(Length::Flex(1))
+                .height(Length::Flex(1))
+                .child(body),
         )
         .into()
+}
+
+fn panel_tabs(state: &crate::state::State, panel: usize) -> Vec<&SidebarTab> {
+    state
+        .sidebar
+        .panels
+        .get(panel)
+        .into_iter()
+        .flat_map(|panel| &panel.tabs)
+        .filter_map(|id| state.config.sidebar.tabs.iter().find(|tab| tab.id() == *id))
+        .collect()
+}
+
+fn panel_bar_id(panel: usize) -> String {
+    format!("hyprmux-sidebar-panel-{panel}")
+}
+
+pub(crate) fn panel_from_bar_id(id: &str) -> Option<usize> {
+    id.strip_prefix("hyprmux-sidebar-panel-")?.parse().ok()
+}
+
+fn empty_body(ctx: &Context<HyprmuxApp>, panel: usize, text: &str) -> Element {
+    ScrollView::new()
+        .focusable(true)
+        .scroll_keys(ScrollKeymap::NONE)
+        .child(placeholder(ctx, text))
+        .key(body_key(panel))
 }
 
 /// A workspace's custom name, if it has a usable one.
@@ -174,27 +201,29 @@ pub(super) fn workspace_heading(state: &crate::state::State, index: usize) -> St
 
 /// The configured tab currently showing, resolved the same way the view resolves it.
 pub(crate) fn active_tab(ctx: &Context<HyprmuxApp>) -> Option<&SidebarTab> {
-    active_tab_of(&ctx.state)
+    active_tab_in(ctx, ctx.state.sidebar.active_panel)
 }
 
-/// [`active_tab`] against bare state, for the update side, which decides whether a tab is on screen
-/// without holding a view context.
-pub(crate) fn active_tab_of(state: &crate::state::State) -> Option<&SidebarTab> {
-    let tabs = &state.config.sidebar.tabs;
-    let index = state
-        .sidebar
-        .active_tab
-        .as_ref()
-        .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
-        .unwrap_or(0);
-    tabs.get(index)
+pub(crate) fn active_tab_in(ctx: &Context<HyprmuxApp>, panel: usize) -> Option<&SidebarTab> {
+    active_tab_in_state(&ctx.state, panel)
+}
+
+pub(crate) fn active_tab_in_state(
+    state: &crate::state::State,
+    panel: usize,
+) -> Option<&SidebarTab> {
+    let id = state.sidebar.active_tab_in(panel)?;
+    state.config.sidebar.tabs.iter().find(|tab| tab.id() == *id)
 }
 
 /// Every elapsed time the Agents tab is currently showing, joined — the duration tick's "is there
 /// anything to advance, and did it change" input. `None` whenever nothing is showing one: the
 /// sidebar is hidden, another tab is up, or every agent is idle.
 pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
-    if !state.sidebar_visible || !matches!(active_tab_of(state), Some(SidebarTab::Agents)) {
+    if !state.sidebar_visible
+        || !(0..state.sidebar.panels.len())
+            .any(|panel| matches!(active_tab_in_state(state, panel), Some(SidebarTab::Agents)))
+    {
         return None;
     }
     agents::duration_digest(state)
@@ -204,12 +233,26 @@ pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
 /// switching projects does not inherit another directory's expansion state, so the focus target has
 /// to be derived from state rather than assumed constant.
 pub(crate) fn body_focus_key(ctx: &Context<HyprmuxApp>) -> String {
-    match active_tab(ctx) {
+    body_focus_key_for(ctx, ctx.state.sidebar.active_panel)
+}
+
+pub(crate) fn body_focus_key_for(ctx: &Context<HyprmuxApp>, panel: usize) -> String {
+    match active_tab_in(ctx, panel) {
         Some(SidebarTab::Tree { view, config }) => tree::tree_root(ctx, config)
-            .map(|root| tree::tree_key(*view, &root))
-            .unwrap_or_else(|| super::sidebar_body_key().to_string()),
-        _ => super::sidebar_body_key().to_string(),
+            .map(|root| {
+                if config.explorer {
+                    tree::tree_focus_key(panel, *view, &root)
+                } else {
+                    tree::tree_key(panel, *view, &root)
+                }
+            })
+            .unwrap_or_else(|| body_key(panel)),
+        _ => body_key(panel),
     }
+}
+
+pub(crate) fn body_key(panel: usize) -> String {
+    format!("{}-{panel}", super::sidebar_body_key())
 }
 
 /// Every sidebar row, in display order, for whichever tab is active. Pure in `State`, which is what
@@ -253,13 +296,15 @@ fn empty_text(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> &'static str {
 /// Rows are direct `ScrollView` children so each can carry its own key — that is what lets
 /// `scroll_to_key` follow the cursor. Nesting them inside one stack would make the whole body a
 /// single child and scrolling would only ever resolve to the top of it.
-fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
+fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Element {
     let rows = body_rows(ctx, tab);
     if rows.is_empty() {
-        return row::empty(ctx, empty_text(ctx, tab));
+        return empty_body(ctx, panel, empty_text(ctx, tab));
     }
-    let focused = ctx.state.sidebar.focused;
-    let cursor = cursor_index(ctx, &rows);
+    let panel_state = &ctx.state.sidebar.panels[panel];
+    let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel == panel;
+    let cursor = cursor_index(ctx, panel, &rows);
+    let tab_id = tab.id();
 
     let mut view = ScrollView::new()
         .scrollbar(true)
@@ -267,21 +312,29 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
         // Focusable so `focus-sidebar` has a target and the cursor can mean something, but its own
         // scroll keys are off: arrows move the cursor, and the view follows via `scroll_to_key`.
         .focusable(true)
-        .scroll_keys(ScrollKeymap::NONE);
+        .scroll_keys(ScrollKeymap::NONE)
+        .on_viewport_change(
+            ctx.link()
+                .callback(move |event| Msg::SidebarViewportChanged {
+                    panel,
+                    tab_id: tab_id.clone(),
+                    event,
+                }),
+        );
     if let Some(cursor) = cursor.filter(|_| focused) {
-        view = view.scroll_to_key(row_key(cursor));
+        view = view.scroll_to_key(row_key(panel, cursor));
     }
 
     for (index, row) in rows.into_iter().enumerate() {
         let selectable = row.selectable();
-        let close = close_affordance(ctx, &row, index);
+        let close = close_affordance(ctx, panel, &row, index);
         let mut element = match row.kind {
             row::RowKind::Spacer => Text::new(" ").height(Length::Px(1)).into(),
             row::RowKind::Header(element) => *element,
             row::RowKind::Item(item) => item.build(ctx, focused && cursor == Some(index), close),
         };
-        let close_hovered = ctx.has_hover_within_key(row::close_hover_key(index));
-        if close_hovered && !ctx.state.sidebar.suppress_row_hover {
+        let close_hovered = ctx.has_hover_within_key(row::close_hover_key(panel, index));
+        if close_hovered && !panel_state.suppress_row_hover {
             // Hover resolves to the innermost MouseRegion, so the row's native hover effect is
             // inactive while the keyed ✕ region owns hover. Apply the same background transform
             // through a scope around the row; the ✕ keeps its foreground-only native effect, and
@@ -293,14 +346,21 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
         }
         let element: Element = if selectable {
             let mut region = MouseRegion::new()
-                .on_mouse_move(ctx.link().callback(|_| Msg::SidebarPointerMoved))
-                .on_click(ctx.link().callback(move |_| Msg::SidebarRowActivate(index)))
-                .on_hover_change(
+                .on_mouse_move(
                     ctx.link()
-                        .callback(move |hovered| Msg::SidebarRowHover { index, hovered }),
+                        .callback(move |_| Msg::SidebarPointerMoved(panel)),
                 )
+                .on_click(
+                    ctx.link()
+                        .callback(move |_| Msg::SidebarRowActivate { panel, index }),
+                )
+                .on_hover_change(ctx.link().callback(move |hovered| Msg::SidebarRowHover {
+                    panel,
+                    index,
+                    hovered,
+                }))
                 .child(element);
-            if !ctx.state.sidebar.suppress_row_hover {
+            if !panel_state.suppress_row_hover {
                 // A transform rather than a style: it lifts whatever the row already painted, so
                 // the active pane's row and the row under the keyboard cursor still respond to the
                 // pointer. An absolute hover style sits *under* those backgrounds and never shows.
@@ -311,9 +371,9 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
         } else {
             element
         };
-        view = view.child(element.key(row_key(index)));
+        view = view.child(element.key(row_key(panel, index)));
     }
-    view.key(super::sidebar_body_key())
+    view.key(body_key(panel))
 }
 
 /// Whether a row shows its ✕ this frame, and in which state.
@@ -325,19 +385,24 @@ fn row_list(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Element {
 /// is gated, so keyboard navigation does not leave a ✕ behind under a stale pointer.
 fn close_affordance(
     ctx: &Context<HyprmuxApp>,
+    panel: usize,
     row: &row::SidebarRow,
     index: usize,
 ) -> Option<row::CloseAffordance> {
     let close = row.close.as_ref()?;
     let armed = ctx.state.sidebar.pending_row_close.as_ref() == Some(close);
-    let hovered =
-        ctx.state.sidebar.hovered_row == Some(index) && !ctx.state.sidebar.suppress_row_hover;
-    (armed || hovered).then_some(row::CloseAffordance { index, armed })
+    let panel_state = &ctx.state.sidebar.panels[panel];
+    let hovered = panel_state.hovered_row == Some(index) && !panel_state.suppress_row_hover;
+    (armed || hovered).then_some(row::CloseAffordance {
+        panel,
+        index,
+        armed,
+    })
 }
 
 /// Per-row element key, used both for reconciliation and as the `scroll_to_key` target.
-fn row_key(index: usize) -> String {
-    format!("sidebar-row-{index}")
+fn row_key(panel: usize, index: usize) -> String {
+    format!("sidebar-{panel}-row-{index}")
 }
 
 /// Where the cursor actually sits: the stored index if it still points at a selectable row,
@@ -359,8 +424,12 @@ pub(crate) fn resolve_cursor(cursor: usize, rows: &[row::SidebarRow]) -> Option<
         })
 }
 
-fn cursor_index(ctx: &Context<HyprmuxApp>, rows: &[row::SidebarRow]) -> Option<usize> {
-    resolve_cursor(ctx.state.sidebar.cursor, rows)
+fn cursor_index(
+    ctx: &Context<HyprmuxApp>,
+    panel: usize,
+    rows: &[row::SidebarRow],
+) -> Option<usize> {
+    resolve_cursor(ctx.state.sidebar.panels[panel].cursor, rows)
 }
 
 /// Scrollbar presentation shared by every scrolling surface in the sidebar, including the file

@@ -494,19 +494,18 @@ fn execute_action_inner(
             ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
             crate::update::sidebar::visibility_changed(ctx)
         }
+        Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
             if ctx.state.sidebar_visible {
-                ctx.state.sidebar.cycle(&ctx.state.config.sidebar, true);
-                crate::update::sidebar::visibility_changed(ctx)
+                crate::update::sidebar::cycle_tab(ctx, true)
             } else {
                 Update::none()
             }
         }
         Action::SidebarPrevTab => {
             if ctx.state.sidebar_visible {
-                ctx.state.sidebar.cycle(&ctx.state.config.sidebar, false);
-                crate::update::sidebar::visibility_changed(ctx)
+                crate::update::sidebar::cycle_tab(ctx, false)
             } else {
                 Update::none()
             }
@@ -763,8 +762,8 @@ mod tests {
                     .dispatch(Msg::RunAction(Action::SidebarNextTab))
                     .expect("cycle sidebar tab");
                 assert_eq!(
-                    backend.state().sidebar.active_tab,
-                    Some(crate::config::SidebarTabId::new("panes"))
+                    backend.state().sidebar.active_tab(),
+                    Some(&crate::config::SidebarTabId::new("panes"))
                 );
                 backend
                     .dispatch(Msg::FlushLayoutCommit { epoch: 0 })

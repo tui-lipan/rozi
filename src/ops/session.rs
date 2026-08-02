@@ -1712,9 +1712,7 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
                 .rename_session
                 .as_ref()
                 .and_then(|rename| rename.host_target.clone());
-            if !open_ephemeral
-                && session_name_already_running(ctx, &name, host_target.as_ref())
-            {
+            if !open_ephemeral && session_name_already_running(ctx, &name, host_target.as_ref()) {
                 reject_session_name(ctx, format!("Session `{name}` is already running"));
                 return Update::full();
             }
@@ -2086,7 +2084,10 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> U
         && ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_target == entry.remote_target;
     if is_current {
-        crate::pty_events::notify_info(ctx, "Kill (Ctrl+K) the current session, or leave the client");
+        crate::pty_events::notify_info(
+            ctx,
+            "Kill (Ctrl+K) the current session, or leave the client",
+        );
         return Update::full();
     }
     let Some(id) = ctx
@@ -2909,11 +2910,7 @@ mod tests {
                     "the parked previous session remains as a choice"
                 );
                 assert!(!state.background.contains_key(&10));
-                assert!(
-                    state
-                        .attachment_by_identity("occupied", None)
-                        .is_none()
-                );
+                assert!(state.attachment_by_identity("occupied", None).is_none());
                 assert!(
                     state.background.values().any(|attachment| {
                         attachment.session_name.as_deref() == Some("previous")
@@ -3062,7 +3059,8 @@ mod tests {
                     // Client-global chrome that must survive a create: an open sidebar on a chosen
                     // tab, and a running workbar command poller.
                     state.sidebar_visible = true;
-                    state.sidebar.active_tab = Some(crate::config::SidebarTabId::new("sessions"));
+                    state.sidebar.panels[0].active_tab =
+                        Some(crate::config::SidebarTabId::new("sessions"));
                     state.workbar_commands_running.insert("date".to_string());
                     // Simulate a profile-seeded session: the current pane carries a command.
                     state.current_mut().workspaces[0].panes[0].identity.command =
@@ -3108,8 +3106,8 @@ mod tests {
                 assert_eq!(state.sidebar.config_epoch, 11);
                 assert!(state.sidebar_visible);
                 assert_eq!(
-                    state.sidebar.active_tab,
-                    Some(crate::config::SidebarTabId::new("sessions"))
+                    state.sidebar.active_tab(),
+                    Some(&crate::config::SidebarTabId::new("sessions"))
                 );
                 assert!(state.workbar_commands_running.contains("date"));
             })

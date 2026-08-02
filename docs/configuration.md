@@ -577,16 +577,36 @@ restart.
 
 ## `[sidebar]`
 
-The optional sidebar is a fixed-width local navigation surface docked beside the app content.
+The optional sidebar is a resizable local navigation surface docked beside the app content.
 See [Sidebar](sidebar.md) for the built-in Panes tab, tab configuration, interaction, and shared
 session sizing behavior.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `visible` | `false` | Initial visibility. `toggle-sidebar` changes only the current client until the next config reload; reload reapplies this value. |
-| `width` | `32` | Requested width in columns, clamped to `16..=80`. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
+| `width` | `32` | Requested width in columns, clamped to `16..=80`. Drag the divider or use the focused-sidebar resize keys to update and persist it. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
-| `tabs` | `["agents", "panes", "sessions"]` | Ordered tabs. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
+| `tabs` | `["agents", "panes", "sessions"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
+| `panels` | one panel containing every tab | Durable placement recipe: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
+| `split` | inferred from `panels` | Render two saved panel groups vertically. When omitted, it is true for two panel arrays and false for one. Turning it off displays all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
+| `split_ratio` | `0.5` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
+
+The tab strips are draggable. Reordering within a panel or moving a tab between two panels updates
+only the ID placement in `panels`; custom tab definitions remain in `tabs` and are never rewritten.
+The `toggle-sidebar-split` command persists only `split`, not a flattened replacement for `panels`.
+External edits to `tabs`, `panels`, `split`, `width`, or `split_ratio` apply on normal live reload.
+
+```toml
+[sidebar]
+visible = true
+tabs = ["agents", "panes", "sessions", "files"]
+panels = [["agents", "files"], ["panes", "sessions"]]
+split = true
+split_ratio = 0.6
+```
+
+See [`examples/sidebar.toml`](../examples/sidebar.toml) for a larger two-panel setup combining all
+built-ins with launcher and command-backed tabs.
 
 ### File tree tabs
 
@@ -833,7 +853,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `collaborators`, `request-control`, `grant-control`, `toggle-input-lock`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`, `restart-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
-`toggle-workbar-powerline`, `toggle-sidebar`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
+`toggle-workbar-powerline`, `toggle-sidebar`, `toggle-sidebar-split`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `toggle-highlight-focused-border`,
 `toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-title-style`,

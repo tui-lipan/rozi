@@ -151,21 +151,65 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
     Ok(path)
 }
 
+pub fn persist_sidebar_width(width: u16) -> std::result::Result<PathBuf, String> {
+    persist_sidebar_value("width", &width.to_string())
+}
+
+pub fn persist_sidebar_split_ratio(ratio: f32) -> std::result::Result<PathBuf, String> {
+    persist_sidebar_value("split_ratio", &format!("{ratio:.3}"))
+}
+
+pub fn persist_sidebar_split(split: bool) -> std::result::Result<PathBuf, String> {
+    persist_sidebar_value("split", if split { "true" } else { "false" })
+}
+
+pub fn persist_sidebar_panels(
+    panels: &[Vec<super::schema::SidebarTabId>],
+) -> std::result::Result<PathBuf, String> {
+    let value = panels
+        .iter()
+        .map(|panel| {
+            let tabs = panel
+                .iter()
+                .map(|id| toml::Value::String(id.as_str().to_string()).to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{tabs}]")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    persist_sidebar_value("panels", &format!("[{value}]"))
+}
+
+fn persist_sidebar_value(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated = upsert_value_in_section(&text, "sidebar", key, value);
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
 fn upsert_bool_in_section(text: &str, section: &str, key: &str, value: bool) -> String {
     upsert_value_in_section(text, section, key, if value { "true" } else { "false" })
 }
 
 /// Insert or replace `key = <line_value>` inside `[section]`, creating the section at the end
 /// of the file when it does not exist yet. `line_value` is written verbatim (already quoted for
-/// strings, bare for bools/numbers).
+/// strings, bare for bools/numbers). Replacing a multiline TOML value consumes its complete source
+/// assignment rather than leaving continuation lines behind.
 fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &str) -> String {
     let section_header = format!("[{section}]");
     let mut output = String::new();
     let mut in_section = false;
     let mut saw_section = false;
     let mut wrote_key = false;
+    let mut lines = text.lines().peekable();
 
-    for line in text.lines() {
+    while let Some(line) = lines.next() {
         let trimmed = line.trim();
         let section_starts = trimmed.starts_with('[') && trimmed.ends_with(']');
         if section_starts {
@@ -178,14 +222,14 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
         }
 
         if in_section
-            && trimmed
-                .split_once('=')
-                .is_some_and(|(candidate, _)| candidate.trim() == key)
+            && let Some((candidate, old_value)) = trimmed.split_once('=')
+            && candidate.trim() == key
         {
             if !wrote_key {
                 output.push_str(&format!("{key} = {line_value}\n"));
                 wrote_key = true;
             }
+            consume_toml_value(old_value.trim(), &mut lines);
             continue;
         }
 
@@ -205,6 +249,40 @@ fn upsert_value_in_section(text: &str, section: &str, key: &str, line_value: &st
     }
 
     output
+}
+
+fn consume_toml_value<'a>(first_line: &str, lines: &mut std::iter::Peekable<std::str::Lines<'a>>) {
+    let mut assignment = format!("value = {first_line}");
+    let mut consumed_continuation = false;
+    while toml::from_str::<toml::Value>(&assignment).is_err() {
+        let Some(line) = lines.next() else {
+            break;
+        };
+        consumed_continuation = true;
+        assignment.push('\n');
+        assignment.push_str(line);
+    }
+
+    // Older hyprmux builds replaced only the first line of a multiline array, producing a complete
+    // inline assignment followed by the orphaned old array rows. Recognize that tail as an array
+    // body and consume it too, allowing the next preference write to repair affected configs.
+    let starts_orphaned_array = lines.peek().is_some_and(|line| {
+        line.len() != line.trim_start().len() && line.trim_start().starts_with('[')
+    });
+    if !consumed_continuation && starts_orphaned_array {
+        let probe = lines.clone();
+        let mut orphaned = String::from("value = [");
+        for (index, line) in probe.enumerate() {
+            orphaned.push('\n');
+            orphaned.push_str(line);
+            if toml::from_str::<toml::Value>(&orphaned).is_ok() {
+                for _ in 0..=index {
+                    lines.next();
+                }
+                break;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +305,89 @@ mod padding_persistence_tests {
             upsert_pane_padding("[theme]\nname = \"dark\"\n", 3, 4),
             "[theme]\nname = \"dark\"\n\n[pane]\npadding = [3, 4]\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod sidebar_persistence_tests {
+    use super::*;
+
+    #[test]
+    fn panel_layout_serializes_as_valid_inline_arrays() {
+        let panels = [
+            vec![
+                super::super::schema::SidebarTabId::new("panes"),
+                super::super::schema::SidebarTabId::new("quoted-tab"),
+            ],
+            vec![super::super::schema::SidebarTabId::new("agents")],
+        ];
+        let value = panels
+            .iter()
+            .map(|panel| {
+                let tabs = panel
+                    .iter()
+                    .map(|id| toml::Value::String(id.as_str().to_string()).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{tabs}]")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = upsert_value_in_section("", "sidebar", "panels", &format!("[{value}]"));
+        let parsed: toml::Value = toml::from_str(&text).unwrap();
+        assert_eq!(parsed["sidebar"]["panels"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn split_flag_is_independent_from_panel_layout() {
+        let source = "[sidebar]\npanels = [[\"agents\"], [\"panes\"]]\nsplit = true\n";
+        let updated = upsert_value_in_section(source, "sidebar", "split", "false");
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert_eq!(parsed["sidebar"]["split"].as_bool(), Some(false));
+        assert_eq!(parsed["sidebar"]["panels"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn panel_layout_replaces_the_complete_multiline_value() {
+        let source = format!(
+            "{}\n[workbar]\nright = [\"session\"]\n",
+            include_str!("../../examples/sidebar.toml")
+        );
+        let updated = upsert_value_in_section(
+            &source,
+            "sidebar",
+            "panels",
+            r#"[["agents", "panes", "files", "git"], ["dev", "branches", "sessions"]]"#,
+        );
+
+        assert_eq!(updated.matches("panels =").count(), 1, "{updated}");
+        let parsed: toml::Value = toml::from_str(&updated).expect("updated config remains valid");
+        assert_eq!(parsed["sidebar"]["panels"][1][2].as_str(), Some("sessions"));
+        assert_eq!(parsed["sidebar"]["split_ratio"].as_float(), Some(0.62));
+        assert_eq!(parsed["workbar"]["right"][0].as_str(), Some("session"));
+    }
+
+    #[test]
+    fn panel_layout_repairs_an_orphaned_multiline_array_tail() {
+        let source = r#"[sidebar]
+panels = [["agents", "panes", "files", "git"], ["dev", "branches", "sessions"]]
+  ["agents", "panes", "files", "git"],
+  ["sessions", "dev", "branches"],
+]
+split_ratio = 0.62
+"#;
+        let updated = upsert_value_in_section(
+            source,
+            "sidebar",
+            "panels",
+            r#"[["agents", "files"], ["panes", "sessions", "dev", "branches"]]"#,
+        );
+
+        let parsed: toml::Value = toml::from_str(&updated).expect("corrupt config is repaired");
+        assert_eq!(updated.matches("panels =").count(), 1, "{updated}");
+        assert_eq!(parsed["sidebar"]["panels"][0][1].as_str(), Some("files"));
+        assert_eq!(parsed["sidebar"]["panels"][1][3].as_str(), Some("branches"));
+        assert_eq!(parsed["sidebar"]["split_ratio"].as_float(), Some(0.62));
     }
 }
 

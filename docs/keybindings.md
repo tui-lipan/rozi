@@ -245,17 +245,22 @@ second confirmation.
 | Command | Default keys | What it does |
 | --- | --- | --- |
 | Toggle sidebar (`toggle-sidebar`) | `b` | Show or hide the current client's docked sidebar. It remains available while the scratchpad is open. |
+| Toggle sidebar split (`toggle-sidebar-split`) | `\` | Show the saved panel assignment as one or two panels without erasing it. |
 | Focus sidebar (`focus-sidebar`) | `shift-b` | Move the keyboard into the sidebar's row list, revealing the sidebar first if it was hidden. |
-| Next sidebar tab (`sidebar-next-tab`) | *(no default)* | Cycle forward through configured tabs while the sidebar is visible. |
-| Previous sidebar tab (`sidebar-prev-tab`) | *(no default)* | Cycle backward through configured tabs while the sidebar is visible. |
+| Next sidebar tab (`sidebar-next-tab`) | `page-down` | Cycle forward through configured tabs while the sidebar is visible. |
+| Previous sidebar tab (`sidebar-prev-tab`) | `page-up` | Cycle backward through configured tabs while the sidebar is visible. |
 | Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next pane reporting `blocked`; wraps after the current focus and skips closing/special panes. |
 
-All five actions are available from the command palette and `hyprmux run-action`, and all are
+All six actions are available from the command palette and `hyprmux run-action`, and all are
 rebindable under `[keys]`.
 
 Once the sidebar has the keyboard, `↑`/`↓` move the cursor (skipping section headers), `Enter`
-activates the row exactly as a click would, `←`/`→` expand and collapse directories in the Files and
-Git tabs, `Tab`/`Shift-Tab` cycle sidebar tabs, and `Esc` returns the keyboard to the focused pane.
+activates the row exactly as a click would, and `Tab`/`Shift-Tab` cycle sidebar tabs.
+In Files and Git, `←`/`h` and `→`/`l` collapse/expand directories, while `Space` toggles them.
+`Esc` returns the keyboard to the focused pane.
+`Ctrl+Shift+←`/`Ctrl+Shift+→` reorder tabs; `Ctrl+↑`/`Ctrl+↓` switch panels;
+`Ctrl+Shift+↑`/`Ctrl+Shift+↓` transfer the active tab; `Shift+←`/`Shift+→` resize the sidebar;
+`Shift+↑`/`Shift+↓` resize the panel split; and `s` toggles its one/two-panel presentation.
 The sidebar is deliberately excluded from the Tab focus ring and from click-to-focus, so `Tab` keeps
 reaching the focused pane's program and clicking a row never steals the keyboard from a running
 command. See [Sidebar](sidebar.md).

@@ -66,21 +66,23 @@ pub(super) fn command_rows(
         .rows
         .iter()
         .map(|row| {
-            let (glyph, style) = if row.error {
-                ("!", Style::new().fg(ctx.state.theme.status.error))
-            } else if clickable {
-                ("·", super::super::fg_only(&ctx.state.theme.primary))
+            let style = if row.error {
+                Style::new().fg(ctx.state.theme.status.error)
             } else {
-                (" ", super::super::fg_only(&ctx.state.theme.primary))
+                super::super::fg_only(&ctx.state.theme.primary)
             };
             let glyph_style = if row.error {
                 Style::new().fg(ctx.state.theme.status.error)
             } else {
                 super::super::fg_only(&ctx.state.theme.muted)
             };
-            let built = Row::new(row.display.clone())
-                .title_style(style)
-                .glyph(Text::new(glyph).style(glyph_style).height(Length::Px(1)));
+            let mut built = Row::new(row.display.clone()).title_style(style);
+            if row.error || clickable {
+                let glyph = if row.error { "!" } else { "·" };
+                built = built.glyph(Text::new(glyph).style(glyph_style).height(Length::Px(1)));
+            } else {
+                built = built.group_level();
+            }
             // An error row carries no command to re-run, and a tab without `on_click` has nothing to
             // do with any row; both stay in the list as context but refuse selection and activation.
             if clickable && !row.error {

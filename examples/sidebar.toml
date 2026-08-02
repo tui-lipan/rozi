@@ -1,0 +1,33 @@
+# Example: a two-panel sidebar with built-in, launcher, and command tabs.
+#
+# Copy this table into ~/.config/hyprmux/hyprmux.toml and adjust commands to
+# match the tools available in your shell.
+
+[sidebar]
+visible = true
+width = 38
+position = "left"
+split = true
+split_ratio = 0.62
+tabs = [
+  "agents",
+  "panes",
+  "sessions",
+  { name = "files", label = "", show_hidden = true, explorer = true },
+  "git",
+  { name = "dev", label = "Dev", entries = [
+    { label = "Run tests", run = "cargo test" },
+    { label = "Check", send = "cargo check\n" },
+    { label = "Git UI", popup = "lazygit", keep_open = false },
+  ] },
+  {
+    name = "branches",
+    label = "Branches",
+    command = "git branch --format='%(refname:short)'",
+    interval = 15,
+  },
+]
+panels = [
+  ["agents", "panes", "files", "git"],
+  ["sessions", "dev", "branches"],
+]

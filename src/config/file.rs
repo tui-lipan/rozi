@@ -130,6 +130,9 @@ pub(super) struct SidebarFileConfig {
     pub(super) width: Option<u16>,
     pub(super) position: Option<String>,
     pub(super) tabs: Option<Vec<SidebarTabSpec>>,
+    pub(super) panels: Option<Vec<Vec<String>>>,
+    pub(super) split: Option<bool>,
+    pub(super) split_ratio: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1004,6 +1007,19 @@ mod file_tests {
             parsed.navigation.editors,
             Some(vec!["nvim".into(), "hx".into()])
         );
+    }
+
+    #[test]
+    fn sidebar_example_is_a_valid_warning_free_config() {
+        let parsed: FileConfig = toml::from_str(include_str!("../../examples/sidebar.toml"))
+            .expect("sidebar example parses");
+        let mut sidebar = SidebarConfig::default();
+        let mut warnings = Vec::new();
+        apply_sidebar_config(&mut sidebar, parsed.sidebar, &mut warnings);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(sidebar.tabs.len(), 7);
+        assert_eq!(sidebar.panels.len(), 2);
     }
 
     #[test]

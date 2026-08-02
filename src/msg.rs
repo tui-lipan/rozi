@@ -38,26 +38,53 @@ pub enum Msg {
     ConfigFileChanged,
     /// A `WorkbarSegment::Command` poller produced fresh output: (command string, first output line).
     WorkbarCommandOutput(String, String),
-    SidebarTabSelected(crate::config::SidebarTabId),
-    SidebarPointerMoved,
+    SidebarTabSelected {
+        panel: usize,
+        index: usize,
+    },
+    SidebarTabReordered {
+        panel: usize,
+        event: DraggableTabReorderEvent,
+    },
+    SidebarTabTransferred(DraggableTabTransferEvent),
+    SidebarPanelsResized(SplitterResizeEvent),
+    SidebarViewportChanged {
+        panel: usize,
+        tab_id: crate::config::SidebarTabId,
+        event: ScrollViewportEvent,
+    },
+    SidebarWidthResizing(SplitterResizeEvent),
+    SidebarWidthResized(SplitterResizeEvent),
+    SidebarPointerMoved(usize),
     /// A row in the sidebar's list was activated by Enter or by a click — `List` routes both
     /// through `on_activate`, so the two gestures cannot drift apart. The index is resolved
     /// against a freshly rebuilt row list, which is a pure function of `State`.
-    SidebarRowActivate(usize),
+    SidebarRowActivate {
+        panel: usize,
+        index: usize,
+    },
     /// The pointer entered or left a sidebar row (or its ✕), which is what reveals the ✕. Both the
     /// row and the ✕ nested inside it report, because hover resolves to one innermost node: without
     /// the inner report, moving onto the ✕ would read as leaving the row and hide it.
     SidebarRowHover {
+        panel: usize,
         index: usize,
         hovered: bool,
     },
     /// The ✕ on a sidebar row was clicked: arm a confirmation, or commit one already armed.
-    SidebarRowClose(usize),
+    SidebarRowClose {
+        panel: usize,
+        index: usize,
+    },
     /// The shared arm-then-confirm window lapsed for the arming identified by this token; whatever
     /// is still armed under it is dropped. See [`crate::ops::confirm`].
     ConfirmationExpired(u64),
-    /// Escape while the row list has focus: hand the keyboard back to the pane.
+    /// Escape while the sidebar or a pointer-focused explorer has focus: hand the keyboard back to
+    /// the pane.
     SidebarBlur,
+    /// The file tree regained focus after leaving its explorer input.
+    SidebarTreeFocused,
+    SidebarExplorerFocus(Option<FileTreeExplorerFocusOrigin>),
     /// Tab / Shift-Tab while the row list has focus.
     SidebarCycleTab(bool),
     SidebarFocusPane(PaneId),

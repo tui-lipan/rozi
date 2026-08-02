@@ -35,7 +35,7 @@ pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
                     .detail(
                         row::truncate_start(
                             &location,
-                            location_budget(ctx.state.config.sidebar.width),
+                            location_budget(ctx.state.sidebar_requested_width()),
                         ),
                         super::super::fg_only(&ctx.state.theme.muted),
                     ),

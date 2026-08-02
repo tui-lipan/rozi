@@ -18,13 +18,13 @@ pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
 use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
 use crate::state::{PaneId, WORKBAR_HEIGHT};
 use crate::tiling::PanePlacement;
+use crate::{HyprmuxApp, Msg};
 
 use pane::pane_title_bg;
 
@@ -210,12 +210,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // Dividers always use target layout placements, including panes mid-open or mid-reflow.
         // Animating tiles still paint above the seams, so glyphs only show in emerging gaps
         // instead of vanishing for the whole spawn/close geometry animation.
-        if divider_mode
-            && !pane.floating
-            && !pane.fullscreen
-            && !pane.closing
-            && moving.is_none()
-        {
+        if divider_mode && !pane.floating && !pane.fullscreen && !pane.closing && moving.is_none() {
             divider_panes.push(pane.id);
         }
         // Capped titles paint their seam cap in the neighbor's title color so a shared cell reads
@@ -482,19 +477,41 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let shell: Element = if sidebar_width == 0 {
         content
     } else {
-        let sidebar = sidebar::sidebar(ctx, sidebar_width);
-        match ctx.state.config.sidebar.position {
-            crate::config::SidebarPosition::Left => HStack::new()
+        let sidebar = sidebar::sidebar(ctx);
+        let sidebar_pane_width = sidebar_width.saturating_sub(1);
+        let content_width = viewport.w.saturating_sub(sidebar_width);
+        let divider_bg = ctx.state.theme.surface.element;
+        let divider_style = Style::new().fg(divider_bg.elevate(0.15)).bg(divider_bg);
+        let mut splitter = Splitter::vertical()
+            .split_id("hyprmux-sidebar-shell")
+            .weights_nonce(
+                ctx.state
+                    .sidebar
+                    .outer_splitter_nonce(viewport.w, sidebar_width),
+            )
+            .min_size(1)
+            .handle_symbol('│')
+            .handle_style(divider_style)
+            .handle_hover_style(divider_style)
+            .handle_active_style(
+                Style::new()
+                    .fg(ctx.state.theme.border_active)
+                    .bg(divider_bg)
+                    .bold(),
+            )
+            .on_resize_live(ctx.link().callback(Msg::SidebarWidthResizing))
+            .on_resize(ctx.link().callback(Msg::SidebarWidthResized));
+        splitter = match ctx.state.config.sidebar.position {
+            crate::config::SidebarPosition::Left => splitter
+                .weights(vec![sidebar_pane_width as f32, content_width as f32])
                 .child(sidebar)
+                .child(content),
+            crate::config::SidebarPosition::Right => splitter
+                .weights(vec![content_width as f32, sidebar_pane_width as f32])
                 .child(content)
-                .height(Length::Flex(1))
-                .into(),
-            crate::config::SidebarPosition::Right => HStack::new()
-                .child(content)
-                .child(sidebar)
-                .height(Length::Flex(1))
-                .into(),
-        }
+                .child(sidebar),
+        };
+        splitter.into()
     };
 
     ThemeProvider::new(ctx.state.theme.clone())

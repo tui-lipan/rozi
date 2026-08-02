@@ -45,7 +45,7 @@ fn panes_sidebar_lines(
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
                 state.config.sidebar.tabs = vec![SidebarTab::Panes];
                 setup(state);
             }
@@ -77,7 +77,7 @@ fn the_close_affordance_is_revealed_by_hover_and_hidden_at_rest() {
     );
 
     let hovered = panes_sidebar_lines(|state| {
-        state.sidebar.hovered_row = Some(PANE_ROW);
+        state.sidebar.panels[0].hovered_row = Some(PANE_ROW);
     });
     assert!(
         hovered.iter().any(|line| line.contains('✕')),
@@ -90,8 +90,8 @@ fn the_close_affordance_is_revealed_by_hover_and_hidden_at_rest() {
 #[test]
 fn keyboard_navigation_suppresses_a_stale_hovered_close_affordance() {
     let lines = panes_sidebar_lines(|state| {
-        state.sidebar.hovered_row = Some(PANE_ROW);
-        state.sidebar.suppress_row_hover = true;
+        state.sidebar.panels[0].hovered_row = Some(PANE_ROW);
+        state.sidebar.panels[0].suppress_row_hover = true;
     });
     assert!(
         !lines.iter().any(|line| line.contains('✕')),
@@ -121,7 +121,7 @@ fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
                 state.config.sidebar.tabs = vec![SidebarTab::Panes];
             }
             settle(&mut backend);

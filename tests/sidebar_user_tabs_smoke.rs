@@ -1,5 +1,6 @@
 use hyprmux::HyprmuxApp;
 use hyprmux::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
+use hyprmux::state::{SidebarCommandOutput, SidebarCommandRow};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 
@@ -17,7 +18,8 @@ fn sidebar_lines(tab: SidebarTab) -> Vec<String> {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(tab.id());
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
             }
             backend.render();
@@ -89,4 +91,63 @@ fn launcher_tab_without_entries_shows_a_muted_placeholder() {
             .iter()
             .any(|line| line.contains("No launcher entries"))
     );
+}
+
+#[test]
+fn read_only_command_output_has_one_cell_of_leading_padding() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let tab_id = SidebarTabId::new("branches");
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 20,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.tabs = vec![SidebarTab::Command {
+                    name: tab_id.clone(),
+                    label: "Branches".into(),
+                    command: "git branch --format='%(refname:short)'".into(),
+                    interval_secs: 30,
+                    on_click: None,
+                }];
+                state.sidebar.panels[0].tabs = vec![tab_id.clone()];
+                state.sidebar.panels[0].active_tab = Some(tab_id.clone());
+                state.sidebar.command_output.insert(
+                    tab_id,
+                    SidebarCommandOutput {
+                        epoch: 1,
+                        rows: vec![SidebarCommandRow {
+                            raw: "master".into(),
+                            display: "master".into(),
+                            error: false,
+                        }],
+                    },
+                );
+            }
+            backend.render();
+
+            let line = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .into_iter()
+                .find(|line| line.contains("master"))
+                .expect("command output row renders");
+            assert!(
+                line.starts_with(" master"),
+                "row has one-cell inset: {line:?}"
+            );
+            assert!(
+                !line.starts_with("  master"),
+                "row is not over-indented: {line:?}"
+            );
+        })
+        .expect("spawn command row smoke thread")
+        .join()
+        .expect("command row smoke completes");
 }

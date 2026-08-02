@@ -518,6 +518,15 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::ToggleSidebarSplit,
+        label: "Sidebar split",
+        category: "Sidebar",
+        // A backslash depicts the sidebar's vertical split without competing with the session
+        // command's `s` mnemonic. The focused-sidebar `s` binding remains a quick local alias.
+        default_keys: &["\\"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::FocusSidebar,
         label: "Focus sidebar",
         category: "Sidebar",
@@ -529,14 +538,14 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::SidebarNextTab,
         label: "Next sidebar tab",
         category: "Sidebar",
-        default_keys: &[],
+        default_keys: &["page-down"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::SidebarPrevTab,
         label: "Previous sidebar tab",
         category: "Sidebar",
-        default_keys: &[],
+        default_keys: &["page-up"],
         palette: true,
     },
     BuiltinCommand {
@@ -1090,6 +1099,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
             enable_disable_label("workbar powerline", state.config.pane.workbar_powerline)
         }
         Action::ToggleSidebar => enable_disable_label("sidebar", state.sidebar_visible),
+        Action::ToggleSidebarSplit => {
+            enable_disable_label("sidebar split", state.config.sidebar.split)
+        }
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }
@@ -1249,6 +1261,39 @@ mod tests {
                 .any(|binding| binding.matches_sequence(&[alt('c')])),
             "expected an alt-c modifier mirror in {shortcuts:?}"
         );
+    }
+
+    #[test]
+    fn sidebar_defaults_use_spatial_navigation_keys() {
+        let config = HyprmuxConfig::default();
+        let has = |id: &str, event: KeyEvent| {
+            default_shortcuts_for_action(&config.input, id)
+                .expect("builtin sidebar action")
+                .iter()
+                .any(|binding| binding.matches_sequence(std::slice::from_ref(&event)))
+        };
+
+        assert!(has(
+            "toggle-sidebar-split",
+            KeyEvent {
+                code: KeyCode::Char('\\'),
+                mods: KeyMods::ALT,
+            }
+        ));
+        assert!(has(
+            "sidebar-next-tab",
+            KeyEvent {
+                code: KeyCode::PageDown,
+                mods: KeyMods::ALT,
+            }
+        ));
+        assert!(has(
+            "sidebar-prev-tab",
+            KeyEvent {
+                code: KeyCode::PageUp,
+                mods: KeyMods::ALT,
+            }
+        ));
     }
 
     #[test]

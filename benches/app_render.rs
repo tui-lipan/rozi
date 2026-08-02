@@ -147,7 +147,8 @@ fn sidebar_render(c: &mut Criterion) {
             if let Some(tab) = tab.clone() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(tab.id());
+                state.sidebar.panels[0].tabs = vec![tab.id()];
+                state.sidebar.panels[0].active_tab = Some(tab.id());
                 state.config.sidebar.tabs = vec![tab];
                 // The file tree roots at the focused pane's directory; point it at this repo so the
                 // benchmark reads a real listing rather than an empty one.

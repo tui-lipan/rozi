@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use crate::config::{SidebarConfig, SidebarTabId};
@@ -31,9 +32,55 @@ pub enum SidebarClose {
     },
 }
 
+#[derive(Clone, Debug)]
+pub struct SidebarPanelState {
+    pub tabs: Vec<SidebarTabId>,
+    pub active_tab: Option<SidebarTabId>,
+    pub cursor: usize,
+    /// Number of selectable rows visible in the active row list, used by PageUp/PageDown.
+    pub page_rows: usize,
+    pub suppress_row_hover: bool,
+    pub hovered_row: Option<usize>,
+}
+
+impl Default for SidebarPanelState {
+    fn default() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active_tab: None,
+            cursor: 0,
+            page_rows: 5,
+            suppress_row_hover: false,
+            hovered_row: None,
+        }
+    }
+}
+
+impl SidebarPanelState {
+    fn new(tabs: Vec<SidebarTabId>) -> Self {
+        Self {
+            active_tab: tabs.first().cloned(),
+            tabs,
+            ..Self::default()
+        }
+    }
+
+    fn reconcile_active(&mut self) {
+        if self
+            .active_tab
+            .as_ref()
+            .is_none_or(|active| !self.tabs.contains(active))
+        {
+            self.active_tab = self.tabs.first().cloned();
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SidebarState {
-    pub active_tab: Option<SidebarTabId>,
+    pub panels: Vec<SidebarPanelState>,
+    /// Panel keyboard operations target. It also remembers the last panel selected by mouse.
+    pub active_panel: usize,
     pub command_output: HashMap<SidebarTabId, SidebarCommandOutput>,
     pub command_in_flight: HashMap<SidebarTabId, u64>,
     pub command_epoch: u64,
@@ -77,17 +124,9 @@ pub struct SidebarState {
     /// `on_focus`/`on_blur` rather than set directly, so it cannot disagree with the framework
     /// about where focus actually is — clicking a pane blurs the body and clears this on its own.
     pub focused: bool,
-    /// Row index of the keyboard cursor. `List` keeps no selection state of its own — it is fully
-    /// controlled — so the cursor lives here and moves in response to the widget's `on_select`.
-    /// Reset whenever the row list is replaced wholesale, which is a tab change.
-    pub cursor: usize,
-    /// Ignore stale pointer position after keyboard navigation changes the row cursor. The next
-    /// real mouse movement clears this, matching `List`/`Tree` item-hover behavior.
-    pub suppress_row_hover: bool,
-    /// Row index the pointer is currently over, which is what reveals that row's ✕. Driven by
-    /// `on_hover_change` on the row rather than by pointer position, so leaving the sidebar
-    /// entirely still clears it — there is no "pointer moved away" message to rely on.
-    pub hovered_row: Option<usize>,
+    /// Whether the explorer input was entered from the focused tree with `/`. App commands run
+    /// before widget interceptors, so Escape uses this signal to let the input return to the tree.
+    pub explorer_entered_from_tree: bool,
     /// A row's ✕ armed for a confirming second click. Cleared by acting on anything else or by
     /// moving the cursor, so the confirmation never outlives the moment. An armed row keeps its ✕
     /// visible even unhovered — an invisible armed state is worse than a lingering glyph.
@@ -100,47 +139,204 @@ pub struct SidebarState {
     /// change, revealing the sidebar, an agent changing state — and without this each would start
     /// its own chain, so the sidebar would repaint once a second per arming.
     pub agent_tick_armed: bool,
+    /// Requested sidebar width while its outer splitter is being dragged. This drives live layout
+    /// and PTY resizing without persisting the preference until release.
+    pub width_preview: Option<u16>,
+    outer_splitter_signature: Cell<Option<(u16, u16)>>,
+    outer_splitter_nonce: Cell<u32>,
+    panel_splitter_signature: Cell<Option<(usize, u32)>>,
+    panel_splitter_nonce: Cell<u32>,
 }
 
 impl SidebarState {
     pub fn new(config: &SidebarConfig) -> Self {
         Self {
-            active_tab: config.tabs.first().map(|tab| tab.id()),
+            panels: displayed_panel_ids(config)
+                .iter()
+                .cloned()
+                .map(SidebarPanelState::new)
+                .collect(),
             ..Self::default()
         }
     }
 
     pub fn reconcile(&mut self, config: &SidebarConfig) {
         let ids: Vec<_> = config.tabs.iter().map(|tab| tab.id()).collect();
-        if self
-            .active_tab
-            .as_ref()
-            .is_none_or(|active| !ids.contains(active))
-        {
-            self.active_tab = ids.first().cloned();
-        }
+        self.apply_panel_layout(config, &ids);
         self.command_output.retain(|id, _| ids.contains(id));
         self.invalidate_commands();
         self.config_epoch = self.config_epoch.wrapping_add(1);
         self.invalidate_sessions();
     }
 
-    pub fn cycle(&mut self, config: &SidebarConfig, forward: bool) {
-        if config.tabs.is_empty() {
-            self.active_tab = None;
+    pub fn apply_configured_panels(&mut self, config: &SidebarConfig) {
+        let ids: Vec<_> = config.tabs.iter().map(|tab| tab.id()).collect();
+        self.apply_panel_layout(config, &ids);
+    }
+
+    fn apply_panel_layout(&mut self, config: &SidebarConfig, ids: &[SidebarTabId]) {
+        let selected = self.active_tab().cloned();
+        let old_active: Vec<_> = selected
+            .iter()
+            .cloned()
+            .chain(
+                self.panels
+                    .iter()
+                    .filter_map(|panel| panel.active_tab.clone())
+                    .filter(|active| Some(active) != selected.as_ref()),
+            )
+            .collect();
+        self.panels = displayed_panel_ids(config)
+            .iter()
+            .map(|tabs| {
+                let tabs: Vec<_> = tabs.iter().filter(|id| ids.contains(id)).cloned().collect();
+                let active_tab = old_active.iter().find(|id| tabs.contains(id)).cloned();
+                let mut panel = SidebarPanelState {
+                    tabs,
+                    active_tab,
+                    ..SidebarPanelState::default()
+                };
+                panel.reconcile_active();
+                panel
+            })
+            .collect();
+        if self.panels.is_empty() {
+            self.panels.push(SidebarPanelState::new(ids.to_vec()));
+        }
+        self.active_panel = self.active_panel.min(self.panels.len() - 1);
+    }
+
+    pub fn active_panel(&self) -> Option<&SidebarPanelState> {
+        self.panels.get(self.active_panel)
+    }
+
+    pub fn active_panel_mut(&mut self) -> Option<&mut SidebarPanelState> {
+        self.panels.get_mut(self.active_panel)
+    }
+
+    pub fn active_tab(&self) -> Option<&SidebarTabId> {
+        self.active_panel()?.active_tab.as_ref()
+    }
+
+    pub fn active_tab_in(&self, panel: usize) -> Option<&SidebarTabId> {
+        self.panels.get(panel)?.active_tab.as_ref()
+    }
+
+    pub fn active_tabs(&self) -> impl Iterator<Item = &SidebarTabId> {
+        self.panels
+            .iter()
+            .filter_map(|panel| panel.active_tab.as_ref())
+    }
+
+    pub fn cycle(&mut self, panel: usize, forward: bool) {
+        let Some(panel) = self.panels.get_mut(panel) else {
+            return;
+        };
+        if panel.tabs.is_empty() {
+            panel.active_tab = None;
             return;
         }
-        let current = self
+        let current = panel
             .active_tab
             .as_ref()
-            .and_then(|active| config.tabs.iter().position(|tab| tab.id() == *active))
+            .and_then(|active| panel.tabs.iter().position(|tab| tab == active))
             .unwrap_or(0);
         let next = if forward {
-            (current + 1) % config.tabs.len()
+            (current + 1) % panel.tabs.len()
         } else {
-            current.checked_sub(1).unwrap_or(config.tabs.len() - 1)
+            current.checked_sub(1).unwrap_or(panel.tabs.len() - 1)
         };
-        self.active_tab = Some(config.tabs[next].id());
+        panel.active_tab = Some(panel.tabs[next].clone());
+    }
+
+    pub fn reorder_tab(&mut self, panel: usize, from: usize, to: usize) -> bool {
+        let Some(panel) = self.panels.get_mut(panel) else {
+            return false;
+        };
+        if from >= panel.tabs.len() || to >= panel.tabs.len() || from == to {
+            return false;
+        }
+        let tab = panel.tabs.remove(from);
+        panel.tabs.insert(to, tab);
+        true
+    }
+
+    pub fn transfer_tab(
+        &mut self,
+        from_panel: usize,
+        to_panel: usize,
+        from: usize,
+        to: usize,
+    ) -> bool {
+        if from_panel == to_panel
+            || from_panel >= self.panels.len()
+            || to_panel >= self.panels.len()
+        {
+            return false;
+        }
+        let Some(tab) = self.panels[from_panel].tabs.get(from).cloned() else {
+            return false;
+        };
+        self.panels[from_panel].tabs.remove(from);
+        if self.panels[from_panel].active_tab.as_ref() == Some(&tab) {
+            self.panels[from_panel].active_tab = self.panels[from_panel]
+                .tabs
+                .get(from.min(self.panels[from_panel].tabs.len().saturating_sub(1)))
+                .cloned();
+        }
+        let to = to.min(self.panels[to_panel].tabs.len());
+        self.panels[to_panel].tabs.insert(to, tab.clone());
+        self.panels[to_panel].active_tab = Some(tab);
+        true
+    }
+
+    pub fn set_split(&mut self, split: bool) {
+        match (split, self.panels.len()) {
+            (true, 1) => self.panels.push(SidebarPanelState::default()),
+            (false, 2..) => {
+                let selected = self.active_tab().cloned();
+                let trailing = self.panels.split_off(1);
+                self.panels[0]
+                    .tabs
+                    .extend(trailing.into_iter().flat_map(|panel| panel.tabs));
+                self.active_panel = 0;
+                self.panels[0].active_tab =
+                    selected.or_else(|| self.panels[0].tabs.first().cloned());
+            }
+            _ => {}
+        }
+    }
+
+    pub fn panel_ids(&self) -> Vec<Vec<SidebarTabId>> {
+        self.panels.iter().map(|panel| panel.tabs.clone()).collect()
+    }
+
+    pub fn outer_splitter_nonce(&self, viewport_width: u16, sidebar_width: u16) -> u32 {
+        if self.outer_splitter_signature.get() != Some((viewport_width, sidebar_width)) {
+            self.outer_splitter_signature
+                .set(Some((viewport_width, sidebar_width)));
+            self.outer_splitter_nonce
+                .set(self.outer_splitter_nonce.get().wrapping_add(1));
+        }
+        self.outer_splitter_nonce.get()
+    }
+
+    pub fn invalidate_outer_splitter(&self) {
+        self.outer_splitter_signature.set(None);
+    }
+
+    pub fn panel_splitter_nonce(&self, panel_count: usize, split_ratio: f32) -> u32 {
+        let signature = (panel_count, split_ratio.to_bits());
+        if self.panel_splitter_signature.get() != Some(signature) {
+            self.panel_splitter_signature.set(Some(signature));
+            self.panel_splitter_nonce
+                .set(self.panel_splitter_nonce.get().wrapping_add(1));
+        }
+        self.panel_splitter_nonce.get()
+    }
+
+    pub fn invalidate_panel_splitter(&self) {
+        self.panel_splitter_signature.set(None);
     }
 
     pub fn invalidate_sessions(&mut self) {
@@ -150,6 +346,14 @@ impl SidebarState {
 
     pub fn invalidate_commands(&mut self) {
         self.command_epoch = self.command_epoch.wrapping_add(1);
+    }
+}
+
+fn displayed_panel_ids(config: &SidebarConfig) -> Vec<Vec<SidebarTabId>> {
+    if config.split {
+        config.panels.clone()
+    } else {
+        vec![config.panels.iter().flatten().cloned().collect()]
     }
 }
 
@@ -165,7 +369,7 @@ mod tests {
             ..SidebarConfig::default()
         };
         let mut state = SidebarState::new(&old);
-        state.active_tab = Some(SidebarTabId::new("panes"));
+        state.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         state.command_output.insert(
             SidebarTabId::new("removed"),
             SidebarCommandOutput {
@@ -179,12 +383,119 @@ mod tests {
             ..SidebarConfig::default()
         };
         state.reconcile(&new);
-        assert_eq!(state.active_tab, Some(SidebarTabId::new("panes")));
+        assert_eq!(state.active_tab(), Some(&SidebarTabId::new("panes")));
         assert!(state.command_output.is_empty());
 
         new.tabs = vec![SidebarTab::Sessions];
         state.reconcile(&new);
-        assert_eq!(state.active_tab, Some(SidebarTabId::new("sessions")));
+        assert_eq!(state.active_tab(), Some(&SidebarTabId::new("sessions")));
+    }
+
+    #[test]
+    fn transfer_keeps_both_panel_selections_valid() {
+        let config = SidebarConfig {
+            split: true,
+            panels: vec![
+                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")],
+                vec![SidebarTabId::new("sessions")],
+            ],
+            ..SidebarConfig::default()
+        };
+        let mut state = SidebarState::new(&config);
+        state.panels[0].active_tab = Some(SidebarTabId::new("panes"));
+        assert!(state.transfer_tab(0, 1, 1, 1));
+        assert_eq!(
+            state.panels[0].active_tab,
+            Some(SidebarTabId::new("agents"))
+        );
+        assert_eq!(state.panels[1].active_tab, Some(SidebarTabId::new("panes")));
+    }
+
+    #[test]
+    fn reorder_and_merge_preserve_tab_identity_and_selection() {
+        let config = SidebarConfig {
+            split: true,
+            panels: vec![
+                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")],
+                vec![SidebarTabId::new("sessions")],
+            ],
+            ..SidebarConfig::default()
+        };
+        let mut state = SidebarState::new(&config);
+        state.panels[0].active_tab = Some(SidebarTabId::new("agents"));
+        assert!(state.reorder_tab(0, 0, 1));
+        assert_eq!(
+            state.panels[0].tabs,
+            vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")]
+        );
+        assert_eq!(
+            state.panels[0].active_tab,
+            Some(SidebarTabId::new("agents"))
+        );
+
+        state.active_panel = 1;
+        state.set_split(false);
+        assert_eq!(state.panels.len(), 1);
+        assert_eq!(
+            state.panels[0].tabs,
+            vec![
+                SidebarTabId::new("panes"),
+                SidebarTabId::new("agents"),
+                SidebarTabId::new("sessions"),
+            ]
+        );
+        assert_eq!(
+            state.panels[0].active_tab,
+            Some(SidebarTabId::new("sessions"))
+        );
+    }
+
+    #[test]
+    fn disabling_split_flattens_display_and_reenabling_restores_saved_panels() {
+        let mut config = SidebarConfig {
+            split: true,
+            panels: vec![
+                vec![SidebarTabId::new("agents")],
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
+            ],
+            ..SidebarConfig::default()
+        };
+        let saved = config.panels.clone();
+        let mut state = SidebarState::new(&config);
+        state.panels[1].active_tab = Some(SidebarTabId::new("sessions"));
+        state.active_panel = 1;
+
+        config.split = false;
+        state.apply_configured_panels(&config);
+        assert_eq!(config.panels, saved);
+        assert_eq!(state.panels.len(), 1);
+        assert_eq!(state.panels[0].tabs, saved.concat());
+        assert_eq!(
+            state.panels[0].active_tab,
+            Some(SidebarTabId::new("sessions"))
+        );
+
+        config.split = true;
+        state.apply_configured_panels(&config);
+        assert_eq!(state.panel_ids(), saved);
+        assert_eq!(
+            state.panels[1].active_tab,
+            Some(SidebarTabId::new("sessions"))
+        );
+    }
+
+    #[test]
+    fn invalidating_controlled_splitters_forces_the_next_weights() {
+        let state = SidebarState::default();
+        let outer = state.outer_splitter_nonce(100, 32);
+        assert_eq!(state.outer_splitter_nonce(100, 32), outer);
+        state.invalidate_outer_splitter();
+        assert_ne!(state.outer_splitter_nonce(100, 32), outer);
+
+        let panels = state.panel_splitter_nonce(2, 0.5);
+        assert_eq!(state.panel_splitter_nonce(2, 0.5), panels);
+        state.invalidate_panel_splitter();
+        assert_ne!(state.panel_splitter_nonce(2, 0.5), panels);
     }
 
     #[test]

@@ -3,9 +3,10 @@ use std::collections::HashSet;
 use super::file::{SidebarFileConfig, SidebarTabSpec};
 use super::input::parse_user_command_action;
 use super::schema::{
-    SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COMMAND_INTERVAL_SECS, SIDEBAR_MIN_WIDTH,
-    SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig, SidebarLauncherEntry, SidebarPosition,
-    SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView,
+    SIDEBAR_MAX_SPLIT_RATIO, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_COMMAND_INTERVAL_SECS,
+    SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MIN_WIDTH, SIDEBAR_TREE_MAX_ENTRIES_LIMIT, SidebarConfig,
+    SidebarLauncherEntry, SidebarPosition, SidebarTab, SidebarTabId, SidebarTreeConfig,
+    SidebarTreeRoot, SidebarTreeView,
 };
 
 const BUILTIN_TABS: &[&str] = &["agents", "panes", "sessions", "files", "git"];
@@ -77,6 +78,7 @@ pub(super) fn apply_sidebar_config(
     raw: SidebarFileConfig,
     warnings: &mut Vec<String>,
 ) {
+    let requested_panels = raw.panels;
     if let Some(visible) = raw.visible {
         sidebar.visible = visible;
     }
@@ -100,6 +102,85 @@ pub(super) fn apply_sidebar_config(
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
     }
+    sidebar.panels = build_panels(&sidebar.tabs, requested_panels, warnings);
+    sidebar.split = raw.split.unwrap_or(sidebar.panels.len() > 1);
+    if sidebar.split && sidebar.panels.len() == 1 {
+        sidebar.panels.push(Vec::new());
+    }
+    if let Some(split_ratio) = raw.split_ratio {
+        if !split_ratio.is_finite() {
+            warnings.push(format!(
+                "Sidebar split_ratio {split_ratio} is not finite; keeping {}",
+                sidebar.split_ratio
+            ));
+            return;
+        }
+        let clamped = split_ratio.clamp(SIDEBAR_MIN_SPLIT_RATIO, SIDEBAR_MAX_SPLIT_RATIO);
+        if (clamped - split_ratio).abs() > f32::EPSILON {
+            warnings.push(format!(
+                "Sidebar split_ratio {split_ratio} out of range; clamped to {clamped}"
+            ));
+        }
+        sidebar.split_ratio = clamped;
+    }
+}
+
+fn build_panels(
+    tabs: &[SidebarTab],
+    requested: Option<Vec<Vec<String>>>,
+    warnings: &mut Vec<String>,
+) -> Vec<Vec<SidebarTabId>> {
+    let ids: Vec<_> = tabs.iter().map(SidebarTab::id).collect();
+    let Some(mut requested) = requested else {
+        return vec![ids];
+    };
+    if requested.is_empty() {
+        warnings.push("Sidebar panels must contain one or two panels; using one panel".to_string());
+        return vec![ids];
+    }
+    if requested.len() > 2 {
+        warnings.push(
+            "Sidebar panels supports at most two panels; extra panels were ignored".to_string(),
+        );
+        requested.truncate(2);
+    }
+
+    let mut seen = HashSet::new();
+    let mut panels = Vec::with_capacity(requested.len());
+    for panel in requested {
+        let mut resolved = Vec::new();
+        for name in panel {
+            let id = SidebarTabId::new(name.trim());
+            if !ids.contains(&id) {
+                warnings.push(format!(
+                    "Unknown sidebar panel tab `{}`; skipped",
+                    id.as_str()
+                ));
+            } else if !seen.insert(id.clone()) {
+                warnings.push(format!(
+                    "Sidebar panel tab `{}` appears more than once; duplicate skipped",
+                    id.as_str()
+                ));
+            } else {
+                resolved.push(id);
+            }
+        }
+        panels.push(resolved);
+    }
+
+    let omitted: Vec<_> = ids.into_iter().filter(|id| !seen.contains(id)).collect();
+    if !omitted.is_empty() {
+        warnings.push(format!(
+            "Sidebar panels omitted {}; appended to the first panel",
+            omitted
+                .iter()
+                .map(|id| format!("`{}`", id.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        panels[0].extend(omitted);
+    }
+    panels
 }
 
 fn build_tabs(raw: Vec<SidebarTabSpec>, warnings: &mut Vec<String>) -> Vec<SidebarTab> {
@@ -265,6 +346,8 @@ mod tests {
         assert!(!config.visible);
         assert_eq!(config.width, 32);
         assert_eq!(config.position, SidebarPosition::Left);
+        assert!(!config.split);
+        assert_eq!(config.split_ratio, 0.5);
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             vec![
@@ -273,6 +356,71 @@ mod tests {
                 SidebarTabId::new("sessions")
             ]
         );
+        assert_eq!(config.panels.len(), 1);
+        assert_eq!(
+            config.panels[0],
+            config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn panels_assign_order_validate_ids_and_keep_omitted_tabs_reachable() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = ["agents", "panes", "sessions"]
+            panels = [["panes"], ["agents", "bogus", "agents"]]
+            split_ratio = 0.7
+            "#,
+        );
+        assert_eq!(config.split_ratio, 0.7);
+        assert_eq!(
+            config.panels,
+            vec![
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("sessions")],
+                vec![SidebarTabId::new("agents")],
+            ]
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("bogus")));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("more than once"))
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("omitted")));
+    }
+
+    #[test]
+    fn split_controls_presentation_without_discarding_panel_placement() {
+        let (config, warnings) = parse(
+            r#"
+            tabs = ["agents", "panes", "sessions"]
+            panels = [["agents"], ["panes", "sessions"]]
+            split = false
+            "#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(!config.split);
+        assert_eq!(config.panels.len(), 2);
+
+        let (config, warnings) = parse(
+            r#"
+            tabs = ["agents", "panes", "sessions"]
+            panels = [["agents"], ["panes", "sessions"]]
+            "#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(config.split);
+
+        let (config, warnings) = parse(
+            r#"
+            tabs = ["agents", "panes", "sessions"]
+            split = true
+            "#,
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(config.split);
+        assert_eq!(config.panels.len(), 2);
+        assert!(config.panels[1].is_empty());
     }
 
     fn tree(config: &SidebarConfig, id: &str) -> SidebarTreeConfig {

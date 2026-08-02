@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::config::{SidebarTab, SidebarTabId, UserCommandAction};
-use crate::state::{SidebarCommandOutput, SidebarCommandRow};
+use crate::state::{SidebarCommandOutput, SidebarCommandRow, ToastChannel};
 use crate::view::sidebar::RowTarget;
 
 const SESSION_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -18,13 +18,12 @@ fn sessions_active(ctx: &Context<HyprmuxApp>) -> bool {
         && ctx
             .state
             .sidebar
-            .active_tab
-            .as_ref()
-            .is_some_and(|id| id.as_str() == "sessions")
+            .active_tabs()
+            .any(|id| id.as_str() == "sessions")
 }
 
 fn command_active(ctx: &Context<HyprmuxApp>, id: &SidebarTabId) -> bool {
-    ctx.state.sidebar_visible && ctx.state.sidebar.active_tab.as_ref() == Some(id)
+    ctx.state.sidebar_visible && ctx.state.sidebar.active_tabs().any(|active| active == id)
 }
 
 fn command_tab(ctx: &Context<HyprmuxApp>, id: &SidebarTabId) -> Option<(String, u64)> {
@@ -90,17 +89,19 @@ pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<HyprmuxApp>) {
 }
 
 pub(crate) fn request_command_poll(ctx: &Context<HyprmuxApp>) {
-    let Some(tab_id) = ctx.state.sidebar.active_tab.clone() else {
+    if !ctx.state.sidebar_visible {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.as_ref() else {
         return;
     };
-    if command_active(ctx, &tab_id)
-        && command_tab(ctx, &tab_id).is_some()
-        && let Some(link) = ctx.state.command_link.as_ref()
-    {
-        link.send(crate::Msg::SidebarCommandPoll {
-            epoch: ctx.state.sidebar.command_epoch,
-            tab_id,
-        });
+    for tab_id in ctx.state.sidebar.active_tabs().cloned() {
+        if command_tab(ctx, &tab_id).is_some() {
+            link.send(crate::Msg::SidebarCommandPoll {
+                epoch: ctx.state.sidebar.command_epoch,
+                tab_id,
+            });
+        }
     }
 }
 
@@ -139,7 +140,17 @@ pub(super) fn agent_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::with_command(command)
 }
 
-pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> Update {
+pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+    let Some(id) = ctx
+        .state
+        .sidebar
+        .panels
+        .get(panel)
+        .and_then(|panel| panel.tabs.get(index))
+        .cloned()
+    else {
+        return Update::none();
+    };
     if ctx
         .state
         .config
@@ -148,34 +159,187 @@ pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, id: SidebarTabId) -> U
         .iter()
         .any(|tab| tab.id() == id)
     {
-        if ctx.state.sidebar.active_tab.as_ref() == Some(&id) {
+        if ctx.state.sidebar.active_tab_in(panel) == Some(&id) {
+            let changed_panel = ctx.state.sidebar.active_panel != panel;
+            ctx.state.sidebar.active_panel = panel;
+            if changed_panel {
+                refocus_body(ctx);
+                return Update::full();
+            }
+            return Update::none();
+        }
+        let Some(panel_state) = ctx.state.sidebar.panels.get_mut(panel) else {
+            return Update::none();
+        };
+        if !panel_state.tabs.contains(&id) {
             return Update::none();
         }
         ctx.state.sidebar.invalidate_sessions();
         ctx.state.sidebar.invalidate_commands();
-        ctx.state.sidebar.active_tab = Some(id);
+        ctx.state.sidebar.active_panel = panel;
+        let panel_state = &mut ctx.state.sidebar.panels[panel];
+        panel_state.active_tab = Some(id);
         // A different tab is a different row list; carrying the old index over would drop the
         // cursor somewhere arbitrary.
-        ctx.state.sidebar.cursor = 0;
+        panel_state.cursor = 0;
+        panel_state.suppress_row_hover = true;
+        panel_state.hovered_row = None;
         // Clicking the tab strip does not move focus — the strip is not focusable and the sidebar
         // is outside click-to-focus — but the body it was on unmounts, and focus goes with it. The
         // file tree feels this worst: each tree keys on its root, so even Files -> Git is a
         // remount, and without this the keyboard would be left pointing at nothing.
         refocus_body(ctx);
         arm_agent_tick(ctx);
-        if sessions_active(ctx) {
-            open_sessions(ctx)
-        } else {
-            start_active_command(ctx)
-        }
+        refresh_active_tabs(ctx)
     } else {
         Update::none()
     }
 }
 
+pub(super) fn tab_reordered(
+    ctx: &mut Context<HyprmuxApp>,
+    panel: usize,
+    event: DraggableTabReorderEvent,
+) -> Update {
+    if !ctx.state.sidebar.reorder_tab(panel, event.from, event.to) {
+        return Update::none();
+    }
+    sync_and_persist_panels(ctx);
+    Update::layout()
+}
+
+pub(super) fn tab_transferred(
+    ctx: &mut Context<HyprmuxApp>,
+    event: DraggableTabTransferEvent,
+) -> Update {
+    let Some(from_panel) = crate::view::sidebar::panel_from_bar_id(&event.from_bar) else {
+        return Update::none();
+    };
+    let Some(to_panel) = crate::view::sidebar::panel_from_bar_id(&event.to_bar) else {
+        return Update::none();
+    };
+    if !ctx
+        .state
+        .sidebar
+        .transfer_tab(from_panel, to_panel, event.from, event.to)
+    {
+        return Update::none();
+    }
+    ctx.state.sidebar.active_panel = to_panel;
+    sync_and_persist_panels(ctx);
+    let update = visibility_changed(ctx);
+    refocus_body(ctx);
+    update
+}
+
+pub(super) fn panels_resized(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+    let Some(ratio) = event.weights.first().copied() else {
+        return Update::none();
+    };
+    set_split_ratio(ctx, ratio)
+}
+
+fn width_from_resize_event(ctx: &Context<HyprmuxApp>, event: &SplitterResizeEvent) -> Option<u16> {
+    let viewport = ctx.viewport();
+    let sidebar_index =
+        usize::from(ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right);
+    let weight = event.weights.get(sidebar_index).copied()?;
+    let available = viewport.w.saturating_sub(1);
+    let pane_width = (weight * f32::from(available)).round() as u16;
+    Some(pane_width.saturating_add(1).clamp(
+        crate::config::SIDEBAR_MIN_WIDTH,
+        crate::config::SIDEBAR_MAX_WIDTH,
+    ))
+}
+
+pub(super) fn width_resizing(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+    let Some(width) = width_from_resize_event(ctx, &event) else {
+        return Update::none();
+    };
+    if ctx.state.sidebar.width_preview == Some(width) {
+        return Update::none();
+    }
+    ctx.state.sidebar.width_preview = Some(width);
+    Update::full()
+}
+
+pub(super) fn width_resized(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+    let Some(width) = width_from_resize_event(ctx, &event) else {
+        ctx.state.sidebar.width_preview = None;
+        return Update::full();
+    };
+    ctx.state.sidebar.width_preview = None;
+    set_width(ctx, width)
+}
+
+fn sync_and_persist_panels(ctx: &mut Context<HyprmuxApp>) {
+    let panels = persisted_panel_ids(
+        ctx.state.sidebar.panel_ids(),
+        &ctx.state.config.sidebar.panels,
+        ctx.state.config.sidebar.split,
+    );
+    ctx.state.config.sidebar.panels = panels.clone();
+    persist_sidebar_preference(ctx, crate::config::persist_sidebar_panels(&panels));
+}
+
+fn persisted_panel_ids(
+    mut displayed: Vec<Vec<crate::config::SidebarTabId>>,
+    configured: &[Vec<crate::config::SidebarTabId>],
+    split: bool,
+) -> Vec<Vec<crate::config::SidebarTabId>> {
+    if split || configured.len() < 2 || displayed.len() != 1 {
+        return displayed;
+    }
+
+    let flat = displayed.pop().unwrap_or_default();
+    let mut offset: usize = 0;
+    configured
+        .iter()
+        .enumerate()
+        .map(|(index, panel)| {
+            let end = if index + 1 == configured.len() {
+                flat.len()
+            } else {
+                offset.saturating_add(panel.len()).min(flat.len())
+            };
+            let tabs = flat[offset..end].to_vec();
+            offset = end;
+            tabs
+        })
+        .collect()
+}
+
+fn set_split_enabled(ctx: &mut Context<HyprmuxApp>, split: bool) {
+    if ctx.state.config.sidebar.split == split {
+        return;
+    }
+    ctx.state.config.sidebar.split = split;
+    if split && ctx.state.config.sidebar.panels.len() == 1 {
+        ctx.state.config.sidebar.panels.push(Vec::new());
+    }
+    ctx.state
+        .sidebar
+        .apply_configured_panels(&ctx.state.config.sidebar);
+    persist_sidebar_preference(ctx, crate::config::persist_sidebar_split(split));
+}
+
+fn persist_sidebar_preference(
+    ctx: &mut Context<HyprmuxApp>,
+    result: std::result::Result<std::path::PathBuf, String>,
+) {
+    if let Err(error) = result {
+        crate::pty_events::notify_on(
+            ctx,
+            ToastChannel::PreferenceSave,
+            Some("Sidebar preference not saved".to_string()),
+            error,
+        );
+    }
+}
+
 /// Re-aim keyboard focus at the active tab's body after the previous one unmounted. A no-op unless
 /// the sidebar already had the keyboard — switching tabs with the mouse must not steal it.
-fn refocus_body(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn refocus_body(ctx: &mut Context<HyprmuxApp>) {
     if !ctx.state.sidebar.focused {
         return;
     }
@@ -190,14 +354,13 @@ pub(crate) fn visibility_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
         ctx.state.sidebar.focused = false;
         release_focus(ctx);
     }
+    if !ctx.state.sidebar_visible {
+        ctx.state.sidebar.width_preview = None;
+    }
     ctx.state.sidebar.invalidate_sessions();
     ctx.state.sidebar.invalidate_commands();
     arm_agent_tick(ctx);
-    if sessions_active(ctx) {
-        open_sessions(ctx)
-    } else {
-        start_active_command(ctx)
-    }
+    refresh_active_tabs(ctx)
 }
 
 /// `focus-sidebar`: reveal the sidebar if it is hidden, then move keyboard focus into its row list.
@@ -218,19 +381,42 @@ pub(crate) fn focus_body(ctx: &mut Context<HyprmuxApp>) -> Update {
     // back off the framework — the body sits in a `FocusScope::Exclude` subtree, which is invisible
     // to `has_focus_within_key` — so `ops::focus` retracts it whenever focus goes elsewhere.
     ctx.state.sidebar.focused = true;
-    ctx.state.sidebar.suppress_row_hover = true;
+    if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
+        panel.suppress_row_hover = true;
+    }
     ctx.state.commands_dirty = true;
     Update::with_command(command)
 }
 
-/// Escape from the sidebar: give the keyboard back to the focused pane.
+/// Escape from the sidebar or a pointer-focused explorer: give the keyboard back to the focused
+/// pane.
 pub(crate) fn blur_body(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.sidebar.focused {
-        return Update::none();
-    }
     ctx.state.sidebar.focused = false;
+    ctx.state.sidebar.explorer_entered_from_tree = false;
     ctx.state.commands_dirty = true;
     release_focus(ctx);
+    Update::full()
+}
+
+pub(crate) fn explorer_focus(
+    ctx: &mut Context<HyprmuxApp>,
+    origin: Option<FileTreeExplorerFocusOrigin>,
+) -> Update {
+    ctx.state.sidebar.explorer_entered_from_tree =
+        origin == Some(FileTreeExplorerFocusOrigin::Tree);
+    Update::none()
+}
+
+/// The explorer committed its query with Enter and returned focus to the tree. This is a real
+/// sidebar-mode entry, unlike a pointer click into the explorer, so restore the sidebar cursor and
+/// its keyboard ownership before the next key arrives.
+pub(crate) fn tree_focused(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.sidebar.focused = true;
+    ctx.state.sidebar.explorer_entered_from_tree = false;
+    if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
+        panel.suppress_row_hover = true;
+    }
+    ctx.state.commands_dirty = true;
     Update::full()
 }
 
@@ -248,41 +434,214 @@ pub(crate) fn cycle_tab(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update 
     if !ctx.state.sidebar_visible {
         return Update::none();
     }
-    ctx.state.sidebar.cycle(&ctx.state.config.sidebar, forward);
-    ctx.state.sidebar.cursor = 0;
-    ctx.state.sidebar.suppress_row_hover = true;
+    let panel = ctx.state.sidebar.active_panel;
+    ctx.state.sidebar.cycle(panel, forward);
+    if let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) {
+        panel.cursor = 0;
+        panel.suppress_row_hover = true;
+        panel.hovered_row = None;
+    }
     let update = visibility_changed(ctx);
     refocus_body(ctx);
     update
 }
 
-fn open_sessions(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let epoch = ctx.state.sidebar.sessions_epoch;
+/// Store the number of selectable rows currently visible in a composed row list. The event is
+/// keyed by tab because switching tabs can queue the old list's final viewport event alongside the
+/// new one.
+pub(crate) fn viewport_changed(
+    ctx: &mut Context<HyprmuxApp>,
+    panel: usize,
+    tab_id: crate::config::SidebarTabId,
+    event: ScrollViewportEvent,
+) -> Update {
+    if ctx.state.sidebar.active_tab_in(panel) != Some(&tab_id) {
+        return Update::none();
+    }
+    let Some(first) = event.first_visible_index else {
+        return Update::none();
+    };
+    let last = event.last_visible_index.unwrap_or(first).max(first);
+    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
+        return Update::none();
+    };
+    let rows = crate::view::sidebar::body_rows(ctx, &tab);
+    let page_rows = rows
+        .iter()
+        .enumerate()
+        .filter(|(index, row)| *index >= first && *index <= last && row.selectable())
+        .count()
+        .max(1);
+    let Some(panel_state) = ctx.state.sidebar.panels.get_mut(panel) else {
+        return Update::none();
+    };
+    panel_state.page_rows = page_rows;
+    Update::none()
+}
+
+/// Move by the number of selectable rows that fit in the active row list's viewport.
+pub(crate) fn move_cursor_page(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+    let page_rows = ctx
+        .state
+        .sidebar
+        .active_panel()
+        .map(|panel| panel.page_rows.max(1) as isize)
+        .unwrap_or(1);
+    move_cursor(ctx, if down { page_rows } else { -page_rows })
+}
+
+pub(crate) fn focus_panel(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+    if ctx.state.sidebar.panels.len() < 2 {
+        return Update::none();
+    }
+    let next = if down { 1 } else { 0 };
+    if ctx.state.sidebar.active_panel == next {
+        return Update::none();
+    }
+    ctx.state.sidebar.active_panel = next;
+    if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
+        panel.suppress_row_hover = true;
+    }
+    refocus_body(ctx);
+    Update::full()
+}
+
+pub(crate) fn reorder_active_tab(ctx: &mut Context<HyprmuxApp>, right: bool) -> Update {
+    let panel = ctx.state.sidebar.active_panel;
+    let Some(panel_state) = ctx.state.sidebar.panels.get(panel) else {
+        return Update::none();
+    };
+    let Some(active) = panel_state.active_tab.as_ref() else {
+        return Update::none();
+    };
+    let Some(from) = panel_state.tabs.iter().position(|id| id == active) else {
+        return Update::none();
+    };
+    let to = if right {
+        (from + 1).min(panel_state.tabs.len().saturating_sub(1))
+    } else {
+        from.saturating_sub(1)
+    };
+    if !ctx.state.sidebar.reorder_tab(panel, from, to) {
+        return Update::none();
+    }
+    sync_and_persist_panels(ctx);
+    Update::layout()
+}
+
+pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+    if ctx.state.sidebar.panels.len() == 1 {
+        if !down {
+            return Update::none();
+        }
+        set_split_enabled(ctx, true);
+    }
+    let from_panel = ctx.state.sidebar.active_panel;
+    let to_panel = if down { 1 } else { 0 };
+    if from_panel == to_panel {
+        return Update::none();
+    }
+    let Some(active) = ctx.state.sidebar.active_tab().cloned() else {
+        return Update::none();
+    };
+    let Some(from) = ctx.state.sidebar.panels[from_panel]
+        .tabs
+        .iter()
+        .position(|id| id == &active)
+    else {
+        return Update::none();
+    };
+    let to = ctx.state.sidebar.panels[to_panel].tabs.len();
+    if !ctx
+        .state
+        .sidebar
+        .transfer_tab(from_panel, to_panel, from, to)
+    {
+        return Update::none();
+    }
+    ctx.state.sidebar.active_panel = to_panel;
+    sync_and_persist_panels(ctx);
+    let update = visibility_changed(ctx);
+    refocus_body(ctx);
+    update
+}
+
+pub(crate) fn toggle_split(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let split = !ctx.state.config.sidebar.split;
+    set_split_enabled(ctx, split);
+    let update = visibility_changed(ctx);
+    refocus_body(ctx);
+    update
+}
+
+pub(crate) fn resize_width(ctx: &mut Context<HyprmuxApp>, handle_right: bool) -> Update {
+    let wider = match ctx.state.config.sidebar.position {
+        crate::config::SidebarPosition::Left => handle_right,
+        crate::config::SidebarPosition::Right => !handle_right,
+    };
+    let delta = if wider { 2 } else { -2 };
+    let width = ctx.state.config.sidebar.width.saturating_add_signed(delta);
+    set_width(ctx, width)
+}
+
+fn set_width(ctx: &mut Context<HyprmuxApp>, width: u16) -> Update {
+    let width = width.clamp(
+        crate::config::SIDEBAR_MIN_WIDTH,
+        crate::config::SIDEBAR_MAX_WIDTH,
+    );
+    ctx.state.sidebar.invalidate_outer_splitter();
+    if ctx.state.config.sidebar.width == width {
+        return Update::layout();
+    }
+    ctx.state.config.sidebar.width = width;
+    persist_sidebar_preference(ctx, crate::config::persist_sidebar_width(width));
+    Update::full()
+}
+
+pub(crate) fn resize_panel_split(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+    if ctx.state.sidebar.panels.len() < 2 {
+        return Update::none();
+    }
+    let delta = if down { 0.05 } else { -0.05 };
+    set_split_ratio(ctx, ctx.state.config.sidebar.split_ratio + delta)
+}
+
+fn set_split_ratio(ctx: &mut Context<HyprmuxApp>, ratio: f32) -> Update {
+    let ratio = ratio.clamp(
+        crate::config::SIDEBAR_MIN_SPLIT_RATIO,
+        crate::config::SIDEBAR_MAX_SPLIT_RATIO,
+    );
+    ctx.state.sidebar.invalidate_panel_splitter();
+    if (ctx.state.config.sidebar.split_ratio - ratio).abs() < 0.001 {
+        return Update::layout();
+    }
+    ctx.state.config.sidebar.split_ratio = ratio;
+    persist_sidebar_preference(ctx, crate::config::persist_sidebar_split_ratio(ratio));
+    Update::full()
+}
+
+fn open_sessions(ctx: &mut Context<HyprmuxApp>) {
     // Populate the tab instantly with local rows, then run the full sweep (configured remote hosts
     // included) off the UI thread. Querying remote hosts over ssh here used to block the tab switch
     // on a round-trip — or the whole connect timeout when a host was down — every time it opened.
     ctx.state.sidebar.sessions = crate::ops::session::local_picker_rows(ctx);
     crate::ops::session::seed_host_registry(ctx);
-    refresh_sessions(ctx, epoch)
 }
 
-fn start_active_command(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(tab_id) = ctx.state.sidebar.active_tab.clone() else {
-        return Update::full();
-    };
-    if command_active(ctx, &tab_id) && command_tab(ctx, &tab_id).is_some() {
-        let update = poll_command(ctx, ctx.state.sidebar.command_epoch, tab_id);
-        Update::with_command(update.command)
-    } else {
-        Update::full()
+fn refresh_active_tabs(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if sessions_active(ctx) {
+        open_sessions(ctx);
     }
+    request_command_poll(ctx);
+    Update::full()
 }
 
 /// Move the keyboard cursor by `delta` selectable rows, stopping at the ends rather than wrapping —
 /// the row list is a panel, not a carousel, and wrapping past the last agent back to the first reads
 /// as a glitch. Headers and spacers are stepped over rather than landed on.
 pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+    let panel = ctx.state.sidebar.active_panel;
+    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
     let rows = crate::view::sidebar::body_rows(ctx, &tab);
@@ -295,7 +654,8 @@ pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update
     if selectable.is_empty() {
         return Update::none();
     }
-    let current = crate::view::sidebar::resolve_cursor(ctx.state.sidebar.cursor, &rows);
+    let current =
+        crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows);
     let position = current
         .and_then(|current| selectable.iter().position(|index| *index == current))
         .unwrap_or(0);
@@ -303,23 +663,26 @@ pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update
         .saturating_add_signed(delta)
         .min(selectable.len() - 1);
     let cursor = selectable[next];
-    if ctx.state.sidebar.cursor == cursor {
+    if ctx.state.sidebar.panels[panel].cursor == cursor {
         return Update::none();
     }
     // Moving off a row disarms any pending confirmation.
     ctx.state.sidebar.pending_host_disconnect = None;
     ctx.state.sidebar.pending_row_close = None;
-    ctx.state.sidebar.cursor = cursor;
-    ctx.state.sidebar.suppress_row_hover = true;
+    ctx.state.sidebar.panels[panel].cursor = cursor;
+    ctx.state.sidebar.panels[panel].suppress_row_hover = true;
     Update::full()
 }
 
 /// A real pointer move ends keyboard modality and lets row hover follow the pointer again.
-pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>) -> Update {
-    if !ctx.state.sidebar.suppress_row_hover {
+pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>, panel: usize) -> Update {
+    let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) else {
+        return Update::none();
+    };
+    if !panel.suppress_row_hover {
         return Update::none();
     }
-    ctx.state.sidebar.suppress_row_hover = false;
+    panel.suppress_row_hover = false;
     // Re-enabling the rows' hover effects changes how the row list describes itself, so the view has
     // to run - but the description is the same shape, so reconciling it is enough.
     Update::layout()
@@ -331,18 +694,26 @@ pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// fires leave for the row and then enter for the ✕, both naming the same index, and the queue is
 /// drained before the next paint — so ordering them this way keeps the glyph steady under the
 /// pointer instead of flickering out from under it.
-pub(crate) fn row_hover(ctx: &mut Context<HyprmuxApp>, index: usize, hovered: bool) -> Update {
+pub(crate) fn row_hover(
+    ctx: &mut Context<HyprmuxApp>,
+    panel: usize,
+    index: usize,
+    hovered: bool,
+) -> Update {
+    let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) else {
+        return Update::none();
+    };
     let next = if hovered {
         Some(index)
-    } else if ctx.state.sidebar.hovered_row == Some(index) {
+    } else if panel.hovered_row == Some(index) {
         None
     } else {
         return Update::none();
     };
-    if ctx.state.sidebar.hovered_row == next {
+    if panel.hovered_row == next {
         return Update::none();
     }
-    ctx.state.sidebar.hovered_row = next;
+    panel.hovered_row = next;
     // A click-only region does not repaint on a hover transition by itself, and the ✕ appearing is
     // exactly what the transition has to show — so the view has to run. `layout` rather than `full`:
     // the row list is described the same way either side of the transition, one glyph aside, so
@@ -358,8 +729,8 @@ pub(crate) fn row_hover(ctx: &mut Context<HyprmuxApp>, index: usize, hovered: bo
 /// This is a one-cell pointer target sitting on a row whose ordinary click merely focuses a pane or
 /// attaches a session, so a slip is both easy and expensive — the two are not the same gesture and
 /// do not share a switch.
-pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
     let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
@@ -392,12 +763,13 @@ pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
 
 /// Enter: run whatever the row under the cursor does — the same path a click on it takes.
 pub(crate) fn activate_cursor(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+    let panel = ctx.state.sidebar.active_panel;
+    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
     let rows = crate::view::sidebar::body_rows(ctx, &tab);
-    match crate::view::sidebar::resolve_cursor(ctx.state.sidebar.cursor, &rows) {
-        Some(index) => row_activate(ctx, index),
+    match crate::view::sidebar::resolve_cursor(ctx.state.sidebar.panels[panel].cursor, &rows) {
+        Some(index) => row_activate(ctx, panel, index),
         None => Update::none(),
     }
 }
@@ -405,8 +777,8 @@ pub(crate) fn activate_cursor(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// A row was activated by Enter or by a click. The index is resolved against a freshly rebuilt row
 /// list — the same pure function of `State` the view rendered from — so both gestures land on the
 /// same handler and a row list that changed underneath simply resolves to nothing.
-pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
-    let Some(tab) = crate::view::sidebar::active_tab(ctx).cloned() else {
+pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+    let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
     let mut rows = crate::view::sidebar::body_rows(ctx, &tab);
@@ -1105,6 +1477,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unsplit_reorder_keeps_the_saved_panel_boundary() {
+        let id = |name: &str| crate::config::SidebarTabId::new(name);
+        let configured = vec![vec![id("agents")], vec![id("panes"), id("sessions")]];
+        let displayed = vec![vec![id("panes"), id("agents"), id("sessions")]];
+
+        assert_eq!(
+            persisted_panel_ids(displayed, &configured, false),
+            vec![vec![id("panes")], vec![id("agents"), id("sessions")]]
+        );
+    }
+
     fn discovered(name: &str) -> crate::session::discovery::DiscoveredSession {
         crate::session::discovery::DiscoveredSession {
             name: name.to_string(),
@@ -1138,11 +1522,11 @@ mod tests {
     /// through the link needs it left alone.
     fn open_sessions_tab_unswept(backend: &mut TestBackend<HyprmuxApp>, epoch: u64) {
         backend
-            .dispatch(crate::Msg::SidebarPointerMoved)
+            .dispatch(crate::Msg::SidebarPointerMoved(0))
             .expect("settle the mount");
         let state = backend.state_mut();
         state.sidebar_visible = true;
-        state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
         state.sidebar.sessions_epoch = epoch;
         state.command_link = None;
     }
@@ -1237,7 +1621,7 @@ mod tests {
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(nested.clone());
             }
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("sync runs after any message");
             assert_eq!(backend.state().sidebar.tree_cwd.as_deref(), Some(&*nested));
             assert_eq!(backend.state().sidebar.tree_repo.as_deref(), Some(&*repo));
@@ -1246,7 +1630,7 @@ mod tests {
 
             // Same directory reported again: no walk, no refresh.
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("repeat sync");
             assert_eq!(backend.state().sidebar.git_refresh_token, settled);
 
@@ -1255,7 +1639,7 @@ mod tests {
                 .terminal
                 .cwd = Some(outside.clone());
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("files")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("cwd change sync");
             assert_eq!(backend.state().sidebar.tree_cwd.as_deref(), Some(&*outside));
             assert_eq!(backend.state().sidebar.tree_repo, None);
@@ -1279,7 +1663,7 @@ mod tests {
                     .command_phase = crate::session::protocol::PaneCommandPhase::Executing;
             }
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("observe executing");
             let running = backend.state().sidebar.git_refresh_token;
 
@@ -1289,14 +1673,14 @@ mod tests {
                 exit_status: Some(0),
             };
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("observe completion");
             let finished = backend.state().sidebar.git_refresh_token;
             assert_eq!(finished, running + 1, "one refresh per finished command");
 
             // Still completed on the next message: no repeat refresh.
             backend
-                .dispatch(crate::Msg::SidebarTabSelected(SidebarTabId::new("git")))
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 0, index: 0 })
                 .expect("steady state");
             assert_eq!(backend.state().sidebar.git_refresh_token, finished);
         });
@@ -1456,7 +1840,7 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state.sidebar.sessions_epoch = 10;
             }
             let stale = vec![discovered("old")];
@@ -1473,7 +1857,7 @@ mod tests {
             assert!(backend.state().sidebar.sessions.is_empty());
 
             backend.state_mut().sidebar_visible = true;
-            backend.state_mut().sidebar.active_tab = Some(SidebarTabId::new("panes"));
+            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             backend.state_mut().sidebar.invalidate_sessions();
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -1529,11 +1913,11 @@ mod tests {
                     crate::config::RemoteHostConfig::default(),
                 );
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             }
             // Seed the host registry (offline) the way opening the tab does.
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("settle");
             assert!(
                 backend.state().hosts.get(&target).is_some(),
@@ -1546,7 +1930,7 @@ mod tests {
             //   4 WINVM / "Click to connect" · 5 spacer · 6 "Connect a host…"
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
                 .expect("connect through host row");
             assert_eq!(
                 backend.state().hosts.get(&target).unwrap().probe,
@@ -1560,7 +1944,7 @@ mod tests {
             //   … 4 WINVM / "Click to disconnect" · 5 "No sessions here yet" · 6 "+ New…"
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
                 .expect("arm disconnect");
             assert_eq!(
                 backend.state().sidebar.pending_host_disconnect.as_ref(),
@@ -1571,7 +1955,7 @@ mod tests {
                 crate::state::HostProbe::Reached;
             backend.state_mut().sidebar.sessions.clear();
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
                 .expect("confirm disconnect");
             assert_eq!(
                 backend.state().hosts.get(&target).unwrap().probe,
@@ -1592,7 +1976,7 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             }
             let id = backend
                 .state()
@@ -1603,7 +1987,10 @@ mod tests {
             let pane_row = 1;
 
             backend
-                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .dispatch(crate::Msg::SidebarRowClose {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("arm the close");
             assert_eq!(
                 backend.state().sidebar.pending_row_close,
@@ -1613,7 +2000,10 @@ mod tests {
 
             // Activating the row instead of confirming abandons the arming.
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(pane_row))
+                .dispatch(crate::Msg::SidebarRowActivate {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("activate the row");
             assert!(
                 backend.state().sidebar.pending_row_close.is_none(),
@@ -1626,10 +2016,16 @@ mod tests {
             );
 
             backend
-                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .dispatch(crate::Msg::SidebarRowClose {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("re-arm the close");
             backend
-                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .dispatch(crate::Msg::SidebarRowClose {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("confirm the close");
             assert!(
                 backend.state().sidebar.pending_row_close.is_none(),
@@ -1654,11 +2050,14 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             }
             let pane_row = 1;
             backend
-                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .dispatch(crate::Msg::SidebarRowClose {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("arm the close");
             let armed_epoch = backend.state().confirm_epoch;
             assert!(backend.state().sidebar.pending_row_close.is_some());
@@ -1666,10 +2065,16 @@ mod tests {
             // Re-arming (here, the same row after a disarm) advances the token, so the first
             // arming's expiry is now stale and must not clear what replaced it.
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(pane_row))
+                .dispatch(crate::Msg::SidebarRowActivate {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("disarm");
             backend
-                .dispatch(crate::Msg::SidebarRowClose(pane_row))
+                .dispatch(crate::Msg::SidebarRowClose {
+                    panel: 0,
+                    index: pane_row,
+                })
                 .expect("re-arm");
             assert_ne!(backend.state().confirm_epoch, armed_epoch);
             backend
@@ -1700,27 +2105,30 @@ mod tests {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
+                    panel: 0,
                     index: 1,
                     hovered: true,
                 })
                 .expect("enter the row");
-            assert_eq!(backend.state().sidebar.hovered_row, Some(1));
+            assert_eq!(backend.state().sidebar.panels[0].hovered_row, Some(1));
 
             // Crossing onto the ✕: the row leaves, then the ✕ enters, both naming row 1.
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
+                    panel: 0,
                     index: 1,
                     hovered: false,
                 })
                 .expect("leave the row");
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
+                    panel: 0,
                     index: 1,
                     hovered: true,
                 })
                 .expect("enter the ✕");
             assert_eq!(
-                backend.state().sidebar.hovered_row,
+                backend.state().sidebar.panels[0].hovered_row,
                 Some(1),
                 "the ✕ stays revealed under the pointer"
             );
@@ -1728,19 +2136,21 @@ mod tests {
             // A leave naming a row that is no longer the hovered one is stale and must not clear it.
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
+                    panel: 0,
                     index: 4,
                     hovered: false,
                 })
                 .expect("stale leave");
-            assert_eq!(backend.state().sidebar.hovered_row, Some(1));
+            assert_eq!(backend.state().sidebar.panels[0].hovered_row, Some(1));
 
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
+                    panel: 0,
                     index: 1,
                     hovered: false,
                 })
                 .expect("leave the sidebar");
-            assert_eq!(backend.state().sidebar.hovered_row, None);
+            assert_eq!(backend.state().sidebar.panels[0].hovered_row, None);
         });
     }
 
@@ -1753,7 +2163,7 @@ mod tests {
             let mut backend = TestBackend::new(HyprmuxApp::default());
             // Let init settle so the command link is wired (the re-arm sends through it).
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("settle init");
             assert!(
                 backend.state().command_link.is_some(),
@@ -1762,13 +2172,13 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 // Simulate a session switch: epoch advanced, old loop's armed epoch left behind.
                 state.sidebar.sessions_epoch = 99;
                 state.sidebar.sessions_refresh_armed_epoch = Some(98);
             }
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("post-update runs");
             assert_eq!(
                 backend.state().sidebar.sessions_refresh_armed_epoch,
@@ -1777,9 +2187,9 @@ mod tests {
             );
 
             // Leaving the sessions tab clears the arm so it re-arms cleanly on return.
-            backend.state_mut().sidebar.active_tab = Some(SidebarTabId::new("panes"));
+            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("tab left");
             assert_eq!(backend.state().sidebar.sessions_refresh_armed_epoch, None);
         });
@@ -1801,10 +2211,10 @@ mod tests {
                     crate::config::RemoteHostConfig::default(),
                 );
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             }
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("settle");
 
             {
@@ -1834,7 +2244,7 @@ mod tests {
 
             // Row 4 is the WINVM host row — see `host_connect_and_two_click_disconnect`.
             backend
-                .dispatch(crate::Msg::SidebarRowActivate(4))
+                .dispatch(crate::Msg::SidebarRowActivate { panel: 0, index: 4 })
                 .expect("confirm disconnect");
 
             let state = backend.state();
@@ -1869,10 +2279,10 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
             }
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("settle");
             {
                 let state = backend.state_mut();
@@ -1897,10 +2307,10 @@ mod tests {
 
             // The ✕ on the current session's row: arm, then confirm.
             backend
-                .dispatch(crate::Msg::SidebarRowClose(1))
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 1 })
                 .expect("arm the kill");
             backend
-                .dispatch(crate::Msg::SidebarRowClose(1))
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 1 })
                 .expect("confirm the kill");
 
             let state = backend.state();
@@ -1913,9 +2323,10 @@ mod tests {
                 "a parked session remains as a choice, so the picker opens"
             );
             assert!(
-                state.background.values().any(|attachment| {
-                    attachment.session_name.as_deref() == Some("dev")
-                }),
+                state
+                    .background
+                    .values()
+                    .any(|attachment| { attachment.session_name.as_deref() == Some("dev") }),
                 "the parked session stays retained for an explicit picker choice"
             );
             assert!(
@@ -1941,11 +2352,11 @@ mod tests {
                     crate::config::RemoteHostConfig::default(),
                 );
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state.sidebar.sessions_epoch = 7;
             }
             backend
-                .dispatch(crate::Msg::SidebarPointerMoved)
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
                 .expect("settle");
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -2006,7 +2417,7 @@ mod tests {
                     crate::config::RemoteHostConfig::default(),
                 );
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(SidebarTabId::new("sessions"));
+                state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state.sidebar.sessions_epoch = 3;
             }
             backend
@@ -2278,7 +2689,7 @@ mod tests {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
-                state.sidebar.active_tab = Some(id.clone());
+                state.sidebar.panels[0].active_tab = Some(id.clone());
                 state.sidebar.command_epoch = 8;
                 state.sidebar.command_in_flight.insert(id.clone(), 7);
                 state.sidebar.command_output.insert(
@@ -2318,14 +2729,14 @@ mod tests {
                     interval_secs: 5,
                     on_click: None,
                 }];
-                state.sidebar.active_tab = Some(id.clone());
+                state.sidebar.panels[0].active_tab = Some(id.clone());
                 state.sidebar.command_epoch = 6;
             }
             for (visible, epoch, active) in
                 [(false, 6, "rows"), (true, 5, "rows"), (true, 6, "other")]
             {
                 backend.state_mut().sidebar_visible = visible;
-                backend.state_mut().sidebar.active_tab = Some(SidebarTabId::new(active));
+                backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new(active));
                 backend
                     .dispatch(crate::Msg::SidebarCommandPoll {
                         epoch,
@@ -2337,7 +2748,7 @@ mod tests {
 
             let state = backend.state_mut();
             state.sidebar_visible = true;
-            state.sidebar.active_tab = Some(id.clone());
+            state.sidebar.panels[0].active_tab = Some(id.clone());
             state.sidebar.command_in_flight.insert(id.clone(), 5);
             backend
                 .dispatch(crate::Msg::SidebarCommandPoll {
@@ -2346,6 +2757,62 @@ mod tests {
                 })
                 .expect("overlap guard");
             assert_eq!(backend.state().sidebar.command_in_flight.get(&id), Some(&5));
+            backend.state_mut().sidebar_visible = false;
+        });
+    }
+
+    #[test]
+    fn sessions_and_command_panels_refresh_together() {
+        on_test_thread(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend
+                .dispatch(crate::Msg::SidebarPointerMoved(0))
+                .expect("initialize command link");
+            let command_id = SidebarTabId::new("rows");
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.tabs = vec![
+                    SidebarTab::Sessions,
+                    SidebarTab::Panes,
+                    SidebarTab::Command {
+                        name: command_id.clone(),
+                        label: "Rows".to_string(),
+                        command: "echo command-panel".to_string(),
+                        interval_secs: 5,
+                        on_click: None,
+                    },
+                ];
+                state.sidebar.panels = vec![
+                    crate::state::SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("sessions")],
+                        active_tab: Some(SidebarTabId::new("sessions")),
+                        ..Default::default()
+                    },
+                    crate::state::SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("panes"), command_id.clone()],
+                        active_tab: Some(SidebarTabId::new("panes")),
+                        ..Default::default()
+                    },
+                ];
+            }
+
+            backend
+                .dispatch(crate::Msg::SidebarTabSelected { panel: 1, index: 1 })
+                .expect("select command beside sessions");
+            assert!(
+                backend
+                    .state()
+                    .sidebar
+                    .command_in_flight
+                    .contains_key(&command_id)
+                    || backend
+                        .state()
+                        .sidebar
+                        .command_output
+                        .contains_key(&command_id),
+                "the command panel must start even while Sessions is visible"
+            );
             backend.state_mut().sidebar_visible = false;
         });
     }

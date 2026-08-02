@@ -71,7 +71,7 @@ fn agents_tab_renders_project_groups() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.sidebar.tabs = vec![SidebarTab::Agents];
-                state.sidebar.active_tab = Some(SidebarTab::Agents.id());
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
                 let mut finished = agent_pane(
                     2,
                     AgentKind::OpenCode,
@@ -165,7 +165,7 @@ fn agents_tab_heads_projects_with_their_branch() {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
                 state.config.sidebar.tabs = vec![SidebarTab::Agents];
-                state.sidebar.active_tab = Some(SidebarTab::Agents.id());
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
                 state.current_mut().workspaces[0].panes = vec![
                     agent_pane_in_project(
                         1,

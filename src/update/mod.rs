@@ -42,13 +42,29 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::WorkbarCommandOutput(command, output) => {
             overlays::workbar_command_output(ctx, command, output)
         }
-        Msg::SidebarTabSelected(id) => sidebar::tab_selected(ctx, id),
-        Msg::SidebarPointerMoved => sidebar::pointer_moved(ctx),
-        Msg::SidebarRowActivate(index) => sidebar::row_activate(ctx, index),
-        Msg::SidebarRowHover { index, hovered } => sidebar::row_hover(ctx, index, hovered),
-        Msg::SidebarRowClose(index) => sidebar::row_close(ctx, index),
+        Msg::SidebarTabSelected { panel, index } => sidebar::tab_selected(ctx, panel, index),
+        Msg::SidebarTabReordered { panel, event } => sidebar::tab_reordered(ctx, panel, event),
+        Msg::SidebarTabTransferred(event) => sidebar::tab_transferred(ctx, event),
+        Msg::SidebarPanelsResized(event) => sidebar::panels_resized(ctx, event),
+        Msg::SidebarViewportChanged {
+            panel,
+            tab_id,
+            event,
+        } => sidebar::viewport_changed(ctx, panel, tab_id, event),
+        Msg::SidebarWidthResizing(event) => sidebar::width_resizing(ctx, event),
+        Msg::SidebarWidthResized(event) => sidebar::width_resized(ctx, event),
+        Msg::SidebarPointerMoved(panel) => sidebar::pointer_moved(ctx, panel),
+        Msg::SidebarRowActivate { panel, index } => sidebar::row_activate(ctx, panel, index),
+        Msg::SidebarRowHover {
+            panel,
+            index,
+            hovered,
+        } => sidebar::row_hover(ctx, panel, index, hovered),
+        Msg::SidebarRowClose { panel, index } => sidebar::row_close(ctx, panel, index),
         Msg::ConfirmationExpired(epoch) => crate::ops::confirm::expired(ctx, epoch),
         Msg::SidebarBlur => sidebar::blur_body(ctx),
+        Msg::SidebarTreeFocused => sidebar::tree_focused(ctx),
+        Msg::SidebarExplorerFocus(origin) => sidebar::explorer_focus(ctx, origin),
         Msg::SidebarCycleTab(forward) => sidebar::cycle_tab(ctx, forward),
         Msg::SidebarFocusPane(id) => sidebar::focus_pane(ctx, id),
         Msg::SidebarLauncherActivate {
@@ -134,7 +150,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::SessionPickerCreateFromQuery => prompts::session_picker_create_from_query(ctx),
         Msg::SessionPickerKillSelected => prompts::session_picker_kill_selected(ctx),
         Msg::SessionPickerRestartSelected => prompts::session_picker_restart_selected(ctx),
-        Msg::SessionPickerDisconnectAttachment => prompts::session_picker_disconnect_attachment(ctx),
+        Msg::SessionPickerDisconnectAttachment => {
+            prompts::session_picker_disconnect_attachment(ctx)
+        }
         Msg::SessionPickerDisconnectHost => prompts::session_picker_disconnect_host(ctx),
         Msg::SessionPickerConnectHost => prompts::session_picker_connect_host(ctx),
         Msg::SessionPickerNameCurrent => prompts::session_picker_name_current(ctx),

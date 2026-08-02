@@ -528,7 +528,7 @@ fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
         Some(branch) => row::header_with_note(
             ctx,
             label,
-            row::truncate_start(branch, branch_budget(ctx.state.config.sidebar.width)),
+            row::truncate_start(branch, branch_budget(ctx.state.sidebar_requested_width())),
         ),
         None => row::header(ctx, label, false),
     }
@@ -596,7 +596,7 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
         content = content.detail(label, Style::new().fg(color));
     }
     if let Some(activity) = row.activity.as_deref() {
-        let budget = activity_budget(ctx.state.config.sidebar.width, duration.as_deref());
+        let budget = activity_budget(ctx.state.sidebar_requested_width(), duration.as_deref());
         content = content.detail(
             row::truncate(activity, budget),
             super::super::fg_only(&ctx.state.theme.muted).dim(),

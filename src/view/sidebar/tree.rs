@@ -11,6 +11,7 @@ use crate::{HyprmuxApp, Msg};
 /// the two would leave the wheel fighting over which one moves.
 pub(super) fn tree_tab(
     ctx: &Context<HyprmuxApp>,
+    panel: usize,
     view: SidebarTreeView,
     config: &SidebarTreeConfig,
 ) -> Element {
@@ -34,12 +35,16 @@ pub(super) fn tree_tab(
     let changed_only = view == SidebarTreeView::Changes;
     let tab_id = crate::config::SidebarTabId::new(view.id());
     let config_epoch = ctx.state.sidebar.config_epoch;
+    let tree_focus_key = tree_focus_key(panel, view, &root);
+    let explorer_focus_key = format!("{}-explorer", tree_key(panel, view, &root));
 
     // The same lift the composed row lists use, so the cursor means one thing across every tab.
     let selection = super::row_highlight(theme);
 
     let mut tree = FileTree::new(root.clone())
         .show_hidden(config.show_hidden)
+        .tree_focus_key(tree_focus_key)
+        .explorer_focus_key(explorer_focus_key)
         .show_icons(config.icons)
         .max_entries_per_dir(config.max_entries)
         .change_view(if changed_only {
@@ -57,6 +62,10 @@ pub(super) fn tree_tab(
         // keeps clicks from focusing it. `focus-sidebar` is the only way in.
         .focusable(true)
         .tab_stop(false)
+        .on_focus(ctx.link().callback(|_| Msg::SidebarTreeFocused))
+        // Bare arrows and h/l expand or collapse; modified arrows remain available to the sidebar
+        // for tab movement and resizing.
+        .keymap(TreeKeymap::ARROWS | TreeKeymap::VIM | TreeKeymap::TOGGLE)
         .directory_label_style(super::super::fg_only(&theme.accent))
         .file_label_style(super::super::fg_only(&theme.primary))
         // Semantic change colors from the theme's git palette. The widget's own defaults are empty
@@ -129,17 +138,31 @@ pub(super) fn tree_tab(
         tree = tree
             .explorer(true)
             .explorer_placeholder("Find files…")
-            .explorer_match_style(super::super::fg_only(&theme.accent).bold());
+            .explorer_match_style(super::super::fg_only(&theme.accent).bold())
+            .on_explorer_focus(
+                ctx.link()
+                    .callback(|origin| Msg::SidebarExplorerFocus(Some(origin))),
+            )
+            .on_explorer_blur(ctx.link().callback(|_| Msg::SidebarExplorerFocus(None)))
+            .on_explorer_escape(ctx.link().callback(|_| Msg::SidebarBlur));
     }
 
-    tree.key(tree_key(view, &root))
+    tree.key(tree_key(panel, view, &root))
 }
 
 /// Keyed on the root so switching projects remounts the tree rather than reusing another
 /// directory's expansion and selection state. Built here rather than inline so `focus-sidebar` can
 /// aim at the same key the view is about to render.
-pub(super) fn tree_key(view: SidebarTreeView, root: &str) -> String {
-    format!("{}-{}-{root}", crate::view::sidebar_body_key(), view.id())
+pub(super) fn tree_key(panel: usize, view: SidebarTreeView, root: &str) -> String {
+    format!(
+        "{}-{panel}-{}-{root}",
+        crate::view::sidebar_body_key(),
+        view.id()
+    )
+}
+
+pub(super) fn tree_focus_key(panel: usize, view: SidebarTreeView, root: &str) -> String {
+    format!("{}-tree", tree_key(panel, view, root))
 }
 
 /// The directory a tab is rooted at, exposed so the focus key can be derived without rendering.

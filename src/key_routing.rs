@@ -59,14 +59,6 @@ pub(crate) fn handle_key_routing(
     }
 }
 
-/// Keys hyprmux claims while the sidebar body has focus.
-///
-/// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
-/// composed row lists have no widget behind them, so hyprmux owns their cursor too. `PAGE_ROWS` is a
-/// fixed step rather than a viewport-derived one — the row list is short and the view follows the
-/// cursor anyway, so measuring the viewport buys nothing.
-const PAGE_ROWS: isize = 5;
-
 /// Whether a bare `Enter` should start a shell: only in the launcher, where no pane owns the
 /// keyboard and the panel advertises exactly one thing to do. The configured `spawn` chord stays
 /// bound everywhere and is unaffected; this only gives the launcher's single offer the obvious key.
@@ -77,14 +69,52 @@ fn launcher_start_key(state: &State, key: KeyEvent) -> bool {
     key.is(KeyCode::Enter) && state.is_launcher() && crate::commands::commands_active(state)
 }
 
+/// Keys hyprmux claims while the sidebar body has focus.
+///
+/// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
+/// composed row lists have no widget behind them, so hyprmux owns their cursor too. Page movement
+/// uses the active row list's measured viewport size, with a small fallback before its first layout.
 fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Update> {
     use crate::update::sidebar;
+    // App commands run before focused widgets. Let the explorer consume its own Escape so `/`
+    // returns to the tree; pointer-entered explorer focus never sets `sidebar.focused`, so its
+    // escape callback takes the separate path that restores the pane.
+    if key.is(KeyCode::Esc) && ctx.state.sidebar.explorer_entered_from_tree {
+        return None;
+    }
+    if key.mods.ctrl && key.mods.shift {
+        return match key.code {
+            KeyCode::Left => Some(sidebar::reorder_active_tab(ctx, false)),
+            KeyCode::Right => Some(sidebar::reorder_active_tab(ctx, true)),
+            KeyCode::Up => Some(sidebar::move_active_tab_to_panel(ctx, false)),
+            KeyCode::Down => Some(sidebar::move_active_tab_to_panel(ctx, true)),
+            _ => None,
+        };
+    }
+    if key.mods.ctrl {
+        return match key.code {
+            KeyCode::Up => Some(sidebar::focus_panel(ctx, false)),
+            KeyCode::Down => Some(sidebar::focus_panel(ctx, true)),
+            _ => None,
+        };
+    }
+    if key.mods.shift {
+        return match key.code {
+            KeyCode::Left => Some(sidebar::resize_width(ctx, false)),
+            KeyCode::Right => Some(sidebar::resize_width(ctx, true)),
+            KeyCode::Up => Some(sidebar::resize_panel_split(ctx, false)),
+            KeyCode::Down => Some(sidebar::resize_panel_split(ctx, true)),
+            KeyCode::BackTab | KeyCode::Tab => Some(sidebar::cycle_tab(ctx, false)),
+            _ => None,
+        };
+    }
     match key.code {
         KeyCode::Esc => return Some(sidebar::blur_body(ctx)),
-        // Tab cycles sidebar tabs rather than the focus ring: the sidebar is deliberately outside
-        // that ring, and this leaves the arrow keys free for the tree's expand/collapse.
-        KeyCode::Tab if !key.mods.shift => return Some(sidebar::cycle_tab(ctx, true)),
-        KeyCode::BackTab | KeyCode::Tab => return Some(sidebar::cycle_tab(ctx, false)),
+        // Tab cycles sidebar tabs rather than the focus ring. FileTree owns bare Left/Right for
+        // directory navigation; h/l and Space retain the equivalent tree operations.
+        KeyCode::Tab => return Some(sidebar::cycle_tab(ctx, true)),
+        KeyCode::BackTab => return Some(sidebar::cycle_tab(ctx, false)),
+        KeyCode::Char('s') => return Some(sidebar::toggle_split(ctx)),
         _ => {}
     }
     if tree_tab_active(ctx) {
@@ -95,8 +125,8 @@ fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Up
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => Some(sidebar::move_cursor(ctx, -1)),
         KeyCode::Down | KeyCode::Char('j') => Some(sidebar::move_cursor(ctx, 1)),
-        KeyCode::PageUp => Some(sidebar::move_cursor(ctx, -PAGE_ROWS)),
-        KeyCode::PageDown => Some(sidebar::move_cursor(ctx, PAGE_ROWS)),
+        KeyCode::PageUp => Some(sidebar::move_cursor_page(ctx, false)),
+        KeyCode::PageDown => Some(sidebar::move_cursor_page(ctx, true)),
         KeyCode::Home | KeyCode::Char('g') => Some(sidebar::move_cursor(ctx, isize::MIN)),
         KeyCode::End | KeyCode::Char('G') => Some(sidebar::move_cursor(ctx, isize::MAX)),
         KeyCode::Enter => Some(sidebar::activate_cursor(ctx)),

@@ -711,6 +711,8 @@ impl UserCommandAction {
 
 pub const SIDEBAR_MIN_WIDTH: u16 = 16;
 pub const SIDEBAR_MAX_WIDTH: u16 = 80;
+pub const SIDEBAR_MIN_SPLIT_RATIO: f32 = 0.15;
+pub const SIDEBAR_MAX_SPLIT_RATIO: f32 = 0.85;
 pub const SIDEBAR_MIN_COMMAND_INTERVAL_SECS: u64 = 5;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -882,21 +884,31 @@ impl SidebarTab {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
     pub visible: bool,
     pub width: u16,
     pub position: SidebarPosition,
     pub tabs: Vec<SidebarTab>,
+    /// Durable tab placement for the top and optional bottom panel.
+    pub panels: Vec<Vec<SidebarTabId>>,
+    /// Whether the saved panel placement is rendered as a vertical split.
+    pub split: bool,
+    /// Fraction of the split sidebar height assigned to the top panel.
+    pub split_ratio: f32,
 }
 
 impl Default for SidebarConfig {
     fn default() -> Self {
+        let tabs = vec![SidebarTab::Agents, SidebarTab::Panes, SidebarTab::Sessions];
         Self {
             visible: false,
             width: 32,
             position: SidebarPosition::Left,
-            tabs: vec![SidebarTab::Agents, SidebarTab::Panes, SidebarTab::Sessions],
+            panels: vec![tabs.iter().map(SidebarTab::id).collect()],
+            tabs,
+            split: false,
+            split_ratio: 0.5,
         }
     }
 }

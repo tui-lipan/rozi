@@ -135,8 +135,13 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.sidebar_visible = new_config.sidebar.visible;
     ctx.state.sidebar.reconcile(&new_config.sidebar);
     ctx.state.config = new_config;
-    crate::update::sidebar::request_sessions_refresh(ctx);
-    crate::update::sidebar::request_command_poll(ctx);
+    // Releasing focus when a reload hides the sidebar is part of the same visibility transition as
+    // the interactive toggle. Refresh work is kicked explicitly below, so only the synchronous
+    // focus/cache effects are needed here.
+    let _ = crate::update::sidebar::visibility_changed(ctx);
+    if ctx.state.sidebar_visible && ctx.state.sidebar.focused {
+        crate::update::sidebar::refocus_body(ctx);
+    }
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {

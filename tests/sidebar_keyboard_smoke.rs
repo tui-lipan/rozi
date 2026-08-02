@@ -5,12 +5,15 @@
 //! the two things the list has to get right once it has focus: stepping over non-selectable section
 //! headers, and Enter resolving to the same action a click would have run.
 
-use hyprmux::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
+use hyprmux::config::{
+    SidebarLauncherEntry, SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeView,
+    UserCommandAction,
+};
 use hyprmux::input::Action;
 use hyprmux::state::Pane;
 use hyprmux::{HyprmuxApp, Msg};
 use tui_lipan::TestBackend;
-use tui_lipan::core::event::{MouseEvent, MouseKind};
+use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{Color, KeyCode, KeyEvent, KeyMods, Rect};
 use tui_lipan::style::geometry::FloatRect;
 
@@ -51,6 +54,10 @@ fn key(code: KeyCode) -> KeyEvent {
     }
 }
 
+fn modified_key(code: KeyCode, mods: KeyMods) -> KeyEvent {
+    KeyEvent { code, mods }
+}
+
 /// Two workspaces, so the list carries section headers between the selectable rows.
 fn backend_with_panes() -> TestBackend<HyprmuxApp> {
     let mut backend = TestBackend::new(HyprmuxApp::default());
@@ -64,7 +71,7 @@ fn backend_with_panes() -> TestBackend<HyprmuxApp> {
         let state = backend.state_mut();
         state.sidebar_visible = true;
         state.config.sidebar.tabs = vec![SidebarTab::Panes];
-        state.sidebar.active_tab = Some(SidebarTabId::new("panes"));
+        state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("panes"));
         state.current_mut().workspaces[0].panes = vec![pane(1), pane(2)];
         state.current_mut().workspaces[1].panes = vec![pane(3)];
         state.current_mut().focused_pane = Some(1);
@@ -100,6 +107,196 @@ fn focus_sidebar_then_escape_is_a_round_trip() {
         .expect("spawn round trip thread")
         .join()
         .expect("round trip completes");
+}
+
+fn backend_with_explorer() -> TestBackend<HyprmuxApp> {
+    let mut backend = TestBackend::new(HyprmuxApp::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 30,
+    });
+    {
+        let state = backend.state_mut();
+        let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
+        config.explorer = true;
+        let tab = SidebarTab::Tree {
+            view: SidebarTreeView::Files,
+            config,
+        };
+        state.sidebar_visible = true;
+        state.sidebar.panels[0].tabs = vec![tab.id()];
+        state.sidebar.panels[0].active_tab = Some(tab.id());
+        state.config.sidebar.tabs = vec![tab];
+        let mut pane = pane(1);
+        pane.terminal.cwd = Some(env!("CARGO_MANIFEST_DIR").to_string());
+        state.current_mut().workspaces[0].panes = vec![pane];
+        state.current_mut().focused_pane = Some(1);
+        state.sidebar.tree_cwd = Some(env!("CARGO_MANIFEST_DIR").to_string());
+    }
+    backend.render();
+    backend
+}
+
+fn explorer_input_position(backend: &TestBackend<HyprmuxApp>) -> (u16, u16) {
+    backend
+        .capture_frame()
+        .to_fixed_grid_lines()
+        .iter()
+        .enumerate()
+        .find_map(|(y, line)| {
+            line.chars()
+                .position(|ch| ch == 'F')
+                .filter(|_| line.contains("Find files"))
+                .map(|x| (x as u16, y as u16))
+        })
+        .expect("explorer input is visible")
+}
+
+fn click(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16) {
+    for kind in [
+        MouseKind::Down(MouseButton::Left),
+        MouseKind::Up(MouseButton::Left),
+    ] {
+        backend
+            .send_mouse(MouseEvent {
+                x,
+                y,
+                kind,
+                mods: KeyMods::NONE,
+            })
+            .expect("click explorer input");
+    }
+}
+
+#[test]
+fn pointer_focused_explorer_escape_returns_to_the_pane() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_explorer();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+            backend.send_key(key(KeyCode::Esc)).expect("leave sidebar");
+            settle(&mut backend);
+            let pane_focus = backend.focused_key().cloned().expect("pane has focus");
+
+            let (x, y) = explorer_input_position(&backend);
+            click(&mut backend, x, y);
+            settle(&mut backend);
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref().ends_with("-explorer"))
+            );
+            assert!(!backend.state().sidebar.focused);
+
+            backend.send_key(key(KeyCode::Esc)).expect("leave explorer");
+            settle(&mut backend);
+            assert_eq!(backend.focused_key(), Some(&pane_focus));
+            assert!(!backend.state().sidebar.focused);
+        })
+        .expect("spawn pointer explorer escape thread")
+        .join()
+        .expect("pointer explorer escape completes");
+}
+
+#[test]
+fn slash_focused_explorer_escape_returns_to_sidebar_tree() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_explorer();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            backend
+                .send_key(key(KeyCode::Char('/')))
+                .expect("open explorer from tree");
+            settle(&mut backend);
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref().ends_with("-explorer"))
+            );
+            assert!(backend.state().sidebar.focused);
+            assert!(backend.state().sidebar.explorer_entered_from_tree);
+
+            backend.send_key(key(KeyCode::Esc)).expect("return to tree");
+            settle(&mut backend);
+            assert!(backend.focused().is_some());
+            assert!(
+                backend
+                    .focused_key()
+                    .is_none_or(|key| !key.as_ref().ends_with("-explorer"))
+            );
+            assert!(backend.state().sidebar.focused);
+        })
+        .expect("spawn keyboard explorer escape thread")
+        .join()
+        .expect("keyboard explorer escape completes");
+}
+
+#[test]
+fn enter_in_explorer_enables_sidebar_tree_mode() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_explorer();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+            backend
+                .send_key(key(KeyCode::Char('/')))
+                .expect("open explorer");
+            settle(&mut backend);
+
+            backend
+                .send_key(key(KeyCode::Enter))
+                .expect("commit explorer");
+            settle(&mut backend);
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref().ends_with("-tree"))
+            );
+            assert!(backend.state().sidebar.focused);
+            assert!(!backend.state().sidebar.explorer_entered_from_tree);
+        })
+        .expect("spawn explorer Enter thread")
+        .join()
+        .expect("explorer Enter completes");
+}
+
+#[test]
+fn clicking_tree_outside_pointer_focused_explorer_returns_to_pane() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_explorer();
+            let input_y = explorer_input_position(&backend).1;
+            click(&mut backend, 2, input_y);
+            settle(&mut backend);
+            assert!(!backend.state().sidebar.focused);
+
+            click(&mut backend, 2, input_y.saturating_add(2));
+            settle(&mut backend);
+            assert!(!backend.state().sidebar.focused);
+            assert!(
+                backend
+                    .focused_key()
+                    .is_some_and(|key| key.as_ref().starts_with("hyprmux-terminal-"))
+            );
+        })
+        .expect("spawn outside-click explorer thread")
+        .join()
+        .expect("outside-click explorer completes");
 }
 
 /// `focus-sidebar` reveals a hidden sidebar rather than silently doing nothing — otherwise the
@@ -174,6 +371,8 @@ fn tab_cycles_sidebar_tabs_while_focused() {
         .spawn(|| {
             let mut backend = backend_with_panes();
             backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().sidebar.panels[0].tabs =
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -182,8 +381,8 @@ fn tab_cycles_sidebar_tabs_while_focused() {
             let _ = backend.send_key(key(KeyCode::Tab));
             settle(&mut backend);
             assert_eq!(
-                backend.state().sidebar.active_tab,
-                Some(SidebarTabId::new("agents")),
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("agents")),
                 "Tab moves to the next sidebar tab"
             );
             assert!(
@@ -194,6 +393,167 @@ fn tab_cycles_sidebar_tabs_while_focused() {
         .expect("spawn tab cycle thread")
         .join()
         .expect("tab cycle completes");
+}
+
+#[test]
+fn left_and_right_do_not_cycle_non_tree_sidebar_tabs() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().sidebar.panels[0].tabs =
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            let _ = backend.send_key(key(KeyCode::Right));
+            settle(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("panes")),
+                "horizontal arrows belong to the active row widget, not tab cycling"
+            );
+
+            let _ = backend.send_key(key(KeyCode::Left));
+            settle(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("panes"))
+            );
+        })
+        .expect("spawn arrow tab cycle thread")
+        .join()
+        .expect("arrow navigation completes");
+}
+
+#[test]
+fn ctrl_shift_left_and_right_reorder_sidebar_tabs() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            backend.state_mut().sidebar.panels[0].tabs =
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")];
+            backend.state_mut().sidebar.panels[0].active_tab = Some(SidebarTabId::new("agents"));
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            let _ = backend.send_key(modified_key(
+                KeyCode::Left,
+                KeyMods {
+                    ctrl: true,
+                    shift: true,
+                    ..KeyMods::NONE
+                },
+            ));
+            settle(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.panels[0].tabs,
+                vec![SidebarTabId::new("agents"), SidebarTabId::new("panes")]
+            );
+
+            let _ = backend.send_key(modified_key(
+                KeyCode::Right,
+                KeyMods {
+                    ctrl: true,
+                    shift: true,
+                    ..KeyMods::NONE
+                },
+            ));
+            settle(&mut backend);
+            assert_eq!(
+                backend.state().sidebar.panels[0].tabs,
+                vec![SidebarTabId::new("panes"), SidebarTabId::new("agents")]
+            );
+        })
+        .expect("spawn tab reorder thread")
+        .join()
+        .expect("tab reorder completes");
+}
+
+#[test]
+fn s_toggles_sidebar_split_while_focused() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            let _ = backend.send_key(key(KeyCode::Char('s')));
+            settle(&mut backend);
+            assert!(backend.state().config.sidebar.split);
+            assert_eq!(backend.state().sidebar.panels.len(), 2);
+
+            let _ = backend.send_key(key(KeyCode::Char('s')));
+            settle(&mut backend);
+            assert!(!backend.state().config.sidebar.split);
+            assert_eq!(backend.state().sidebar.panels.len(), 1);
+        })
+        .expect("spawn focused split thread")
+        .join()
+        .expect("focused split completes");
+}
+
+#[test]
+fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            {
+                let state = backend.state_mut();
+                state.sidebar.panels = vec![
+                    hyprmux::state::SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("panes")],
+                        active_tab: Some(SidebarTabId::new("panes")),
+                        ..Default::default()
+                    },
+                    hyprmux::state::SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("agents")],
+                        active_tab: Some(SidebarTabId::new("agents")),
+                        ..Default::default()
+                    },
+                ];
+                state.config.sidebar.tabs = vec![SidebarTab::Panes, SidebarTab::Agents];
+            }
+            backend
+                .dispatch(Msg::RunAction(Action::FocusSidebar))
+                .expect("focus sidebar");
+            settle(&mut backend);
+
+            let _ = backend.send_key(modified_key(
+                KeyCode::Down,
+                KeyMods {
+                    ctrl: true,
+                    ..KeyMods::NONE
+                },
+            ));
+            settle(&mut backend);
+            assert_eq!(backend.state().sidebar.active_panel, 1);
+            assert!(backend.state().sidebar.focused);
+
+            let _ = backend.send_key(modified_key(
+                KeyCode::Up,
+                KeyMods {
+                    ctrl: true,
+                    ..KeyMods::NONE
+                },
+            ));
+            settle(&mut backend);
+            assert_eq!(backend.state().sidebar.active_panel, 0);
+        })
+        .expect("spawn panel navigation thread")
+        .join()
+        .expect("panel navigation completes");
 }
 
 #[test]
@@ -216,6 +576,12 @@ fn keyboard_tab_cycling_scrolls_the_active_top_tab_into_view() {
                 launcher("sessions-long", "Sessions"),
                 launcher("deployment", "Deployment"),
             ];
+            backend.state_mut().sidebar.panels[0].tabs = vec![
+                SidebarTabId::new("panes"),
+                SidebarTabId::new("build"),
+                SidebarTabId::new("sessions-long"),
+                SidebarTabId::new("deployment"),
+            ];
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
                 .expect("focus sidebar");
@@ -227,8 +593,8 @@ fn keyboard_tab_cycling_scrolls_the_active_top_tab_into_view() {
             }
 
             assert_eq!(
-                backend.state().sidebar.active_tab,
-                Some(SidebarTabId::new("deployment"))
+                backend.state().sidebar.active_tab(),
+                Some(&SidebarTabId::new("deployment"))
             );
             let top = &backend.capture_frame().to_fixed_grid_lines()[0];
             assert!(
@@ -283,6 +649,47 @@ fn keyboard_row_navigation_scrolls_the_cursor_into_view() {
         .expect("spawn row visibility thread")
         .join()
         .expect("row visibility completes");
+}
+
+#[test]
+fn page_navigation_uses_the_visible_row_count() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = backend_with_panes();
+            backend.state_mut().current_mut().workspaces[0].panes =
+                (1..=12).map(pane).collect();
+            backend.state_mut().current_mut().workspaces[1].panes.clear();
+
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 10,
+            });
+            backend.render();
+            settle(&mut backend);
+            let short_page = backend.state().sidebar.panels[0].page_rows;
+
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            backend.render();
+            settle(&mut backend);
+            let tall_page = backend.state().sidebar.panels[0].page_rows;
+
+            assert!(short_page > 0);
+            assert!(
+                tall_page > short_page,
+                "a taller sidebar should page across more selectable rows: {short_page} -> {tall_page}"
+            );
+        })
+        .expect("spawn page navigation thread")
+        .join()
+        .expect("page navigation completes");
 }
 
 /// The active row's accent bar runs the full height of the row. A two-line entry gets `▍` on both

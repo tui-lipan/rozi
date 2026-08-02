@@ -108,7 +108,7 @@ wait_for_marker() {
   local socket=$1 pane=$2 marker=$3 deadline=$((SECONDS + 20)) capture
   while ((SECONDS < deadline)); do
     if capture=$("$BIN" --socket "$socket" capture-pane --target "$pane" --scrollback full 2>/dev/null) &&
-      python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.load(sys.stdin)["data"]["text"] else 1)' "$marker" <<<"$capture"; then
+      python3 -c 'import json,sys; text=json.load(sys.stdin)["data"]["text"].replace("\n", ""); sys.exit(0 if sys.argv[1] in text else 1)' "$marker" <<<"$capture"; then
       return 0
     fi
     sleep 0.05

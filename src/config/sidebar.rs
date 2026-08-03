@@ -170,14 +170,6 @@ fn build_panels(
 
     let omitted: Vec<_> = ids.into_iter().filter(|id| !seen.contains(id)).collect();
     if !omitted.is_empty() {
-        warnings.push(format!(
-            "Sidebar panels omitted {}; appended to the first panel",
-            omitted
-                .iter()
-                .map(|id| format!("`{}`", id.as_str()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
         panels[0].extend(omitted);
     }
     panels
@@ -386,7 +378,7 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("more than once"))
         );
-        assert!(warnings.iter().any(|warning| warning.contains("omitted")));
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
     }
 
     #[test]

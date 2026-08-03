@@ -545,37 +545,70 @@ pub(crate) fn clipboard_copy_feedback_duration(config: &HyprmuxConfig) -> Durati
 }
 
 pub fn run() -> Result<()> {
-    // Checked before anything else: on a host with no ConPTY there is no pane hyprmux could open,
-    // and saying so once is far kinder than failing on every spawn (cross-platform plan Phase 10).
-    if let Err(reason) = platform::server_lifecycle::check_host_supported() {
-        eprintln!("hyprmux: {reason}");
-        std::process::exit(1);
-    }
-
-    let cli = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
-        Ok(cli::ParsedCli::Help) => {
-            cli::print_help();
-            return Ok(());
-        }
-        Ok(cli::ParsedCli::Version) => {
-            cli::print_version();
-            return Ok(());
-        }
-        Ok(cli::ParsedCli::Control(command)) => return cli::run_control_cli(command),
-        Ok(cli::ParsedCli::Server { name, fresh }) => return cli::run_server_cli(&name, fresh),
-        Ok(cli::ParsedCli::RemoteServe { name }) => return cli::run_remote_serve_cli(&name),
-        Ok(cli::ParsedCli::ListSessions { format, remote }) => {
-            return cli::run_list_sessions_cli(format, remote.as_deref());
-        }
-        Ok(cli::ParsedCli::KillSession { name, remote }) => {
-            return cli::run_kill_session_cli(&name, remote.as_deref());
-        }
-        Ok(cli::ParsedCli::Run(args)) => args,
+    let parsed = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
+        Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
             eprintln!("Run `hyprmux --help` for usage.");
             std::process::exit(1);
         }
+    };
+
+    // Reconcile a managed pointer before any command can observe or start the application. This is
+    // local-only and makes updater recovery precede ConPTY checks, endpoints, sessions, and the TUI.
+    if let Err(message) = cli::recover_managed_installation() {
+        eprintln!("hyprmux: {message}");
+        std::process::exit(1);
+    }
+
+    let parsed = match parsed {
+        cli::ParsedCli::Help => {
+            cli::print_help();
+            return Ok(());
+        }
+        cli::ParsedCli::Version => {
+            cli::print_version();
+            return Ok(());
+        }
+        cli::ParsedCli::Install => {
+            if let Err(message) = cli::run_install_cli() {
+                eprintln!("hyprmux: {message}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        cli::ParsedCli::Update(command) => {
+            if let Err(message) = cli::run_update_cli(command) {
+                eprintln!("hyprmux: {message}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        parsed => parsed,
+    };
+
+    // Every runtime/session command still receives the platform support check; only the updater,
+    // help, and version paths above intentionally run before it.
+    if let Err(reason) = platform::server_lifecycle::check_host_supported() {
+        eprintln!("hyprmux: {reason}");
+        std::process::exit(1);
+    }
+
+    let cli = match parsed {
+        cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
+        cli::ParsedCli::Server { name, fresh } => return cli::run_server_cli(&name, fresh),
+        cli::ParsedCli::RemoteServe { name } => return cli::run_remote_serve_cli(&name),
+        cli::ParsedCli::ListSessions { format, remote } => {
+            return cli::run_list_sessions_cli(format, remote.as_deref());
+        }
+        cli::ParsedCli::KillSession { name, remote } => {
+            return cli::run_kill_session_cli(&name, remote.as_deref());
+        }
+        cli::ParsedCli::Run(args) => args,
+        cli::ParsedCli::Help
+        | cli::ParsedCli::Version
+        | cli::ParsedCli::Install
+        | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
     };
 
     if let Some(path) = cli.config_path {

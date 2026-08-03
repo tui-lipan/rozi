@@ -39,6 +39,8 @@ pub(crate) struct ControlCli {
 pub(crate) enum ParsedCli {
     Help,
     Version,
+    Install,
+    Update(UpdateCommand),
     Run(CliArgs),
     Control(ControlCli),
     Server {
@@ -59,6 +61,13 @@ pub(crate) enum ParsedCli {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateCommand {
+    Check,
+    Apply,
+    Rollback,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ListFormat {
     #[default]
@@ -76,6 +85,27 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         match arg.as_str() {
             "--help" | "-h" => return Ok(ParsedCli::Help),
             "--version" | "-V" => return Ok(ParsedCli::Version),
+            "install" => {
+                reject_trailing_control_args(&mut iter, "install")?;
+                return Ok(ParsedCli::Install);
+            }
+            "update" => {
+                let command = match iter.next().as_deref() {
+                    None => UpdateCommand::Apply,
+                    Some("--check") => {
+                        reject_trailing_control_args(&mut iter, "update --check")?;
+                        UpdateCommand::Check
+                    }
+                    Some("--rollback") => {
+                        reject_trailing_control_args(&mut iter, "update --rollback")?;
+                        UpdateCommand::Rollback
+                    }
+                    Some(other) => {
+                        return Err(format!("unexpected argument `{other}` after update"));
+                    }
+                };
+                return Ok(ParsedCli::Update(command));
+            }
             "list-sessions" => {
                 let mut format = ListFormat::Text;
                 let mut remote = None;
@@ -571,6 +601,79 @@ pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> {
+    crate::platform::install::Installation::from_process()
+        .recover_if_managed()
+        .map(|_| ())
+        .map_err(|error| format!("managed installation recovery failed: {error}"))
+}
+
+pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
+    let installation = crate::platform::install::Installation::from_process();
+    let result = installation
+        .install()
+        .map_err(|error| format!("installation failed: {error}"))?;
+    if result.changed {
+        println!("Installed hyprmux v{}", result.version);
+    } else {
+        println!(
+            "hyprmux v{} is already installed and verified",
+            result.version
+        );
+    }
+    println!("Command  {}", installation.command_path().display());
+    Ok(())
+}
+
+pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), String> {
+    let installation = crate::platform::install::Installation::from_process();
+    match command {
+        UpdateCommand::Check => {
+            let result = installation
+                .check_latest()
+                .map_err(|error| format!("update check failed: {error}"))?;
+            let running = semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                .map_err(|error| format!("invalid running version: {error}"))?;
+            let current = result.current.as_ref().unwrap_or(&running);
+            println!(
+                "Current  v{}{}",
+                current,
+                if result.managed {
+                    " (managed)"
+                } else {
+                    " (unmanaged)"
+                }
+            );
+            println!("Latest   v{}", result.latest);
+            let status = if result.latest > *current {
+                "update available"
+            } else if result.latest == *current {
+                "up to date"
+            } else {
+                "running version is newer"
+            };
+            println!("Status   {status}");
+        }
+        UpdateCommand::Apply => {
+            let result = installation
+                .update()
+                .map_err(|error| format!("update failed: {error}"))?;
+            if result.changed {
+                println!("Updated hyprmux to v{}", result.version);
+            } else {
+                println!("hyprmux v{} is up to date", result.version);
+            }
+        }
+        UpdateCommand::Rollback => {
+            let result = installation
+                .rollback()
+                .map_err(|error| format!("rollback failed: {error}"))?;
+            println!("Rolled back hyprmux to v{}", result.version);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) -> Result<()> {
     let rows = if let Some(remote) = remote {
         let target = session::remote::parse_remote_target(remote).map_err(std::io::Error::other)?;
@@ -705,6 +808,8 @@ hyprmux - Hyprland-style tiling terminal multiplexer
 
 USAGE:
     hyprmux [TARGET] [--read-only]
+    hyprmux install
+    hyprmux update [--check|--rollback]
     hyprmux attach <NAME> [--read-only]
     hyprmux new <NAME> [--profile <RECIPE>]
     hyprmux [--socket PATH] list|list-panes
@@ -796,6 +901,31 @@ mod tests {
             parse_cli_args(vec!["-V".into()]).expect("parses"),
             ParsedCli::Version
         ));
+    }
+
+    #[test]
+    fn cli_parses_managed_install_and_update_commands_strictly() {
+        assert!(matches!(
+            parse_cli_args(vec!["install".into()]).expect("parses"),
+            ParsedCli::Install
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["update".into()]).expect("parses"),
+            ParsedCli::Update(UpdateCommand::Apply)
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["update".into(), "--check".into()]).expect("parses"),
+            ParsedCli::Update(UpdateCommand::Check)
+        ));
+        assert!(matches!(
+            parse_cli_args(vec!["update".into(), "--rollback".into()]).expect("parses"),
+            ParsedCli::Update(UpdateCommand::Rollback)
+        ));
+        assert!(parse_cli_args(vec!["install".into(), "extra".into()]).is_err());
+        assert!(parse_cli_args(vec!["update".into(), "--check".into(), "extra".into()]).is_err());
+        assert!(
+            parse_cli_args(vec!["update".into(), "--rollback".into(), "--check".into()]).is_err()
+        );
     }
 
     #[test]

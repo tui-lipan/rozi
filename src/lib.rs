@@ -26,6 +26,7 @@ pub mod platform;
 mod popup;
 mod profiles;
 mod pty_events;
+pub mod release;
 mod rules;
 mod scratchpad;
 mod send_keys;

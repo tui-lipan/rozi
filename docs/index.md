@@ -14,6 +14,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | Page | What it covers |
 | --- | --- |
 | [Getting started](getting-started.md) | Requirements, platform support, building, running, and quitting. |
+| [Installation & releases](installation.md) | Bootstrap installers, signed updates, rollback, managed layout, and release signing. |
 | [Keybindings](keybindings.md) | Prefix mode, held modifier, mouse gestures, resize mode, and the full key table. |
 | [Configuration](configuration.md) | The complete `hyprmux.toml` reference: shell, input, animations, theme, profile, clipboard. |
 | [Layouts & panes](layouts-and-panes.md) | Dwindle vs master tiling, floating, fullscreen, split ratios, focus and movement. |

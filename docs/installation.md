@@ -1,0 +1,246 @@
+# Installation and releases
+
+`hyprmux` has a small bootstrap helper for Unix and Windows. It downloads the host release archive,
+downloads the adjacent checksum, verifies the archive bytes, safely extracts the canonical payload,
+and executes that payload with `install`. The payload's managed installer verifies the signed
+release metadata before activating the version. Bootstrap helpers do not edit shell startup files
+or create the managed layout themselves.
+
+## Bootstrap trust caveat
+
+> Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised.
+
+This caveat applies to both installer help outputs. The bootstrap helpers require HTTPS, exact asset
+names, archive-root validation, and checksum matching. Those checks detect transfer corruption but
+do not authenticate a release location. The extracted payload then verifies signed release metadata
+before the managed installer activates its downloaded version; that verification cannot make a
+compromised bootstrap payload safe before it runs.
+
+## Bootstrap resource limits
+
+Both helpers reject archives larger than 256 MiB or checksums larger than 1 MiB while downloading.
+Windows also rejects any declared ZIP member over 256 MiB or total declared uncompressed content over
+256 MiB; extracted payload and launcher files are capped at 256 MiB. Unix applies the 256 MiB cap to
+the declared and extracted payload. Only canonical executable members are written from an archive.
+
+## Managed layout contract
+
+The installed CLI owns version retention, activation, rollback state, and the stable command path.
+An install keeps immutable version directories and switches one authoritative active pointer. It
+does not prune retained versions automatically, and it refuses to replace an unmanaged command.
+
+Default locations are:
+
+| Platform | Managed data root | Stable command |
+| --- | --- | --- |
+| Unix/macOS | `${XDG_DATA_HOME:-$HOME/.local/share}/hyprmux` | `$HOME/.local/bin/hyprmux` |
+| Windows | `%LOCALAPPDATA%\hyprmux` | `%LOCALAPPDATA%\hyprmux\bin\hyprmux.exe` |
+
+`XDG_DATA_HOME` changes the Unix data root only; the Unix stable command remains under
+`$HOME/.local/bin`. The CLI has no `--root`, `--bin-dir`, or updater-version argument.
+
+Unix layout:
+
+```text
+<managed data root>/
+├── versions/<version>/
+│   ├── hyprmux
+│   ├── release.json
+│   ├── release.signatures.json
+│   └── version.json
+├── install.json
+├── pending-activation.json  # transient activation journal
+├── .lock                    # mutation lock
+└── .staging/                # transaction staging
+
+$HOME/.local/bin/hyprmux -> <managed data root>/versions/<version>/hyprmux
+```
+
+Windows layout:
+
+```text
+%LOCALAPPDATA%\hyprmux\
+├── versions\<version>\
+│   ├── hyprmux.exe
+│   ├── release.json
+│   ├── release.signatures.json
+│   └── version.json
+├── bin\hyprmux.exe         # stable launcher; retained across updates
+├── active                   # authoritative active-version selector
+├── install.json
+├── pending-activation.json  # transient activation journal
+├── .lock                    # mutation lock
+└── .staging\                # transaction staging
+```
+
+The stable Windows launcher is created during the first managed install and is verified for
+ownership before an update reuses it. `install.json` records the active and previous versions;
+`update --rollback` selects the recorded previous version without downloading another archive.
+
+## Bootstrap installation
+
+Unix:
+
+```bash
+# Resolve the current released tag and install its exact host archive.
+./install.sh
+
+# Select an exact release archive for bootstrap.
+./install.sh --version 0.2.0
+```
+
+Windows PowerShell:
+
+```powershell
+# Resolve the current released tag and install its exact host archive.
+.\install.ps1
+
+# Select an exact release archive and opt in to the user PATH entry.
+.\install.ps1 -Version 0.2.0 -AddToPath
+```
+
+The helper's optional version selects the archive used to bootstrap. It is not forwarded as an
+argument to the payload: the extracted binary's package version is the version passed to its
+`install` command. The helper deletes its temporary download and extraction directory after the
+payload exits. Unix PATH setup is left to the user; Windows `-AddToPath` appends
+`%LOCALAPPDATA%\hyprmux\bin` to the user PATH only after a successful install.
+
+`HYPRMUX_RELEASE_REPO` changes the GitHub repository used by the helper. `HYPRMUX_RELEASE_BASE_URL`
+can point at an HTTPS mirror with the same release-directory layout. When no version is supplied,
+`HYPRMUX_RELEASE_LATEST_URL` selects an HTTPS `.../releases/latest` redirect endpoint; both
+installers resolve its final URL and require a `v<version>` tag. These variables affect bootstrap
+downloads only; managed updates use the repository compiled into the installed binary.
+
+## Update, check, and rollback
+
+Run lifecycle operations through the installed command. These commands take no root, binary, or
+version arguments:
+
+```bash
+# Verify signed latest metadata and compare it with the active managed version.
+hyprmux update --check
+
+# Download and activate the signed latest release.
+hyprmux update
+
+# Activate the retained previous version.
+hyprmux update --rollback
+```
+
+`hyprmux install` is the bootstrap payload operation. It installs the exact package version compiled
+into that payload and is normally invoked by `install.sh` or `install.ps1`.
+
+### 0.2 update boundaries
+
+- Every installed version is retained. There is no automatic pruning, cleanup command, or process
+  lease yet.
+- Startup performs local crash recovery for managed installs, but no passive network check. Update
+  checks are explicit through `hyprmux update --check`; there is no workbar notice or in-TUI install.
+- Local activation does not update, restart, or otherwise change remote sessions. The existing
+  exact-version remote bootstrap remains separate until its later signed-manifest migration.
+- Windows launcher protocol 1 is stable and is not replaced by self-update. A launcher security fix
+  requires rerunning the bootstrap installer after closing hyprmux.
+
+Help exits `0`. Download, checksum, archive, or managed-install failures exit `1`; invalid
+bootstrap command-line usage exits `2`. A failed bootstrap leaves no managed layout changes made
+by the helper itself.
+
+## Release archive contract
+
+Every release contains canonical assets for the supported targets:
+
+```text
+hyprmux-<version>-<target>.tar.gz       # Unix
+hyprmux-<version>-<target>.zip          # Windows
+```
+
+Each archive has a root directory with the same stem. It contains `hyprmux` on Unix, `hyprmux.exe`
+on Windows, and `hyprmux-launcher.exe` on Windows. The release assets also include:
+
+```text
+hyprmux-release.json
+hyprmux-release.signatures.json
+<archive>.sha256                         # adjacent to every archive
+```
+
+The release tool computes archive, payload, and launcher sizes/hashes from the final bytes and
+rejects target, path, size, or hash mismatches before publication. The adjacent checksums are
+published for bootstrap corruption detection; see the trust-boundary caveat above.
+
+The generated manifest is the canonical JSON shape
+`{schema_version, version, published_at, targets}`. `published_at` is an RFC3339 UTC timestamp and
+`targets` is keyed by the target triple. Each value contains `archive`, `archive_sha256`,
+`archive_size`, `payload`, and the Windows-only `launcher`.
+
+The Cargo manifest uses the sibling path dependency `../tui-lipan`. The release workflow checks out
+that sibling explicitly so it preserves local build semantics; it does not claim that this
+repository has been switched to a crates.io framework dependency.
+
+## Maintainer key generation and signing
+
+The release tool is an optional CLI. Its cryptographic and archive dependencies are library
+dependencies:
+
+```bash
+mkdir -p "$HOME/.config/hyprmux/release-keys"
+cargo run --features release-tool --bin hyprmux-release -- \
+  keygen \
+  --id release-2026-a \
+  --private-key "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64" \
+  --public-key /tmp/hyprmux-release-keys.json
+
+# Review the strict document, then replace the initial empty trust file deliberately.
+mv /tmp/hyprmux-release-keys.json release-keys.json
+```
+
+Both paths are mandatory. Key generation uses OS randomness, refuses to overwrite either path, and
+writes the Unix private file as mode `0600`. The private path above is outside the repository by
+design; only the strict public document belongs in committed `release-keys.json`. There is no
+production default key or test key.
+
+After build/package jobs have produced final archives, generate and sign metadata:
+
+```bash
+cargo run --features release-tool --bin hyprmux-release -- \
+  manifest --version 0.2.0 --artifacts-dir dist --output dist/hyprmux-release.json
+
+HYPRMUX_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64")" \
+cargo run --features release-tool --bin hyprmux-release -- \
+  sign --manifest dist/hyprmux-release.json \
+       --output dist/hyprmux-release.signatures.json \
+       --key-id release-2026-a
+
+cargo run --features release-tool --bin hyprmux-release -- \
+  verify --manifest dist/hyprmux-release.json \
+         --signatures dist/hyprmux-release.signatures.json \
+         --keys release-keys.json --artifacts-dir dist
+```
+
+Signing covers the exact bytes on disk; reparsing and reserializing the manifest after signing will
+invalidate its digest/signature. The envelope contains a list of key-id/signature records so a
+rotation can append a second trusted signature without changing the manifest. Verification
+requires at least one valid Ed25519 signature from the committed trust document and checks the final
+archives and adjacent checksums again.
+
+## Protected publication setup
+
+Production publication requires a generated `release-2026-a` entry in `release-keys.json`. An empty
+or missing trust-key file is an intentional fail-closed condition: the workflow runs `trust-check`
+before it reads any signing secret and prints setup guidance.
+
+After committing that public document:
+
+1. Create a GitHub Actions environment named `release` and require maintainer approval as desired.
+2. Add the environment secret `HYPRMUX_RELEASE_PRIVATE_KEY` containing the base64 32-byte private
+   key value, not a repository file or checked-in secret.
+3. Optionally set the environment variable `HYPRMUX_RELEASE_KEY_ID`; otherwise the workflow uses
+   `release-2026-a`.
+4. Keep the private value available only to the workflow's signing step. Build/test/package jobs,
+   pull requests, and manual dispatches never receive it.
+
+The protected signing job downloads immutable completed archives and a prebuilt Linux release tool,
+checks the tag against `Cargo.toml`, generates hashes from final bytes, signs, verifies against the
+committed key, and uploads one verified publication bundle. A separate publication job with
+`contents: write` downloads only that bundle and runs `gh release create`; it receives no signing
+secret. The signing job never runs Cargo after the private key is available. Manual dispatch can
+exercise artifact builds but cannot publish a release.

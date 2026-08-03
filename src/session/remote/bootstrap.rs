@@ -924,7 +924,7 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
     // Hashed in-process rather than through `sha256sum`/`shasum`: neither exists on Windows, and
     // verification is the security-relevant step of a cross-platform install — it must never be
     // skipped, or silently degraded, for want of a tool on the client.
-    let actual = super::sha256::hash_file(archive)
+    let actual = crate::release::sha256_file(archive)
         .map_err(|err| format!("hash {}: {err}", archive.display()))?;
     if actual != expected {
         return Err(format!(

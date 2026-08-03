@@ -4,16 +4,37 @@ on:
   push:
     tags:
       - "v*"
-  # Buildable on demand so the artifact pipeline can be exercised without minting a tag. A manual
-  # run uploads workflow artifacts but never publishes a release.
+  pull_request:
   workflow_dispatch:
 
+# The repository currently uses tui-lipan = { path = "../tui-lipan" }.  Keep this checkout
+# explicit until the dependency is intentionally published and Cargo.toml is changed; this is not
+# a crates.io fallback or a claim that standalone CI can build the current manifest.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
-    name: ${{ matrix.target }}
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out hyprmux beside its path dependency
+        uses: actions/checkout@v4
+        with:
+          path: hyprmux
+      - name: Check out the sibling tui-lipan dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Razuer/tui-lipan
+          path: tui-lipan
+      - uses: dtolnay/rust-toolchain@1.88
+      - name: Test
+        working-directory: hyprmux
+        run: cargo test --locked --all-targets
+
+  package:
+    name: package ${{ matrix.target }}
+    needs: test
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -34,145 +55,382 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
-    # Hoisted to the job so the signing steps can gate on them: a step's `if:` may read `env` but
-    # not `secrets`, so "sign only when a certificate is configured" has to go through here.
-    env:
-      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out hyprmux beside its path dependency
+        uses: actions/checkout@v4
+        with:
+          path: hyprmux
+      - name: Check out the sibling tui-lipan dependency
+        uses: actions/checkout@v4
+        with:
+          repository: Razuer/tui-lipan
+          path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.88
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build
+      - name: Resolve package version
+        id: version
+        working-directory: hyprmux
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build payload
+        working-directory: hyprmux
         run: cargo build --locked --release --target ${{ matrix.target }}
 
-      # Every artifact is unpacked and run before it can be published. A binary that cannot even
-      # print its own version is not one anybody should be downloading, and this is the cheapest
-      # possible place to notice - each runner is the platform it just built for, so this is a real
-      # native execution, not a cross-compiled guess.
-      - name: Smoke-test the built binary
+      - name: Build Windows launcher
+        if: matrix.archive == 'zip'
+        working-directory: hyprmux
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin hyprmux-launcher
+
+      - name: Smoke-test payload version
+        working-directory: hyprmux
         shell: bash
         run: |
           set -euo pipefail
           binary="target/${{ matrix.target }}/release/hyprmux"
-          [ "${{ matrix.archive }}" = "zip" ] && binary="$binary.exe"
-          "$binary" --version
-          "$binary" --help > /dev/null
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
+          "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
+          "$binary" --help >/dev/null
 
-      # Signing is opt-in on credentials being present, so a fork (or this repo before anybody sets
-      # the secrets up) still produces working unsigned artifacts rather than failing the release.
-      # An unsigned macOS binary is Gatekeeper-quarantined on download but runs fine from a
-      # terminal, which is where a terminal multiplexer is run from anyway.
-      - name: Sign and notarize (macOS)
-        if: runner.os == 'macOS' && env.MACOS_CERTIFICATE != ''
-        env:
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      - name: Package canonical archive
+        id: package
+        working-directory: hyprmux
+        shell: bash
         run: |
           set -euo pipefail
-          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p actions build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p actions build.keychain
-          security import certificate.p12 -k build.keychain \
-            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k actions build.keychain
-          codesign --force --options runtime --timestamp \
-            --sign "$MACOS_SIGN_IDENTITY" \
-            "target/${{ matrix.target }}/release/hyprmux"
-          rm -f certificate.p12
+          version="${{ steps.version.outputs.version }}"
+          stem="hyprmux-${version}-${{ matrix.target }}"
+          mkdir -p "dist/${stem}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            cp "target/${{ matrix.target }}/release/hyprmux.exe" "dist/${stem}/hyprmux.exe"
+            cp "target/${{ matrix.target }}/release/hyprmux-launcher.exe" \
+              "dist/${stem}/hyprmux-launcher.exe"
+          else
+            cp "target/${{ matrix.target }}/release/hyprmux" "dist/${stem}/hyprmux"
+          fi
+          cp README.md LICENSE-APACHE LICENSE-MIT "dist/${stem}/"
+          cp -R examples "dist/${stem}/examples"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd dist && 7z a -tzip "${stem}.zip" "$stem" >/dev/null)
+          else
+            tar -czf "dist/${stem}.tar.gz" -C dist "$stem"
+          fi
+          rm -rf "dist/${stem}"
 
-      - name: Sign (Windows)
-        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != ''
+      - name: Smoke-test extracted final archive
+        working-directory: hyprmux
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          stem="hyprmux-${version}-${{ matrix.target }}"
+          mkdir -p dist/verify
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            7z x "dist/${stem}.zip" -odist/verify >/dev/null
+            "dist/verify/${stem}/hyprmux.exe" --version | grep -F "$version"
+            test -x "dist/verify/${stem}/hyprmux-launcher.exe" || \
+              test -f "dist/verify/${stem}/hyprmux-launcher.exe"
+          else
+            tar -xzf "dist/${stem}.tar.gz" -C dist/verify
+            "dist/verify/${stem}/hyprmux" --version | grep -F "$version"
+          fi
+
+      - name: Smoke-test Windows launcher-v1
+        if: matrix.archive == 'zip'
+        working-directory: hyprmux
         shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          [IO.File]::WriteAllBytes('certificate.pfx', [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
-          & signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            /f certificate.pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD `
-            "target/${{ matrix.target }}/release/hyprmux.exe"
-          Remove-Item certificate.pfx
+          $version = '${{ steps.version.outputs.version }}'
+          $stem = "hyprmux-$version-${{ matrix.target }}"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP ('hyprmux-launcher-smoke-' + [Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+          try {
+              $archiveRoot = Join-Path $smokeRoot 'archive'
+              New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
+              & 7z x "dist/$stem.zip" "-o$archiveRoot" -y | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw 'could not unpack the final Windows archive for smoke testing' }
+              $packagedRoot = Join-Path $archiveRoot $stem
+              $packagedPayload = Join-Path $packagedRoot 'hyprmux.exe'
+              $packagedLauncher = Join-Path $packagedRoot 'hyprmux-launcher.exe'
+              if (-not (Test-Path -LiteralPath $packagedPayload -PathType Leaf)) { throw 'packaged payload is missing' }
+              if (-not (Test-Path -LiteralPath $packagedLauncher -PathType Leaf)) { throw 'packaged launcher is missing' }
 
-      - name: Package
-        id: package
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          name="hyprmux-${version}-${{ matrix.target }}"
-          mkdir -p "dist/${name}"
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            cp "target/${{ matrix.target }}/release/hyprmux.exe" "dist/${name}/"
-          else
-            cp "target/${{ matrix.target }}/release/hyprmux" "dist/${name}/"
-          fi
-          cp README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
-          cp -r examples "dist/${name}/examples"
+              $managedRoot = Join-Path $smokeRoot 'managed'
+              $managedBin = Join-Path $managedRoot 'bin'
+              $managedVersion = Join-Path (Join-Path $managedRoot 'versions') $version
+              New-Item -ItemType Directory -Path $managedBin, $managedVersion -Force | Out-Null
+              $launcher = Join-Path $managedBin 'hyprmux.exe'
+              Copy-Item -LiteralPath $packagedLauncher -Destination $launcher
+              Copy-Item -LiteralPath $packagedPayload -Destination (Join-Path $managedVersion 'hyprmux.exe')
+              [IO.File]::WriteAllText(
+                  (Join-Path $managedRoot 'active'),
+                  $version,
+                  [Text.UTF8Encoding]::new($false)
+              )
+              $versionOutput = (& $launcher --version 2>&1 | Out-String)
+              $versionLine = ($versionOutput -split "`r?`n", 2)[0]
+              if ($LASTEXITCODE -ne 0 -or $versionLine -cne "hyprmux $version") {
+                  throw "launcher-v1 did not execute the packaged payload: $versionOutput"
+              }
 
-          cd dist
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a -tzip "${name}.zip" "${name}" > /dev/null
-            archive="${name}.zip"
-          else
-            tar -czf "${name}.tar.gz" "${name}"
-            archive="${name}.tar.gz"
-          fi
+              $forwardRoot = Join-Path $smokeRoot 'forwarding'
+              $forwardBin = Join-Path $forwardRoot 'bin'
+              $forwardVersion = Join-Path (Join-Path $forwardRoot 'versions') '0.0.0'
+              $forwardCwd = Join-Path $forwardRoot 'cwd'
+              New-Item -ItemType Directory -Path $forwardBin, $forwardVersion, $forwardCwd -Force | Out-Null
+              $forwardLauncher = Join-Path $forwardBin 'hyprmux.exe'
+              Copy-Item -LiteralPath $packagedLauncher -Destination $forwardLauncher
+              $cmdPayload = Join-Path $forwardVersion 'hyprmux.exe'
+              Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $cmdPayload
+              [IO.File]::WriteAllText(
+                  (Join-Path $forwardRoot 'active'),
+                  '0.0.0',
+                  [Text.UTF8Encoding]::new($false)
+              )
+              $oldSmokeEnv = $env:HYPRMUX_LAUNCHER_SMOKE
+              try {
+                  $env:HYPRMUX_LAUNCHER_SMOKE = 'forwarded-env'
+                  Push-Location $forwardCwd
+                  try {
+                      $command = 'echo forwarded-argument & echo %HYPRMUX_LAUNCHER_SMOKE% & cd & exit 37'
+                      $forwardOutput = (& $forwardLauncher '/d' '/c' $command 2>&1 | Out-String)
+                      $forwardExitCode = $LASTEXITCODE
+                  } finally {
+                      Pop-Location
+                  }
+              } finally {
+                  if ($null -eq $oldSmokeEnv) {
+                      Remove-Item Env:HYPRMUX_LAUNCHER_SMOKE -ErrorAction SilentlyContinue
+                  } else {
+                      $env:HYPRMUX_LAUNCHER_SMOKE = $oldSmokeEnv
+                  }
+              }
+              if ($forwardExitCode -ne 37) {
+                  throw "launcher-v1 did not propagate cmd.exe exit code 37: $forwardExitCode"
+              }
+              if ($forwardOutput -notmatch 'forwarded-argument') {
+                  throw "launcher-v1 did not forward the command arguments: $forwardOutput"
+              }
+              if ($forwardOutput -notmatch 'forwarded-env') {
+                  throw "launcher-v1 did not forward the environment: $forwardOutput"
+              }
+              if ($forwardOutput -notmatch [regex]::Escape($forwardCwd)) {
+                  throw "launcher-v1 did not forward the working directory: $forwardOutput"
+              }
+          } finally {
+              if (Test-Path -LiteralPath $smokeRoot) {
+                  Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+              }
+          }
 
-          # Checksums are produced next to the archive on the machine that built it, so the digest
-          # covers exactly the bytes that were uploaded.
-          if command -v sha256sum > /dev/null; then
-            sha256sum "${archive}" > "${archive}.sha256"
-          else
-            shasum -a 256 "${archive}" > "${archive}.sha256"
-          fi
-          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
-
-      # Re-extract the packaged archive and run *that* binary, not the one in `target/`. This is the
-      # check that catches a packaging bug (wrong file copied, archive built from the wrong
-      # directory, an executable bit lost in the tarball) rather than a build bug.
-      - name: Smoke-test the extracted archive
-        working-directory: dist
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          name="hyprmux-${version}-${{ matrix.target }}"
-          rm -rf verify && mkdir verify && cd verify
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z x "../${{ steps.package.outputs.archive }}" > /dev/null
-            "./${name}/hyprmux.exe" --version
-          else
-            tar -xzf "../${{ steps.package.outputs.archive }}"
-            "./${name}/hyprmux" --version
-          fi
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload immutable final archive
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
+          name: archive-${{ matrix.target }}
           path: |
+            hyprmux/dist/*.tar.gz
+            hyprmux/dist/*.zip
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
+
+      # Build this only on the native Linux runner. Publication downloads this executable and never
+      # invokes Cargo after the protected private-key step.
+      - name: Build Linux release tool
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: hyprmux
+        run: cargo build --locked --release --features release-tool --bin hyprmux-release
+
+      - name: Upload prebuilt Linux release tool
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-tool-linux
+          path: hyprmux/target/release/hyprmux-release
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
+
+  sign_release:
+    name: sign verified release
+    needs: [test, package]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+    permissions:
+      contents: read
+    steps:
+      - name: Check out release metadata
+        uses: actions/checkout@v4
+
+      - name: Download completed archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download prebuilt Linux release tool
+        uses: actions/download-artifact@v4
+        with:
+          name: release-tool-linux
+          path: release-tool
+
+      - name: Prepare tool
+        shell: bash
+        run: chmod 0755 release-tool/hyprmux-release
+
+      - name: Check tag, package, and final archive version before secret use
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]
+          package_version="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path("Cargo.toml").read_text()
+          match = re.search(r"(?ms)^\[package\].*?^version\s*=\s*[\"']([^\"']+)[\"']", text)
+          if not match:
+              raise SystemExit("Cargo.toml package.version is missing")
+          print(match.group(1))
+          PY
+          )"
+          test "$version" = "$package_version" || {
+            echo "tag v$version does not match Cargo.toml package.version $package_version" >&2
+            exit 1
+          }
+          test -n "$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print -quit)"
+          for archive in \
+            "hyprmux-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "hyprmux-${version}-aarch64-unknown-linux-gnu.tar.gz" \
+            "hyprmux-${version}-x86_64-apple-darwin.tar.gz" \
+            "hyprmux-${version}-aarch64-apple-darwin.tar.gz" \
+            "hyprmux-${version}-x86_64-pc-windows-msvc.zip"; do
+            test -f "dist/$archive" || {
+              echo "completed artifact is missing: $archive" >&2
+              exit 1
+            }
+          done
+
+      # This is intentionally before the signing step. release-keys.json starts empty until the
+      # maintainer generates release-2026-a; no protected secret is read when this fails.
+      - name: Fail closed if the committed trust store is empty
+        shell: bash
+        run: release-tool/hyprmux-release trust-check --keys release-keys.json
+
+      - name: Generate hashes and manifest from final artifact bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          release-tool/hyprmux-release manifest \
+            --version "$version" \
+            --artifacts-dir dist \
+            --output dist/hyprmux-release.json
+          python3 - "$version" <<'PY'
+          import json
+          import sys
+          from datetime import datetime
+          manifest = json.load(open("dist/hyprmux-release.json", encoding="utf-8"))
+          assert set(manifest) == {"schema_version", "version", "published_at", "targets"}
+          assert manifest["schema_version"] == 1
+          assert manifest["version"] == sys.argv[1]
+          assert manifest["published_at"].endswith("Z")
+          datetime.fromisoformat(manifest["published_at"].replace("Z", "+00:00"))
+          assert set(manifest["targets"]) == {
+              "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+              "x86_64-apple-darwin", "aarch64-apple-darwin",
+              "x86_64-pc-windows-msvc",
+          }
+          PY
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf "$verify_dir"' EXIT
+          linux_stem="hyprmux-${version}-x86_64-unknown-linux-gnu"
+          tar -xzf "dist/${linux_stem}.tar.gz" -C "$verify_dir"
+          "$verify_dir/${linux_stem}/hyprmux" --version | grep -F "$version"
+
+      # The environment is protected, but the private value is deliberately scoped to this one
+      # step. No Cargo command, compiler, or checkout runs after it becomes available.
+      - name: Sign exact manifest bytes
+        env:
+          HYPRMUX_RELEASE_PRIVATE_KEY: ${{ secrets.HYPRMUX_RELEASE_PRIVATE_KEY }}
+          HYPRMUX_RELEASE_KEY_ID: ${{ vars.HYPRMUX_RELEASE_KEY_ID || 'release-2026-a' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HYPRMUX_RELEASE_PRIVATE_KEY"
+          test -n "$HYPRMUX_RELEASE_KEY_ID"
+          release-tool/hyprmux-release sign \
+            --manifest dist/hyprmux-release.json \
+            --output dist/hyprmux-release.signatures.json \
+            --key-id "$HYPRMUX_RELEASE_KEY_ID"
+
+      - name: Verify signature and every final archive before publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          release-tool/hyprmux-release verify \
+            --manifest dist/hyprmux-release.json \
+            --signatures dist/hyprmux-release.signatures.json \
+            --keys release-keys.json \
+            --artifacts-dir dist
+
+      - name: Upload verified publication bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-release-bundle
+          path: |
+            dist/hyprmux-release.json
+            dist/hyprmux-release.signatures.json
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
           if-no-files-found: error
+          overwrite: false
+          retention-days: 14
 
   publish:
-    name: publish
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: publish verified release
+    needs: sign_release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.sign_release.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download verified publication bundle
+        uses: actions/download-artifact@v4
         with:
+          name: verified-release-bundle
           path: dist
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.sha256
-          generate_release_notes: true
+
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "v$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            dist/hyprmux-release.json \
+            dist/hyprmux-release.signatures.json \
+            dist/*.tar.gz \
+            dist/*.zip \
+            dist/*.sha256 \
+            --verify-tag \
+            --generate-notes

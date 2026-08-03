@@ -14,7 +14,7 @@ mod unix {
             "hyprmux-cli-{label}-{}-{nonce}",
             std::process::id()
         ));
-        for dir in ["config", "state", "runtime"] {
+        for dir in ["config", "state", "data", "runtime"] {
             let path = root.join(dir);
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -28,6 +28,7 @@ mod unix {
             .env("HOME", root)
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_STATE_HOME", root.join("state"))
+            .env("XDG_DATA_HOME", root.join("data"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"));
         command
     }
@@ -40,7 +41,10 @@ mod unix {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("No session or profile named `wok`."));
         assert!(stderr.contains("Create it with: hyprmux new wok"));
-        let runtime_entries = fs::read_dir(root.join("runtime/hyprmux")).unwrap().count();
+        let runtime_path = root.join("runtime/hyprmux");
+        let runtime_entries = fs::read_dir(&runtime_path)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
         assert_eq!(runtime_entries, 0, "startup error must not launch a server");
         fs::remove_dir_all(root).unwrap();
     }
@@ -57,6 +61,27 @@ mod unix {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("Session `work` is not running."));
         assert!(stderr.contains("Start it with: hyprmux work"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unmanaged_update_refuses_before_runtime_or_session_startup() {
+        let root = isolated_home("unmanaged-update");
+        let output = command(&root).arg("update").output().unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("managed installation is not present"));
+        let runtime_entries = fs::read_dir(root.join("runtime/hyprmux"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(
+            runtime_entries, 0,
+            "update refusal must not create endpoints"
+        );
+        assert!(
+            !root.join("data/hyprmux").exists(),
+            "unmanaged update must not create managed state"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

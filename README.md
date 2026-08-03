@@ -13,6 +13,10 @@ explicitly with `hyprmux new <name>`; unknown targets do not silently create one
 It builds natively on Linux, macOS, and Windows. See the
 [platform support matrix](docs/getting-started.md#platform-support).
 
+Managed release installs support signed checks, updates, and rollback. See
+[Installation & releases](docs/installation.md). Production publication remains intentionally
+blocked until the maintainer-generated `release-2026-a` public key is committed.
+
 ```bash
 cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 ```
@@ -59,6 +63,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 Full docs live in [`docs/`](docs/):
 
 - [Getting started](docs/getting-started.md) - requirements, platform support, build, run, and quit.
+- [Installation & releases](docs/installation.md) - bootstrap, signed update/rollback, and signing workflow.
 - [Keybindings](docs/keybindings.md) - prefix, held modifier, mouse, and the full key reference.
 - [Configuration](docs/configuration.md) - the complete `hyprmux.toml` reference.
 - [Layouts & panes](docs/layouts-and-panes.md) - dwindle, master, floating, fullscreen, resize.

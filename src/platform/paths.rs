@@ -11,6 +11,7 @@
 //! | Config  | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | `%APPDATA%\hyprmux` |
 //! | State   | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
 //! | Cache   | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | `%LOCALAPPDATA%\hyprmux\cache` |
+//! | Data    | `$XDG_DATA_HOME/hyprmux`, else `~/.local/share/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
 //! | Runtime | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp dir | not yet implemented (Phase 5 named-pipe registry) |
 //!
 //! The Windows column is written per the plan and believed correct against documented API
@@ -41,6 +42,8 @@ pub struct PlatformEnv {
     /// `$XDG_CACHE_HOME`, only if it was set to a non-empty absolute path.
     ///
     pub xdg_cache_home: Option<PathBuf>,
+    /// `$XDG_DATA_HOME`, only if it was set to a non-empty absolute path.
+    pub xdg_data_home: Option<PathBuf>,
     /// `$XDG_RUNTIME_DIR`, only if it was set to a non-empty absolute path.
     pub xdg_runtime_dir: Option<PathBuf>,
     /// `%APPDATA%` (Windows only).
@@ -57,6 +60,7 @@ impl PlatformEnv {
             xdg_config_home: env_absolute_path("XDG_CONFIG_HOME"),
             xdg_state_home: env_absolute_path("XDG_STATE_HOME"),
             xdg_cache_home: env_absolute_path("XDG_CACHE_HOME"),
+            xdg_data_home: env_absolute_path("XDG_DATA_HOME"),
             xdg_runtime_dir: env_absolute_path("XDG_RUNTIME_DIR"),
             appdata: env_absolute_path("APPDATA"),
             local_appdata: env_absolute_path("LOCALAPPDATA"),
@@ -111,6 +115,36 @@ pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
         return local_appdata.join(APP_DIR).join("cache");
     }
     xdg_style_dir(env.xdg_cache_home.as_ref(), &env.home, ".cache")
+}
+
+/// Base data directory used by managed installations: `$XDG_DATA_HOME/hyprmux`, else
+/// `~/.local/share/hyprmux`; `%LOCALAPPDATA%\hyprmux` on Windows.
+pub fn data_dir(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows)
+        && let Some(local_appdata) = &env.local_appdata
+    {
+        return local_appdata.join(APP_DIR);
+    }
+    xdg_style_dir(env.xdg_data_home.as_ref(), &env.home, ".local/share")
+}
+
+/// The command path owned by a managed installation. Unix keeps the stable command as an absolute
+/// symlink into [`data_dir`]; Windows keeps a stable launcher beside the active-version selector.
+pub fn managed_command_path(env: &PlatformEnv) -> PathBuf {
+    if cfg!(windows) {
+        data_dir(env).join("bin").join("hyprmux.exe")
+    } else {
+        env.home
+            .as_ref()
+            .map(|home| home.join(".local/bin/hyprmux"))
+            .unwrap_or_else(|| PathBuf::from(".local/bin/hyprmux"))
+    }
+}
+
+/// Alias kept intentionally descriptive for call sites that refer to the stable command rather
+/// than the managed-installation implementation detail.
+pub fn default_command_path(env: &PlatformEnv) -> PathBuf {
+    managed_command_path(env)
 }
 
 fn xdg_style_dir(
@@ -575,6 +609,57 @@ mod tests {
     fn cache_dir_falls_back_to_home_dot_cache() {
         let env = env_with_home("/home/user");
         assert_eq!(cache_dir(&env), PathBuf::from("/home/user/.cache/hyprmux"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn data_dir_prefers_xdg_data_home_and_falls_back_to_local_share() {
+        let env = PlatformEnv {
+            xdg_data_home: Some(PathBuf::from("/custom/data")),
+            home: Some(PathBuf::from("/home/user")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(data_dir(&env), PathBuf::from("/custom/data/hyprmux"));
+        assert_eq!(
+            data_dir(&env_with_home("/home/user")),
+            PathBuf::from("/home/user/.local/share/hyprmux")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn data_dir_uses_local_appdata_on_windows() {
+        let env = PlatformEnv {
+            local_appdata: Some(PathBuf::from(r"C:\Users\user\AppData\Local")),
+            ..PlatformEnv::default()
+        };
+        assert_eq!(
+            data_dir(&env),
+            PathBuf::from(r"C:\Users\user\AppData\Local\hyprmux")
+        );
+    }
+
+    #[test]
+    fn managed_command_path_uses_the_platform_stable_command_location() {
+        let env = if cfg!(windows) {
+            PlatformEnv {
+                local_appdata: Some(PathBuf::from(r"C:\Users\user\AppData\Local")),
+                ..PlatformEnv::default()
+            }
+        } else {
+            env_with_home("/home/user")
+        };
+        if cfg!(windows) {
+            assert_eq!(
+                managed_command_path(&env),
+                PathBuf::from(r"C:\Users\user\AppData\Local\hyprmux\bin\hyprmux.exe")
+            );
+        } else {
+            assert_eq!(
+                managed_command_path(&env),
+                PathBuf::from("/home/user/.local/bin/hyprmux")
+            );
+        }
     }
 
     #[test]

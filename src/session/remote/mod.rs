@@ -8,7 +8,6 @@ mod bootstrap;
 mod connect;
 mod preamble;
 mod proxy;
-mod sha256;
 mod target;
 
 pub use bootstrap::ensure_remote_binary;

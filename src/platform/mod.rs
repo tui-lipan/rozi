@@ -7,7 +7,7 @@
 //! submodule's doc comment for what has actually landed versus what is still a placeholder.
 //!
 //! Status (tracked against the cross-platform plan):
-//! - [`paths`] - config/state/cache/runtime directory resolution (Phase 3), wired into
+//! - [`paths`] - config/state/cache/data/runtime directory resolution (Phase 3), wired into
 //!   `config::file`, `profiles`, `session::server::resurrect`, `session::server::panes`,
 //!   `platform::shell_integration`, and `control::runtime_dir`.
 //! - [`fs_security`] - private-directory policy: Unix ownership/mode/symlink enforcement, Windows
@@ -32,12 +32,16 @@
 //!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
 //! - [`notifications`] - desktop notifications (Phase 10).
+//! - [`install`] / [`executable`] - signed managed releases, durable activation/recovery, and the
+//!   stable launcher/pointer filesystem operations.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring
 //! workspace**; treat CI as the first real verification of any of it.
 
+pub mod executable;
 pub mod fs_security;
+pub mod install;
 pub mod paths;
 pub mod user;
 

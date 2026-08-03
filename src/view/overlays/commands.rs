@@ -89,10 +89,9 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
         "request-control" => alias_list(&["take control", "layout control", "collaboration"]),
         "toggle-input-lock" => alias_list(&["input lock", "follower input", "collaboration"]),
         "toggle-control-takeover" => alias_list(&["takeover", "control safety", "collaboration"]),
-        // The live label is "Enable/Disable sidebar", so a bare "sidebar" query only matches its
-        // label as a mid-string substring and loses to "Next/Previous sidebar tab". An exact
-        // "sidebar" alias competes via `max()` and floats the toggle to the top.
-        "toggle-sidebar" => alias_list(&["sidebar", "panel", "toggle sidebar"]),
+        // Live label leads with "Sidebar"; keep an exact "sidebar" alias so it stays the first hit
+        // even if the display wording shifts, plus common synonyms.
+        "toggle-sidebar" => alias_list(&["sidebar", "panel", "toggle sidebar", "enable sidebar", "disable sidebar"]),
         _ => Vec::new(),
     }
 }

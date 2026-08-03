@@ -37,7 +37,8 @@ Both tab bars share a drag group, so tabs reorder live within one bar and move b
 panel divider is also draggable. Dragging its junction with the outer divider resizes both axes at
 once; the junction ends at the sidebar gutter and does not extend onto pane borders. Tab
 order/assignment and both splitter sizes persist to `hyprmux.toml` and remain live-editable there.
-Disabling `split` temporarily presents the saved groups as one tab bar; it does not merge or erase
+Toggling the sidebar (`toggle-sidebar` / `b`) writes `visible` the same way. Disabling `split`
+temporarily presents the saved groups as one tab bar; it does not merge or erase
 the `panels` recipe, so enabling it again restores the previous groups.
 
 The built-in IDs are `agents`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine

@@ -163,6 +163,10 @@ pub fn persist_sidebar_split(split: bool) -> std::result::Result<PathBuf, String
     persist_sidebar_value("split", if split { "true" } else { "false" })
 }
 
+pub fn persist_sidebar_visible(visible: bool) -> std::result::Result<PathBuf, String> {
+    persist_sidebar_value("visible", if visible { "true" } else { "false" })
+}
+
 pub fn persist_sidebar_panels(
     panels: &[Vec<super::schema::SidebarTabId>],
 ) -> std::result::Result<PathBuf, String> {

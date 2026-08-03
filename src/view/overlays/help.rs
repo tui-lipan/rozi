@@ -261,6 +261,15 @@ mod palette_alias_tests {
     }
 
     #[test]
+    fn toggle_sidebar_has_sidebar_alias() {
+        let aliases = command_palette_aliases("toggle-sidebar");
+        assert!(
+            aliases.iter().any(|alias| alias.as_ref() == "sidebar"),
+            "toggle-sidebar must keep an exact sidebar alias for Hybrid ranking"
+        );
+    }
+
+    #[test]
     fn help_categories_put_appearance_after_profiles() {
         let categories = [
             "Appearance",

@@ -63,6 +63,64 @@ fn sidebar_shell_reserves_the_same_content_width_on_both_docks() {
 }
 
 #[test]
+fn live_dock_flip_keeps_configured_sidebar_width() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.width = 30;
+                state.config.sidebar.position = SidebarPosition::Left;
+                state.config.sidebar.tabs = vec![SidebarTab::Panes];
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
+            }
+            backend.render();
+            assert_eq!(backend.state().effective_sidebar_width(backend.viewport()), 30);
+            assert!(
+                backend
+                    .capture_frame()
+                    .to_fixed_grid_lines()
+                    .iter()
+                    .any(|line| line.chars().take(30).collect::<String>().contains("Panes"))
+            );
+
+            backend.state_mut().config.sidebar.position = SidebarPosition::Right;
+            backend.render();
+            assert_eq!(backend.state().effective_sidebar_width(backend.viewport()), 30);
+            assert_eq!(backend.state().content_viewport(backend.viewport()).w, 70);
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            assert!(
+                lines.iter().any(|line| line
+                    .chars()
+                    .skip(70)
+                    .collect::<String>()
+                    .contains("Panes")),
+                "sidebar must stay 30 cols on the right after a live dock flip; got:\n{}",
+                lines.join("\n")
+            );
+            assert!(
+                lines.iter().all(|line| !line
+                    .chars()
+                    .take(70)
+                    .collect::<String>()
+                    .contains("Panes")),
+                "pane area must not inherit the old sidebar column after a live dock flip"
+            );
+        })
+        .expect("spawn live dock flip thread")
+        .join()
+        .expect("live dock flip completes");
+}
+
+#[test]
 fn narrow_sidebar_yields_to_a_one_column_canvas() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

@@ -142,7 +142,10 @@ pub struct SidebarState {
     /// Requested sidebar width while its outer splitter is being dragged. This drives live layout
     /// and PTY resizing without persisting the preference until release.
     pub width_preview: Option<u16>,
-    outer_splitter_signature: Cell<Option<(u16, u16)>>,
+    /// `(viewport_w, sidebar_w, docked_right)` — dock side is part of the signature so a live
+    /// `position` flip re-applies explicit weights instead of keeping the previous index-ordered
+    /// sizes (which would swap the sidebar and pane column after the children swap).
+    outer_splitter_signature: Cell<Option<(u16, u16, bool)>>,
     outer_splitter_nonce: Cell<u32>,
     panel_splitter_signature: Cell<Option<(usize, u32)>>,
     panel_splitter_nonce: Cell<u32>,
@@ -311,10 +314,15 @@ impl SidebarState {
         self.panels.iter().map(|panel| panel.tabs.clone()).collect()
     }
 
-    pub fn outer_splitter_nonce(&self, viewport_width: u16, sidebar_width: u16) -> u32 {
-        if self.outer_splitter_signature.get() != Some((viewport_width, sidebar_width)) {
-            self.outer_splitter_signature
-                .set(Some((viewport_width, sidebar_width)));
+    pub fn outer_splitter_nonce(
+        &self,
+        viewport_width: u16,
+        sidebar_width: u16,
+        docked_right: bool,
+    ) -> u32 {
+        let signature = (viewport_width, sidebar_width, docked_right);
+        if self.outer_splitter_signature.get() != Some(signature) {
+            self.outer_splitter_signature.set(Some(signature));
             self.outer_splitter_nonce
                 .set(self.outer_splitter_nonce.get().wrapping_add(1));
         }
@@ -487,10 +495,11 @@ mod tests {
     #[test]
     fn invalidating_controlled_splitters_forces_the_next_weights() {
         let state = SidebarState::default();
-        let outer = state.outer_splitter_nonce(100, 32);
-        assert_eq!(state.outer_splitter_nonce(100, 32), outer);
+        let outer = state.outer_splitter_nonce(100, 32, false);
+        assert_eq!(state.outer_splitter_nonce(100, 32, false), outer);
+        assert_ne!(state.outer_splitter_nonce(100, 32, true), outer);
         state.invalidate_outer_splitter();
-        assert_ne!(state.outer_splitter_nonce(100, 32), outer);
+        assert_ne!(state.outer_splitter_nonce(100, 32, true), outer);
 
         let panels = state.panel_splitter_nonce(2, 0.5);
         assert_eq!(state.panel_splitter_nonce(2, 0.5), panels);

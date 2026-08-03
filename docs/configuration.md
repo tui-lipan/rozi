@@ -586,7 +586,7 @@ session sizing behavior.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `visible` | `false` | Initial visibility. `toggle-sidebar` changes only the current client until the next config reload; reload reapplies this value. |
+| `visible` | `false` | Initial visibility. `toggle-sidebar` updates and persists this the same way `toggle-sidebar-split` writes `split`. |
 | `width` | `32` | Requested width in columns, clamped to `16..=80`. Drag the divider or use the focused-sidebar resize keys to update and persist it. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
 | `tabs` | `["agents", "panes", "sessions"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
@@ -596,8 +596,9 @@ session sizing behavior.
 
 The tab strips are draggable. Reordering within a panel or moving a tab between two panels updates
 only the ID placement in `panels`; custom tab definitions remain in `tabs` and are never rewritten.
-The `toggle-sidebar-split` command persists only `split`, not a flattened replacement for `panels`.
-External edits to `tabs`, `panels`, `split`, `width`, or `split_ratio` apply on normal live reload.
+The `toggle-sidebar` and `toggle-sidebar-split` commands persist `visible` and `split` respectively;
+neither rewrites `panels`. External edits to `tabs`, `panels`, `split`, `visible`, `width`, or
+`split_ratio` apply on normal live reload.
 
 ```toml
 [sidebar]

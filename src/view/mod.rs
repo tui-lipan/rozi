@@ -484,11 +484,11 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         let divider_style = Style::new().fg(divider_bg.elevate(0.15)).bg(divider_bg);
         let mut splitter = Splitter::vertical()
             .split_id("hyprmux-sidebar-shell")
-            .weights_nonce(
-                ctx.state
-                    .sidebar
-                    .outer_splitter_nonce(viewport.w, sidebar_width),
-            )
+            .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
+                viewport.w,
+                sidebar_width,
+                ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right,
+            ))
             .min_size(1)
             .handle_symbol('│')
             .handle_style(divider_style)

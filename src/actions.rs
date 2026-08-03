@@ -253,7 +253,7 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::ToggleLayout
         | Action::MoveToWorkspace(_)
         | Action::RelocateWorkspace(_)
-        |         Action::TogglePaneSynchronization
+        | Action::TogglePaneSynchronization
         | Action::RenamePane
         | Action::RenameWorkspace
         | Action::KillWorkspace
@@ -507,10 +507,7 @@ fn execute_action_inner(
         Action::ToggleWorkbarGap => toggle_pane_flag!(ctx, workbar_gap),
         Action::ToggleWorkbarPosition => toggle_pane_flag!(ctx, workbar_at_bottom),
         Action::ToggleWorkbarPowerline => toggle_pane_flag!(ctx, workbar_powerline),
-        Action::ToggleSidebar => {
-            ctx.state.sidebar_visible = !ctx.state.sidebar_visible;
-            crate::update::sidebar::visibility_changed(ctx)
-        }
+        Action::ToggleSidebar => crate::update::sidebar::toggle_visible(ctx),
         Action::ToggleSidebarSplit => crate::update::sidebar::toggle_split(ctx),
         Action::FocusSidebar => crate::update::sidebar::focus_body(ctx),
         Action::SidebarNextTab => {
@@ -768,6 +765,7 @@ mod tests {
                     .dispatch(Msg::RunAction(Action::ToggleSidebar))
                     .expect("toggle controller sidebar");
                 assert!(backend.state().sidebar_visible);
+                assert!(backend.state().config.sidebar.visible);
                 assert_eq!(
                     backend
                         .state()

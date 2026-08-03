@@ -566,6 +566,20 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<HyprmuxApp>, down: bool
     update
 }
 
+pub(crate) fn toggle_visible(ctx: &mut Context<HyprmuxApp>) -> Update {
+    set_visible(ctx, !ctx.state.sidebar_visible);
+    visibility_changed(ctx)
+}
+
+fn set_visible(ctx: &mut Context<HyprmuxApp>, visible: bool) {
+    ctx.state.sidebar_visible = visible;
+    if ctx.state.config.sidebar.visible == visible {
+        return;
+    }
+    ctx.state.config.sidebar.visible = visible;
+    persist_sidebar_preference(ctx, crate::config::persist_sidebar_visible(visible));
+}
+
 pub(crate) fn toggle_split(ctx: &mut Context<HyprmuxApp>) -> Update {
     let split = !ctx.state.config.sidebar.split;
     set_split_enabled(ctx, split);

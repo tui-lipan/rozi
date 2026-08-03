@@ -1098,7 +1098,15 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleWorkbarPowerline => {
             enable_disable_label("workbar powerline", state.config.pane.workbar_powerline)
         }
-        Action::ToggleSidebar => enable_disable_label("sidebar", state.sidebar_visible),
+        // Lead with "Sidebar" so Hybrid ranks query "sidebar" as a label prefix above other
+        // commands that only contain the word mid-label ("Focus/Next/Previous sidebar …").
+        Action::ToggleSidebar => {
+            if state.sidebar_visible {
+                "Sidebar · disable".to_string()
+            } else {
+                "Sidebar · enable".to_string()
+            }
+        }
         Action::ToggleSidebarSplit => {
             enable_disable_label("sidebar split", state.config.sidebar.split)
         }

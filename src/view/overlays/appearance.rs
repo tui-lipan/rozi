@@ -1,116 +1,137 @@
 pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let pane = &ctx.state.config.pane;
-    // Dependent rows (Titlebar cap style, Workbar gap/position) always stay in the list; when their
+    // Dependent rows (Titlebar Cap style, Workbar Gap/Position) always stay in the list; when their
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
-    // `render_item` below) rather than disappearing. Grouped so each control sits next to the
-    // toggle it depends on.
-    let rows = vec![
-        ("Theme", current_theme_label(ctx), AppearanceAction::Theme),
+    // `render_item` below) rather than disappearing. Category headers mirror the Commands picker;
+    // short labels rely on group context (and aliases for search).
+    let row = |label: &str, status: String, action: AppearanceAction| {
+        SearchEntry::Item(
+            SearchItem::new(label, (action, status)).aliases(appearance_palette_aliases(action)),
+        )
+    };
+    let entries = search_entries_with_groups([
         (
-            "Terminal padding",
-            padding_summary(pane.padding),
-            AppearanceAction::EditPadding,
+            "General",
+            vec![
+                row("Theme", current_theme_label(ctx), AppearanceAction::Theme),
+                row(
+                    "Terminal padding",
+                    padding_summary(pane.padding),
+                    AppearanceAction::EditPadding,
+                ),
+                row(
+                    "Animations",
+                    enabled_status(ctx.state.config.animations.enabled),
+                    AppearanceAction::ToggleAnimations,
+                ),
+                row(
+                    "Background follows terminal",
+                    enabled_status(pane.background_follows_terminal),
+                    AppearanceAction::ToggleBackgroundFollowsTerminal,
+                ),
+            ],
         ),
         (
             "Titlebar",
-            enabled_status(pane.show_titles),
-            AppearanceAction::ToggleTitles,
-        ),
-        (
-            "Titlebar layout",
-            pane.titlebar.label().to_string(),
-            AppearanceAction::CycleTitlebar,
-        ),
-        (
-            "Titlebar cap style",
-            cap_style_label(pane.title_style).to_string(),
-            AppearanceAction::CycleTitleStyle,
+            vec![
+                row(
+                    "Show titlebar",
+                    enabled_status(pane.show_titles),
+                    AppearanceAction::ToggleTitles,
+                ),
+                row(
+                    "Layout",
+                    pane.titlebar.label().to_string(),
+                    AppearanceAction::CycleTitlebar,
+                ),
+                row(
+                    "Cap style",
+                    cap_style_label(pane.title_style).to_string(),
+                    AppearanceAction::CycleTitleStyle,
+                ),
+            ],
         ),
         (
             "Workbar",
-            enabled_status(pane.show_workbar),
-            AppearanceAction::ToggleWorkbar,
+            vec![
+                row(
+                    "Show workbar",
+                    enabled_status(pane.show_workbar),
+                    AppearanceAction::ToggleWorkbar,
+                ),
+                row(
+                    "Position",
+                    if pane.workbar_at_bottom {
+                        "Bottom"
+                    } else {
+                        "Top"
+                    }
+                    .to_string(),
+                    AppearanceAction::ToggleWorkbarPosition,
+                ),
+                row(
+                    "Gap",
+                    enabled_status(pane.workbar_gap),
+                    AppearanceAction::ToggleWorkbarGap,
+                ),
+                row(
+                    "Style",
+                    cap_style_label(pane.workbar_style).to_string(),
+                    AppearanceAction::CycleWorkbarStyle,
+                ),
+                row(
+                    "Badge style",
+                    cap_style_label(pane.workbar_badge_style).to_string(),
+                    AppearanceAction::CycleWorkbarBadgeStyle,
+                ),
+                row(
+                    "Tab style",
+                    cap_style_label(pane.workbar_tab_style).to_string(),
+                    AppearanceAction::CycleWorkbarTabStyle,
+                ),
+                row(
+                    "Powerline",
+                    enabled_status(pane.workbar_powerline),
+                    AppearanceAction::ToggleWorkbarPowerline,
+                ),
+            ],
         ),
         (
-            "Workbar gap",
-            enabled_status(pane.workbar_gap),
-            AppearanceAction::ToggleWorkbarGap,
+            "Focused pane",
+            vec![
+                row(
+                    "Background",
+                    enabled_status(pane.highlight_focused_background),
+                    AppearanceAction::ToggleHighlightFocusedBackground,
+                ),
+                row(
+                    "Border",
+                    enabled_status(pane.highlight_focused_border),
+                    AppearanceAction::ToggleHighlightFocusedBorder,
+                ),
+                row(
+                    "Titlebar",
+                    enabled_status(pane.highlight_focused_titlebar),
+                    AppearanceAction::ToggleHighlightFocusedTitlebar,
+                ),
+            ],
         ),
         (
-            "Workbar position",
-            if pane.workbar_at_bottom {
-                "Bottom"
-            } else {
-                "Top"
-            }
-            .to_string(),
-            AppearanceAction::ToggleWorkbarPosition,
+            "Borders",
+            vec![
+                row(
+                    "Mode",
+                    pane.border_mode.label().to_string(),
+                    AppearanceAction::CycleBorderMode,
+                ),
+                row(
+                    "Style",
+                    pane.border_style.label().to_string(),
+                    AppearanceAction::CycleBorderStyle,
+                ),
+            ],
         ),
-        (
-            "Workbar style",
-            cap_style_label(pane.workbar_style).to_string(),
-            AppearanceAction::CycleWorkbarStyle,
-        ),
-        (
-            "Workbar badge style",
-            cap_style_label(pane.workbar_badge_style).to_string(),
-            AppearanceAction::CycleWorkbarBadgeStyle,
-        ),
-        (
-            "Workbar powerline",
-            enabled_status(pane.workbar_powerline),
-            AppearanceAction::ToggleWorkbarPowerline,
-        ),
-        (
-            "Workbar tab style",
-            cap_style_label(pane.workbar_tab_style).to_string(),
-            AppearanceAction::CycleWorkbarTabStyle,
-        ),
-        (
-            "Animations",
-            enabled_status(ctx.state.config.animations.enabled),
-            AppearanceAction::ToggleAnimations,
-        ),
-        (
-            "Focused pane background",
-            enabled_status(pane.highlight_focused_background),
-            AppearanceAction::ToggleHighlightFocusedBackground,
-        ),
-        (
-            "Focused pane border",
-            enabled_status(pane.highlight_focused_border),
-            AppearanceAction::ToggleHighlightFocusedBorder,
-        ),
-        (
-            "Focused pane titlebar",
-            enabled_status(pane.highlight_focused_titlebar),
-            AppearanceAction::ToggleHighlightFocusedTitlebar,
-        ),
-        (
-            "Border mode",
-            pane.border_mode.label().to_string(),
-            AppearanceAction::CycleBorderMode,
-        ),
-        (
-            "Border style",
-            pane.border_style.label().to_string(),
-            AppearanceAction::CycleBorderStyle,
-        ),
-        (
-            "Background follows terminal",
-            enabled_status(pane.background_follows_terminal),
-            AppearanceAction::ToggleBackgroundFollowsTerminal,
-        ),
-    ];
-    let entries: Vec<_> = rows
-        .into_iter()
-        .map(|(label, status, action)| {
-            SearchEntry::Item(
-                SearchItem::new(label, (action, status))
-                    .aliases(appearance_palette_aliases(action)),
-            )
-        })
-        .collect();
+    ]);
 
     let pane_flags = ctx.state.config.pane;
     let item_style = fg_only(&ctx.state.theme.primary);
@@ -119,6 +140,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
     let palette = shared_search_palette::<(AppearanceAction, String)>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search appearance…")
+        .preserve_groups(true)
         .render_item(Arc::new(
             move |item: &SearchItem<(AppearanceAction, String)>, _highlight| {
                 let disabled_reason = item.value.0.disabled_reason(&pane_flags);

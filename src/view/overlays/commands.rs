@@ -28,11 +28,7 @@ pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         }
     }
 
-    let mut entries: Vec<SearchEntry<Callback<()>>> = Vec::new();
-    for (category, items) in groups {
-        entries.push(SearchEntry::header(category));
-        entries.extend(items);
-    }
+    let entries = search_entries_with_groups(groups);
     let palette = action_search_palette(ctx, entries, "Search commands…");
 
     action_palette(
@@ -103,126 +99,88 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
 
 fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
     match action {
-        AppearanceAction::Theme => alias_list(&[
-            "theme", "themes", "color", "colors", "colour", "colours", "scheme",
-        ]),
-        AppearanceAction::EditPadding => alias_list(&[
-            "padding", "margin", "margins", "inset", "insets", "terminal", "pane",
-        ]),
+        AppearanceAction::Theme => alias_list(&["themes", "color scheme", "colour scheme"]),
+        AppearanceAction::EditPadding => {
+            alias_list(&["pane padding", "terminal insets", "pane margins"])
+        }
         AppearanceAction::ToggleTitles => alias_list(&[
-            "titlebar",
-            "titlebars",
-            "title",
-            "titles",
             "title bar",
             "show titles",
+            "toggle titlebar",
         ]),
         AppearanceAction::CycleTitleStyle => alias_list(&[
             "titlebar cap style",
-            "title cap style",
             "titlebar caps",
-            "title caps",
-            "pill",
-            "round",
-            "arrow",
-            "half",
-            "padded",
-            "cap style",
+            "titlebar style",
+            "titlebar pill",
+            "titlebar arrow",
         ]),
         AppearanceAction::CycleTitlebar => alias_list(&[
             "titlebar layout",
             "titlebar mode",
-            "title layout",
-            // Qualify mode names so a bare "border"/"bar" query prefers the real border/workbar
-            // rows under Hybrid (exact alias otherwise outranks their label substrings).
             "bar titlebar",
             "border titlebar",
-            "titlebar border",
-            "frame titlebar",
             "integrated titlebar",
-            "compact titlebar",
         ]),
-        AppearanceAction::ToggleWorkbar => {
-            alias_list(&["workbar", "top bar", "status bar", "bar", "show workbar"])
-        }
+        AppearanceAction::ToggleWorkbar => alias_list(&["show workbar", "toggle workbar"]),
         AppearanceAction::ToggleWorkbarGap => {
-            alias_list(&["workbar gap", "gap", "spacing", "gutter", "separator"])
+            alias_list(&["workbar gap", "workbar spacing", "workbar separator"])
         }
         AppearanceAction::ToggleWorkbarPosition => alias_list(&[
             "workbar position",
-            "position",
-            "placement",
-            "top",
-            "bottom",
-            "relocate",
+            "workbar placement",
+            "workbar top",
+            "workbar bottom",
         ]),
         AppearanceAction::CycleWorkbarStyle => {
-            alias_list(&["workbar style", "workbar caps", "bar style", "bar caps"])
+            alias_list(&["workbar style", "workbar caps", "workbar pill"])
         }
         AppearanceAction::CycleWorkbarBadgeStyle => alias_list(&[
-            "badge",
-            "badges",
-            "badge style",
-            "workbar badge",
-            "chip",
-            "chips",
-            "mode chip",
-            "powerline badge",
+            "workbar badge style",
+            "workbar badges",
+            "workbar chips",
         ]),
         AppearanceAction::ToggleWorkbarPowerline => {
-            alias_list(&["powerline", "chain", "chained", "interlock", "badge chain"])
+            alias_list(&["workbar powerline", "workbar badge chain"])
         }
-        AppearanceAction::CycleWorkbarTabStyle => {
-            alias_list(&["tab", "tabs", "workspace tabs", "tab style", "workbar tabs"])
-        }
-        AppearanceAction::ToggleAnimations => alias_list(&[
-            "animation",
-            "animations",
-            "motion",
-            "transitions",
-            "animate",
+        AppearanceAction::CycleWorkbarTabStyle => alias_list(&[
+            "workbar tab style",
+            "workspace tab style",
+            "workbar tabs",
         ]),
+        AppearanceAction::ToggleAnimations => {
+            alias_list(&["animation effects", "motion effects", "transitions"])
+        }
         AppearanceAction::ToggleHighlightFocusedBackground => alias_list(&[
-            "focused background",
-            "focus background",
-            "highlight background",
-            "active background",
-            "focused pane",
+            "focused pane background",
+            "active pane background",
         ]),
         AppearanceAction::ToggleHighlightFocusedBorder => alias_list(&[
-            "focused border",
-            "focus border",
-            "highlight border",
-            "active border",
+            "focused pane border",
+            "active pane border",
         ]),
         AppearanceAction::ToggleHighlightFocusedTitlebar => alias_list(&[
-            "focused titlebar",
-            "focus titlebar",
-            "highlight titlebar",
-            "active titlebar",
+            "focused pane titlebar",
+            "active pane titlebar",
         ]),
         AppearanceAction::CycleBorderMode => alias_list(&[
             "border mode",
             "border merge",
             "merge borders",
-            "merging",
-            "seam",
-            "border seam",
-            "borderless",
-            "no borders",
-            "dividers",
-            "separators",
+            "borderless panes",
+            "pane dividers",
         ]),
         AppearanceAction::ToggleBackgroundFollowsTerminal => alias_list(&[
             "background follows terminal",
             "terminal background",
             "match terminal",
-            "transparent background",
-            "backdrop",
         ]),
-        AppearanceAction::CycleBorderStyle => {
-            alias_list(&["border style", "rounded", "square", "border caps"])
-        }
+        AppearanceAction::CycleBorderStyle => alias_list(&[
+            "border style",
+            "rounded borders",
+            "square borders",
+            "border glyphs",
+        ]),
     }
 }
 

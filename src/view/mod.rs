@@ -779,6 +779,19 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     }
 }
 
+/// Flatten `(category, items)` buckets into a header-prefixed entry list for `SearchPalette`.
+/// Category headers only show for an empty query when the palette uses `preserve_groups(false)`.
+pub(crate) fn search_entries_with_groups<T>(
+    groups: impl IntoIterator<Item = (impl Into<std::sync::Arc<str>>, Vec<SearchEntry<T>>)>,
+) -> Vec<SearchEntry<T>> {
+    let mut entries = Vec::new();
+    for (category, items) in groups {
+        entries.push(SearchEntry::header(category));
+        entries.extend(items);
+    }
+    entries
+}
+
 fn search_palette_active_item_style() -> Style {
     Style::new()
         .fg(Color::Yellow)

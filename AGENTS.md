@@ -162,6 +162,9 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
 - Lifecycle/event/data modules use plain names, such as `pane_lifecycle`, `pty_events`, and
   `profiles`.
 - Keep `input.rs` as the source of truth for command/action metadata used by help and palettes.
+- Do not toast successful state changes that are already visible on screen. Lossless config
+  normalization is also silent; reserve toasts for failures, rejections, destructive confirmations,
+  and useful off-screen results. See `docs/configuration.md#in-app-toasts`.
 - Overlays and modals present **structured data, not prose**. A dialog is a list of rows, badges,
   and chrome labels; it is not a place for explanatory sentences. Concretely:
   - No sentence-shaped body lines (`You: razuer #2077 · controller`, `Sides differ; applying writes

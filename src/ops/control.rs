@@ -28,10 +28,10 @@ struct PaneInfo {
 }
 
 #[derive(Serialize)]
-struct NewPaneAccepted {
-    id: PaneId,
-    accepted: bool,
-    pty_ready: bool,
+pub(crate) struct NewPaneAccepted {
+    pub id: PaneId,
+    pub accepted: bool,
+    pub pty_ready: bool,
 }
 
 #[derive(Serialize)]
@@ -86,22 +86,39 @@ pub(crate) fn handle_control_request(
             height,
             title,
             keep_open,
-        } => match crate::popup::open(
-            ctx,
-            command,
-            cwd,
-            width,
-            height,
-            title,
-            keep_open.unwrap_or(true),
-            Vec::new(),
-        ) {
-            Ok(update) => {
-                let _ = envelope.reply.send(ControlResponse::empty());
+        } => {
+            let keep_open = keep_open.unwrap_or(true);
+            if let Some(update) = crate::ops::session::ensure_session_for_pty(
+                ctx,
+                crate::state::PendingSessionAction::Popup {
+                    command: command.clone(),
+                    cwd: cwd.clone(),
+                    width,
+                    height,
+                    title: title.clone(),
+                    keep_open,
+                },
+            ) {
+                ctx.state.pending_control_reply = Some(envelope.reply);
                 return update;
             }
-            Err(error) => ControlResponse::error(error),
-        },
+            match crate::popup::open(
+                ctx,
+                command,
+                cwd,
+                width,
+                height,
+                title,
+                keep_open,
+                Vec::new(),
+            ) {
+                Ok(update) => {
+                    let _ = envelope.reply.send(ControlResponse::empty());
+                    return update;
+                }
+                Err(error) => ControlResponse::error(error),
+            }
+        }
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
@@ -418,6 +435,19 @@ fn new_pane(
         let _ = reply.send(ControlResponse::error("not controller"));
         return Update::full();
     }
+    if let Some(update) = crate::ops::session::ensure_session_for_pty(
+        ctx,
+        crate::state::PendingSessionAction::NewPane {
+            source,
+            command: command.clone(),
+            cwd: cwd.clone(),
+            title: title.clone(),
+            keep_open,
+        },
+    ) {
+        ctx.state.pending_control_reply = Some(reply);
+        return update;
+    }
     let source_workspace = match workspace_for_source(&ctx.state, source) {
         Ok(index) => index,
         Err(message) => {
@@ -425,6 +455,43 @@ fn new_pane(
             return Update::full();
         }
     };
+    let (id, update) = spawn_new_pane(ctx, source_workspace, source, command, cwd, title, keep_open);
+    let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
+        id,
+        accepted: true,
+        pty_ready: false,
+    }));
+    update
+}
+
+/// Spawn a pane once a session client is available (shared by the live control path and the
+/// deferred launcher replay).
+pub(crate) fn new_pane_after_session(
+    ctx: &mut Context<HyprmuxApp>,
+    source: Option<PaneId>,
+    command: Option<String>,
+    cwd: Option<String>,
+    title: Option<String>,
+    keep_open: bool,
+) -> (PaneId, Update) {
+    if !ctx.state.is_controller() {
+        return (0, Update::full());
+    }
+    let Ok(source_workspace) = workspace_for_source(&ctx.state, source) else {
+        return (0, Update::full());
+    };
+    spawn_new_pane(ctx, source_workspace, source, command, cwd, title, keep_open)
+}
+
+fn spawn_new_pane(
+    ctx: &mut Context<HyprmuxApp>,
+    source_workspace: usize,
+    source: Option<PaneId>,
+    command: Option<String>,
+    cwd: Option<String>,
+    title: Option<String>,
+    keep_open: bool,
+) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
         command,
         cwd,
@@ -434,13 +501,7 @@ fn new_pane(
     if let Some(title) = title {
         identity.set_custom_title(title);
     }
-    let (id, update) = spawn_interactive_pane(ctx, source_workspace, source, identity);
-    let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
-        id,
-        accepted: true,
-        pty_ready: false,
-    }));
-    update
+    spawn_interactive_pane(ctx, source_workspace, source, identity)
 }
 
 fn workspace_for_source(

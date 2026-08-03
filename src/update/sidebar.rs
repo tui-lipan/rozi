@@ -1540,6 +1540,24 @@ mod tests {
             .expect("sidebar test completes");
     }
 
+    /// Pretend an attach is already in flight so PTY-creating sidebar actions queue into
+    /// `pending_spawns` instead of starting a real ephemeral (see `needs_session_for_pty`).
+    fn hold_attach_open(backend: &mut TestBackend<HyprmuxApp>) {
+        backend.state_mut().current_mut().pending_session_attach =
+            Some(crate::state::PendingSessionAttach {
+                epoch: backend.state().runtime_epoch,
+                name: "test".to_string(),
+                client: None,
+                autostart: false,
+                read_only: false,
+                reconnect: false,
+                remote_host: None,
+                intent: crate::state::AttachIntent::Plain,
+                left: None,
+                parked_epoch: None,
+            });
+    }
+
     /// A scratch directory scoped to this process and test name, matching how the rest of the
     /// suite isolates filesystem fixtures. Removed first so a previous crashed run cannot leak in.
     struct ScratchDir(std::path::PathBuf);
@@ -1736,6 +1754,7 @@ mod tests {
             }];
             backend.state_mut().sidebar.config_epoch = 1;
             backend.state_mut().current_mut().pending_spawns.clear();
+            hold_attach_open(&mut backend);
 
             let hostile = "/repo/; rm -rf ~/.rs";
             backend
@@ -2507,9 +2526,9 @@ mod tests {
         );
     }
 
-    /// Build a one-entry launcher tab and activate it, returning the spawn request it queued. With
-    /// no session client attached the request lands in `pending_spawns` instead of going out on the
-    /// wire, which is exactly the payload worth asserting on.
+    /// Build a one-entry launcher tab and activate it, returning the spawn request it queued. An
+    /// in-flight attach (`hold_attach_open`) keeps the request in `pending_spawns` so the test can
+    /// assert the payload without starting a real ephemeral session.
     fn activate_launcher(
         action: UserCommandAction,
         cwd: Option<&str>,
@@ -2534,6 +2553,7 @@ mod tests {
                 .cwd = Some(cwd.to_string());
         }
         backend.state_mut().current_mut().pending_spawns.clear();
+        hold_attach_open(&mut backend);
         backend
             .dispatch(crate::Msg::SidebarLauncherActivate {
                 config_epoch: 1,

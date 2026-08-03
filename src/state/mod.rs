@@ -146,6 +146,12 @@ pub struct State {
     /// choosing it after dismissing the picker still lands on the layout the launch intended.
     /// `None` once consumed, and for a launcher reached by killing a session rather than at launch.
     pub launcher_seed: Option<Attachment>,
+    /// PTY action waiting for an ephemeral session attach (open-config, user `run`/`popup`,
+    /// scratchpad, control `new-pane`). Cleared on attach success or failure.
+    pub pending_session_action: Option<PendingSessionAction>,
+    /// Control-socket reply held while [`Self::pending_session_action`] waits for attach, so
+    /// `new-pane` / `popup` can answer with the real pane id after the session is up.
+    pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
     /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
@@ -269,6 +275,8 @@ impl State {
             attachment,
             background: HashMap::new(),
             launcher_seed: None,
+            pending_session_action: None,
+            pending_control_reply: None,
             hosts: HostRegistry::default(),
             host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,
@@ -455,6 +463,13 @@ impl State {
                 .workspaces
                 .iter()
                 .any(|workspace| !workspace.panes.is_empty())
+    }
+
+    /// Whether a new PTY spawn would have nowhere to run: no live client and no attach in flight.
+    /// Mid-connect may still queue into `pending_spawns` (flushed on attach); this is the resting
+    /// no-session case where those spawns would hang forever.
+    pub fn needs_session_for_pty(&self) -> bool {
+        self.current().session_client.is_none() && self.current().pending_session_attach.is_none()
     }
 
     /// Whether a pane's contents reach the screen on the next frame.

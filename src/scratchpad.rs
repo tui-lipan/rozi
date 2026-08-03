@@ -80,6 +80,15 @@ pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.animation = GeometryAnimation::TileFloat;
 
     if ctx.state.scratch.is_none() {
+        if let Some(update) = crate::ops::session::ensure_session_for_pty(
+            ctx,
+            crate::state::PendingSessionAction::ToggleScratchpad,
+        ) {
+            // Not visible yet — the deferred open will show it after attach.
+            ctx.state.scratch_visible = false;
+            ctx.state.scratch_return_focus = None;
+            return update;
+        }
         let bounds = ctx
             .state
             .canvas_bounds_from_terminal_viewport(ctx.viewport());

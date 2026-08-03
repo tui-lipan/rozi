@@ -187,7 +187,6 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Opens `hyprmux.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
 /// hand-editing the config doesn't require remembering or typing its path.
 pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
-    let path = crate::config::config_path();
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
         crate::pty_events::notify_error(
@@ -197,6 +196,13 @@ pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
         );
         return Update::none();
     }
+    if let Some(update) = crate::ops::session::ensure_session_for_pty(
+        ctx,
+        crate::state::PendingSessionAction::OpenConfigFile,
+    ) {
+        return update;
+    }
+    let path = crate::config::config_path();
     let command = format!("{editor} {}", quote_shell_arg(&path.to_string_lossy()));
 
     let identity = PaneIdentity {

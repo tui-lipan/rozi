@@ -39,7 +39,8 @@ save again. Changes hyprmux persists itself (theme selection, appearance toggles
 profile) are already applied and don't trigger a reload.
 
 The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
-(falling back to `$VISUAL`, then `vi`) in a new pane. It is an ordinary action, so it also
+(falling back to `$VISUAL`, then `vi`) in a new pane. From the sessionless launcher it starts an
+ephemeral session first so the editor has a live PTY. It is an ordinary action, so it also
 works as `hyprmux run-action open-config` over the control socket (see `docs/control.md`).
 
 ## Full example
@@ -435,6 +436,8 @@ appears only when something happened that you cannot already see:
   losing layout control, and locking input all show in the workbar badges (`󰛤 name`,
   `CTRL`/`FOLLOW`/`READ ONLY`, `SYNC`). Deleting a profile or killing a session from a list removes
   the row you acted on. Applying a profile rebuilds the panes.
+- **Lossless normalization is silent.** If hyprmux can safely make a config value usable without
+  dropping data, the resulting visible state is the feedback; it does not produce a warning toast.
 - **Off-screen results are toasted.** Where a profile was written, what log file a pane is recording
   to, what a copy put on the clipboard, what a detach left running, and every failure.
 - **Rejections say why.** An action that cannot run (not attached, read-only, nothing to copy, no

@@ -90,6 +90,20 @@ pub(crate) fn execute_user_command_action_with_env(
     env: Vec<(String, String)>,
 ) -> Update {
     match action {
+        UserCommandAction::Run { .. } | UserCommandAction::Popup { .. } => {
+            if let Some(update) = crate::ops::session::ensure_session_for_pty(
+                ctx,
+                crate::state::PendingSessionAction::UserCommand {
+                    action: action.clone(),
+                    env: env.clone(),
+                },
+            ) {
+                return update;
+            }
+        }
+        UserCommandAction::Send(_) => {}
+    }
+    match action {
         UserCommandAction::Run { command, keep_open } => {
             let identity = PaneIdentity {
                 command: Some(command.clone()),
@@ -239,10 +253,12 @@ pub(crate) fn is_layout_mutating(state: &crate::state::State, action: Action) ->
         | Action::ToggleLayout
         | Action::MoveToWorkspace(_)
         | Action::RelocateWorkspace(_)
-        | Action::TogglePaneSynchronization
+        |         Action::TogglePaneSynchronization
         | Action::RenamePane
         | Action::RenameWorkspace
-        | Action::KillWorkspace => true,
+        | Action::KillWorkspace
+        | Action::OpenConfigFile
+        | Action::EditScrollback => true,
         // Showing can create the server-owned scratch PTY; hiding is a local overlay change.
         Action::ToggleScratchpad => !state.scratch_visible,
         // A user `Run` command spawns a pane (structural); `Send` only writes to the PTY (local).
@@ -300,10 +316,11 @@ fn execute_action_inner(
         return Update::full();
     }
     match action {
-        // In the launcher there is no session to spawn into, and queueing the spawn against a
-        // client that will never arrive would look like a hang. Asking for a shell there is the
-        // explicit "start a new session" the launcher advertises.
-        Action::Spawn if ctx.state.is_launcher() => {
+        // In the launcher (or any no-client resting state) there is no session to spawn into, and
+        // queueing the spawn against a client that will never arrive would look like a hang. Asking
+        // for a shell there is the explicit "start a new session" the launcher advertises.
+        Action::Spawn if crate::ops::session::needs_session_for_pty(&ctx.state) => {
+            crate::ops::session::clear_pending_session_action(ctx, None);
             crate::ops::session::attach_startup_ephemeral(ctx)
         }
         Action::Spawn => spawn_pane(ctx),

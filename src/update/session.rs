@@ -77,6 +77,7 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
     let was_reconnect = pending.reconnect;
     let parked_epoch = pending.parked_epoch;
     ctx.state.current_mut().pending_session_attach = None;
+    crate::ops::session::clear_pending_session_action(ctx, Some(&message));
     ctx.state.current_mut().connection = if was_remote {
         crate::state::ConnectionState::Unreachable
     } else {
@@ -207,7 +208,7 @@ pub(super) fn attached(
     let had_panes = !panes.is_empty();
 
     let populated = layout.is_some() || had_panes;
-    let update = if let Some(layout) = layout {
+    let mut update = if let Some(layout) = layout {
         // Shared attach: seed the whole window-manager structure from the authoritative layout via
         // the one reconciler code path, then bind server backends and sizes from the pane metadata
         // before the replay seed frames arrive.
@@ -287,6 +288,17 @@ pub(super) fn attached(
     // before this client settles in as a follower. Raised last so the attach is fully installed —
     // cancelling from the prompt leaves the session the same way switching away from it would.
     crate::ops::session::prompt_follow_if_occupied(ctx);
+    if ctx.state.pending_session_action.is_some() {
+        let deferred = crate::ops::session::run_pending_session_action(ctx);
+        // Empty-seed deferred starts leave `update` as a command-less full refresh; prefer the
+        // deferred spawn's timers when present.
+        if deferred.command.is_some() {
+            return deferred;
+        }
+        if deferred.dirty {
+            update = deferred;
+        }
+    }
     update
 }
 

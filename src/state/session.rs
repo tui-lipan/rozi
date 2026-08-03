@@ -3,7 +3,39 @@ use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalColorPalette;
 
+use crate::config::UserCommandAction;
+
 use super::PaneId;
+
+/// A PTY-creating action deferred until an ephemeral session finishes attaching.
+///
+/// The launcher (and any other no-client resting state) has nowhere to run a pane. Callers stash
+/// one of these, start [`crate::ops::session::attach_startup_ephemeral`], and
+/// [`crate::ops::session::run_pending_session_action`] replays it from `SessionAttached`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PendingSessionAction {
+    OpenConfigFile,
+    ToggleScratchpad,
+    UserCommand {
+        action: UserCommandAction,
+        env: Vec<(String, String)>,
+    },
+    NewPane {
+        source: Option<PaneId>,
+        command: Option<String>,
+        cwd: Option<String>,
+        title: Option<String>,
+        keep_open: bool,
+    },
+    Popup {
+        command: String,
+        cwd: Option<String>,
+        width: Option<f32>,
+        height: Option<f32>,
+        title: Option<String>,
+        keep_open: bool,
+    },
+}
 
 pub struct PendingSessionAttach {
     pub epoch: u64,

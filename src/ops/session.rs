@@ -1266,6 +1266,7 @@ fn enter_sessionless(ctx: &mut Context<HyprmuxApp>) {
     crate::scratchpad::close_for_session_switch(ctx);
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
+    crate::ops::session::clear_pending_session_action(ctx, None);
     // Leave the session picker alone: kill-from-picker refreshes it in place, and
     // `offer_session_picker_or_launcher` opens or closes it deliberately.
     ctx.state.sidebar.invalidate_sessions();
@@ -1503,19 +1504,30 @@ pub(crate) fn activate_discovered_session(
 /// shell from the launcher, so the layout the launch intended is still what they get.
 ///
 /// A launcher reached by killing a session has no seed; it falls back to a single default pane.
+/// When a [`PendingSessionAction`] is waiting, the seed is empty so the deferred action creates the
+/// only pane after attach — avoiding a blank local pane and a leftover shell.
 pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
-    if ctx.state.is_launcher() {
-        let seed = ctx
-            .state
-            .launcher_seed
-            .take()
-            .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config));
+    if ctx.state.needs_session_for_pty() {
+        let seed = if ctx.state.pending_session_action.is_some() {
+            let mut empty = crate::state::Attachment::new();
+            empty.auto_created = true;
+            empty
+        } else if ctx.state.is_launcher() {
+            ctx.state
+                .launcher_seed
+                .take()
+                .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config))
+        } else {
+            // Stuck no-client panes (e.g. a pre-fix blank spawn): replace with a working shell.
+            crate::state::fresh_default_attachment(&ctx.state.config)
+        };
         let epoch = ctx.state.runtime_epoch;
         ctx.state.attachment = seed;
         ctx.state.current_mut().epoch = epoch;
+        ctx.state.current_mut().auto_created = true;
         finish_session_install(ctx);
     }
     // This is a *local* fallback; clear any remote target left over from a failed `--remote` attach
@@ -1550,6 +1562,106 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
             crate::session::bootstrap::attach_session_client(epoch, name, true, false, link)
         });
     }))
+}
+
+/// True when a PTY spawn would hang with no client and no attach in flight.
+pub(crate) fn needs_session_for_pty(state: &crate::state::State) -> bool {
+    state.needs_session_for_pty()
+}
+
+/// If no session can run a PTY yet, stash `action` and start an ephemeral attach. Returns
+/// `Some(update)` when the caller must stop — the action runs from [`run_pending_session_action`]
+/// after `SessionAttached`. Returns `None` when the caller should proceed immediately.
+pub(crate) fn ensure_session_for_pty(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::PendingSessionAction,
+) -> Option<Update> {
+    if !needs_session_for_pty(&ctx.state) {
+        return None;
+    }
+    ctx.state.pending_session_action = Some(action);
+    Some(attach_startup_ephemeral(ctx))
+}
+
+/// Drop a deferred PTY action (and any held control reply) without running it — attach failed, or
+/// the user started a plain shell instead.
+pub(crate) fn clear_pending_session_action(ctx: &mut Context<HyprmuxApp>, error: Option<&str>) {
+    ctx.state.pending_session_action = None;
+    if let Some(reply) = ctx.state.pending_control_reply.take() {
+        let _ = reply.send(match error {
+            Some(message) => crate::control::ControlResponse::error(message),
+            None => crate::control::ControlResponse::error("session attach cancelled"),
+        });
+    }
+}
+
+/// Replay a deferred PTY action now that a session client is installed.
+pub(crate) fn run_pending_session_action(ctx: &mut Context<HyprmuxApp>) -> Update {
+    let Some(action) = ctx.state.pending_session_action.take() else {
+        return Update::none();
+    };
+    match action {
+        crate::state::PendingSessionAction::OpenConfigFile => {
+            crate::ops::config::open_config_file(ctx)
+        }
+        crate::state::PendingSessionAction::ToggleScratchpad => crate::scratchpad::toggle(ctx),
+        crate::state::PendingSessionAction::UserCommand { action, env } => {
+            crate::actions::execute_user_command_action_with_env(ctx, &action, env)
+        }
+        crate::state::PendingSessionAction::NewPane {
+            source,
+            command,
+            cwd,
+            title,
+            keep_open,
+        } => {
+            let (id, update) = crate::ops::control::new_pane_after_session(
+                ctx,
+                source,
+                command,
+                cwd,
+                title,
+                keep_open,
+            );
+            if let Some(reply) = ctx.state.pending_control_reply.take() {
+                let _ = reply.send(crate::control::ControlResponse::ok(
+                    crate::ops::control::NewPaneAccepted {
+                        id,
+                        accepted: true,
+                        pty_ready: false,
+                    },
+                ));
+            }
+            update
+        }
+        crate::state::PendingSessionAction::Popup {
+            command,
+            cwd,
+            width,
+            height,
+            title,
+            keep_open,
+        } => {
+            let result = crate::popup::open(
+                ctx, command, cwd, width, height, title, keep_open, Vec::new(),
+            );
+            match result {
+                Ok(update) => {
+                    if let Some(reply) = ctx.state.pending_control_reply.take() {
+                        let _ = reply.send(crate::control::ControlResponse::empty());
+                    }
+                    update
+                }
+                Err(error) => {
+                    if let Some(reply) = ctx.state.pending_control_reply.take() {
+                        let _ = reply.send(crate::control::ControlResponse::error(error.clone()));
+                    }
+                    crate::pty_events::notify_error(ctx, "Popup failed", error);
+                    Update::full()
+                }
+            }
+        }
+    }
 }
 
 /// Close the session picker. With a session in the foreground this just returns focus to the

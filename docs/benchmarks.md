@@ -173,6 +173,10 @@ trigger overhead stay outside the reported value: Criterion's `iter_custom` sums
 The matrix uses ten flat samples with a short warm-up and measurement window to keep the 16-pane,
 5,000-row case practical without changing its fixture.
 
+One in-place update dirties exactly one pane, so the matrix measures the common shape - one busy
+pane among idle ones - now that a snapshot reuses unchanged panes' replay files. It is therefore not
+the cost of a session where every pane is producing output; that case still exports every pane.
+
 Because the durable write runs on a snapshot worker, the Criterion figure is *throughput* of a whole
 attempt, not the stall it imposes on the session. Each case also prints
 `max_server_loop_blocking_us` to stderr, taken from `last_blocking_us`: that is the part the server

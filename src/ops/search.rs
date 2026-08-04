@@ -129,6 +129,14 @@ fn search_scan_command(epoch: u64) -> Command {
     )
 }
 
+fn schedule_search_scan(state: &mut State, epoch: u64) -> Option<Command> {
+    if state.search_scan_scheduled_epoch.is_some() {
+        return None;
+    }
+    state.search_scan_scheduled_epoch = Some(epoch);
+    Some(search_scan_command(epoch))
+}
+
 pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     if let Some(search) = ctx.state.search.as_mut()
         && search.from_copy_mode
@@ -185,10 +193,36 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
         .as_ref()
         .is_some_and(|search| search.scan.is_some())
     {
-        Update::with_command(search_scan_command(epoch))
+        let command = schedule_search_scan(&mut ctx.state, epoch);
+        Update::with_command(command)
     } else {
         Update::full()
     }
+}
+
+/// Invalidate coordinates captured from a pane before applying more live output.
+///
+/// A scan always has at most one queued chunk. If that chunk belongs to an older epoch it will
+/// re-arm the newest scan when it arrives, rather than every output frame adding another stale
+/// message to the queue.
+pub(crate) fn restart_search_after_pane_output(
+    ctx: &mut Context<HyprmuxApp>,
+    pane_id: PaneId,
+) -> Option<Update> {
+    if let Some(copy) = ctx.state.copy_mode.as_mut()
+        && copy.target == pane_id
+        && !copy.search_matches.is_empty()
+    {
+        copy.search_matches.clear();
+        copy.search_current = 0;
+        copy.search_truncated = false;
+    }
+
+    let affected = ctx.state.search.as_ref().is_some_and(|search| {
+        !search.input.text().trim().is_empty()
+            && panes_in_scope(&ctx.state, search.target, search.scope).contains(&pane_id)
+    });
+    affected.then(|| recompute_search(ctx))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,6 +333,10 @@ pub fn advance_search_scan(
 }
 
 pub(crate) fn search_scan_chunk(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+    if ctx.state.search_scan_scheduled_epoch != Some(epoch) {
+        return Update::none();
+    }
+    ctx.state.search_scan_scheduled_epoch = None;
     let advance = advance_search_scan(&mut ctx.state, epoch, SEARCH_LINES_PER_CHUNK);
     if matches!(
         advance,
@@ -310,9 +348,28 @@ pub(crate) fn search_scan_chunk(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Up
         jump_to_search_match(ctx);
         request_search_focus(ctx);
     }
-    scan_advance_update(advance, epoch)
+    let next_epoch = match advance {
+        SearchScanAdvance::Running { .. } => Some(epoch),
+        SearchScanAdvance::Stale => ctx
+            .state
+            .search
+            .as_ref()
+            .and_then(|search| search.scan.as_ref())
+            .map(|scan| scan.epoch),
+        SearchScanAdvance::Complete { .. } => None,
+    };
+    let command = next_epoch.and_then(|epoch| schedule_search_scan(&mut ctx.state, epoch));
+    match advance {
+        SearchScanAdvance::Stale => command.map_or_else(Update::none, Update::command_only),
+        SearchScanAdvance::Running { render: true, .. } => Update::with_command(command),
+        SearchScanAdvance::Running { render: false, .. } => {
+            command.map_or_else(Update::none, Update::command_only)
+        }
+        SearchScanAdvance::Complete { .. } => Update::full(),
+    }
 }
 
+#[cfg(test)]
 fn scan_advance_update(advance: SearchScanAdvance, epoch: u64) -> Update {
     match advance {
         SearchScanAdvance::Stale => Update::none(),

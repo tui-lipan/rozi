@@ -201,9 +201,10 @@ jumping. ASCII letters match case-insensitively; non-ASCII text remains case-sen
 regardless of the program running in the pane, because it reads rendered terminal lines rather
 than relying on an in-terminal highlight search.
 
-The scan reads a live terminal view rather than copying or locking history. New output or
-scrollback eviction can therefore shift absolute lines between slices; results already discovered
-remain stable, while later slices reflect the then-current retained view.
+The scan reads a live terminal view rather than copying or locking history. When new output reaches
+any pane in the active scope, hyprmux cancels the current scan, clears its coordinates, and restarts
+the same query with the focused target first. This also applies after a scan has completed while
+the search remains open, so a result can never jump to text shifted by live scrollback eviction.
 
 ## Edit scrollback
 

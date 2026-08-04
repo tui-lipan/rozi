@@ -652,6 +652,13 @@ pub(super) fn output(
         }
         return Update::none();
     }
+    // Search coordinates are absolute within the retained terminal grid. Apply output first, drop
+    // the pane borrow, then rebuild any affected scan so no result can address the pre-output grid.
+    if !bytes.is_empty()
+        && let Some(update) = crate::ops::search::restart_search_after_pane_output(ctx, pane_id)
+    {
+        return update;
+    }
     // The screen is already updated above; only ask for a frame when the result reaches the
     // display. A chatty pane on an inactive workspace would otherwise drive the renderer at full
     // rate painting a view its output never appears in (see `State::pane_is_rendered`).
@@ -1334,6 +1341,7 @@ mod tests {
     use crate::session::client::SessionClient;
     use std::collections::HashSet;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tui_lipan::TestBackend;
 
     fn agent_pane(status: &str) -> crate::pane::TerminalPane {
@@ -1348,6 +1356,202 @@ mod tests {
             set_at: 1,
         });
         pane
+    }
+
+    fn install_search_scan(
+        backend: &mut TestBackend<crate::HyprmuxApp>,
+        target: crate::state::PaneId,
+        query: &str,
+    ) -> u64 {
+        let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+            .expect("search target")
+            .terminal
+            .search_line_count();
+        let state = backend.state_mut();
+        let epoch = state.search_scan_epoch.wrapping_add(1);
+        state.search_scan_epoch = epoch;
+        state.search_scan_scheduled_epoch = Some(epoch);
+        let mut search = crate::state::ScrollbackSearchState::new(target);
+        search.input.set_text(query);
+        search.scan = Some(crate::state::ScrollbackSearchScan {
+            epoch,
+            query: Arc::from(query),
+            panes: Arc::from([target]),
+            pane_ends: Arc::from([pane_end]),
+            pane_index: 0,
+            line_cursor: 0,
+            first_jump_done: false,
+        });
+        search.refresh_match_status();
+        state.search = Some(search);
+        epoch
+    }
+
+    fn search_output_lines(count: usize) -> Vec<u8> {
+        (0..count)
+            .map(|index| format!("needle-{index}\r\n"))
+            .collect::<String>()
+            .into_bytes()
+    }
+
+    #[test]
+    fn pane_output_restarts_partial_search_and_rejects_its_stale_chunk() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let generation = 7;
+                {
+                    let pane =
+                        crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                    pane.pty_generation = generation;
+                    pane.terminal.bind_session(target, generation);
+                    pane.terminal
+                        .process_server_output(&search_output_lines(700));
+                }
+                let old_epoch = install_search_scan(&mut backend, target, "needle");
+                assert!(matches!(
+                    crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 100),
+                    crate::ops::search::SearchScanAdvance::Running { .. }
+                ));
+                assert!(
+                    !backend
+                        .state()
+                        .search
+                        .as_ref()
+                        .expect("partial search")
+                        .matches
+                        .is_empty()
+                );
+
+                let level = backend
+                    .update_level(Msg::SessionOutput {
+                        epoch,
+                        pane_id: target,
+                        generation,
+                        bytes: b"live needle\r\n".to_vec(),
+                    })
+                    .expect("apply live output");
+                assert_eq!(level, tui_lipan::UpdateLevel::Full);
+                let restarted_epoch = backend.state().search_scan_epoch;
+                assert_ne!(old_epoch, restarted_epoch);
+                let search = backend.state().search.as_ref().expect("restarted search");
+                assert!(search.matches.is_empty());
+                assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
+                assert_eq!(
+                    search.scan.as_ref().expect("scan").panes.as_ref(),
+                    &[target]
+                );
+                assert_eq!(
+                    crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 1),
+                    crate::ops::search::SearchScanAdvance::Stale
+                );
+
+                let stale_level = backend
+                    .update_level(Msg::SearchScanChunk { epoch: old_epoch })
+                    .expect("deliver stale queued chunk");
+                assert_eq!(stale_level, tui_lipan::UpdateLevel::None);
+                assert_eq!(
+                    backend.state().search_scan_scheduled_epoch,
+                    Some(restarted_epoch)
+                );
+                backend
+                    .update_level(Msg::SearchScanChunk { epoch: old_epoch })
+                    .expect("reject duplicate stale chunk");
+                assert_eq!(
+                    backend.state().search_scan_scheduled_epoch,
+                    Some(restarted_epoch)
+                );
+
+                let offset_before_activation =
+                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                        .unwrap()
+                        .terminal
+                        .scrollback_offset();
+                backend
+                    .update_level(Msg::SearchActivate(0))
+                    .expect("empty restarted result is not actionable");
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                        .unwrap()
+                        .terminal
+                        .scrollback_offset(),
+                    offset_before_activation
+                );
+            })
+            .expect("spawn partial live-output search test")
+            .join()
+            .expect("partial live-output search test completes");
+    }
+
+    #[test]
+    fn pane_output_restarts_a_completed_search() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let generation = 9;
+                {
+                    let pane =
+                        crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target).unwrap();
+                    pane.pty_generation = generation;
+                    pane.terminal.bind_session(target, generation);
+                    pane.terminal
+                        .process_server_output(&search_output_lines(40));
+                }
+                let old_epoch = install_search_scan(&mut backend, target, "needle");
+                loop {
+                    if matches!(
+                        crate::ops::search::advance_search_scan(backend.state_mut(), old_epoch, 17),
+                        crate::ops::search::SearchScanAdvance::Complete { .. }
+                    ) {
+                        break;
+                    }
+                }
+                backend.state_mut().search_scan_scheduled_epoch = None;
+                assert!(
+                    !backend
+                        .state()
+                        .search
+                        .as_ref()
+                        .expect("completed search")
+                        .matches
+                        .is_empty()
+                );
+
+                backend
+                    .update_level(Msg::SessionOutput {
+                        epoch,
+                        pane_id: target,
+                        generation,
+                        bytes: b"post-completion\r\n".to_vec(),
+                    })
+                    .expect("apply output after completion");
+                let restarted_epoch = backend.state().search_scan_epoch;
+                assert_ne!(old_epoch, restarted_epoch);
+                let search = backend.state().search.as_ref().expect("restarted search");
+                assert!(search.matches.is_empty());
+                assert_eq!(search.scan.as_ref().expect("scan").epoch, restarted_epoch);
+                assert_eq!(
+                    backend.state().search_scan_scheduled_epoch,
+                    Some(restarted_epoch)
+                );
+            })
+            .expect("spawn completed live-output search test")
+            .join()
+            .expect("completed live-output search test completes");
     }
 
     #[test]

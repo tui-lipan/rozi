@@ -93,6 +93,8 @@ pub struct State {
     pub theme_watcher: Option<ThemeWatcher>,
     /// Global search-scan generation; never reset when the search overlay closes.
     pub search_scan_epoch: u64,
+    /// Epoch of the one cooperative search chunk currently queued in the runtime.
+    pub search_scan_scheduled_epoch: Option<u64>,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
     pub rename_session: Option<SessionRenameState>,
@@ -244,6 +246,7 @@ impl State {
             system_theme: None,
             theme_watcher: None,
             search_scan_epoch: 0,
+            search_scan_scheduled_epoch: None,
             search: None,
             rename: None,
             rename_session: None,

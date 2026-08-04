@@ -45,8 +45,17 @@ pub(super) fn tree_tab(
         .show_hidden(config.show_hidden)
         .tree_focus_key(tree_focus_key)
         .explorer_focus_key(explorer_focus_key)
-        .show_icons(config.icons)
+        // Keep the tree's file rows icon-free, but reserve its icon gutter for directory state.
+        .show_icons(true)
+        .directory_icon("")
+        .opened_directory_icon("")
+        .file_icon("")
+        .symlink_icon("")
+        .other_icon("")
         .max_entries_per_dir(config.max_entries)
+        .indent_style(IndentStyle::Short)
+        .indent_width(1)
+        .indent_guide_style(Style::new().fg(theme.surface.element.elevate(0.15)))
         .change_view(if changed_only {
             FileTreeChangeView::ChangedOnly
         } else {
@@ -113,6 +122,10 @@ pub(super) fn tree_tab(
                     is_dir: event.kind == FileKind::Directory,
                 }),
         );
+
+    if config.icons {
+        tree = tree.icon_style(FileIconStyle::NerdFont);
+    }
 
     // Under `--remote` the files are on the server's host, so the widget cannot enumerate them
     // itself. Serve listings from state instead and let it ask for what it is missing; local

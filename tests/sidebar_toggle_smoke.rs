@@ -83,7 +83,10 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
                 state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
             }
             backend.render();
-            assert_eq!(backend.state().effective_sidebar_width(backend.viewport()), 30);
+            assert_eq!(
+                backend.state().effective_sidebar_width(backend.viewport()),
+                30
+            );
             assert!(
                 backend
                     .capture_frame()
@@ -94,7 +97,10 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
 
             backend.state_mut().config.sidebar.position = SidebarPosition::Right;
             backend.render();
-            assert_eq!(backend.state().effective_sidebar_width(backend.viewport()), 30);
+            assert_eq!(
+                backend.state().effective_sidebar_width(backend.viewport()),
+                30
+            );
             assert_eq!(backend.state().content_viewport(backend.viewport()).w, 70);
             let lines = backend.capture_frame().to_fixed_grid_lines();
             assert!(

@@ -73,6 +73,12 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
         .and_then(|id| tabs.iter().position(|tab| tab.id() == *id))
         .unwrap_or(0);
     let bar_id = panel_bar_id(panel);
+    let hover_style = Style::new().fg(ctx.state.theme.surface.menu).bg(ctx
+        .state
+        .theme
+        .surface
+        .element
+        .elevate(0.08));
     let tab_bar = DraggableTabBar::new()
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
@@ -82,7 +88,9 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
         .border(false)
         .divider(' ')
         .show_close_buttons(false)
-        .show_overflow_controls(false)
+        .show_overflow_controls(true)
+        .overflow_left_label(|_| std::sync::Arc::from("❮ "))
+        .overflow_right_label(|_| std::sync::Arc::from(" ❯"))
         .focusable(false)
         .height(Length::Px(1))
         .style(
@@ -96,8 +104,10 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
                 .bg(ctx.state.theme.border_active)
                 .bold(),
         )
-        .tab_hover_style(
-            Style::new().fg(ctx.state.theme.surface.menu).bg(ctx
+        .tab_hover_style(hover_style)
+        .overflow_style(Style::new().fg(ctx.state.theme.border_active))
+        .overflow_hover_style(
+            Style::new().fg(ctx.state.theme.border_active).bg(ctx
                 .state
                 .theme
                 .surface

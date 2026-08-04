@@ -85,6 +85,8 @@ At minimum, retain these representative rows:
 - `control_frame_serde`
 - `scrollback_search/{sparse,dense,no_match}/{1,8,16}`
 - `server_fairness/key_round_trip/continuous_pty_ingress`
+- the one-shot `server_fairness --saturation-probe` evidence mode
+- `resurrection_snapshot/panes_{1,8,16}/history_{0,1000,5000}`
 
 Use a saved baseline when evaluating a change:
 
@@ -123,16 +125,27 @@ The fixture is 250x60 with 5,000 retained lines in each of 1, 8, or 16 panes. It
 no-match (`absent-search-token`) cases. `tests/bench_setup_sanity.rs` pins the dimensions, corpus
 line count, and expected match counts so a fixture drift cannot silently redefine the benchmark.
 
-Also retain the public-surface server fairness row:
+Also retain the public-surface server fairness and resurrection rows:
 
 ```bash
-cargo bench --bench server_fairness -- key_round_trip
+cargo bench --bench server_fairness -- continuous_pty_ingress
+cargo bench --bench server_fairness -- --saturation-probe
+cargo bench --bench server_fairness -- resurrection_snapshot
 ```
 
 It measures key input through `SessionClient` to an acknowledgement from a self-helper running in a
-real server-owned PTY while deterministic output flows continuously through PTY ingress. It does
-not claim queue saturation. Resurrection duration is observed separately through `hyprmux metrics`;
-the server records each completed export/write/sync/rename attempt, including failures.
+real server-owned PTY while sustainably paced output flows continuously. Keep that latency row
+separate from the one-shot saturation probe: two unpaced concurrent producers must put the public
+protocol-18 PTY ingress high-water within one 64 KiB coalescing chunk of the 4 MiB queue cap, after
+which the expected bounded downstream overflow disconnects the attached client. The probe reports
+time to disconnect, not a key RTT. No saturated key-latency number exists because the disconnect is
+the measured boundary; server-loop or overflow-policy redesign remains Phase 5 work.
+
+The resurrection matrix holds 1/8/16 real 250x60 panes with 0/1,000/5,000 retained history rows in
+an isolated snapshot directory. Each iteration makes one in-place terminal update, waits for the
+server's attempt counter to advance exactly once, and contributes only the server-reported
+`last_duration_us` to Criterion. Trigger and metrics-polling delay are excluded; the reported value
+covers export, writes, file syncs, directory syncs, atomic rename, and old-snapshot cleanup.
 
 ### Picker-filter scaling
 

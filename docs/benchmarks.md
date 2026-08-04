@@ -1,9 +1,10 @@
 # Benchmarks and profiling
 
 hyprmux uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
-framing, scrollback search, the client session-output path, and server input fairness under
-continuous PTY ingress. Run timing benchmarks on an otherwise idle machine; CI compiles them
-through `cargo check --all-targets` but does not use shared runners for timing.
+framing, scrollback search, the client session-output path, server input fairness under sustainable
+continuous PTY ingress, saturation boundedness, and durable resurrection snapshots. Run timing
+benchmarks on an otherwise idle machine; CI compiles them through `cargo check --all-targets` but
+does not use shared runners for timing.
 For the broader CPU, memory, lifecycle, scaling, and interpretation procedure, see
 [Reproducing a performance audit](performance/audit-playbook.md).
 
@@ -37,7 +38,9 @@ cargo bench --bench protocol_framing -- control_frame_serde
 cargo bench --bench session_pipeline -- session_pipeline_memory/4096
 cargo bench --bench scrollback_search -- 'sparse/(1|8|16)'
 cargo bench --bench scrollback_search -- 'slice'
-cargo bench --bench server_fairness -- key_round_trip
+cargo bench --bench server_fairness -- continuous_pty_ingress
+cargo bench --bench server_fairness -- --saturation-probe
+cargo bench --bench server_fairness -- resurrection_snapshot
 ```
 
 List the benchmark IDs in a target without measuring them:
@@ -85,9 +88,11 @@ PSS, anonymous, private, and file-backed memory; active-client and thread/proces
 per-pane application-PSS deltas. The client group includes live probe UI processes even after a
 session kill; `active_clients` separately counts current session attachments. Cleanup evidence uses
 current RSS and PSS after quiescence, never `VmHWM`. It writes both `results.json` and `results.md`
-below the selected output directory. Probe clients detach and the server receives a protocol
-shutdown before the private directory is removed; a trap targets only the PIDs owned by the runner
-if normal shutdown fails.
+below the selected output directory. Before a killed scenario shuts down, the runner captures every
+server/PTY descendant PID and process start time, then fails if any same process survives; this
+detects reparented leaks without mistaking PID reuse for survival. Probe clients detach and the
+server receives a protocol shutdown before the private directory is removed; a trap targets only
+the PIDs owned by the runner if normal shutdown fails.
 
 Memory numbers vary with the kernel, allocator, linked libraries, terminal dimensions, and host
 load. Compare two runs made from the same build on an otherwise idle machine. Scenario PSS within
@@ -140,16 +145,33 @@ every run:
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
 | `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
 | `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained deterministic lines per pane, plus explicit 512-line cooperative slices for sparse (one match per 100 lines), dense (every line), and no-match queries. `slice_*` isolates the range scanner; `full_slice_*` is the acceptance row and includes the production update-thread mapping, accumulated item-cache cloning, and description formatting. |
-| `server_fairness` | Public `SessionServer`/`SessionClient` key-to-helper acknowledgement latency while a real PTY continuously emits deterministic output. The helper and an owned, bounded-lifecycle server are modes of the benchmark executable itself, so no shell-specific command fixture or detached server is involved. |
+| `server_fairness` | Public `SessionServer`/`SessionClient` key-to-helper acknowledgement latency under sustainable paced continuous ingress; a separate unpaced saturation probe proves the 4 MiB PTY ingress high-water and expected bounded downstream client disconnect. The same target measures server-reported durable resurrection snapshot duration for 1/8/16 real panes with 0/1,000/5,000 retained rows at 250x60. Helpers and owned, bounded-lifecycle servers are modes of the benchmark executable itself. |
 
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
 than comparing incompatible corpora.
 
-`server_fairness` deliberately has no resurrection snapshot-duration row. Runtime instrumentation
-records the complete durable export/write/sync/rename attempt and exposes its last/max duration
-through `hyprmux metrics`, but it does not provide a command that triggers and acknowledges one
-specific snapshot. Use the counters around a live reproduction; do not poll the snapshot path and
-call that delay server snapshot time.
+`server_fairness/key_round_trip/continuous_pty_ingress` retains a 1 ms producer interval so the
+attached client can sustainably drain output while Criterion measures key-to-helper
+acknowledgement latency. It is continuous-ingress fairness evidence, not a saturated-queue result.
+
+`cargo bench --bench server_fairness -- --saturation-probe` is a one-shot evidence mode rather than
+a Criterion statistic. Two concurrent unpaced real PTY producers must drive the protocol-18 PTY
+ingress high-water to within one maximum 64 KiB coalesced event of the 4 MiB cap. Sustained
+saturation then reaches the designed bounded downstream overflow behavior and disconnects the
+attached client before a key round trip can be sampled. The probe succeeds only after both
+saturation and that disconnect occur, prints the high-water/capacity and time to disconnect, and
+tears down its owned server and helpers with bounded fallbacks. No saturated key-latency number is
+claimed; changing server-loop fairness or downstream overflow policy belongs to the Phase 5
+redesign.
+
+`resurrection_snapshot/panes_{1,8,16}/history_{0,1000,5000}` uses an isolated snapshot directory,
+`resurrect = true`, and a zero snapshot interval. Each stable fixture contains real live 250x60
+PTY panes and validates the saved pane count, dimensions, and retained replay history before
+measurement. One in-place terminal update creates one dirty generation per iteration. Polling and
+trigger overhead stay outside the reported value: Criterion's `iter_custom` sums protocol-18
+`last_duration_us`, measured by the server around the complete export/write/fsync/rename attempt.
+The matrix uses ten flat samples with a short warm-up and measurement window to keep the 16-pane,
+5,000-row case practical without changing its fixture.
 
 ## Live stress recipes
 
@@ -277,8 +299,22 @@ and the walk is unreachable there either way — a `captured()` assertion would 
 ## Snapshot rebuilds dominate output cost
 
 The expensive part of receiving output is not rendering it — it is rebuilding the render snapshot.
-`snapshot_rebuild` puts one rebuild at ~58 µs at 80x24, ~343 µs at 200x60, and ~809 µs at 320x90.
-For comparison, the whole app's view and layout for eight tiled panes is ~395 µs.
+The isolated 2026-08-04 Phase 1 comparison held Hyprmux at `c07b6be` on the same Ryzen machine and
+changed only tui-lipan. Detached temporary worktrees and separate `CARGO_TARGET_DIR`s kept the two
+builds independent:
+
+| Screen | Before (`934d7b1`) | After (`f951197`) | Improvement |
+| --- | ---: | ---: | ---: |
+| 80x24 | 64.074 µs | 39.631 µs | 38.1% |
+| 200x60 | 374.72 µs | 229.10 µs | 38.9% |
+| 320x90 | 879.19 µs | 539.27 µs | 38.7% |
+
+This genuine framework-only before/after attributes the roughly 38-39% reduction to allocation-free
+cell text append. A later post-fix run measured 39.226 µs, 230.89 µs, and 536.07 µs at the same
+dimensions; normal run-to-run movement does not change the conclusion. For comparison, the whole
+app's view and layout is 219.41 µs for eight tiled panes and 380.29 µs for sixteen. The framework
+change removes per-cell text allocation from snapshot construction; it does not alter the burst
+shape below.
 
 `terminal_pane_process_server_output` shows the shape of the problem: 64 B and 1 KiB messages cost
 almost the same, because the cost is per *message* (one full rebuild) rather than per byte.
@@ -311,23 +347,19 @@ Two consequences worth preserving:
 
 `HyprmuxApp` is the only `Component` in the crate, so every `Update::full()` re-runs `view()` for
 every pane, the workbar, and the overlays — there is no smaller subtree to refresh. `app_render`
-measures that, on a 200x60 viewport with dwindle-tiled panes (Ryzen, release build):
+measures that on a 200x60 viewport with styled terminal content and dwindle-tiled panes (2026-08-04
+Ryzen release build):
 
-| Panes | With terminal content | Empty screens |
-| --- | --- | --- |
-| 1 | 58 µs | 55 µs |
-| 2 | 103 µs | 100 µs |
-| 4 | 202 µs | 195 µs |
-| 8 | 395 µs | 381 µs |
-| 16 | 756 µs | 720 µs |
+| Panes | View + expand + layout |
+| --- | ---: |
+| 8 | 219.41 µs |
+| 16 | 380.29 µs |
 
-Two things follow, and both argue against scoping renders:
+The current evidence still argues against a large scoped-render refactor:
 
-- Cost is linear at roughly **47 µs per pane**, and styled terminal content accounts for only about
-  5% of it. The rest is per-pane chrome and tiling structure. Memoizing terminal snapshots — the
-  intuitive target — would therefore buy almost nothing.
-- Even the whole of it is small. At 8 panes, an `Update::full()` costs ~395 µs of view/layout more
-  than an `Update::paint()`. Sustained at the runtime's 60fps ceiling that is ~2.4% of one core.
+- Even at 16 panes, the whole avoidable view/layout slice remains below 0.4 ms.
+- At 8 panes, an `Update::full()` costs about 219 µs of view/layout more than an `Update::paint()`.
+  Sustained at the runtime's 60fps ceiling, that is about 1.3% of one core.
 
 So splitting panes into child `Component`s with `memo_key()` has a hard ceiling of a few percent of
 a core, against a large refactor of `view/pane.rs` and real visual-regression risk. Prefer

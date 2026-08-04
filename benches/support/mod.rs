@@ -21,6 +21,10 @@ pub const SEARCH_DENSE_QUERY: &str = "line-";
 pub const SEARCH_NO_MATCH_QUERY: &str = "absent-search-token";
 pub const SEARCH_SPARSE_MATCHES_PER_PANE: usize = SEARCH_LINES / 100;
 pub const SEARCH_DENSE_MATCHES_PER_PANE: usize = SEARCH_LINES;
+pub const SNAPSHOT_COLS: u16 = 250;
+pub const SNAPSHOT_ROWS: u16 = 60;
+pub const SNAPSHOT_PANE_COUNTS: [usize; 3] = [1, 8, 16];
+pub const SNAPSHOT_HISTORY_ROWS: [usize; 3] = [0, 1_000, 5_000];
 
 pub fn screen(cols: u16, rows: u16) -> TerminalScreen {
     TerminalScreen::new(rows, cols, 5_000)
@@ -90,6 +94,21 @@ pub fn scrollback_search_corpus() -> Vec<u8> {
         } else {
             bytes.extend_from_slice(format!("line-{line:05} ordinary payload\r\n").as_bytes());
         }
+    }
+    bytes
+}
+
+pub fn resurrection_snapshot_corpus(pane_id: u32, history_rows: usize) -> Vec<u8> {
+    let line_count = history_rows + usize::from(SNAPSHOT_ROWS) - 1;
+    let line_width = usize::from(SNAPSHOT_COLS) - 1;
+    let mut bytes = Vec::with_capacity(line_count * (line_width + 2));
+    for line in 0..line_count {
+        let prefix = format!("pane={pane_id:02} history={line:05} ");
+        bytes.extend_from_slice(prefix.as_bytes());
+        for col in prefix.len()..line_width {
+            bytes.push(b'a' + ((line + col + pane_id as usize) % 26) as u8);
+        }
+        bytes.extend_from_slice(b"\r\n");
     }
     bytes
 }

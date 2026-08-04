@@ -63,6 +63,74 @@ CONTROL_SOCKETS=()
 ACTIVE_CLIENTS=0
 PANE_IDS=()
 PANE_MARKERS=()
+PTY_DESCENDANT_PIDS=()
+declare -A PTY_DESCENDANT_START=()
+
+proc_start_time() {
+  local pid=$1
+  python3 - "$pid" <<'PY'
+import pathlib, sys
+try:
+    stat = pathlib.Path(f"/proc/{sys.argv[1]}/stat").read_text()
+    print(stat.rsplit(")", 1)[1].split()[19])
+except (IndexError, OSError, ValueError):
+    raise SystemExit(1)
+PY
+}
+
+owned_pid_alive() {
+  local pid=$1 expected current
+  if [[ -n ${PTY_DESCENDANT_START[$pid]+captured} ]]; then
+    expected=${PTY_DESCENDANT_START[$pid]}
+    current=$(proc_start_time "$pid" 2>/dev/null) || return 1
+    [[ $current == "$expected" ]]
+  else
+    kill -0 "$pid" >/dev/null 2>&1
+  fi
+}
+
+capture_pty_descendants() {
+  PTY_DESCENDANT_PIDS=()
+  PTY_DESCENDANT_START=()
+  local pid start
+  while read -r pid start; do
+    [[ -n $pid && -n $start ]] || continue
+    PTY_DESCENDANT_PIDS+=("$pid")
+    PTY_DESCENDANT_START[$pid]=$start
+  done < <(python3 - "$SERVER_PID" <<'PY'
+import pathlib, sys
+todo = [int(sys.argv[1])]
+seen = set(todo)
+while todo:
+    parent = todo.pop()
+    try:
+        children = [int(value) for value in pathlib.Path(f"/proc/{parent}/task/{parent}/children").read_text().split()]
+    except (OSError, ValueError):
+        children = []
+    for child in children:
+        if child in seen:
+            continue
+        seen.add(child)
+        todo.append(child)
+        try:
+            stat = pathlib.Path(f"/proc/{child}/stat").read_text()
+            start = stat.rsplit(")", 1)[1].split()[19]
+        except (IndexError, OSError, ValueError):
+            continue
+        print(child, start)
+PY
+  )
+}
+
+report_pty_descendant_survivors() {
+  local pid survivors=()
+  for pid in "${PTY_DESCENDANT_PIDS[@]:-}"; do
+    [[ -n $pid ]] && owned_pid_alive "$pid" && survivors+=("$pid")
+  done
+  ((${#survivors[@]} == 0)) && return 0
+  echo "PTY descendants survived session shutdown: ${survivors[*]}" >&2
+  return 1
+}
 
 cleanup_scenario() {
   set +e
@@ -75,20 +143,20 @@ cleanup_scenario() {
   local attempt pid
   for attempt in {1..40}; do
     local live=0
-    for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}"; do
-      [[ -n $pid ]] && kill -0 "$pid" >/dev/null 2>&1 && live=1
+    for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+      [[ -n $pid ]] && owned_pid_alive "$pid" && live=1
     done
     ((live == 0)) && break
     sleep 0.05
   done
-  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}"; do
-    if [[ -n $pid ]] && kill -0 "$pid" >/dev/null 2>&1; then
+  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+    if [[ -n $pid ]] && owned_pid_alive "$pid"; then
       kill "$pid" >/dev/null 2>&1
     fi
   done
   sleep 0.1
-  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}"; do
-    if [[ -n $pid ]] && kill -0 "$pid" >/dev/null 2>&1; then
+  for pid in "${WRAPPER_PIDS[@]:-}" "${SERVER_PID:-}" "${PTY_DESCENDANT_PIDS[@]:-}"; do
+    if [[ -n $pid ]] && owned_pid_alive "$pid"; then
       kill -9 "$pid" >/dev/null 2>&1
     fi
     [[ -n $pid ]] && wait "$pid" >/dev/null 2>&1
@@ -100,6 +168,8 @@ cleanup_scenario() {
   CONTROL_SOCKETS=()
   PANE_IDS=()
   PANE_MARKERS=()
+  PTY_DESCENDANT_PIDS=()
+  PTY_DESCENDANT_START=()
   set -e
 }
 trap cleanup_scenario EXIT INT TERM
@@ -215,7 +285,14 @@ measure_groups() {
   local client_csv server_csv shell_csv active_clients=$ACTIVE_CLIENTS
   client_csv=$(IFS=,; printf '%s' "${CLIENT_PIDS[*]:-}")
   server_csv=$SERVER_PID
-  shell_csv=$(python3 - "$SERVER_PID" <<'PY'
+  if ((${#PTY_DESCENDANT_PIDS[@]})); then
+    local captured=() pid
+    for pid in "${PTY_DESCENDANT_PIDS[@]}"; do
+      captured+=("$pid@${PTY_DESCENDANT_START[$pid]}")
+    done
+    shell_csv=$(IFS=,; printf '%s' "${captured[*]}")
+  else
+    shell_csv=$(python3 - "$SERVER_PID" <<'PY'
 import pathlib, sys
 todo = [int(sys.argv[1])]
 seen = set(todo)
@@ -234,7 +311,8 @@ while todo:
             todo.append(child)
 print(",".join(map(str, children)))
 PY
-  )
+    )
+  fi
   sleep "$SETTLE_SECONDS"
   python3 - "$JSONL" "$scenario" "$rows" "$cols" "$panes" "$history" "$content" "$clients" "$active_clients" "$state" "$SAMPLE_COUNT" "$SAMPLE_INTERVAL" "client=$client_csv" "server=$server_csv" "shell=$shell_csv" <<'PY'
 import json, pathlib, statistics, sys, time
@@ -243,7 +321,22 @@ out, scenario, rows, cols, panes, history, content, clients, active_clients, sta
 group_pids = {}
 for item in groups:
     name, raw = item.split("=", 1)
-    group_pids[name] = [int(pid) for pid in raw.split(",") if pid and pathlib.Path(f"/proc/{pid}").exists()]
+    parsed = []
+    for token in raw.split(","):
+        if not token:
+            continue
+        pid, separator, start = token.partition("@")
+        parsed.append((int(pid), start if separator else None))
+    group_pids[name] = parsed
+
+def same_process(pid, expected_start):
+    if expected_start is None:
+        return pathlib.Path(f"/proc/{pid}").exists()
+    try:
+        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
+        return stat.rsplit(")", 1)[1].split()[19] == expected_start
+    except (IndexError, OSError, ValueError):
+        return False
 
 def proc_metrics(pid):
     values = {key: 0 for key in ("rss_kib", "pss_kib", "anonymous_kib", "private_kib", "file_pss_kib", "threads", "current_rss_kib")}
@@ -276,7 +369,9 @@ samples = {name: [] for name in group_pids}
 for sample_index in range(int(count)):
     for name, pids in group_pids.items():
         aggregate = {"process_count": 0}
-        for pid in pids:
+        for pid, expected_start in pids:
+            if not same_process(pid, expected_start):
+                continue
             try:
                 metrics = proc_metrics(pid)
             except (FileNotFoundError, ProcessLookupError):
@@ -393,6 +488,7 @@ EOF
     ACTIVE_CLIENTS=$clients
   elif [[ $state == killed ]]; then
     local session_endpoint="$XDG_RUNTIME_DIR/hyprmux/session-$SESSION.sock"
+    capture_pty_descendants
     "$BIN" --socket "$control" run-action kill-session >/dev/null
     wait_for_absent "$session_endpoint"
     ACTIVE_CLIENTS=0
@@ -402,6 +498,9 @@ EOF
     mapfile -t CLIENT_PIDS < <(for control in "${CONTROL_SOCKETS[@]}"; do basename "$control" | cut -d- -f2 | cut -d. -f1; done)
   fi
   measure_groups "$label" "$rows" "$cols" "$panes" "$history" "$content" "$clients" "$state"
+  if [[ $state == killed ]]; then
+    report_pty_descendant_survivors
+  fi
   cleanup_scenario
 }
 

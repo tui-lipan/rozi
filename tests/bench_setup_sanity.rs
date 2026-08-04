@@ -130,3 +130,35 @@ fn scrollback_search_fixture_pins_dimensions_corpus_and_matches() {
             .is_empty()
     );
 }
+
+#[test]
+fn resurrection_snapshot_fixture_pins_matrix_dimensions_and_history() {
+    assert_eq!(bench_support::SNAPSHOT_PANE_COUNTS, [1, 8, 16]);
+    assert_eq!(bench_support::SNAPSHOT_HISTORY_ROWS, [0, 1_000, 5_000]);
+    assert_eq!(
+        (bench_support::SNAPSHOT_COLS, bench_support::SNAPSHOT_ROWS),
+        (250, 60)
+    );
+
+    for history_rows in bench_support::SNAPSHOT_HISTORY_ROWS {
+        let mut screen = tui_lipan::prelude::TerminalScreen::new(
+            bench_support::SNAPSHOT_ROWS,
+            bench_support::SNAPSHOT_COLS,
+            history_rows,
+        );
+        screen.process_bytes(&bench_support::resurrection_snapshot_corpus(
+            1,
+            history_rows,
+        ));
+        assert_eq!(screen.total_scrollback_rows(), history_rows);
+
+        let replay = screen.export_replay_bytes();
+        let mut restored = tui_lipan::prelude::TerminalScreen::new(
+            bench_support::SNAPSHOT_ROWS,
+            bench_support::SNAPSHOT_COLS,
+            history_rows,
+        );
+        restored.process_bytes(&replay);
+        assert_eq!(restored.total_scrollback_rows(), history_rows);
+    }
+}

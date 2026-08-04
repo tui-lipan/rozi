@@ -68,11 +68,17 @@ immediately and asks the session server to refresh its cache asynchronously; it 
 that round trip. Consequently, `server` can be `null` on the first request. Cached server samples
 include monotonic reception `age_ms` and become `"stale":true` at 15 seconds.
 
+Resurrection reports two durations. `last_duration_us` / `max_duration_us` cover the whole attempt,
+capture plus durable write, and stay comparable with measurements taken when snapshots were written
+synchronously. `last_blocking_us` / `max_blocking_us` cover only the part the server loop is held
+for while it captures pane replay bytes; the write, sync, and rename run on a snapshot worker. It is
+the blocking figure, not the total, that bounds input latency during a snapshot.
+
 The response field names and resource nesting are deterministic; timestamps, counters, optional
 resources, and byte values reflect the sampled process:
 
 ```json
-{"ok":true,"data":{"sampled_at_unix_ms":1000,"client_inbound":{"current_bytes":0,"high_water_bytes":4096,"capacity_bytes":8388608,"queued_items":0},"client_outbound":{"current_bytes":0,"high_water_bytes":512,"capacity_bytes":8388608,"queued_items":0},"piped_remote":null,"orphan_output":{"current_bytes":0,"high_water_bytes":0,"capacity_bytes":4194304,"keys":0,"capacity_keys":4096},"server":{"sampled_at_unix_ms":990,"pty_ingress":{"current_bytes":0,"high_water_bytes":8192,"capacity_bytes":4194304,"queued_items":0},"client_outboxes":{"current_bytes":0,"high_water_bytes":16384,"capacity_bytes":16777216,"clients":2},"resurrection":{"attempts":1,"successes":1,"failures":0,"last_duration_us":2400,"max_duration_us":2400},"age_ms":10,"stale":false}}}
+{"ok":true,"data":{"sampled_at_unix_ms":1000,"client_inbound":{"current_bytes":0,"high_water_bytes":4096,"capacity_bytes":8388608,"queued_items":0},"client_outbound":{"current_bytes":0,"high_water_bytes":512,"capacity_bytes":8388608,"queued_items":0},"piped_remote":null,"orphan_output":{"current_bytes":0,"high_water_bytes":0,"capacity_bytes":4194304,"keys":0,"capacity_keys":4096},"server":{"sampled_at_unix_ms":990,"pty_ingress":{"current_bytes":0,"high_water_bytes":8192,"capacity_bytes":4194304,"queued_items":0},"client_outboxes":{"current_bytes":0,"high_water_bytes":16384,"capacity_bytes":16777216,"clients":2},"resurrection":{"attempts":1,"successes":1,"failures":0,"last_duration_us":2400,"max_duration_us":2400,"last_blocking_us":310,"max_blocking_us":310},"age_ms":10,"stale":false}}}
 ```
 
 `send-keys` accepts tmux-style key names (`C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,

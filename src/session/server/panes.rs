@@ -173,7 +173,7 @@ impl SessionServer {
                         initial_cursor_report_primed: cfg!(windows),
                     },
                 );
-                self.dirty = true;
+                self.mark_dirty();
                 self.sync_pane_runtime(id, generation);
                 ServerMessage::SpawnResult {
                     pane_id: id,
@@ -249,7 +249,10 @@ impl SessionServer {
                             format!("pane log write failed: {error}")
                         });
                         pane.screen.process_bytes(&bytes);
-                        self.dirty = true;
+                        // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
+                        // borrow of `self.panes`, and a disjoint field assignment is what the
+                        // borrow checker accepts here.
+                        self.dirty_generation = self.dirty_generation.saturating_add(1);
                         let semantic_events = pane.screen.drain_semantic_events();
                         if let Some(pty) = &pane.pty {
                             for response in pane.screen.drain_responses() {
@@ -300,7 +303,7 @@ impl SessionServer {
                             return self.replace_with_keep_open_shell(id, generation, code);
                         }
                         pane.exited = Some(code);
-                        self.dirty = true;
+                        self.mark_dirty();
                         self.sync_pane_runtime(id, generation);
                         Some(ServerOutbound::control(ServerMessage::Exited {
                             pane_id: id,
@@ -344,7 +347,7 @@ impl SessionServer {
         }
         pane.exited = Some(code);
 
-        self.dirty = true;
+        self.mark_dirty();
         self.sync_pane_runtime(id, generation);
         self.broadcast_outbound(&ServerOutbound::PaneOutput {
             pane_id: id,
@@ -421,7 +424,7 @@ impl SessionServer {
         }
         let died = pane.exited;
 
-        self.dirty = true;
+        self.mark_dirty();
         self.sync_pane_runtime(id, generation);
         if died.is_some() {
             self.broadcast_outbound(&ServerOutbound::PaneOutput {

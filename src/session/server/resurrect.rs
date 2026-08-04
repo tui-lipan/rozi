@@ -4,9 +4,182 @@ use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SNAPSHOT_VERSION: u32 = 1;
+
+/// How long shutdown waits for an in-flight durable write before abandoning it.
+const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// One durable snapshot, owned outright so the write never touches live server state.
+struct SnapshotJob {
+    /// The `dirty_generation` this capture describes.
+    generation: u64,
+    /// When the attempt began on the server thread, so the reported duration spans capture and
+    /// write rather than only the worker's share.
+    started: Instant,
+    final_path: PathBuf,
+    session_name: String,
+    meta: SnapshotMeta,
+    layout: Option<SharedLayout>,
+    replays: Vec<(PaneId, Vec<u8>)>,
+}
+
+struct SnapshotOutcome {
+    generation: u64,
+    result: io::Result<()>,
+    total: Duration,
+}
+
+/// A single background writer for durable snapshots.
+///
+/// Exports stay on the server thread because they need the live `TerminalScreen`; only the write,
+/// sync, and rename move here. One job runs at a time: a snapshot deferred because the previous
+/// one is still writing simply stays dirty and is retried, which keeps at most one snapshot's
+/// worth of replay bytes alive off-thread.
+pub(super) struct SnapshotWorker {
+    jobs: Option<mpsc::Sender<SnapshotJob>>,
+    done: mpsc::Receiver<SnapshotOutcome>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    in_flight: usize,
+}
+
+impl SnapshotWorker {
+    fn new() -> Self {
+        let (jobs, job_rx) = mpsc::channel::<SnapshotJob>();
+        let (done_tx, done) = mpsc::channel::<SnapshotOutcome>();
+        let handle = std::thread::Builder::new()
+            .name("hyprmux-snapshot".to_string())
+            .spawn(move || {
+                for job in job_rx {
+                    let generation = job.generation;
+                    let started = job.started;
+                    let result = write_snapshot_job(job);
+                    if done_tx
+                        .send(SnapshotOutcome {
+                            generation,
+                            result,
+                            total: started.elapsed(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .ok();
+        Self {
+            jobs: Some(jobs),
+            done,
+            handle,
+            in_flight: 0,
+        }
+    }
+
+    fn busy(&self) -> bool {
+        self.in_flight > 0
+    }
+
+    fn dispatch(&mut self, job: SnapshotJob) {
+        if let Some(jobs) = self.jobs.as_ref()
+            && jobs.send(job).is_ok()
+        {
+            self.in_flight += 1;
+        }
+    }
+
+    fn drain(&mut self) -> Vec<SnapshotOutcome> {
+        let outcomes: Vec<_> = self.done.try_iter().collect();
+        self.in_flight = self.in_flight.saturating_sub(outcomes.len());
+        outcomes
+    }
+
+    fn finish(mut self, grace: Duration) -> Vec<SnapshotOutcome> {
+        // Dropping the sender ends the worker loop once the queue empties.
+        self.jobs = None;
+        let deadline = Instant::now() + grace;
+        let mut outcomes = Vec::new();
+        while self.in_flight > 0 {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match self.done.recv_timeout(remaining) {
+                Ok(outcome) => {
+                    self.in_flight -= 1;
+                    outcomes.push(outcome);
+                }
+                Err(_) => break,
+            }
+        }
+        // Only join once the writer can no longer be mid-rename; otherwise leave it detached and
+        // let process exit reap it rather than blocking shutdown on stuck storage.
+        if self.in_flight == 0
+            && let Some(handle) = self.handle.take()
+        {
+            let _ = handle.join();
+        }
+        outcomes
+    }
+}
+
+fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
+    let SnapshotJob {
+        final_path,
+        session_name,
+        meta,
+        layout,
+        replays,
+        ..
+    } = job;
+    let parent = final_path.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "snapshot path has no parent")
+    })?;
+    crate::platform::fs_security::ensure_private_dir(parent)?;
+    let suffix = format!(
+        "{}.{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let temp = parent.join(format!(".{session_name}.tmp-{suffix}"));
+    let backup = parent.join(format!(".{session_name}.old-{suffix}"));
+    crate::platform::fs_security::ensure_private_dir(&temp)?;
+    let panes_dir = temp.join("panes");
+    crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
+
+    for (pane_id, replay) in &replays {
+        write_secure(&panes_dir.join(format!("{pane_id}.replay")), replay)?;
+    }
+    write_secure(
+        &temp.join("meta.json"),
+        &serde_json::to_vec_pretty(&meta).map_err(io::Error::other)?,
+    )?;
+    if let Some(layout) = &layout {
+        write_secure(
+            &temp.join("layout.json"),
+            &serde_json::to_vec_pretty(layout).map_err(io::Error::other)?,
+        )?;
+    }
+    sync_directory(&temp)?;
+    if final_path.exists() {
+        fs::rename(&final_path, &backup)?;
+    }
+    if let Err(err) = fs::rename(&temp, &final_path) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, &final_path);
+        }
+        let _ = fs::remove_dir_all(&temp);
+        return Err(err);
+    }
+    sync_directory(parent)?;
+    if backup.exists() {
+        fs::remove_dir_all(backup)?;
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 struct SnapshotMeta {
@@ -51,10 +224,29 @@ impl SessionServer {
         Ok(root.join(&self.session_name))
     }
 
+    /// Record that a snapshot no longer describes the session.
+    pub(super) fn mark_dirty(&mut self) {
+        self.dirty_generation = self.dirty_generation.saturating_add(1);
+    }
+
+    /// Whether live state has moved past the last successfully persisted snapshot.
+    pub(super) fn snapshot_dirty(&self) -> bool {
+        self.dirty_generation != self.snapshot_generation
+    }
+
     pub(super) fn maybe_snapshot(&mut self) -> io::Result<()> {
         if !self.settings.resurrect
-            || !self.dirty
+            || !self.snapshot_dirty()
             || crate::state::is_ephemeral_session_name(&self.session_name)
+        {
+            return Ok(());
+        }
+        // Checked before the detach edge is consumed below, so a snapshot deferred because the
+        // worker is busy still sees `last_detached` on a later call.
+        if self
+            .snapshot_worker
+            .as_ref()
+            .is_some_and(SnapshotWorker::busy)
         {
             return Ok(());
         }
@@ -64,48 +256,112 @@ impl SessionServer {
         if !last_detached && self.last_snapshot.elapsed() < self.settings.snapshot_interval {
             return Ok(());
         }
-        // Advance the deadline before doing synchronous I/O. A transient filesystem error keeps
-        // the snapshot dirty for a later retry, but must not turn the server loop into a 1 ms
+        // Advance the deadline before doing any work. A transient filesystem error keeps the
+        // snapshot dirty for a later retry, but must not turn the server loop into a 1 ms
         // export/write/sync retry storm.
         self.last_snapshot = Instant::now();
         let started = Instant::now();
         self.resurrection_metrics.attempts = self.resurrection_metrics.attempts.saturating_add(1);
-        let result = self.write_snapshot();
-        let elapsed = crate::runtime_metrics::duration_micros(started.elapsed());
-        self.resurrection_metrics.last_duration_us = elapsed;
+        let job = self.capture_snapshot(started);
+        let blocking = crate::runtime_metrics::duration_micros(started.elapsed());
+        self.resurrection_metrics.last_blocking_us = blocking;
+        self.resurrection_metrics.max_blocking_us =
+            self.resurrection_metrics.max_blocking_us.max(blocking);
+        let job = match job {
+            Ok(job) => job,
+            Err(err) => {
+                // Capture failed, so nothing reaches the worker and no completion will arrive.
+                self.record_snapshot_outcome(blocking, false);
+                return Err(err);
+            }
+        };
+        self.snapshot_worker
+            .get_or_insert_with(SnapshotWorker::new)
+            .dispatch(job);
+        Ok(())
+    }
+
+    /// Apply any finished snapshot writes. Called once per server-loop iteration.
+    pub(super) fn drain_snapshot_results(&mut self) -> io::Result<()> {
+        let Some(worker) = self.snapshot_worker.as_mut() else {
+            return Ok(());
+        };
+        let mut failure = None;
+        for outcome in worker.drain() {
+            let total = crate::runtime_metrics::duration_micros(outcome.total);
+            let ok = outcome.result.is_ok();
+            self.record_snapshot_outcome(total, ok);
+            if ok {
+                // Only the generation this job captured is persisted. Changes that arrived while
+                // it was being written keep the session dirty for the next snapshot.
+                self.snapshot_generation = outcome.generation;
+            } else if let Err(err) = outcome.result {
+                failure = Some(err);
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    /// Drive completion draining until every dispatched attempt is accounted for, returning the
+    /// result the completing drain reported.
+    ///
+    /// Snapshots are written off the server loop, so a test that asserts on snapshot *files* has
+    /// to wait for the worker the way `run_listener` does, rather than assuming `maybe_snapshot`
+    /// finished the write.
+    #[cfg(test)]
+    pub(super) fn wait_for_snapshots(&mut self) -> io::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let result = self.drain_snapshot_results();
+            let metrics = &self.resurrection_metrics;
+            if metrics.successes + metrics.failures == metrics.attempts {
+                return result;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "snapshot worker did not report a completion"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn record_snapshot_outcome(&mut self, duration_us: u64, ok: bool) {
+        self.resurrection_metrics.last_duration_us = duration_us;
         self.resurrection_metrics.max_duration_us =
-            self.resurrection_metrics.max_duration_us.max(elapsed);
-        if result.is_ok() {
+            self.resurrection_metrics.max_duration_us.max(duration_us);
+        if ok {
             self.resurrection_metrics.successes =
                 self.resurrection_metrics.successes.saturating_add(1);
         } else {
             self.resurrection_metrics.failures =
                 self.resurrection_metrics.failures.saturating_add(1);
         }
-        result?;
-        self.dirty = false;
-        Ok(())
     }
 
-    fn write_snapshot(&mut self) -> io::Result<()> {
-        let final_path = self.snapshot_path()?;
-        let parent = final_path.parent().unwrap();
-        crate::platform::fs_security::ensure_private_dir(parent)?;
-        let suffix = format!(
-            "{}.{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        let temp = parent.join(format!(".{}.tmp-{suffix}", self.session_name));
-        let backup = parent.join(format!(".{}.old-{suffix}", self.session_name));
-        crate::platform::fs_security::ensure_private_dir(&temp)?;
-        let panes_dir = temp.join("panes");
-        crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
+    /// Let an in-flight snapshot finish before the process exits.
+    ///
+    /// A snapshot is most often triggered by the last client detaching, which is exactly when
+    /// losing it matters, so shutdown waits. The wait is bounded: a hung filesystem must not hold
+    /// the session open forever, and abandoning a partial write is safe because the previous
+    /// snapshot is only replaced by an atomic rename.
+    pub(super) fn finish_snapshots(&mut self) {
+        if let Some(worker) = self.snapshot_worker.take() {
+            for outcome in worker.finish(SNAPSHOT_SHUTDOWN_GRACE) {
+                let total = crate::runtime_metrics::duration_micros(outcome.total);
+                self.record_snapshot_outcome(total, outcome.result.is_ok());
+                if let Ok(()) = outcome.result {
+                    self.snapshot_generation = outcome.generation;
+                }
+            }
+        }
+    }
 
+    /// Capture everything the durable write needs, so the write itself needs no access back to
+    /// live server state. This is the only part the server loop is blocked for.
+    fn capture_snapshot(&mut self, started: Instant) -> io::Result<SnapshotJob> {
+        let final_path = self.snapshot_path()?;
         let mut panes = Vec::new();
+        let mut replays = Vec::new();
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
@@ -123,29 +379,10 @@ impl SessionServer {
                 cols: pane.cols,
                 rows: pane.rows,
             });
-            write_secure(
-                &panes_dir.join(format!("{pane_id}.replay")),
-                &pane.screen.export_replay_bytes(),
-            )?;
+            replays.push((pane_id, pane.screen.export_replay_bytes()));
         }
         panes.sort_by_key(|pane| pane.pane_id);
-        let meta = SnapshotMeta {
-            version: SNAPSHOT_VERSION,
-            session: self.session_name.clone(),
-            saved_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            layout_rev: self.layout_rev,
-            created_from_profile: self.created_from_profile.clone(),
-            panes,
-        };
-        write_secure(
-            &temp.join("meta.json"),
-            &serde_json::to_vec_pretty(&meta).map_err(io::Error::other)?,
-        )?;
-        if let Some(layout) = &self.layout {
-            let mut layout = layout.clone();
+        let layout = self.layout.clone().map(|mut layout| {
             for workspace in &mut layout.workspaces {
                 workspace.panes.retain(|saved| {
                     self.panes
@@ -153,27 +390,27 @@ impl SessionServer {
                         .is_some_and(|pane| pane.exited.is_none())
                 });
             }
-            write_secure(
-                &temp.join("layout.json"),
-                &serde_json::to_vec_pretty(&layout).map_err(io::Error::other)?,
-            )?;
-        }
-        sync_directory(&temp)?;
-        if final_path.exists() {
-            fs::rename(&final_path, &backup)?;
-        }
-        if let Err(err) = fs::rename(&temp, &final_path) {
-            if backup.exists() {
-                let _ = fs::rename(&backup, &final_path);
-            }
-            let _ = fs::remove_dir_all(&temp);
-            return Err(err);
-        }
-        sync_directory(parent)?;
-        if backup.exists() {
-            fs::remove_dir_all(backup)?;
-        }
-        Ok(())
+            layout
+        });
+        Ok(SnapshotJob {
+            generation: self.dirty_generation,
+            started,
+            final_path,
+            session_name: self.session_name.clone(),
+            meta: SnapshotMeta {
+                version: SNAPSHOT_VERSION,
+                session: self.session_name.clone(),
+                saved_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                layout_rev: self.layout_rev,
+                created_from_profile: self.created_from_profile.clone(),
+                panes,
+            },
+            layout,
+            replays,
+        })
     }
 
     pub(super) fn restore(&mut self) -> io::Result<usize> {
@@ -232,7 +469,7 @@ impl SessionServer {
         }
         self.layout = layout;
         self.layout_rev = u64::from(self.layout.is_some());
-        self.dirty = false;
+        self.snapshot_generation = self.dirty_generation;
         self.last_snapshot = Instant::now();
         Ok(restored)
     }
@@ -342,8 +579,11 @@ mod tests {
                 ..ServerSettings::default()
             },
         );
-        server.dirty = true;
-        server.maybe_snapshot().expect("successful snapshot");
+        server.mark_dirty();
+        server
+            .maybe_snapshot()
+            .expect("dispatch successful snapshot");
+        server.wait_for_snapshots().expect("successful snapshot");
         assert_eq!(server.resurrection_metrics.attempts, 1);
         assert_eq!(server.resurrection_metrics.successes, 1);
         assert_eq!(server.resurrection_metrics.failures, 0);
@@ -351,12 +591,19 @@ mod tests {
             server.resurrection_metrics.max_duration_us,
             server.resurrection_metrics.last_duration_us
         );
+        // The whole point of the split: the loop is blocked for less than the full attempt.
+        assert!(
+            server.resurrection_metrics.last_blocking_us
+                <= server.resurrection_metrics.last_duration_us
+        );
+        assert!(!server.snapshot_dirty(), "a clean snapshot clears the need");
 
         let blocked = root.join("not-a-directory");
         fs::write(&blocked, b"x").unwrap();
         server.settings.snapshot_dir = Some(blocked);
-        server.dirty = true;
-        assert!(server.maybe_snapshot().is_err());
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch failing snapshot");
+        assert!(server.wait_for_snapshots().is_err());
         assert_eq!(server.resurrection_metrics.attempts, 2);
         assert_eq!(server.resurrection_metrics.successes, 1);
         assert_eq!(server.resurrection_metrics.failures, 1);
@@ -364,6 +611,54 @@ mod tests {
             server.resurrection_metrics.max_duration_us
                 >= server.resurrection_metrics.last_duration_us
         );
+        assert!(
+            server.snapshot_dirty(),
+            "a failed snapshot stays dirty for a later retry"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Output arriving while a snapshot is being written must not be treated as already saved.
+    #[test]
+    fn changes_during_a_write_are_not_marked_snapshotted() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-generation-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "generation",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch snapshot");
+        // Stands in for a pane emitting output between the capture and the durable write landing.
+        server.mark_dirty();
+        server.wait_for_snapshots().expect("successful snapshot");
+
+        assert_eq!(server.resurrection_metrics.successes, 1);
+        assert!(
+            server.snapshot_dirty(),
+            "the change that arrived mid-write must survive as unsaved"
+        );
+
+        // The next snapshot captures it, and only then is the session clean.
+        server
+            .maybe_snapshot()
+            .expect("dispatch follow-up snapshot");
+        server
+            .wait_for_snapshots()
+            .expect("successful follow-up snapshot");
+        assert_eq!(server.resurrection_metrics.successes, 2);
+        assert!(!server.snapshot_dirty());
 
         let _ = fs::remove_dir_all(root);
     }

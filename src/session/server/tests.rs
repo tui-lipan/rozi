@@ -316,7 +316,7 @@ fn controller_kill_reclaims_server_pane_state() {
     );
 
     assert!(!server.panes.contains_key(&7));
-    assert!(server.dirty);
+    assert!(server.snapshot_dirty());
 }
 
 /// The scenario the parked flag exists for: one client keeps `dev` open in the background while it
@@ -414,7 +414,7 @@ fn profile_origin_is_recorded_only_for_an_empty_session_and_never_overwritten() 
         },
     );
     assert_eq!(server.created_from_profile.as_deref(), Some("work"));
-    assert!(server.dirty);
+    assert!(server.snapshot_dirty());
 
     let (second, _stream) = attach_client(&mut server);
     server.handle_message(
@@ -1529,8 +1529,9 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
         canvas_rows: 5,
         workspaces: Vec::new(),
     });
-    server.dirty = true;
+    server.mark_dirty();
     server.maybe_snapshot().unwrap();
+    server.wait_for_snapshots().unwrap();
     assert!(root.join("dev/meta.json").is_file());
     assert!(root.join("dev/panes/1.replay").is_file());
     assert!(!root.join("dev/panes/2.replay").exists());

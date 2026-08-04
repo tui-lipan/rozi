@@ -333,6 +333,9 @@ fn wait_for_fairness_pane(events: &mpsc::Receiver<DrainEvent>, pane_id: u32) {
 struct SnapshotFixture {
     client: Option<SessionClient>,
     last_attempts: u64,
+    /// Server-loop blocking of the most recent attempt. Criterion times the whole attempt, so this
+    /// is reported alongside rather than through the measured value.
+    last_blocking_us: u64,
     drain_done: mpsc::Receiver<()>,
     drain: Option<JoinHandle<()>>,
     server: ServerOwner,
@@ -422,6 +425,7 @@ impl SnapshotFixture {
         Self {
             client: Some(client),
             last_attempts: metrics.resurrection.attempts,
+            last_blocking_us: 0,
             drain_done,
             drain: Some(drain),
             server,
@@ -436,8 +440,11 @@ impl SnapshotFixture {
             format!("{sequence:016x}\n").into_bytes(),
         );
         let expected_attempts = self.last_attempts.saturating_add(1);
+        // Attempts are counted when the server dispatches, durations only when the worker reports
+        // back. Waiting on the completion counters is what keeps `last_duration_us` from being
+        // read off the *previous* attempt.
         let metrics = wait_for_server_metrics(client, SNAPSHOT_IO_TIMEOUT, |metrics| {
-            metrics.resurrection.attempts >= expected_attempts
+            metrics.resurrection.successes + metrics.resurrection.failures >= expected_attempts
         });
         assert_eq!(
             metrics.resurrection.attempts, expected_attempts,
@@ -451,7 +458,12 @@ impl SnapshotFixture {
             metrics.resurrection.last_duration_us > 0,
             "server reported a zero-duration snapshot"
         );
+        assert!(
+            metrics.resurrection.last_blocking_us <= metrics.resurrection.last_duration_us,
+            "server-loop blocking cannot exceed the whole attempt"
+        );
         self.last_attempts = expected_attempts;
+        self.last_blocking_us = metrics.resurrection.last_blocking_us;
         Duration::from_micros(metrics.resurrection.last_duration_us)
     }
 }
@@ -775,13 +787,22 @@ fn server_fairness(c: &mut Criterion) {
                 |b, &(pane_count, history_rows)| {
                     let fixture = snapshot_fixture
                         .get_or_insert_with(|| SnapshotFixture::new(pane_count, history_rows));
+                    let mut max_blocking_us = 0;
                     b.iter_custom(|iterations| {
                         let mut measured = Duration::ZERO;
                         for sequence in 0..iterations {
                             measured += fixture.measure_snapshot(sequence);
+                            max_blocking_us = max_blocking_us.max(fixture.last_blocking_us);
                         }
                         measured
                     });
+                    // Criterion times the whole attempt. The figure that bounds input latency is
+                    // how long the server loop itself was held, so report it explicitly rather
+                    // than leaving the total to imply it.
+                    eprintln!(
+                        "resurrection_snapshot/panes_{pane_count}/history_{history_rows} \
+                         max_server_loop_blocking_us={max_blocking_us}"
+                    );
                 },
             );
         }

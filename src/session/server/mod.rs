@@ -79,7 +79,13 @@ pub struct SessionServer {
     resurrection_metrics: ResurrectionMetrics,
     shutdown: bool,
     forget_snapshot: bool,
-    dirty: bool,
+    /// Bumped by every change a snapshot must capture. Compared against `snapshot_generation`
+    /// rather than cleared, so output arriving while a snapshot is being written cannot be
+    /// mistaken for output the snapshot already contains.
+    dirty_generation: u64,
+    /// The generation the last *successful* snapshot persisted.
+    snapshot_generation: u64,
+    snapshot_worker: Option<resurrect::SnapshotWorker>,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -377,7 +383,9 @@ impl SessionServer {
             resurrection_metrics: ResurrectionMetrics::default(),
             shutdown: false,
             forget_snapshot: false,
-            dirty: false,
+            dirty_generation: 0,
+            snapshot_generation: 0,
+            snapshot_worker: None,
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -432,6 +440,9 @@ impl SessionServer {
                     retired.remove_stale();
                 }
             }
+            if let Err(err) = self.drain_snapshot_results() {
+                eprintln!("hyprmux: session snapshot failed: {err}");
+            }
             if let Err(err) = self.maybe_snapshot() {
                 eprintln!("hyprmux: session snapshot failed: {err}");
             }
@@ -455,6 +466,10 @@ impl SessionServer {
             let idle = if self.clients.is_empty() { 20 } else { 1 };
             std::thread::sleep(Duration::from_millis(idle));
         }
+        // A snapshot is most often triggered by the last client detaching, so let an in-flight
+        // durable write land before the process exits. Ordered before `forget_snapshot` so a
+        // session being forgotten deletes the finished snapshot rather than racing it.
+        self.finish_snapshots();
         if self.forget_snapshot
             && let Err(err) = self.delete_snapshot()
         {

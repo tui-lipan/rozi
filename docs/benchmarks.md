@@ -173,6 +173,13 @@ trigger overhead stay outside the reported value: Criterion's `iter_custom` sums
 The matrix uses ten flat samples with a short warm-up and measurement window to keep the 16-pane,
 5,000-row case practical without changing its fixture.
 
+Because the durable write runs on a snapshot worker, the Criterion figure is *throughput* of a whole
+attempt, not the stall it imposes on the session. Each case also prints
+`max_server_loop_blocking_us` to stderr, taken from `last_blocking_us`: that is the part the server
+loop is actually held for, and it is the number to compare against key round-trip latency. The
+benchmark waits on `successes + failures` rather than `attempts`, since attempts are counted at
+dispatch and a duration only exists once the worker reports back.
+
 ## Live stress recipes
 
 Microbenchmarks isolate costs; live runs expose scheduling, PTY, rendering, and broadcast behavior.

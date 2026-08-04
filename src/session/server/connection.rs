@@ -132,7 +132,7 @@ impl SessionServer {
                 {
                     self.created_from_profile = Some(profile);
                     self.origin_seed_client = None;
-                    self.dirty = true;
+                    self.mark_dirty();
                     return vec![(
                         Target::Broadcast,
                         ServerMessage::SessionOriginSet {
@@ -303,7 +303,7 @@ impl SessionServer {
                     if let Some(pty) = &pane.pty {
                         let _ = pty.kill();
                     }
-                    self.dirty = true;
+                    self.mark_dirty();
                 }
                 Vec::new()
             }

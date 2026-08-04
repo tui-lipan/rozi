@@ -52,8 +52,16 @@ pub struct ResurrectionMetrics {
     pub attempts: u64,
     pub successes: u64,
     pub failures: u64,
+    /// Complete attempt duration: the server-thread export plus the worker's write, sync, and
+    /// rename. Comparable with the synchronous measurements recorded before snapshots moved off
+    /// the server loop.
     pub last_duration_us: u64,
     pub max_duration_us: u64,
+    /// The part of an attempt the server loop itself is blocked for: capturing pane replay bytes
+    /// and metadata, before the durable write is handed to the snapshot worker. This is the figure
+    /// that bounds input latency during a snapshot; `last_duration_us` no longer does.
+    pub last_blocking_us: u64,
+    pub max_blocking_us: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,7 +341,9 @@ mod tests {
                         "successes": 0,
                         "failures": 0,
                         "last_duration_us": 0,
-                        "max_duration_us": 0
+                        "max_duration_us": 0,
+                        "last_blocking_us": 0,
+                        "max_blocking_us": 0
                     },
                     "age_ms": 10,
                     "stale": false

@@ -336,8 +336,10 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                     .take(34)
                     .collect()
             };
+            // A child row is prefixed by its indent guide, not by plain indentation; the range
+            // starts below the root path row, so the name alone identifies it.
             let src_row = (3u16..16)
-                .find(|&row| row_text(&backend, row).contains("  src"))
+                .find(|&row| row_text(&backend, row).contains("src"))
                 .expect("src directory row is visible");
             for kind in [
                 MouseKind::Down(MouseButton::Left),

@@ -427,10 +427,7 @@ fn drain_orphan_output(
     let Some(shared) = shared else {
         return;
     };
-    if let Some(bytes) = shared
-        .orphan_output
-        .remove(&(shared_pane.pane_id, shared_pane.generation))
-    {
+    if let Some(bytes) = shared.take_orphan_output(shared_pane.pane_id, shared_pane.generation) {
         pane.terminal.process_server_output(&bytes);
     }
 }
@@ -777,6 +774,63 @@ mod reconciler_tests {
                 backend.state_mut().animation,
                 crate::anim::GeometryAnimation::TileFloat,
                 "live layout commits should retain geometry transitions"
+            );
+        });
+    }
+
+    #[test]
+    fn reconciliation_discards_older_drains_exact_and_retains_future_orphans() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            {
+                let shared = backend
+                    .state_mut()
+                    .current_mut()
+                    .shared
+                    .as_mut()
+                    .expect("shared state");
+                shared.buffer_orphan_output(2, 4, b"older\r\n");
+                shared.buffer_orphan_output(2, 5, b"exact\r\n");
+                shared.buffer_orphan_output(2, 6, b"future\r\n");
+            }
+
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout_with_panes(&[(1, 0), (2, 5)]),
+                })
+                .expect("reconcile generation");
+
+            let screen = find_pane(backend.state_mut(), 2)
+                .expect("reconciled pane")
+                .terminal
+                .capture_text();
+            assert!(screen.contains("exact"));
+            assert!(!screen.contains("older"));
+            assert!(!screen.contains("future"));
+
+            let shared = backend
+                .state_mut()
+                .current_mut()
+                .shared
+                .as_mut()
+                .expect("shared state");
+            assert_eq!(
+                shared.orphan_output_stats(),
+                crate::state::OrphanOutputStats {
+                    retained: b"future\r\n".len(),
+                    high_water: b"older\r\nexact\r\nfuture\r\n".len(),
+                    keys: 1,
+                }
+            );
+            assert_eq!(
+                shared.take_orphan_output(2, 6),
+                Some(b"future\r\n".to_vec())
             );
         });
     }

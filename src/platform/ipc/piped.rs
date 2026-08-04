@@ -22,17 +22,42 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 const PUMP_CHUNK: usize = 16 * 1024;
+const PIPED_BUFFER_CAPACITY: usize = 8 * 1024 * 1024;
+const PIPED_BUFFER_LOW_WATER: usize = 4 * 1024 * 1024;
 
 struct PipedBuf {
     bytes: VecDeque<u8>,
     /// Sticky terminal error / EOF once the pump exits. `Ok(())` means clean EOF.
     done: Option<io::Result<()>>,
+    shutdown: bool,
+    high_water: usize,
+}
+
+impl PipedBuf {
+    fn read_into(&mut self, out: &mut [u8]) -> usize {
+        let n = out.len().min(self.bytes.len());
+        let (first, second) = self.bytes.as_slices();
+        let first_n = n.min(first.len());
+        out[..first_n].copy_from_slice(&first[..first_n]);
+        let second_n = n - first_n;
+        out[first_n..n].copy_from_slice(&second[..second_n]);
+        self.bytes.drain(..n);
+        n
+    }
+
+    fn stats(&self) -> PipedBufferStats {
+        PipedBufferStats {
+            current: self.bytes.len(),
+            high_water: self.high_water,
+            capacity: PIPED_BUFFER_CAPACITY,
+        }
+    }
 }
 
 struct PipedShared {
@@ -40,7 +65,26 @@ struct PipedShared {
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     buf: Mutex<PipedBuf>,
     data: Condvar,
-    pump_started: AtomicBool,
+    connections: AtomicUsize,
+}
+
+impl PipedShared {
+    fn shutdown(&self) {
+        let mut buf = self.buf.lock().expect("piped buf");
+        buf.shutdown = true;
+        if buf.done.is_none() {
+            buf.done = Some(Ok(()));
+        }
+        self.data.notify_all();
+    }
+}
+
+/// Current and peak memory retained by a pipe reader pump.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PipedBufferStats {
+    pub current: usize,
+    pub high_water: usize,
+    pub capacity: usize,
 }
 
 /// Owns the ssh (or other) child so dropping the last connection reaps it.
@@ -101,38 +145,56 @@ impl PipedConnection {
             buf: Mutex::new(PipedBuf {
                 bytes: VecDeque::new(),
                 done: None,
+                shutdown: false,
+                high_water: 0,
             }),
             data: Condvar::new(),
-            pump_started: AtomicBool::new(false),
+            connections: AtomicUsize::new(1),
         });
         let pump = Arc::clone(&shared);
-        // Only one pump per shared state; try_clone must not spawn another.
-        if !pump.pump_started.swap(true, Ordering::SeqCst) {
-            thread::spawn(move || {
-                let mut chunk = vec![0u8; PUMP_CHUNK];
-                loop {
-                    let result = reader.read(&mut chunk);
-                    let mut buf = pump.buf.lock().expect("piped buf");
-                    match result {
-                        Ok(0) => {
+        thread::spawn(move || {
+            let mut chunk = vec![0u8; PUMP_CHUNK];
+            loop {
+                let result = reader.read(&mut chunk);
+                if result
+                    .as_ref()
+                    .is_err_and(|err| err.kind() == io::ErrorKind::Interrupted)
+                {
+                    continue;
+                }
+                let mut buf = pump.buf.lock().expect("piped buf");
+                match result {
+                    Ok(0) => {
+                        if buf.done.is_none() {
                             buf.done = Some(Ok(()));
-                            pump.data.notify_all();
+                        }
+                        pump.data.notify_all();
+                        break;
+                    }
+                    Ok(n) => {
+                        if buf.bytes.len() + n > PIPED_BUFFER_CAPACITY {
+                            while !buf.shutdown && buf.bytes.len() > PIPED_BUFFER_LOW_WATER {
+                                buf = pump.data.wait(buf).expect("piped producer wait");
+                            }
+                        }
+                        if buf.shutdown {
                             break;
                         }
-                        Ok(n) => {
-                            buf.bytes.extend(chunk[..n].iter().copied());
-                            pump.data.notify_all();
-                        }
-                        Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(err) => {
+                        debug_assert!(buf.bytes.len() + n <= PIPED_BUFFER_CAPACITY);
+                        buf.bytes.extend(&chunk[..n]);
+                        buf.high_water = buf.high_water.max(buf.bytes.len());
+                        pump.data.notify_all();
+                    }
+                    Err(err) => {
+                        if buf.done.is_none() {
                             buf.done = Some(Err(err));
-                            pump.data.notify_all();
-                            break;
                         }
+                        pump.data.notify_all();
+                        break;
                     }
                 }
-            });
-        }
+            }
+        });
         Self {
             shared,
             child,
@@ -142,6 +204,7 @@ impl PipedConnection {
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {
+        self.shared.connections.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
             shared: Arc::clone(&self.shared),
             child: self.child.clone(),
@@ -170,10 +233,16 @@ impl PipedConnection {
         None
     }
 
+    /// Snapshot the bounded reader buffer's current and peak retained byte counts.
+    pub fn buffer_stats(&self) -> PipedBufferStats {
+        self.shared.buf.lock().expect("piped buf").stats()
+    }
+
     fn close_writer(&self) {
         if let Ok(mut writer) = self.shared.writer.lock() {
             *writer = None;
         }
+        self.shared.shutdown();
     }
 
     fn read_inner(&self, out: &mut [u8]) -> io::Result<usize> {
@@ -187,9 +256,10 @@ impl PipedConnection {
         let mut buf = self.shared.buf.lock().expect("piped buf");
         loop {
             if !buf.bytes.is_empty() {
-                let n = out.len().min(buf.bytes.len());
-                for slot in out.iter_mut().take(n) {
-                    *slot = buf.bytes.pop_front().expect("len checked");
+                let was_above_low_water = buf.bytes.len() > PIPED_BUFFER_LOW_WATER;
+                let n = buf.read_into(out);
+                if was_above_low_water && buf.bytes.len() <= PIPED_BUFFER_LOW_WATER {
+                    self.shared.data.notify_all();
                 }
                 return Ok(n);
             }
@@ -237,9 +307,7 @@ impl PipedConnection {
 
 impl Drop for PipedConnection {
     fn drop(&mut self) {
-        // Connections + pump share `shared`. When this is the last connection (count == 2: us +
-        // pump), close the write half so the remote sees EOF on stdin.
-        if Arc::strong_count(&self.shared) <= 2 {
+        if self.shared.connections.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.close_writer();
         }
         // `self.child` drops next; when the last connection clone drops, OwnedChild kills ssh.
@@ -277,9 +345,54 @@ impl Write for PipedConnection {
 mod tests {
     use super::*;
     use crate::session::protocol::{self, ClientMessage, ServerMessage};
-    use std::io::pipe;
+    use std::io::{Cursor, pipe};
     #[cfg(unix)]
     use std::process::Command;
+    use std::sync::mpsc;
+
+    struct DropSignalReader {
+        inner: Cursor<Vec<u8>>,
+        dropped: mpsc::Sender<()>,
+    }
+
+    impl Read for DropSignalReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Drop for DropSignalReader {
+        fn drop(&mut self) {
+            let _ = self.dropped.send(());
+        }
+    }
+
+    fn patterned_bytes(len: usize) -> Vec<u8> {
+        (0..len).map(|index| (index % 251) as u8).collect()
+    }
+
+    fn wait_for_buffer(
+        conn: &PipedConnection,
+        predicate: impl Fn(PipedBufferStats) -> bool,
+    ) -> PipedBufferStats {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut buf = conn.shared.buf.lock().expect("piped buf");
+        loop {
+            let stats = buf.stats();
+            if predicate(stats) {
+                return stats;
+            }
+            let now = Instant::now();
+            assert!(now < deadline, "buffer condition timed out: {stats:?}");
+            let (guard, wait) = conn
+                .shared
+                .data
+                .wait_timeout(buf, deadline - now)
+                .expect("wait for piped buffer");
+            buf = guard;
+            assert!(!wait.timed_out(), "buffer condition timed out: {stats:?}");
+        }
+    }
 
     #[test]
     fn peer_pid_is_always_none() {
@@ -320,6 +433,86 @@ mod tests {
             .expect_err("idle pipe must time out");
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
         assert!(started.elapsed() >= Duration::from_millis(40));
+    }
+
+    #[test]
+    fn reader_buffer_caps_then_resumes_losslessly_below_low_water() {
+        let expected = patterned_bytes(PIPED_BUFFER_CAPACITY + 4 * 1024 * 1024);
+        let mut conn =
+            PipedConnection::from_reader_writer(io::sink(), Cursor::new(expected.clone()));
+
+        let full = wait_for_buffer(&conn, |stats| stats.current == stats.capacity);
+        assert_eq!(full.high_water, PIPED_BUFFER_CAPACITY);
+
+        let drain_len = PIPED_BUFFER_CAPACITY - PIPED_BUFFER_LOW_WATER + 1;
+        let mut received = vec![0; drain_len];
+        conn.read_exact(&mut received)
+            .expect("drain below low water");
+        wait_for_buffer(&conn, |stats| stats.current > PIPED_BUFFER_LOW_WATER);
+        conn.read_to_end(&mut received).expect("drain through EOF");
+
+        assert_eq!(received, expected);
+        let stats = conn.buffer_stats();
+        assert_eq!(stats.current, 0);
+        assert_eq!(stats.high_water, PIPED_BUFFER_CAPACITY);
+        assert_eq!(stats.capacity, PIPED_BUFFER_CAPACITY);
+    }
+
+    #[test]
+    fn close_writer_wakes_a_capacity_blocked_producer() {
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let reader = DropSignalReader {
+            inner: Cursor::new(patterned_bytes(PIPED_BUFFER_CAPACITY + PUMP_CHUNK)),
+            dropped: dropped_tx,
+        };
+        let mut conn = PipedConnection::from_reader_writer(io::sink(), reader);
+        wait_for_buffer(&conn, |stats| stats.current == stats.capacity);
+
+        conn.close_writer();
+        dropped_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("blocked producer must exit on close");
+
+        let mut retained = Vec::new();
+        conn.read_to_end(&mut retained)
+            .expect("buffered bytes precede terminal EOF");
+        assert_eq!(retained.len(), PIPED_BUFFER_CAPACITY);
+    }
+
+    #[test]
+    fn final_drop_wakes_a_capacity_blocked_producer_without_joining() {
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let reader = DropSignalReader {
+            inner: Cursor::new(patterned_bytes(PIPED_BUFFER_CAPACITY + PUMP_CHUNK)),
+            dropped: dropped_tx,
+        };
+        let conn = PipedConnection::from_reader_writer(io::sink(), reader);
+        wait_for_buffer(&conn, |stats| stats.current == stats.capacity);
+
+        drop(conn);
+        dropped_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("blocked producer must exit after the final connection drops");
+    }
+
+    #[test]
+    fn wrapped_buffer_reads_both_slices_and_drains_once() {
+        let mut bytes = VecDeque::with_capacity(8);
+        bytes.extend(0_u8..8);
+        bytes.drain(..6);
+        bytes.extend(8_u8..12);
+        assert!(!bytes.as_slices().1.is_empty(), "fixture must wrap");
+        let mut buf = PipedBuf {
+            bytes,
+            done: None,
+            shutdown: false,
+            high_water: 8,
+        };
+        let mut out = [0; 6];
+
+        assert_eq!(buf.read_into(&mut out), out.len());
+        assert_eq!(out, [6, 7, 8, 9, 10, 11]);
+        assert!(buf.bytes.is_empty());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
 use tui_lipan::prelude::TerminalColorPalette;
@@ -71,9 +71,106 @@ pub struct LeftSession {
     pub was_ephemeral_shutdown: bool,
 }
 
-/// Per-run maximum orphan bytes buffered per pane before oldest data is dropped (see
-/// [`SharedSessionState::orphan_output`]).
+/// Maximum orphan bytes retained for one `(pane, generation)` key.
 pub const ORPHAN_OUTPUT_CAP: usize = 256 * 1024;
+/// Maximum orphan bytes retained across all panes and generations.
+pub const ORPHAN_OUTPUT_GLOBAL_CAP: usize = 4 * 1024 * 1024;
+
+type OrphanOutputKey = (PaneId, u64);
+
+/// Bounded output received before an authoritative layout creates its pane locally.
+#[derive(Default)]
+pub struct OrphanOutputStore {
+    buffers: HashMap<OrphanOutputKey, Vec<u8>>,
+    order: VecDeque<OrphanOutputKey>,
+    retained: usize,
+    high_water: usize,
+}
+
+/// Cheap accounting snapshot for orphan output retained by an attachment.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OrphanOutputStats {
+    pub retained: usize,
+    pub high_water: usize,
+    pub keys: usize,
+}
+
+impl OrphanOutputStore {
+    pub fn insert(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        let key = (pane_id, generation);
+        if let Some(buffer) = self.buffers.get_mut(&key) {
+            self.retained -= buffer.len();
+            if bytes.len() >= ORPHAN_OUTPUT_CAP {
+                buffer.clear();
+                buffer.extend_from_slice(&bytes[bytes.len() - ORPHAN_OUTPUT_CAP..]);
+            } else {
+                buffer.extend_from_slice(bytes);
+                let overflow = buffer.len().saturating_sub(ORPHAN_OUTPUT_CAP);
+                if overflow > 0 {
+                    buffer.drain(..overflow);
+                }
+            }
+            self.retained += buffer.len();
+        } else {
+            let tail = if bytes.len() > ORPHAN_OUTPUT_CAP {
+                &bytes[bytes.len() - ORPHAN_OUTPUT_CAP..]
+            } else {
+                bytes
+            };
+            self.buffers.insert(key, tail.to_vec());
+            self.order.push_back(key);
+            self.retained += tail.len();
+        }
+
+        while self.retained > ORPHAN_OUTPUT_GLOBAL_CAP {
+            let oldest = self.order.pop_front().expect("retained orphan has key");
+            let removed = self
+                .buffers
+                .remove(&oldest)
+                .expect("orphan order contains live key");
+            self.retained -= removed.len();
+        }
+        self.high_water = self.high_water.max(self.retained);
+        debug_assert_eq!(self.order.len(), self.buffers.len());
+    }
+
+    pub fn take(&mut self, pane_id: PaneId, generation: u64) -> Option<Vec<u8>> {
+        let key = (pane_id, generation);
+        let bytes = self.buffers.remove(&key)?;
+        self.retained -= bytes.len();
+        self.order.retain(|candidate| *candidate != key);
+        debug_assert_eq!(self.order.len(), self.buffers.len());
+        Some(bytes)
+    }
+
+    /// Drop stale generations for this pane, then return only the generation in the layout.
+    pub fn take_for_generation(&mut self, pane_id: PaneId, generation: u64) -> Option<Vec<u8>> {
+        let buffers = &mut self.buffers;
+        let retained = &mut self.retained;
+        self.order.retain(|key| {
+            if key.0 == pane_id && key.1 < generation {
+                let removed = buffers.remove(key).expect("orphan order contains live key");
+                *retained -= removed.len();
+                false
+            } else {
+                true
+            }
+        });
+        self.take(pane_id, generation)
+    }
+
+    pub fn stats(&self) -> OrphanOutputStats {
+        OrphanOutputStats {
+            retained: self.retained,
+            high_water: self.high_water,
+            keys: self.buffers.len(),
+        }
+    }
+}
 
 /// Client-side state for an attached shared session: the layout-control lease, revision
 /// bookkeeping for optimistic commits, the controller's canonical canvas, and the buffers the
@@ -101,8 +198,8 @@ pub struct SharedSessionState {
     /// chokepoint (cheaper than re-serializing).
     pub last_committed_layout: Option<crate::shared_layout::SharedLayout>,
     /// Pane output that arrived before the pane's `LayoutCommitted` created it locally, keyed by
-    /// `(pane_id, generation)`; drained into the pane once the reconciler adds it. Capped per pane.
-    pub orphan_output: HashMap<(PaneId, u64), Vec<u8>>,
+    /// `(pane_id, generation)`; drained into the pane once the reconciler adds it.
+    orphan_output: OrphanOutputStore,
     /// Latest pending resize per pane while the controller debounces resize storms.
     pub pending_resizes: HashMap<PaneId, (u16, u16)>,
     /// Whether a trailing-edge `Msg::FlushPaneResizes` is already in flight, so a burst of resizes
@@ -125,7 +222,7 @@ impl SharedSessionState {
             read_only: false,
             canonical_canvas: None,
             last_committed_layout: None,
-            orphan_output: HashMap::new(),
+            orphan_output: OrphanOutputStore::default(),
             pending_resizes: HashMap::new(),
             resize_flush_scheduled: false,
             layout_commit_scheduled: false,
@@ -155,12 +252,15 @@ impl SharedSessionState {
     /// Buffer pane output that arrived before its pane exists locally, enforcing the per-pane cap
     /// by dropping the oldest bytes.
     pub fn buffer_orphan_output(&mut self, pane_id: PaneId, generation: u64, bytes: &[u8]) {
-        let buffer = self.orphan_output.entry((pane_id, generation)).or_default();
-        buffer.extend_from_slice(bytes);
-        if buffer.len() > ORPHAN_OUTPUT_CAP {
-            let overflow = buffer.len() - ORPHAN_OUTPUT_CAP;
-            buffer.drain(..overflow);
-        }
+        self.orphan_output.insert(pane_id, generation, bytes);
+    }
+
+    pub fn take_orphan_output(&mut self, pane_id: PaneId, generation: u64) -> Option<Vec<u8>> {
+        self.orphan_output.take_for_generation(pane_id, generation)
+    }
+
+    pub fn orphan_output_stats(&self) -> OrphanOutputStats {
+        self.orphan_output.stats()
     }
 }
 
@@ -221,4 +321,85 @@ pub fn remote_ephemeral_session_name() -> String {
         .filter(|host| !host.is_empty())
         .unwrap_or_else(|| "host".to_string());
     format!("{EPHEMERAL_SESSION_PREFIX}{host}-{}", std::process::id())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn orphan_store_keeps_the_newest_per_key_tail_and_ignores_empty_input() {
+        let mut store = OrphanOutputStore::default();
+        store.insert(1, 7, &[]);
+        assert_eq!(store.stats(), OrphanOutputStats::default());
+
+        let first = vec![1; ORPHAN_OUTPUT_CAP - 2];
+        store.insert(1, 7, &first);
+        store.insert(1, 7, &[2, 3, 4, 5]);
+
+        let retained = store.take(1, 7).expect("buffered generation");
+        assert_eq!(retained.len(), ORPHAN_OUTPUT_CAP);
+        assert_eq!(&retained[..2], &[1, 1]);
+        assert_eq!(&retained[ORPHAN_OUTPUT_CAP - 4..], &[2, 3, 4, 5]);
+        assert_eq!(store.stats().retained, 0);
+        assert_eq!(store.stats().keys, 0);
+        assert_eq!(store.order.len(), 0);
+    }
+
+    #[test]
+    fn orphan_store_evicts_oldest_whole_buffers_at_global_budget() {
+        let mut store = OrphanOutputStore::default();
+        for pane_id in 0..=16 {
+            store.insert(pane_id, 1, &vec![pane_id as u8; ORPHAN_OUTPUT_CAP]);
+        }
+
+        assert!(!store.buffers.contains_key(&(0, 1)));
+        assert!(store.buffers.contains_key(&(1, 1)));
+        assert!(store.buffers.contains_key(&(16, 1)));
+        assert_eq!(
+            store.stats(),
+            OrphanOutputStats {
+                retained: ORPHAN_OUTPUT_GLOBAL_CAP,
+                high_water: ORPHAN_OUTPUT_GLOBAL_CAP,
+                keys: 16,
+            }
+        );
+        assert_eq!(store.order.len(), store.buffers.len());
+    }
+
+    #[test]
+    fn orphan_store_take_updates_accounting_and_order() {
+        let mut store = OrphanOutputStore::default();
+        store.insert(1, 1, b"abc");
+        store.insert(2, 1, b"defgh");
+
+        assert_eq!(store.take(1, 1), Some(b"abc".to_vec()));
+        assert_eq!(store.stats().retained, 5);
+        assert_eq!(store.stats().high_water, 8);
+        assert_eq!(store.stats().keys, 1);
+        assert_eq!(store.order.iter().copied().collect::<Vec<_>>(), [(2, 1)]);
+        assert_eq!(store.take(1, 1), None);
+    }
+
+    #[test]
+    fn orphan_store_discards_only_superseded_generations() {
+        let mut store = OrphanOutputStore::default();
+        store.insert(4, 2, b"old");
+        store.insert(4, 3, b"exact");
+        store.insert(4, 4, b"future");
+        store.insert(5, 1, b"other");
+
+        assert_eq!(store.take_for_generation(4, 3), Some(b"exact".to_vec()));
+        assert!(!store.buffers.contains_key(&(4, 2)));
+        assert_eq!(
+            store.buffers.get(&(4, 4)).map(Vec::as_slice),
+            Some(&b"future"[..])
+        );
+        assert_eq!(
+            store.buffers.get(&(5, 1)).map(Vec::as_slice),
+            Some(&b"other"[..])
+        );
+        assert_eq!(store.stats().retained, b"future".len() + b"other".len());
+        assert_eq!(store.order.len(), store.buffers.len());
+    }
 }

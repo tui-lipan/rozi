@@ -34,7 +34,7 @@ use std::path::Path;
 use std::process::Child;
 
 pub(crate) mod piped;
-pub use piped::PipedConnection;
+pub use piped::{PipedBufferStats, PipedConnection};
 
 // `BoundEndpoint` is part of the plan's public abstraction surface and every call site that binds
 // an endpoint does receive one, but each immediately calls `.into_listener()` inline (type

@@ -1616,12 +1616,7 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<HyprmuxApp>) -> Updat
             keep_open,
         } => {
             let (id, update) = crate::ops::control::new_pane_after_session(
-                ctx,
-                source,
-                command,
-                cwd,
-                title,
-                keep_open,
+                ctx, source, command, cwd, title, keep_open,
             );
             if let Some(reply) = ctx.state.pending_control_reply.take() {
                 let _ = reply.send(crate::control::ControlResponse::ok(
@@ -1643,7 +1638,14 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<HyprmuxApp>) -> Updat
             keep_open,
         } => {
             let result = crate::popup::open(
-                ctx, command, cwd, width, height, title, keep_open, Vec::new(),
+                ctx,
+                command,
+                cwd,
+                width,
+                height,
+                title,
+                keep_open,
+                Vec::new(),
             );
             match result {
                 Ok(update) => {

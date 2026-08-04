@@ -455,7 +455,15 @@ fn new_pane(
             return Update::full();
         }
     };
-    let (id, update) = spawn_new_pane(ctx, source_workspace, source, command, cwd, title, keep_open);
+    let (id, update) = spawn_new_pane(
+        ctx,
+        source_workspace,
+        source,
+        command,
+        cwd,
+        title,
+        keep_open,
+    );
     let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
         id,
         accepted: true,
@@ -480,7 +488,15 @@ pub(crate) fn new_pane_after_session(
     let Ok(source_workspace) = workspace_for_source(&ctx.state, source) else {
         return (0, Update::full());
     };
-    spawn_new_pane(ctx, source_workspace, source, command, cwd, title, keep_open)
+    spawn_new_pane(
+        ctx,
+        source_workspace,
+        source,
+        command,
+        cwd,
+        title,
+        keep_open,
+    )
 }
 
 fn spawn_new_pane(

@@ -1444,13 +1444,10 @@ mod tests {
                 backend
                     .dispatch(Msg::SearchQueryChanged("needle".to_string()))
                     .expect("search query");
-                let epoch = backend
-                    .state()
-                    .search
-                    .as_ref()
-                    .and_then(|search| search.scan.as_ref())
-                    .expect("active scan")
-                    .epoch;
+                // Read the generation rather than the live scan: `recompute_search` queues the
+                // first chunk as a command, so a small corpus can finish the whole scan before
+                // this line runs and leave `scan` already `None`.
+                let epoch = backend.state().search_scan_epoch;
                 while backend
                     .state()
                     .search

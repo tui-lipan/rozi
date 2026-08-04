@@ -1547,6 +1547,17 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
     server.mark_dirty();
     server.maybe_snapshot().unwrap();
     server.wait_for_snapshots().unwrap();
+    // Snapshot again with pane 1 untouched, so the restore below reads a *reused* replay file
+    // rather than a freshly exported one. Reuse is the path that could silently drop scrollback,
+    // so the round trip has to cover it, not just the first write.
+    assert_eq!(
+        server.persisted_replays.get(&1),
+        Some(&server.panes[&1].content_generation),
+        "the second snapshot must be eligible to reuse pane 1, or this round trip is vacuous"
+    );
+    server.mark_dirty();
+    server.maybe_snapshot().unwrap();
+    server.wait_for_snapshots().unwrap();
     assert!(root.join("dev/meta.json").is_file());
     assert!(root.join("dev/panes/1.replay").is_file());
     assert!(!root.join("dev/panes/2.replay").exists());

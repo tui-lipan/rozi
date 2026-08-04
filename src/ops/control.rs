@@ -736,6 +736,10 @@ mod tests {
                     data["orphan_output"]["capacity_bytes"],
                     crate::state::ORPHAN_OUTPUT_GLOBAL_CAP as u64
                 );
+                assert_eq!(
+                    data["orphan_output"]["capacity_keys"],
+                    crate::state::ORPHAN_OUTPUT_KEY_CAP as u64
+                );
                 assert!(data["server"].is_null());
             })
             .expect("spawn metrics control test")

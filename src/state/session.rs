@@ -75,6 +75,11 @@ pub struct LeftSession {
 pub const ORPHAN_OUTPUT_CAP: usize = 256 * 1024;
 /// Maximum orphan bytes retained across all panes and generations.
 pub const ORPHAN_OUTPUT_GLOBAL_CAP: usize = 4 * 1024 * 1024;
+/// Maximum distinct `(pane, generation)` buffers retained by one attachment.
+///
+/// Four thousand pending identities is already far beyond a plausible layout race, while keeping
+/// tiny frames from turning the byte-bounded store into an effectively unbounded hash table.
+pub const ORPHAN_OUTPUT_KEY_CAP: usize = 4 * 1024;
 
 type OrphanOutputKey = (PaneId, u64);
 
@@ -126,7 +131,8 @@ impl OrphanOutputStore {
             self.retained += tail.len();
         }
 
-        while self.retained > ORPHAN_OUTPUT_GLOBAL_CAP {
+        while self.retained > ORPHAN_OUTPUT_GLOBAL_CAP || self.buffers.len() > ORPHAN_OUTPUT_KEY_CAP
+        {
             let oldest = self.order.pop_front().expect("retained orphan has key");
             let removed = self
                 .buffers
@@ -368,6 +374,27 @@ mod tests {
     }
 
     #[test]
+    fn orphan_store_evicts_oldest_whole_keys_during_a_tiny_frame_flood() {
+        let mut store = OrphanOutputStore::default();
+        for pane_id in 0..ORPHAN_OUTPUT_KEY_CAP as PaneId + 3 {
+            store.insert(pane_id, 1, &[pane_id as u8]);
+        }
+
+        assert_eq!(store.stats().keys, ORPHAN_OUTPUT_KEY_CAP);
+        assert_eq!(store.stats().retained, ORPHAN_OUTPUT_KEY_CAP);
+        assert_eq!(store.stats().high_water, ORPHAN_OUTPUT_KEY_CAP);
+        assert!(!store.buffers.contains_key(&(0, 1)));
+        assert!(!store.buffers.contains_key(&(1, 1)));
+        assert!(!store.buffers.contains_key(&(2, 1)));
+        assert_eq!(store.order.front(), Some(&(3, 1)));
+        assert_eq!(
+            store.order.back(),
+            Some(&(ORPHAN_OUTPUT_KEY_CAP as PaneId + 2, 1))
+        );
+        assert_eq!(store.order.len(), store.buffers.len());
+    }
+
+    #[test]
     fn orphan_store_take_updates_accounting_and_order() {
         let mut store = OrphanOutputStore::default();
         store.insert(1, 1, b"abc");
@@ -399,7 +426,17 @@ mod tests {
             store.buffers.get(&(5, 1)).map(Vec::as_slice),
             Some(&b"other"[..])
         );
-        assert_eq!(store.stats().retained, b"future".len() + b"other".len());
-        assert_eq!(store.order.len(), store.buffers.len());
+        assert_eq!(
+            store.stats(),
+            OrphanOutputStats {
+                retained: b"future".len() + b"other".len(),
+                high_water: b"old".len() + b"exact".len() + b"future".len() + b"other".len(),
+                keys: 2,
+            }
+        );
+        assert_eq!(
+            store.order.iter().copied().collect::<Vec<_>>(),
+            [(4, 4), (5, 1)]
+        );
     }
 }

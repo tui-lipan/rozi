@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tui_lipan::DevToolsMetric;
 
-use crate::state::{Attachment, ORPHAN_OUTPUT_GLOBAL_CAP};
+use crate::state::{Attachment, ORPHAN_OUTPUT_GLOBAL_CAP, ORPHAN_OUTPUT_KEY_CAP};
 
 /// A server sample older than three normal heartbeat intervals is stale.
 pub const SERVER_METRICS_STALE_AFTER: Duration = Duration::from_secs(15);
@@ -44,6 +44,7 @@ pub struct OrphanOutputMetrics {
     #[serde(flatten)]
     pub bytes: ByteBufferMetrics,
     pub keys: u64,
+    pub capacity_keys: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +115,7 @@ impl RuntimeMetrics {
                     ORPHAN_OUTPUT_GLOBAL_CAP,
                 ),
                 keys: orphan.keys as u64,
+                capacity_keys: ORPHAN_OUTPUT_KEY_CAP as u64,
             },
             server,
         }
@@ -309,7 +311,8 @@ mod tests {
                     "current_bytes": 0,
                     "high_water_bytes": 0,
                     "capacity_bytes": 0,
-                    "keys": 0
+                    "keys": 0,
+                    "capacity_keys": 0
                 },
                 "server": {
                     "sampled_at_unix_ms": 90,

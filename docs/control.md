@@ -72,7 +72,7 @@ The response field names and resource nesting are deterministic; timestamps, cou
 resources, and byte values reflect the sampled process:
 
 ```json
-{"ok":true,"data":{"sampled_at_unix_ms":1000,"client_inbound":{"current_bytes":0,"high_water_bytes":4096,"capacity_bytes":8388608,"queued_items":0},"client_outbound":{"current_bytes":0,"high_water_bytes":512,"capacity_bytes":8388608,"queued_items":0},"piped_remote":null,"orphan_output":{"current_bytes":0,"high_water_bytes":0,"capacity_bytes":4194304,"keys":0},"server":{"sampled_at_unix_ms":990,"pty_ingress":{"current_bytes":0,"high_water_bytes":8192,"capacity_bytes":8388608,"queued_items":0},"client_outboxes":{"current_bytes":0,"high_water_bytes":16384,"capacity_bytes":33554432,"clients":2},"resurrection":{"attempts":1,"successes":1,"failures":0,"last_duration_us":2400,"max_duration_us":2400},"age_ms":10,"stale":false}}}
+{"ok":true,"data":{"sampled_at_unix_ms":1000,"client_inbound":{"current_bytes":0,"high_water_bytes":4096,"capacity_bytes":8388608,"queued_items":0},"client_outbound":{"current_bytes":0,"high_water_bytes":512,"capacity_bytes":8388608,"queued_items":0},"piped_remote":null,"orphan_output":{"current_bytes":0,"high_water_bytes":0,"capacity_bytes":4194304,"keys":0,"capacity_keys":4096},"server":{"sampled_at_unix_ms":990,"pty_ingress":{"current_bytes":0,"high_water_bytes":8192,"capacity_bytes":4194304,"queued_items":0},"client_outboxes":{"current_bytes":0,"high_water_bytes":16384,"capacity_bytes":16777216,"clients":2},"resurrection":{"attempts":1,"successes":1,"failures":0,"last_duration_us":2400,"max_duration_us":2400},"age_ms":10,"stale":false}}}
 ```
 
 `send-keys` accepts tmux-style key names (`C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,

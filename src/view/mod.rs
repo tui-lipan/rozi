@@ -477,10 +477,26 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let shell: Element = if sidebar_width == 0 {
         content
     } else {
-        let sidebar = sidebar::sidebar(ctx);
+        // A modal dialog covers the whole shell, so the sidebar dims with it exactly like the
+        // workspace layer - otherwise a bright column stays beside the dialog. The wrapper is
+        // always mounted so the sidebar's keyed splitter/tab state keeps the same parent as the
+        // dim animates. The scratchpad drops out of this dim: it is a workspace-local layer that
+        // never covers the sidebar.
+        let sidebar_dim = crate::scratchpad::backdrop_dim(dialog_dim_progress);
+        let sidebar: Element = Animated::new(sidebar::sidebar(ctx))
+            .height(Length::Flex(1))
+            .opacity(sidebar_dim)
+            .opacity_target(theme.surface.backdrop)
+            .transition(crate::anim::instant_transition())
+            .into();
         let sidebar_pane_width = sidebar_width.saturating_sub(1);
         let content_width = viewport.w.saturating_sub(sidebar_width);
-        let divider_bg = ctx.state.theme.surface.element;
+        // The splitter paints its own handle column outside both children, so it has to be dimmed
+        // by hand to keep the seam from staying lit between two dimmed panes.
+        let divider_bg = theme
+            .surface
+            .element
+            .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate(0.15)).bg(divider_bg);
         let mut splitter = Splitter::vertical()
             .split_id("hyprmux-sidebar-shell")

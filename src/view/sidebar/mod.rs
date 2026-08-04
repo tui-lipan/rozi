@@ -350,7 +350,7 @@ fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Elemen
             // through a scope around the row; the ✕ keeps its foreground-only native effect, and
             // nested effects compose without another hover state machine.
             element = EffectScope::new()
-                .effect(VisualEffect::transform_bg(hover_lift(&ctx.state.theme)))
+                .effect(VisualEffect::transform_bg(hover_lift()))
                 .child(element)
                 .into();
         }
@@ -374,8 +374,7 @@ fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Elemen
                 // A transform rather than a style: it lifts whatever the row already painted, so
                 // the active pane's row and the row under the keyboard cursor still respond to the
                 // pointer. An absolute hover style sits *under* those backgrounds and never shows.
-                region =
-                    region.hover_effect(VisualEffect::transform_bg(hover_lift(&ctx.state.theme)));
+                region = region.hover_effect(VisualEffect::transform_bg(hover_lift()));
             }
             region.into()
         } else {
@@ -471,16 +470,10 @@ const HOVER_LIFT: f32 = 0.08;
 
 /// The pointer-hover lift, as a transform.
 ///
-/// `Color::elevate` is the theme-aware move — it lightens a dark surface and dims a light one — but
-/// `ColorTransform` has no elevate variant, only the two directions. So pick the direction the same
-/// way `elevate` does. Deciding it once from the surface the sidebar sits on is enough: every row
-/// background is derived from that surface, so they are all on the same side of the light/dark line.
-fn hover_lift(theme: &Theme) -> ColorTransform {
-    if theme.surface.element.is_dark() {
-        ColorTransform::Lighten(HOVER_LIFT)
-    } else {
-        ColorTransform::Dim(HOVER_LIFT)
-    }
+/// `ColorTransform::Elevate` is the relative form of the `Color::elevate` [`row_highlight`] paints
+/// absolutely, so the two land on the same color whatever background the row carries.
+fn hover_lift() -> ColorTransform {
+    ColorTransform::Elevate(HOVER_LIFT)
 }
 
 pub(super) fn placeholder(ctx: &Context<HyprmuxApp>, text: &str) -> Element {

@@ -170,6 +170,12 @@ pub struct ServerPane {
     pub pty: Option<TerminalPty>,
     /// Reached through [`ServerPane::screen_mut`] / [`ServerPane::screen_without_change`] rather
     /// than directly, so a content change cannot silently skip `content_generation`.
+    ///
+    /// **Invariant:** any operation that changes replay-visible terminal state must advance
+    /// `content_generation`. Operations that temporarily transform the screen and fully restore it
+    /// must not. Getting this wrong in the first direction persists a stale replay - restored
+    /// scrollback silently missing output - so when a new terminal feature makes the distinction
+    /// unclear, take [`ServerPane::screen_mut`].
     terminal: TerminalScreen,
     /// Bumped by every change to what this pane's replay bytes would contain.
     ///

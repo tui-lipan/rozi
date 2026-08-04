@@ -15,8 +15,8 @@ The latest audit found no release-blocking performance problems and classified h
 slices, epoch-gated workers resolve the workbar command lifecycle concern, and an isolated
 framework comparison confirms a roughly 38-39% snapshot-rebuild reduction. Saturation and durable
 resurrection now have permanent measured harnesses. Durable snapshots write off the server loop
-and reuse unchanged panes' replay files, cutting the 16-pane 5,000-row stall from roughly 208 ms to
-roughly 11 ms. Remaining work is idle server backoff/readiness design, gated image-budget work,
+and reuse unchanged panes' replay files, cutting maximum 16-pane 5,000-row server-loop blocking from
+207.7 ms to 12.0 ms. Remaining work is idle server backoff/readiness design, gated image-budget work,
 bounding persisted history for sessions where every pane is busy, slow-storage evidence, and a full
 memory soak.
 

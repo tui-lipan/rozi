@@ -35,6 +35,11 @@ struct SnapshotJob {
     replays: Vec<(PaneId, ReplaySource)>,
     /// Per-pane `content_generation` this snapshot persists, adopted once the write succeeds.
     captured: Vec<(PaneId, u64)>,
+    /// How the capture split between re-export and reuse, so the shape of a slow snapshot is
+    /// visible without reproducing it.
+    exported: u32,
+    reused: u32,
+    exported_bytes: u64,
 }
 
 struct SnapshotOutcome {
@@ -137,6 +142,15 @@ impl SnapshotWorker {
     }
 }
 
+/// A pane's replay file inside a snapshot directory.
+///
+/// Replay files are immutable once published: a snapshot only ever creates them in its own
+/// temporary directory, so a reused file is the same bytes under a new link rather than a file
+/// anything writes through.
+fn replay_file(snapshot_dir: &Path, pane_id: PaneId) -> PathBuf {
+    snapshot_dir.join("panes").join(format!("{pane_id}.replay"))
+}
+
 fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
     let SnapshotJob {
         final_path,
@@ -169,7 +183,7 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
         match source {
             ReplaySource::Exported(replay) => write_secure(&target, replay)?,
             ReplaySource::Reuse => {
-                let existing = final_path.join("panes").join(format!("{pane_id}.replay"));
+                let existing = replay_file(&final_path, *pane_id);
                 // A hard link keeps the bytes in place instead of copying them, and the old
                 // directory is only unlinked after the rename, so the inode outlives it. Copying
                 // is the fallback where linking is unavailable (a filesystem without it, or the
@@ -303,6 +317,9 @@ impl SessionServer {
                 return Err(err);
             }
         };
+        self.resurrection_metrics.last_exported_panes = job.exported;
+        self.resurrection_metrics.last_reused_panes = job.reused;
+        self.resurrection_metrics.last_exported_bytes = job.exported_bytes;
         self.snapshot_worker
             .get_or_insert_with(SnapshotWorker::new)
             .dispatch(job);
@@ -411,6 +428,7 @@ impl SessionServer {
         let mut panes = Vec::new();
         let mut replays = Vec::new();
         let mut captured = Vec::new();
+        let (mut exported, mut reused, mut exported_bytes) = (0_u32, 0_u32, 0_u64);
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
@@ -433,10 +451,21 @@ impl SessionServer {
             // so an idle pane reuses the file the last snapshot already wrote for this exact
             // generation. `persisted_replays` only records generations a snapshot *succeeded* on,
             // so a reuse can never point at a file that was never written.
-            let source = if self.persisted_replays.get(&pane_id) == Some(&content_generation) {
+            //
+            // The source is still confirmed present here, on the loop, where re-exporting is
+            // possible: a snapshot directory emptied behind the server's back must degrade into a
+            // full export rather than failing the attempt, since the worker has no screen to fall
+            // back to.
+            let source = if self.persisted_replays.get(&pane_id) == Some(&content_generation)
+                && replay_file(&final_path, pane_id).is_file()
+            {
+                reused += 1;
                 ReplaySource::Reuse
             } else {
-                ReplaySource::Exported(pane.screen_without_change().export_replay_bytes())
+                let replay = pane.screen_without_change().export_replay_bytes();
+                exported += 1;
+                exported_bytes += replay.len() as u64;
+                ReplaySource::Exported(replay)
             };
             replays.push((pane_id, source));
             captured.push((pane_id, content_generation));
@@ -471,6 +500,9 @@ impl SessionServer {
             layout,
             replays,
             captured,
+            exported,
+            reused,
+            exported_bytes,
         })
     }
 
@@ -754,6 +786,129 @@ mod tests {
             contains(&changed, b"pane-1-appended"),
             "a changed pane must be re-exported with its new output"
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Reuse must survive successive generations, and must not depend on the *oldest* snapshot
+    /// directory surviving.
+    ///
+    /// Each snapshot publishes a new directory and unlinks the one it replaced. A reused file is
+    /// carried forward by a hard link, so the bytes outlive every pathname they were ever
+    /// published under - this test is what documents that as intentional rather than luck.
+    #[test]
+    fn reuse_chains_across_generations_and_outlives_the_directory_it_came_from() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-chain-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "chain",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        for pane_id in 1..=3 {
+            let mut pane = test_pane();
+            pane.screen_mut()
+                .process_bytes(format!("pane-{pane_id}-a\r\n").as_bytes());
+            server.panes.insert(pane_id, pane);
+        }
+
+        // A: everything exported.
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch A");
+        server.wait_for_snapshots().expect("snapshot A");
+        assert_eq!(server.resurrection_metrics.last_exported_panes, 3);
+        assert_eq!(server.resurrection_metrics.last_reused_panes, 0);
+
+        // B: pane 1 dirty, 2 and 3 reused.
+        server
+            .panes
+            .get_mut(&1)
+            .expect("pane 1")
+            .screen_mut()
+            .process_bytes(b"pane-1-b\r\n");
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch B");
+        server.wait_for_snapshots().expect("snapshot B");
+        assert_eq!(server.resurrection_metrics.last_exported_panes, 1);
+        assert_eq!(server.resurrection_metrics.last_reused_panes, 2);
+
+        // C: pane 2 dirty, 1 and 3 reused. Pane 3's bytes have now been carried through two
+        // directories that no longer exist.
+        server
+            .panes
+            .get_mut(&2)
+            .expect("pane 2")
+            .screen_mut()
+            .process_bytes(b"pane-2-c\r\n");
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch C");
+        server.wait_for_snapshots().expect("snapshot C");
+        assert_eq!(server.resurrection_metrics.last_exported_panes, 1);
+        assert_eq!(server.resurrection_metrics.last_reused_panes, 2);
+
+        let replay = |pane_id: PaneId| {
+            fs::read(root.join(format!("chain/panes/{pane_id}.replay"))).expect("replay file")
+        };
+        assert!(contains(&replay(1), b"pane-1-b"));
+        assert!(contains(&replay(2), b"pane-2-c"));
+        assert!(
+            contains(&replay(3), b"pane-3-a"),
+            "a pane untouched across every generation keeps its original bytes"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A snapshot directory emptied behind the server's back re-exports rather than failing.
+    #[test]
+    fn a_missing_reuse_source_falls_back_to_export_in_the_same_attempt() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-missing-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "missing",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        let mut pane = test_pane();
+        pane.screen_mut().process_bytes(b"only-copy\r\n");
+        server.panes.insert(1, pane);
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch first snapshot");
+        server.wait_for_snapshots().expect("first snapshot");
+        assert_eq!(server.persisted_replays.get(&1), Some(&1));
+
+        // The reuse claim now points at a file that is gone.
+        fs::remove_file(root.join("missing/panes/1.replay")).expect("remove replay");
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch second snapshot");
+        server
+            .wait_for_snapshots()
+            .expect("a missing source must not fail the snapshot");
+        assert_eq!(
+            server.resurrection_metrics.last_exported_panes, 1,
+            "the pane must be re-exported rather than linked from nothing"
+        );
+        assert_eq!(server.resurrection_metrics.failures, 0);
+        assert!(contains(
+            &fs::read(root.join("missing/panes/1.replay")).expect("rewritten replay"),
+            b"only-copy"
+        ));
 
         let _ = fs::remove_dir_all(root);
     }

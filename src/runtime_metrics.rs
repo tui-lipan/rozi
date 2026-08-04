@@ -62,6 +62,12 @@ pub struct ResurrectionMetrics {
     /// that bounds input latency during a snapshot; `last_duration_us` no longer does.
     pub last_blocking_us: u64,
     pub max_blocking_us: u64,
+    /// How the last capture split between re-exporting changed panes and reusing the replay files
+    /// unchanged ones already had. A snapshot that blocks for a long time is explained by these:
+    /// cost tracks exported panes and their bytes, not the session's pane count.
+    pub last_exported_panes: u32,
+    pub last_reused_panes: u32,
+    pub last_exported_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,12 +188,16 @@ impl RuntimeMetrics {
             DevToolsMetric::new(
                 "Snapshot",
                 format!(
-                    "{}a {}ok {}err · {}/{} ms{}",
+                    "{}a {}ok {}err · {}/{} ms · blk {}/{} ms · {}ex {}re{}",
                     snapshot.attempts,
                     snapshot.successes,
                     snapshot.failures,
                     format_millis(snapshot.last_duration_us),
                     format_millis(snapshot.max_duration_us),
+                    format_millis(snapshot.last_blocking_us),
+                    format_millis(snapshot.max_blocking_us),
+                    snapshot.last_exported_panes,
+                    snapshot.last_reused_panes,
                     format_age(server_age)
                 ),
             ),
@@ -343,7 +353,10 @@ mod tests {
                         "last_duration_us": 0,
                         "max_duration_us": 0,
                         "last_blocking_us": 0,
-                        "max_blocking_us": 0
+                        "max_blocking_us": 0,
+                        "last_exported_panes": 0,
+                        "last_reused_panes": 0,
+                        "last_exported_bytes": 0
                     },
                     "age_ms": 10,
                     "stale": false

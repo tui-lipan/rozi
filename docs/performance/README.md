@@ -14,15 +14,17 @@ The latest audit found no release-blocking performance problems and classified h
 **ready with minor improvements**. Broad-scope scrollback search now runs in bounded cooperative
 slices, epoch-gated workers resolve the workbar command lifecycle concern, and an isolated
 framework comparison confirms a roughly 38-39% snapshot-rebuild reduction. Saturation and durable
-resurrection now have permanent measured harnesses. Remaining work is idle server backoff/readiness
-design, gated image-budget work, async resurrection with slow-storage evidence, and a full memory
+resurrection now have permanent measured harnesses. Durable snapshots now write off the server
+loop, which helps most when little scrollback is retained and least at 5,000 rows, where the
+on-loop export dominates. Remaining work is idle server backoff/readiness design, gated
+image-budget work, skipping unchanged panes in a snapshot, slow-storage evidence, and a full memory
 soak.
 
 ## Audit ledger
 
 | Date | Revision | Verdict | Report |
 | --- | --- | --- | --- |
-| 2026-08-04 | `2b85924` plus recorded audit worktree changes | ready with minor improvements | [Performance follow-up evidence](audits/2026-08-04.md) |
+| 2026-08-04 | `2b85924` plus recorded audit worktree changes, with an asynchronous-resurrection follow-up at `9f66a6a` | ready with minor improvements | [Performance follow-up evidence](audits/2026-08-04.md) |
 | 2026-08-03 | `c07b6be` plus recorded worktree changes | ready with minor improvements | [Performance and resource-efficiency audit](audits/2026-08-03.md) |
 
 ## Recording future audits

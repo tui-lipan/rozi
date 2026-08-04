@@ -5,6 +5,7 @@ use std::sync::{Condvar, Mutex};
 pub(crate) struct QueueStats {
     pub(crate) bytes: usize,
     pub(crate) high_water_bytes: usize,
+    pub(crate) capacity: usize,
     pub(crate) len: usize,
     pub(crate) closed: bool,
 }
@@ -155,6 +156,7 @@ impl<T> ByteQueue<T> {
         QueueStats {
             bytes: state.bytes,
             high_water_bytes: state.high_water_bytes,
+            capacity: self.capacity,
             len: state.entries.len(),
             closed: state.closed,
         }

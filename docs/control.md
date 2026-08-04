@@ -36,6 +36,7 @@ then exactly one live endpoint in the runtime directory.
 
 ```bash
 hyprmux list-panes
+hyprmux metrics
 hyprmux focus 3
 hyprmux send-text 'cargo test
 '
@@ -59,6 +60,20 @@ hyprmux status --clear
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
 discovery/connect failures. `split`/`new-pane` replies as soon as the pane is accepted by the UI; the
 PTY may still be starting (`pty_ready: false`).
+
+`metrics` is a read-only, render-neutral snapshot of bounded runtime resources. It reports local
+client queues, the SSH pipe buffer when present, orphan output, and the latest cached server sample
+for PTY ingress, aggregate client outboxes, and resurrection writes. The command returns
+immediately and asks the session server to refresh its cache asynchronously; it never waits for
+that round trip. Consequently, `server` can be `null` on the first request. Cached server samples
+include monotonic reception `age_ms` and become `"stale":true` at 15 seconds.
+
+The response field names and resource nesting are deterministic; timestamps, counters, optional
+resources, and byte values reflect the sampled process:
+
+```json
+{"ok":true,"data":{"sampled_at_unix_ms":1000,"client_inbound":{"current_bytes":0,"high_water_bytes":4096,"capacity_bytes":8388608,"queued_items":0},"client_outbound":{"current_bytes":0,"high_water_bytes":512,"capacity_bytes":8388608,"queued_items":0},"piped_remote":null,"orphan_output":{"current_bytes":0,"high_water_bytes":0,"capacity_bytes":4194304,"keys":0},"server":{"sampled_at_unix_ms":990,"pty_ingress":{"current_bytes":0,"high_water_bytes":8192,"capacity_bytes":8388608,"queued_items":0},"client_outboxes":{"current_bytes":0,"high_water_bytes":16384,"capacity_bytes":33554432,"clients":2},"resurrection":{"attempts":1,"successes":1,"failures":0,"last_duration_us":2400,"max_duration_us":2400},"age_ms":10,"stale":false}}}
+```
 
 `send-keys` accepts tmux-style key names (`C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
 `BSpace`, arrows, `Home`/`End`, `PgUp`/`PgDn`, `F1`..`F12`) mixed with literal text arguments.
@@ -117,9 +132,9 @@ The socket accepts one newline-delimited JSON request per connection and returns
 `subscribe` is the exception: after its acknowledgement, the connection remains open and streams
 newline-delimited event objects until disconnected.
 
-Requests use a `cmd` field: `list-panes`, `focus`, `send-text`, `send-keys`, `new-pane`, `run-action`,
-`capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`, or `subscribe`. A
-client may include `source_pane`; the CLI derives it from `HYPRMUX_PANE`.
+Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
+`run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`, or
+`subscribe`. A client may include `source_pane`; the CLI derives it from `HYPRMUX_PANE`.
 
 Examples:
 
@@ -134,6 +149,7 @@ Examples:
 ```
 
 ```json
+{"cmd":"metrics"}
 {"cmd":"list-panes","source_pane":1}
 {"cmd":"focus","target":2,"source_pane":1}
 {"cmd":"send-text","target":2,"text":"hello"}

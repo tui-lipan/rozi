@@ -1169,6 +1169,7 @@ mod tests {
             navigation: TerminalCopyMode::new(0, 0, 0),
             search_matches: Vec::new(),
             search_current: 0,
+            search_truncated: false,
         });
         state.hint_mode = Some(crate::state::HintModeState {
             target: 1,

@@ -68,7 +68,21 @@ impl SessionServer {
         // the snapshot dirty for a later retry, but must not turn the server loop into a 1 ms
         // export/write/sync retry storm.
         self.last_snapshot = Instant::now();
-        self.write_snapshot()?;
+        let started = Instant::now();
+        self.resurrection_metrics.attempts = self.resurrection_metrics.attempts.saturating_add(1);
+        let result = self.write_snapshot();
+        let elapsed = crate::runtime_metrics::duration_micros(started.elapsed());
+        self.resurrection_metrics.last_duration_us = elapsed;
+        self.resurrection_metrics.max_duration_us =
+            self.resurrection_metrics.max_duration_us.max(elapsed);
+        if result.is_ok() {
+            self.resurrection_metrics.successes =
+                self.resurrection_metrics.successes.saturating_add(1);
+        } else {
+            self.resurrection_metrics.failures =
+                self.resurrection_metrics.failures.saturating_add(1);
+        }
+        result?;
         self.dirty = false;
         Ok(())
     }
@@ -309,5 +323,48 @@ mod tests {
         .unwrap();
 
         assert_eq!(meta.created_from_profile, None);
+    }
+
+    #[test]
+    fn snapshot_metrics_record_complete_success_and_failure_attempts() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-metrics-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "metrics",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        server.dirty = true;
+        server.maybe_snapshot().expect("successful snapshot");
+        assert_eq!(server.resurrection_metrics.attempts, 1);
+        assert_eq!(server.resurrection_metrics.successes, 1);
+        assert_eq!(server.resurrection_metrics.failures, 0);
+        assert_eq!(
+            server.resurrection_metrics.max_duration_us,
+            server.resurrection_metrics.last_duration_us
+        );
+
+        let blocked = root.join("not-a-directory");
+        fs::write(&blocked, b"x").unwrap();
+        server.settings.snapshot_dir = Some(blocked);
+        server.dirty = true;
+        assert!(server.maybe_snapshot().is_err());
+        assert_eq!(server.resurrection_metrics.attempts, 2);
+        assert_eq!(server.resurrection_metrics.successes, 1);
+        assert_eq!(server.resurrection_metrics.failures, 1);
+        assert!(
+            server.resurrection_metrics.max_duration_us
+                >= server.resurrection_metrics.last_duration_us
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 }

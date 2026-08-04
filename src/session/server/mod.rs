@@ -9,6 +9,10 @@ use tui_lipan::prelude::*;
 
 use crate::control;
 use crate::platform::ipc::{EndpointRegistry, IpcConnection, IpcEndpoint, IpcListener};
+use crate::runtime_metrics::{
+    ByteBufferMetrics, QueueMetrics, ResurrectionMetrics, ServerOutboxMetrics,
+    ServerRuntimeMetrics, unix_time_millis,
+};
 use crate::session::protocol::{
     self, ClientInfo, ClientMessage, ControllerChangeReason, Frame, PROTOCOL_VERSION, PaneMeta,
     ServerMessage, WirePalette,
@@ -70,6 +74,9 @@ pub struct SessionServer {
     next_client_id: ClientId,
     max_backlog: usize,
     events: Arc<ByteQueue<ServerEvent>>,
+    /// Aggregate high-water across every client outbox for this server process's lifetime.
+    outbox_high_water_bytes: usize,
+    resurrection_metrics: ResurrectionMetrics,
     shutdown: bool,
     forget_snapshot: bool,
     dirty: bool,
@@ -366,6 +373,8 @@ impl SessionServer {
             next_client_id: 1,
             max_backlog: DEFAULT_MAX_BACKLOG,
             events,
+            outbox_high_water_bytes: 0,
+            resurrection_metrics: ResurrectionMetrics::default(),
             shutdown: false,
             forget_snapshot: false,
             dirty: false,
@@ -457,6 +466,49 @@ impl SessionServer {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn runtime_metrics(&self) -> ServerRuntimeMetrics {
+        let ingress = self.events.stats();
+        let current_outbox = self
+            .clients
+            .iter()
+            .map(|client| client.outbox_bytes)
+            .sum::<usize>();
+        let outbox_capacity = self
+            .clients
+            .iter()
+            .map(|client| client.backlog_cap(self.max_backlog))
+            .sum::<usize>();
+        ServerRuntimeMetrics {
+            sampled_at_unix_ms: unix_time_millis(),
+            pty_ingress: QueueMetrics {
+                bytes: ByteBufferMetrics::new(
+                    ingress.bytes,
+                    ingress.high_water_bytes,
+                    ingress.capacity,
+                ),
+                queued_items: ingress.len as u64,
+            },
+            client_outboxes: ServerOutboxMetrics {
+                bytes: ByteBufferMetrics::new(
+                    current_outbox,
+                    self.outbox_high_water_bytes,
+                    outbox_capacity,
+                ),
+                clients: self.clients.len() as u64,
+            },
+            resurrection: self.resurrection_metrics,
+        }
+    }
+
+    fn note_outbox_high_water(&mut self) {
+        let current = self
+            .clients
+            .iter()
+            .map(|client| client.outbox_bytes)
+            .sum::<usize>();
+        self.outbox_high_water_bytes = self.outbox_high_water_bytes.max(current);
     }
 }
 

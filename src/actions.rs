@@ -638,6 +638,27 @@ mod tests {
     }
 
     #[test]
+    fn devtools_toggle_is_framework_owned_and_render_neutral() {
+        use crate::Msg;
+        use tui_lipan::{TestBackend, UpdateLevel};
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                assert_eq!(
+                    backend
+                        .update_level(Msg::RunAction(Action::ToggleDevtools))
+                        .expect("toggle devtools update"),
+                    UpdateLevel::None
+                );
+            })
+            .expect("spawn devtools action test thread")
+            .join()
+            .expect("devtools action test thread completes");
+    }
+
+    #[test]
     fn scratchpad_allows_its_toggle_and_sidebar_toggle() {
         let mut state =
             crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());

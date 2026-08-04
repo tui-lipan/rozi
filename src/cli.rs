@@ -291,6 +291,13 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     request: control_request(control::ControlCommand::ListPanes),
                 }));
             }
+            "metrics" => {
+                reject_trailing_control_args(&mut iter, "metrics")?;
+                return Ok(ParsedCli::Control(ControlCli {
+                    socket,
+                    request: control_request(control::ControlCommand::Metrics),
+                }));
+            }
             "focus" => {
                 let target = iter
                     .next()
@@ -813,6 +820,7 @@ USAGE:
     hyprmux attach <NAME> [--read-only]
     hyprmux new <NAME> [--profile <RECIPE>]
     hyprmux [--socket PATH] list|list-panes
+    hyprmux [--socket PATH] metrics
     hyprmux [--socket PATH] focus <PANE_ID>
     hyprmux [--socket PATH] send-text <TEXT>
     hyprmux [--socket PATH] status <VALUE> [--reason <TEXT>]
@@ -932,6 +940,12 @@ mod tests {
     fn cli_reserved_control_commands_do_not_parse_as_profiles() {
         let parsed = parse_cli_args(vec!["list-panes".into()]).expect("parses");
         assert!(matches!(parsed, ParsedCli::Control(_)));
+        let ParsedCli::Control(metrics) =
+            parse_cli_args(vec!["metrics".into()]).expect("metrics parses")
+        else {
+            panic!("expected metrics control command");
+        };
+        assert_eq!(metrics.request.command, control::ControlCommand::Metrics);
 
         let profile = expect_run(
             parse_cli_args(vec!["--session".into(), "list-panes".into()]).expect("parses"),

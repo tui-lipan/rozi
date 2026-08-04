@@ -359,6 +359,11 @@ impl Component for HyprmuxApp {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Element {
+        if ctx.devtools_visible() {
+            ctx.set_devtools_metrics(|| {
+                crate::runtime_metrics::RuntimeMetrics::capture(ctx.state.current()).devtools_rows()
+            });
+        }
         view::render(self, ctx)
     }
 }
@@ -1365,9 +1370,11 @@ mod tests {
                     line: 1,
                     start_col: 8,
                     end_col: 14,
-                    text: "hyprmux master • prompt".to_string(),
+                    text: std::sync::Arc::from("hyprmux master • prompt"),
                     pane: 1,
                 });
+                search.rebuild_items();
+                search.refresh_match_status();
                 backend.state_mut().search = Some(search);
                 let match_fg = backend.state().theme.status.info;
                 backend.render();
@@ -1391,6 +1398,7 @@ mod tests {
                 assert!(rendered.contains("next ctrl+n"), "{rendered}");
                 assert!(rendered.contains("previous ctrl+p"), "{rendered}");
                 assert!(rendered.contains("pane tab"), "{rendered}");
+                assert!(rendered.contains("1 / 1 matches (pane)"), "{rendered}");
                 assert!(!rendered.contains("scope:"), "{rendered}");
 
                 let row = lines
@@ -1409,6 +1417,82 @@ mod tests {
             .expect("spawn snapshot test thread")
             .join()
             .expect("snapshot test thread completes");
+    }
+
+    #[test]
+    fn scrollback_palette_keeps_selection_and_activation_aligned_past_100_rows() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let output = (0..150)
+                    .map(|index| format!("needle-{index:03}\r\n"))
+                    .collect::<String>();
+                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                    .expect("target pane")
+                    .terminal
+                    .process_server_output(output.as_bytes());
+
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
+                    .expect("open search");
+                backend
+                    .dispatch(Msg::SearchQueryChanged("needle".to_string()))
+                    .expect("search query");
+                backend.render();
+                assert_eq!(
+                    backend.state().search.as_ref().expect("search").items.len(),
+                    150
+                );
+
+                backend
+                    .dispatch(Msg::SearchSelect(120))
+                    .expect("select row past sync default");
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('n'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("next row");
+                assert_eq!(
+                    backend.state().search.as_ref().expect("search").current,
+                    121
+                );
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('p'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("previous row");
+                let expected = {
+                    let search = backend.state().search.as_ref().expect("search");
+                    assert_eq!(search.current, 120);
+                    search.matches[120].clone()
+                };
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("activate selected row");
+                assert!(backend.state().search.is_none());
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                        .expect("target pane")
+                        .terminal
+                        .scrollback_offset(),
+                    expected.offset
+                );
+            })
+            .expect("spawn palette selection test")
+            .join()
+            .expect("palette selection test completes");
     }
 
     #[test]

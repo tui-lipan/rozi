@@ -59,6 +59,7 @@ impl CaptureScrollback {
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum ControlCommand {
     ListPanes,
+    Metrics,
     Focus {
         target: PaneId,
     },
@@ -367,6 +368,22 @@ mod tests {
         );
         let round_tripped: ControlRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(round_tripped, request);
+    }
+
+    #[test]
+    fn metrics_command_has_deterministic_json_shape() {
+        let request = ControlRequest {
+            command: ControlCommand::Metrics,
+            source_pane: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&request).unwrap(),
+            r#"{"cmd":"metrics","source_pane":null}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<ControlRequest>(r#"{"cmd":"metrics"}"#).unwrap(),
+            request
+        );
     }
 
     #[test]

@@ -21,10 +21,13 @@ use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use tui_lipan::prelude::*;
 
+use crate::runtime_metrics::ServerRuntimeMetrics;
 use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
+///
+/// 18 adds protocol-gated runtime resource metric requests and samples.
 ///
 /// 16 adds [`ClientMessage::EvictClient`], the controller's way to remove another client.
 ///
@@ -35,7 +38,7 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 /// Oldest wire protocol version this build can still speak.
 ///
 /// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
@@ -51,6 +54,8 @@ pub const CONTROL_TAKEOVER_PROTOCOL: u32 = 15;
 /// First version carrying [`ClientMessage::EvictClient`]. An older server would ignore the unknown
 /// variant, so the client neither sends it nor offers the affordance below this version.
 pub const EVICT_CLIENT_PROTOCOL: u32 = 16;
+/// First version carrying runtime resource metric requests and samples.
+pub const RUNTIME_METRICS_PROTOCOL: u32 = 18;
 /// `code` on the [`ServerMessage::Error`] a client receives just before the server closes it for
 /// being evicted. Distinguishes a removal from a dropped connection, which the client would
 /// otherwise answer by reconnecting straight back into the session it was removed from.
@@ -486,6 +491,8 @@ pub enum ClientMessage {
     ListChanges {
         root: String,
     },
+    /// Ask for an immediate server-owned resource sample (protocol 18+).
+    RequestRuntimeMetrics,
     Detach,
     Shutdown,
 }
@@ -668,6 +675,10 @@ pub enum ServerMessage {
         changes: Vec<WireChange>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// Server-owned resource sample, requested by a protocol-18 client.
+    RuntimeMetrics {
+        metrics: ServerRuntimeMetrics,
     },
 }
 
@@ -1180,6 +1191,38 @@ mod tests {
     }
 
     #[test]
+    fn runtime_metrics_protocol_preserves_legacy_negotiation() {
+        const { assert!(RUNTIME_METRICS_PROTOCOL > MIN_SUPPORTED_PROTOCOL) };
+        const { assert!(RUNTIME_METRICS_PROTOCOL <= PROTOCOL_VERSION) };
+
+        let effective = negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 17, 12)
+            .expect("protocol-18 client can attach to protocol-17 server");
+        assert_eq!(effective, 17);
+        assert!(effective < RUNTIME_METRICS_PROTOCOL);
+
+        let request = ClientMessage::RequestRuntimeMetrics;
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &request).unwrap();
+        assert_eq!(
+            read_frame::<_, ClientMessage>(&mut &bytes[..]).unwrap(),
+            request
+        );
+
+        let sample = ServerMessage::RuntimeMetrics {
+            metrics: ServerRuntimeMetrics {
+                sampled_at_unix_ms: 42,
+                ..ServerRuntimeMetrics::default()
+            },
+        };
+        let mut bytes = Vec::new();
+        write_frame(&mut bytes, &sample).unwrap();
+        assert_eq!(
+            read_frame::<_, ServerMessage>(&mut &bytes[..]).unwrap(),
+            sample
+        );
+    }
+
+    #[test]
     fn pane_status_message_round_trips() {
         let msg = ClientMessage::SetPaneStatus {
             pane_id: 7,
@@ -1308,7 +1351,7 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":17,
+                "protocol_version":18,
                 "min_protocol_version":12,
                 "label":"alice",
                 "read_only":true
@@ -1336,7 +1379,7 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":17,
+                "protocol_version":18,
                 "min_protocol_version":12
             })
         );
@@ -1422,7 +1465,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":17,
+                "effective_protocol":18,
                 "created_from_profile":"work"
             })
         );

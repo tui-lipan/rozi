@@ -46,6 +46,11 @@ pub(crate) fn handle_control_request(
 ) -> Update {
     let response = match envelope.request.command {
         ControlCommand::ListPanes => list_panes(ctx),
+        ControlCommand::Metrics => {
+            let response = runtime_metrics(ctx);
+            let _ = envelope.reply.send(response);
+            return Update::none();
+        }
         ControlCommand::Focus { target } => focus_target(ctx, target),
         ControlCommand::SendText { target, text } => {
             send_text(ctx, target.or(envelope.request.source_pane), text)
@@ -155,6 +160,16 @@ pub(crate) fn handle_control_request(
     };
     let _ = envelope.reply.send(response);
     Update::full()
+}
+
+fn runtime_metrics(ctx: &Context<HyprmuxApp>) -> ControlResponse {
+    if let Some(client) = &ctx.state.current().session_client {
+        // Refresh asynchronously for the next sample; this response always uses the cache.
+        client.request_runtime_metrics();
+    }
+    ControlResponse::ok(crate::runtime_metrics::RuntimeMetrics::capture(
+        ctx.state.current(),
+    ))
 }
 
 fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
@@ -689,5 +704,42 @@ mod tests {
             .expect("spawn list panes test thread")
             .join()
             .expect("list panes test thread completes");
+    }
+
+    #[test]
+    fn metrics_control_is_render_neutral_and_returns_cached_shape_without_waiting() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let (reply, response) = mpsc::channel();
+                let level = backend
+                    .update_level(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::Metrics,
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("update metrics");
+                assert_eq!(level, tui_lipan::UpdateLevel::None);
+                let response = response
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .expect("metrics response is immediate");
+                let data = response.data.expect("metrics data");
+                assert!(response.ok);
+                assert!(data["sampled_at_unix_ms"].is_number());
+                assert!(data["client_inbound"].is_null());
+                assert!(data["client_outbound"].is_null());
+                assert!(data["piped_remote"].is_null());
+                assert_eq!(
+                    data["orphan_output"]["capacity_bytes"],
+                    crate::state::ORPHAN_OUTPUT_GLOBAL_CAP as u64
+                );
+                assert!(data["server"].is_null());
+            })
+            .expect("spawn metrics control test")
+            .join()
+            .expect("metrics control test completes");
     }
 }

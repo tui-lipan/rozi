@@ -28,6 +28,7 @@ mod profiles;
 mod pty_events;
 pub mod release;
 mod rules;
+pub mod runtime_metrics;
 mod scratchpad;
 mod send_keys;
 pub mod session;

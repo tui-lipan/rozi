@@ -160,6 +160,70 @@ fn two_client_broadcast_shares_one_encoded_allocation() {
 }
 
 #[test]
+fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
+    let mut server = SessionServer::new_named("dev");
+    let (first, mut first_stream) = attach_client(&mut server);
+    let (second, mut second_stream) = attach_client(&mut server);
+
+    server.push_to_attached(Arc::from(vec![7; 32]));
+    let queued = server.runtime_metrics().client_outboxes;
+    assert_eq!(queued.bytes.current_bytes, 64);
+    assert_eq!(queued.bytes.high_water_bytes, 64);
+    assert_eq!(queued.clients, 2);
+
+    server.flush_clients();
+    let mut bytes = [0; 32];
+    std::io::Read::read_exact(&mut first_stream, &mut bytes).unwrap();
+    std::io::Read::read_exact(&mut second_stream, &mut bytes).unwrap();
+    let flushed = server.runtime_metrics().client_outboxes;
+    assert_eq!(flushed.bytes.current_bytes, 0);
+    assert_eq!(flushed.bytes.high_water_bytes, 64);
+
+    server.remove_client(first);
+    server.remove_client(second);
+    let disconnected = server.runtime_metrics().client_outboxes;
+    assert_eq!(disconnected.bytes.current_bytes, 0);
+    assert!(disconnected.bytes.high_water_bytes >= 64);
+    assert_eq!(disconnected.clients, 0);
+}
+
+#[test]
+fn runtime_metrics_request_is_protocol_gated() {
+    let mut server = SessionServer::new_named("dev");
+    let (current, _stream) = attach_client(&mut server);
+    assert!(matches!(
+        server
+            .handle_message(current, ClientMessage::RequestRuntimeMetrics)
+            .as_slice(),
+        [(Target::Client(id), ServerMessage::RuntimeMetrics { .. })] if *id == current
+    ));
+
+    let (legacy, _stream) = add_client(&mut server);
+    server.handle_message(
+        legacy,
+        ClientMessage::Attach {
+            session: "dev".into(),
+            protocol_version: 17,
+            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            label: "legacy".into(),
+            read_only: true,
+        },
+    );
+    assert_eq!(
+        server
+            .client_mut(legacy)
+            .expect("legacy attached")
+            .effective_protocol,
+        17
+    );
+    assert!(
+        server
+            .handle_message(legacy, ClientMessage::RequestRuntimeMetrics)
+            .is_empty()
+    );
+}
+
+#[test]
 fn pty_ingress_coalesces_only_adjacent_output_for_the_same_pane() {
     let queue = ByteQueue::new(64);
     let first = ServerEvent::Pty(1, 2, TerminalPtyEvent::Output(Arc::from(&b"abc"[..])));

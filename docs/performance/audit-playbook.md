@@ -131,9 +131,8 @@ cargo bench --bench server_fairness -- key_round_trip
 
 It measures key input through `SessionClient` to an acknowledgement from a self-helper running in a
 real server-owned PTY while deterministic output flows continuously through PTY ingress. It does
-not claim queue saturation. It does not time resurrection snapshots: no public protocol response
-currently identifies completion of the durable snapshot write/rename/sync boundary. Filesystem
-polling would report polling and scheduling delay, not snapshot duration.
+not claim queue saturation. Resurrection duration is observed separately through `hyprmux metrics`;
+the server records each completed export/write/sync/rename attempt, including failures.
 
 ### Picker-filter scaling
 
@@ -304,6 +303,18 @@ cargo test large_paste_counts_bytes_and_overflow_fails_transport_explicitly
 cargo test congested_flood_has_the_same_transcript_as_the_producer
 ```
 
+Sample the live resource high-water marks through the running client's control endpoint:
+
+```bash
+HYPRMUX_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+```
+
+The JSON response contains current/high-water/capacity values for client inbound/outbound queues,
+the remote pipe buffer when present, orphan output, and the latest server PTY ingress/outbox and
+resurrection sample. Server data is cached: `age_ms` and `stale` describe that sample, and the
+control request never waits for the session server. Run it before, during, and after a workload to
+distinguish a bounded peak from retained current bytes.
+
 ## 8. Exercise lifecycle and cleanup
 
 The full memory matrix includes explicit pane-close, client-disconnect, reconnect, and session-kill
@@ -359,7 +370,8 @@ When a host is available, repeat:
 - process and RSS cleanup after disconnect
 
 Watch the pipe-backed transport separately from the bounded session mailbox. A memory plateau must
-be demonstrated before declaring remote backpressure bounded.
+be demonstrated before declaring remote backpressure bounded. `hyprmux metrics` reports these as
+separate `piped_remote` and `client_inbound` resources.
 
 ## 11. Interpret results
 

@@ -554,6 +554,9 @@ pub(crate) fn server_message_to_msg(epoch: u64, frame: Frame<ServerMessage>) -> 
             }
             ServerMessage::ControlDeclined => Msg::SessionControlDeclined { epoch },
             ServerMessage::Ping { seq } => Msg::SessionPing { epoch, seq },
+            ServerMessage::RuntimeMetrics { metrics } => {
+                Msg::SessionRuntimeMetrics { epoch, metrics }
+            }
             ServerMessage::DirectoryListing {
                 path,
                 entries,

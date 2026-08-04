@@ -413,6 +413,25 @@ impl SessionServer {
                     },
                 )]
             }
+            ClientMessage::RequestRuntimeMetrics => {
+                let supported = self
+                    .clients
+                    .iter()
+                    .find(|client| client.id == client_id)
+                    .is_some_and(|client| {
+                        client.effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL
+                    });
+                if supported {
+                    vec![(
+                        Target::Client(client_id),
+                        ServerMessage::RuntimeMetrics {
+                            metrics: self.runtime_metrics(),
+                        },
+                    )]
+                } else {
+                    Vec::new()
+                }
+            }
             ClientMessage::Detach => Vec::new(),
             ClientMessage::Shutdown => {
                 if !self.is_controller(client_id) || self.client_read_only(client_id) {

@@ -34,7 +34,17 @@ use std::path::Path;
 use std::process::Child;
 
 pub(crate) mod piped;
-pub use piped::{PipedBufferStats, PipedConnection};
+pub use piped::{PipedBufferStats, PipedBufferStatsHandle, PipedConnection};
+
+impl IpcConnection {
+    /// Return a non-owning observer only for the SSH pipe-backed transport.
+    pub fn piped_buffer_stats_handle(&self) -> Option<PipedBufferStatsHandle> {
+        match self {
+            Self::Piped(piped) => Some(piped.buffer_stats_handle()),
+            Self::Local(_) => None,
+        }
+    }
+}
 
 // `BoundEndpoint` is part of the plan's public abstraction surface and every call site that binds
 // an endpoint does receive one, but each immediately calls `.into_listener()` inline (type

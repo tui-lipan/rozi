@@ -87,6 +87,19 @@ pub struct PipedBufferStats {
     pub capacity: usize,
 }
 
+/// Cheap cloneable observer for a pipe reader buffer. It keeps no transport handle alive.
+#[derive(Clone)]
+pub struct PipedBufferStatsHandle {
+    shared: std::sync::Weak<PipedShared>,
+}
+
+impl PipedBufferStatsHandle {
+    pub fn stats(&self) -> Option<PipedBufferStats> {
+        let shared = self.shared.upgrade()?;
+        Some(shared.buf.lock().expect("piped buf").stats())
+    }
+}
+
 /// Owns the ssh (or other) child so dropping the last connection reaps it.
 struct OwnedChild {
     child: Mutex<Option<Child>>,
@@ -236,6 +249,12 @@ impl PipedConnection {
     /// Snapshot the bounded reader buffer's current and peak retained byte counts.
     pub fn buffer_stats(&self) -> PipedBufferStats {
         self.shared.buf.lock().expect("piped buf").stats()
+    }
+
+    pub fn buffer_stats_handle(&self) -> PipedBufferStatsHandle {
+        PipedBufferStatsHandle {
+            shared: Arc::downgrade(&self.shared),
+        }
     }
 
     fn close_writer(&self) {

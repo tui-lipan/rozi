@@ -494,6 +494,7 @@ impl SessionServer {
                 self.push_to_attached(bytes);
             }
         }
+        self.note_outbox_high_water();
     }
 
     /// Queue one shared encoded frame on every attached client. Each client retains its own write
@@ -508,6 +509,7 @@ impl SessionServer {
                 slow.push(client.id);
             }
         }
+        self.note_outbox_high_water();
         for id in slow {
             self.remove_client(id);
         }
@@ -566,6 +568,7 @@ impl SessionServer {
                     self.remove_client(id);
                     return;
                 }
+                self.note_outbox_high_water();
             }
         }
     }

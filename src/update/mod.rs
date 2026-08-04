@@ -301,6 +301,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         }
         Msg::SessionControlDeclined { epoch } => session::control_declined(ctx, epoch),
         Msg::SessionPing { epoch, seq } => session::ping(ctx, epoch, seq),
+        Msg::SessionRuntimeMetrics { epoch, metrics: _ } => {
+            runtime_metrics_update(epoch, ctx.state.runtime_epoch, ctx.devtools_visible())
+        }
         Msg::FlushPaneResizes { epoch } => session::flush_pane_resizes(ctx, epoch),
         Msg::FlushLayoutCommit { epoch } => session::flush_layout_commit(ctx, epoch),
         Msg::SessionOutput {
@@ -397,6 +400,14 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
     update
 }
 
+fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool) -> Update {
+    if epoch == current_epoch && devtools_visible {
+        Update::full()
+    } else {
+        Update::none()
+    }
+}
+
 /// Focus chokepoint for the sidebar's "unseen finish" pulse: after every message, clear the flag on
 /// the currently focused pane. Runs here rather than at the many places that move focus (click,
 /// keyboard, workspace switch, layout reconcile) so every path acknowledges a finished agent by the
@@ -478,4 +489,28 @@ pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
     shared.assumed_rev = shared.assumed_rev.saturating_add(1);
     shared.last_committed_layout = Some(layout);
     shared.canonical_canvas = Some(canvas);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tui_lipan::UpdateLevel;
+
+    #[test]
+    fn runtime_metrics_redraw_current_but_not_parked_visible_attachment() {
+        let current_epoch = 7;
+        let parked_epoch = 6;
+        assert_eq!(
+            runtime_metrics_update(current_epoch, current_epoch, true).level(),
+            UpdateLevel::Full
+        );
+        assert_eq!(
+            runtime_metrics_update(parked_epoch, current_epoch, true).level(),
+            UpdateLevel::None
+        );
+        assert_eq!(
+            runtime_metrics_update(current_epoch, current_epoch, false).level(),
+            UpdateLevel::None
+        );
+    }
 }

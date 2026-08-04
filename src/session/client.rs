@@ -2,13 +2,16 @@
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
 use crate::platform::ipc::{IpcConnection, IpcEndpoint};
+use crate::runtime_metrics::{
+    ByteBufferMetrics, CachedServerRuntimeMetrics, QueueMetrics, TimedServerRuntimeMetrics,
+};
 use crate::session::protocol::Frame;
 use crate::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
@@ -26,6 +29,9 @@ pub struct SessionClient {
     outbound: Arc<ByteQueue<ClientOutbound>>,
     transport_failed: Arc<AtomicBool>,
     inbound: Option<Arc<InboundMailbox>>,
+    latest_server_metrics: Arc<Mutex<Option<TimedServerRuntimeMetrics>>>,
+    metrics_request_pending: Arc<AtomicBool>,
+    piped_buffer: Option<crate::platform::ipc::PipedBufferStatsHandle>,
     #[cfg(test)]
     test_observer: Option<mpsc::Sender<ClientOutbound>>,
     server_pid: Option<u32>,
@@ -36,6 +42,14 @@ pub struct SessionClient {
     /// PTYs report pixel dimensions the child can size images against. Read once: it is a
     /// property of the terminal this process is attached to, not of any one pane.
     cell: tui_lipan::TerminalCellSize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientRuntimeStats {
+    pub inbound: Option<QueueMetrics>,
+    pub outbound: QueueMetrics,
+    pub piped_remote: Option<ByteBufferMetrics>,
+    pub server: Option<CachedServerRuntimeMetrics>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +79,9 @@ impl SessionClient {
                 outbound: Arc::clone(&outbound),
                 transport_failed: Arc::new(AtomicBool::new(false)),
                 inbound: None,
+                latest_server_metrics: Arc::new(Mutex::new(None)),
+                metrics_request_pending: Arc::new(AtomicBool::new(false)),
+                piped_buffer: None,
                 test_observer: Some(test_tx),
                 cell: tui_lipan::TerminalCellSize::default(),
                 server_pid: None,
@@ -151,6 +168,7 @@ impl SessionClient {
     ) -> io::Result<(Self, ServerMessage)> {
         let mut stream = stream;
         let server_pid = stream.peer_pid();
+        let piped_buffer = stream.piped_buffer_stats_handle();
         let mut reader = stream.try_clone()?;
         reader.set_read_timeout(Some(Duration::from_secs(2)))?;
         protocol::write_frame(
@@ -195,23 +213,36 @@ impl SessionClient {
         });
         let heartbeat_outbound = Arc::clone(&outbound);
         let reader_outbound = Arc::clone(&outbound);
+        let latest_server_metrics = Arc::new(Mutex::new(None));
+        let reader_metrics = Arc::clone(&latest_server_metrics);
+        let metrics_request_pending = Arc::new(AtomicBool::new(false));
+        let reader_metrics_request_pending = Arc::clone(&metrics_request_pending);
         thread::spawn(move || {
-            forward_inbound(&mut reader, &inbound, Some(&heartbeat_outbound));
+            forward_inbound(
+                &mut reader,
+                &inbound,
+                Some(&heartbeat_outbound),
+                Some(&reader_metrics),
+                Some(&reader_metrics_request_pending),
+                effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL,
+            );
             reader_outbound.close();
         });
-        Ok((
-            Self {
-                outbound,
-                transport_failed: Arc::new(AtomicBool::new(false)),
-                inbound: client_inbound,
-                #[cfg(test)]
-                test_observer: None,
-                server_pid,
-                effective_protocol,
-                cell: tui_lipan::host_cell_size(),
-            },
-            attached,
-        ))
+        let client = Self {
+            outbound,
+            transport_failed: Arc::new(AtomicBool::new(false)),
+            inbound: client_inbound,
+            latest_server_metrics,
+            metrics_request_pending,
+            piped_buffer,
+            #[cfg(test)]
+            test_observer: None,
+            server_pid,
+            effective_protocol,
+            cell: tui_lipan::host_cell_size(),
+        };
+        client.request_runtime_metrics();
+        Ok((client, attached))
     }
 
     pub fn server_pid(&self) -> Option<u32> {
@@ -221,6 +252,39 @@ impl SessionClient {
     /// Negotiated wire version for this connection.
     pub fn effective_protocol(&self) -> u32 {
         self.effective_protocol
+    }
+
+    pub fn request_runtime_metrics(&self) {
+        if self.effective_protocol >= protocol::RUNTIME_METRICS_PROTOCOL {
+            try_enqueue_runtime_metrics_request(&self.outbound, &self.metrics_request_pending);
+        }
+    }
+
+    pub fn runtime_stats(&self) -> ClientRuntimeStats {
+        let queue_metrics = |stats: crate::session::queue::QueueStats| QueueMetrics {
+            bytes: ByteBufferMetrics::new(stats.bytes, stats.high_water_bytes, stats.capacity),
+            queued_items: stats.len as u64,
+        };
+        ClientRuntimeStats {
+            inbound: self
+                .inbound
+                .as_ref()
+                .map(|inbound| queue_metrics(inbound.queue.stats())),
+            outbound: queue_metrics(self.outbound.stats()),
+            piped_remote: self
+                .piped_buffer
+                .as_ref()
+                .and_then(|handle| handle.stats())
+                .map(|stats| {
+                    ByteBufferMetrics::new(stats.current, stats.high_water, stats.capacity)
+                }),
+            server: self
+                .latest_server_metrics
+                .lock()
+                .expect("server metrics cache poisoned")
+                .as_ref()
+                .map(TimedServerRuntimeMetrics::cached),
+        }
     }
 
     /// Whether this server can serve the sidebar file tree's filesystem queries.
@@ -638,6 +702,9 @@ fn forward_inbound<R: std::io::Read>(
     reader: &mut R,
     inbound: &InboundTarget,
     outbound: Option<&Arc<ByteQueue<ClientOutbound>>>,
+    latest_server_metrics: Option<&Arc<Mutex<Option<TimedServerRuntimeMetrics>>>>,
+    metrics_request_pending: Option<&Arc<AtomicBool>>,
+    request_metrics_on_heartbeat: bool,
 ) {
     let mut decoder = protocol::FrameDecoder::default();
     'read: loop {
@@ -650,15 +717,29 @@ fn forward_inbound<R: std::io::Read>(
         loop {
             match decoder.next_frame::<ServerMessage>() {
                 Ok(Some(frame)) => {
-                    if let Frame::Control(ServerMessage::Ping { seq }) = frame
+                    if let Frame::Control(ServerMessage::Ping { seq }) = &frame
                         && let Some(outbound) = outbound
                     {
-                        let pong = ClientOutbound::Control(ClientMessage::Pong { seq });
+                        let pong = ClientOutbound::Control(ClientMessage::Pong { seq: *seq });
                         let bytes = pong.wire_bytes();
                         if outbound.try_push(pong, bytes).is_err() {
                             break 'read;
                         }
+                        if request_metrics_on_heartbeat
+                            && let Some(pending) = metrics_request_pending
+                        {
+                            try_enqueue_runtime_metrics_request(outbound, pending);
+                        }
                         continue;
+                    }
+                    if let Frame::Control(ServerMessage::RuntimeMetrics { metrics }) = &frame
+                        && let Some(cache) = latest_server_metrics
+                    {
+                        *cache.lock().expect("server metrics cache poisoned") =
+                            Some(TimedServerRuntimeMetrics::received(metrics.clone()));
+                        if let Some(pending) = metrics_request_pending {
+                            pending.store(false, Ordering::Release);
+                        }
                     }
                     if inbound.send(frame).is_err() {
                         break 'read;
@@ -673,6 +754,18 @@ fn forward_inbound<R: std::io::Read>(
         }
     }
     inbound.disconnected();
+}
+
+fn try_enqueue_runtime_metrics_request(outbound: &ByteQueue<ClientOutbound>, pending: &AtomicBool) {
+    if pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let request = ClientOutbound::Control(ClientMessage::RequestRuntimeMetrics);
+    let bytes = request.wire_bytes();
+    // Instrumentation is best-effort and must never fail the transport.
+    if outbound.try_push(request, bytes).is_err() {
+        pending.store(false, Ordering::Release);
+    }
 }
 
 #[cfg(test)]
@@ -714,6 +807,9 @@ mod tests {
             &mut client_stream,
             &InboundTarget::Channel(inbound_tx),
             None,
+            None,
+            None,
+            false,
         );
         assert_eq!(
             inbound_rx
@@ -758,6 +854,9 @@ mod tests {
             &mut std::io::Cursor::new(bytes),
             &InboundTarget::Channel(inbound_tx),
             Some(&outbound),
+            None,
+            None,
+            false,
         );
 
         assert_eq!(
@@ -795,6 +894,9 @@ mod tests {
             outbound: Arc::clone(&outbound),
             transport_failed: Arc::new(AtomicBool::new(false)),
             inbound: None,
+            latest_server_metrics: Arc::new(Mutex::new(None)),
+            metrics_request_pending: Arc::new(AtomicBool::new(false)),
+            piped_buffer: None,
             test_observer: None,
             server_pid: None,
             effective_protocol: PROTOCOL_VERSION,
@@ -803,11 +905,32 @@ mod tests {
 
         client.send_input(1, 1, vec![b'x'; capacity - 17]);
         assert_eq!(outbound.stats().bytes, capacity);
+        let stats = client.runtime_stats().outbound;
+        assert_eq!(stats.bytes.current_bytes, capacity as u64);
+        assert_eq!(stats.bytes.high_water_bytes, capacity as u64);
+        assert_eq!(stats.bytes.capacity_bytes, capacity as u64);
+        assert_eq!(stats.queued_items, 1);
         assert!(!client.transport_failed.load(Ordering::Acquire));
         client.send_input(1, 1, vec![b'y']);
         assert!(client.transport_failed.load(Ordering::Acquire));
         assert!(outbound.stats().closed);
         assert_eq!(outbound.stats().high_water_bytes, capacity);
+    }
+
+    #[test]
+    fn metrics_refresh_is_best_effort_and_coalesces_while_pending() {
+        let outbound = ByteQueue::new(1024);
+        let pending = AtomicBool::new(false);
+        try_enqueue_runtime_metrics_request(&outbound, &pending);
+        try_enqueue_runtime_metrics_request(&outbound, &pending);
+        assert_eq!(outbound.stats().len, 1);
+        assert!(pending.load(Ordering::Acquire));
+
+        let full = ByteQueue::new(1);
+        let full_pending = AtomicBool::new(false);
+        try_enqueue_runtime_metrics_request(&full, &full_pending);
+        assert_eq!(full.stats().len, 0);
+        assert!(!full_pending.load(Ordering::Acquire));
     }
 
     #[test]

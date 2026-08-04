@@ -144,11 +144,11 @@ every run:
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
 than comparing incompatible corpora.
 
-`server_fairness` deliberately has no resurrection snapshot-duration row yet. The public session
-protocol has no acknowledgement for completion of the durable snapshot write/rename/sync boundary.
-Polling the snapshot path would add observer polling and server scheduling delay, while timing a
-spawn response would include unrelated PTY spawn work. Add that matrix only after an honest public
-completion boundary exists.
+`server_fairness` deliberately has no resurrection snapshot-duration row. Runtime instrumentation
+records the complete durable export/write/sync/rename attempt and exposes its last/max duration
+through `hyprmux metrics`, but it does not provide a command that triggers and acknowledges one
+specific snapshot. Use the counters around a live reproduction; do not poll the snapshot path and
+call that delay server snapshot time.
 
 ## Live stress recipes
 
@@ -193,6 +193,15 @@ still receives output:
 ```bash
 cargo run --release -- stress --read-only
 ```
+
+In another shell, query the client-local and cached server resource sample without pausing the UI:
+
+```bash
+HYPRMUX_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+```
+
+The server section includes `age_ms` and `stale`; compare current bytes with high-water and capacity
+before, during, and after the producer.
 
 ## Profiling with Samply
 

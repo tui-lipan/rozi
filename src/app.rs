@@ -1444,6 +1444,25 @@ mod tests {
                 backend
                     .dispatch(Msg::SearchQueryChanged("needle".to_string()))
                     .expect("search query");
+                let epoch = backend
+                    .state()
+                    .search
+                    .as_ref()
+                    .and_then(|search| search.scan.as_ref())
+                    .expect("active scan")
+                    .epoch;
+                while backend
+                    .state()
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| search.scan.is_some())
+                {
+                    let _ = crate::ops::search::advance_search_scan(
+                        backend.state_mut(),
+                        epoch,
+                        crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                    );
+                }
                 backend.render();
                 assert_eq!(
                     backend.state().search.as_ref().expect("search").items.len(),
@@ -1493,6 +1512,211 @@ mod tests {
             .expect("spawn palette selection test")
             .join()
             .expect("palette selection test completes");
+    }
+
+    #[test]
+    fn scrollback_search_empty_state_tracks_restart_progress_and_completion() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
+                    .expect("open search");
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+                    .expect("target pane")
+                    .terminal
+                    .search_line_count();
+                let epoch = backend.state().search_scan_epoch.wrapping_add(1);
+                backend.state_mut().search_scan_epoch = epoch;
+                {
+                    let search = backend.state_mut().search.as_mut().expect("search");
+                    search.input.set_text("absent");
+                    search.scan = Some(crate::state::ScrollbackSearchScan {
+                        epoch,
+                        query: std::sync::Arc::from("absent"),
+                        panes: std::sync::Arc::from([target]),
+                        pane_ends: std::sync::Arc::from([pane_end]),
+                        pane_index: 0,
+                        line_cursor: 0,
+                        first_jump_done: false,
+                    });
+                    search.refresh_match_status();
+                }
+
+                backend.render();
+                let started = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(started.contains("Scanning…"), "{started}");
+                assert!(!started.contains("No matches"), "{started}");
+                assert_eq!(
+                    backend.state().search.as_ref().expect("search").status,
+                    "0 matches… (pane)"
+                );
+
+                assert!(matches!(
+                    crate::ops::search::advance_search_scan(backend.state_mut(), epoch, 1),
+                    crate::ops::search::SearchScanAdvance::Running { .. }
+                ));
+                backend.render();
+                let progressing = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(progressing.contains("Scanning…"), "{progressing}");
+                assert!(!progressing.contains("No matches"), "{progressing}");
+
+                while backend
+                    .state()
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| search.scan.is_some())
+                {
+                    let _ = crate::ops::search::advance_search_scan(
+                        backend.state_mut(),
+                        epoch,
+                        crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                    );
+                }
+                backend.render();
+                let completed = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(completed.contains("No matches for `absent`"), "{completed}");
+                assert!(!completed.contains("Scanning…"), "{completed}");
+                assert_eq!(
+                    backend.state().search.as_ref().expect("search").status,
+                    "0 matches (pane)"
+                );
+
+                let restarted_epoch = backend.state().search_scan_epoch.wrapping_add(1);
+                backend.state_mut().search_scan_epoch = restarted_epoch;
+                {
+                    let search = backend.state_mut().search.as_mut().expect("search");
+                    search.input.set_text("still-absent");
+                    search.replace_results(Vec::new(), false);
+                    search.current = 0;
+                    search.scan = Some(crate::state::ScrollbackSearchScan {
+                        epoch: restarted_epoch,
+                        query: std::sync::Arc::from("still-absent"),
+                        panes: std::sync::Arc::from([target]),
+                        pane_ends: std::sync::Arc::from([pane_end]),
+                        pane_index: 0,
+                        line_cursor: 0,
+                        first_jump_done: false,
+                    });
+                    search.refresh_match_status();
+                }
+                backend.render();
+                let restarted = backend.capture_frame().to_fixed_grid_lines().join("\n");
+                assert!(restarted.contains("Scanning…"), "{restarted}");
+                assert!(!restarted.contains("No matches"), "{restarted}");
+            })
+            .expect("spawn empty-state search test")
+            .join()
+            .expect("empty-state search test completes");
+    }
+
+    #[test]
+    fn progressive_search_append_keeps_controlled_selection_bound_to_source_match() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let output = (0..700)
+                    .map(|index| {
+                        if index < 520 {
+                            format!("zzzz candidate {index:03} needle\r\n")
+                        } else {
+                            format!("needle {index:03}\r\n")
+                        }
+                    })
+                    .collect::<String>();
+                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                    .expect("target pane")
+                    .terminal
+                    .process_server_output(output.as_bytes());
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
+                    .expect("open search");
+                let pane_end = crate::pane_lifecycle::find_pane(backend.state(), target)
+                    .expect("target pane")
+                    .terminal
+                    .search_line_count();
+                let epoch = backend.state().search_scan_epoch.wrapping_add(1);
+                backend.state_mut().search_scan_epoch = epoch;
+                {
+                    let search = backend.state_mut().search.as_mut().expect("search");
+                    search.input.set_text("needle");
+                    search.scan = Some(crate::state::ScrollbackSearchScan {
+                        epoch,
+                        query: std::sync::Arc::from("needle"),
+                        panes: std::sync::Arc::from([target]),
+                        pane_ends: std::sync::Arc::from([pane_end]),
+                        pane_index: 0,
+                        line_cursor: 0,
+                        first_jump_done: false,
+                    });
+                    search.refresh_match_status();
+                }
+
+                let _ = crate::ops::search::advance_search_scan(
+                    backend.state_mut(),
+                    epoch,
+                    crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                );
+                backend.render();
+                let first_len = backend
+                    .state()
+                    .search
+                    .as_ref()
+                    .expect("search")
+                    .matches
+                    .len();
+                assert!(first_len > 100);
+                backend
+                    .dispatch(Msg::SearchSelect(120))
+                    .expect("select source row");
+                backend.render();
+                let expected = {
+                    let search = backend.state().search.as_ref().expect("search");
+                    assert_eq!(search.current, 120);
+                    search.matches[120].clone()
+                };
+
+                let _ = crate::ops::search::advance_search_scan(
+                    backend.state_mut(),
+                    epoch,
+                    crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                );
+                backend.render();
+                let search = backend.state().search.as_ref().expect("search");
+                assert!(search.matches.len() > first_len);
+                assert_eq!(search.current, 120);
+                assert_eq!(search.matches[search.current], expected);
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("activate controlled selection");
+                assert!(backend.state().search.is_none());
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                        .expect("target pane")
+                        .terminal
+                        .scrollback_offset(),
+                    expected.offset
+                );
+            })
+            .expect("spawn progressive selection test")
+            .join()
+            .expect("progressive selection test completes");
     }
 
     #[test]

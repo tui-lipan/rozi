@@ -117,6 +117,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ThemeError(message) => overlays::theme_error(ctx, message),
         Msg::CloseSearch => prompts::close_search(ctx),
         Msg::SearchQueryChanged(query) => prompts::search_query_changed(ctx, query),
+        Msg::SearchScanChunk { epoch } => crate::ops::search::search_scan_chunk(ctx, epoch),
         Msg::SearchNext(backward) => prompts::search_next(ctx, backward),
         Msg::SearchSelect(index) => prompts::search_select(ctx, index),
         Msg::SearchActivate(index) => prompts::search_activate(ctx, index),

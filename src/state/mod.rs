@@ -91,6 +91,8 @@ pub struct State {
     pub theme: Theme,
     pub system_theme: Option<Theme>,
     pub theme_watcher: Option<ThemeWatcher>,
+    /// Global search-scan generation; never reset when the search overlay closes.
+    pub search_scan_epoch: u64,
     pub search: Option<ScrollbackSearchState>,
     pub rename: Option<PaneRenameState>,
     pub rename_session: Option<SessionRenameState>,
@@ -241,6 +243,7 @@ impl State {
             theme,
             system_theme: None,
             theme_watcher: None,
+            search_scan_epoch: 0,
             search: None,
             rename: None,
             rename_session: None,

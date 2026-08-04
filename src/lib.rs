@@ -41,4 +41,10 @@ mod view;
 pub use app::HyprmuxApp;
 pub use msg::Msg;
 
+#[doc(hidden)]
+pub use ops::search::{
+    SearchScanAdvance as BenchmarkSearchScanAdvance,
+    advance_search_scan as benchmark_advance_search_scan,
+};
+
 pub(crate) use app::{schedule_agent_tick, schedule_theme_tick, schedule_workbar_tick};

@@ -87,7 +87,7 @@ pub struct TerminalSearchMatch {
     pub text: Arc<str>,
 }
 
-pub(crate) struct BoundedTerminalSearch {
+pub struct TerminalSearchResults {
     pub matches: Vec<TerminalSearchMatch>,
     pub truncated: bool,
 }
@@ -297,17 +297,29 @@ impl TerminalPane {
     }
 
     pub fn search_scrollback(&self, query: &str) -> Vec<TerminalSearchMatch> {
-        self.search_scrollback_bounded(query, usize::MAX).matches
+        self.search_scrollback_range(query, 0, usize::MAX, usize::MAX)
+            .matches
     }
 
-    pub(crate) fn search_scrollback_bounded(
+    /// Number of retained text lines available to a range-bounded search.
+    pub fn search_line_count(&self) -> usize {
+        self.screen.borrow().total_text_lines()
+    }
+
+    /// Search the retained half-open line range `[start, end)`.
+    ///
+    /// `max_matches` bounds retained results while still probing for one additional valid match,
+    /// so a zero cap can distinguish "no later match" from truncation without retaining anything.
+    pub fn search_scrollback_range(
         &self,
         query: &str,
+        start: usize,
+        end: usize,
         max_matches: usize,
-    ) -> BoundedTerminalSearch {
+    ) -> TerminalSearchResults {
         let query = query.trim();
         if query.is_empty() {
-            return BoundedTerminalSearch {
+            return TerminalSearchResults {
                 matches: Vec::new(),
                 truncated: false,
             };
@@ -318,7 +330,7 @@ impl TerminalPane {
         let total = screen.total_text_lines();
         let mut matches = Vec::new();
         let mut truncated = false;
-        let _ = screen.try_for_each_text_line(0, total, |absolute, text| {
+        let _ = screen.try_for_each_text_line(start, end.min(total), |absolute, text| {
             let haystack = text.to_ascii_lowercase();
             let mut search_from = 0usize;
             let mut viewport = None;
@@ -354,7 +366,7 @@ impl TerminalPane {
             }
             ControlFlow::Continue(())
         });
-        BoundedTerminalSearch { matches, truncated }
+        TerminalSearchResults { matches, truncated }
     }
 }
 
@@ -891,6 +903,31 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(0, 3), (4, 7), (8, 11)]
         );
+    }
+
+    #[test]
+    fn range_partitioning_matches_full_search_and_zero_cap_probes_extra_hits() {
+        let mut pane = TerminalPane::new(50);
+        pane.apply_server_resize(24, 4);
+        pane.process_server_output(
+            b"zero needle needle\r\none\r\ntwo needle\r\nthree\r\nfour needle\r\n",
+        );
+        let total = pane.search_line_count();
+        let full = pane.search_scrollback("needle");
+        let mut partitioned = Vec::new();
+        for (start, end) in [(0, 1), (1, 3), (3, total)] {
+            let result = pane.search_scrollback_range("needle", start, end, usize::MAX);
+            assert!(!result.truncated);
+            partitioned.extend(result.matches);
+        }
+        assert_eq!(partitioned, full);
+
+        let with_hit = pane.search_scrollback_range("needle", 0, 1, 0);
+        assert!(with_hit.matches.is_empty());
+        assert!(with_hit.truncated);
+        let without_hit = pane.search_scrollback_range("needle", 1, 2, 0);
+        assert!(without_hit.matches.is_empty());
+        assert!(!without_hit.truncated);
     }
 
     #[test]

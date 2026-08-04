@@ -180,21 +180,30 @@ cap because it may legitimately exceed the steady-state backlog.
 
 Press `/` (or *Search scrollback* in the palette) to search the focused pane's scrollback:
 
-- Type to search; the modal header shows the match count (`1 / N matches`) and the active scope,
-  or "No matches". The first match is selected and shown immediately.
+- Type to search; the modal header shows the match count (`1 / N matches`) and active scope. An
+  ellipsis (`…`) means scanning is still in progress. The first discovered match is selected and
+  shown immediately while later results continue to append.
 - `Ctrl-n` and `Ctrl-p` select the next or previous retained match. `Enter` closes search at the
   selected match.
 - `Tab` cycles the **scope**: the focused pane, the whole workspace, or all panes. Jumping to a
   match in another pane (or workspace) switches focus there before scrolling to it.
 - Selecting a result row scrolls the pane to that position; `Esc` closes the search.
-- Search retains at most 2000 matches across the whole active scope. `2000+` means at least one
-  additional match exists; exactly 2000 matches are shown without the `+`.
+- Search scans cooperatively in slices of at most 512 retained lines so large histories do not
+  block input or rendering. `Ctrl-n` / `Ctrl-p` can navigate matches already discovered.
+- Search retains at most 2000 matches across the whole active scope. `2000+` appears only after an
+  additional valid match is found; exactly 2000 matches are shown without the `+`. Leaving an
+  incomplete copy-mode search hands its discovered pane matches back to copy mode immediately and
+  marks that retained set as truncated.
 
 Search is **app-side**: `hyprmux` streams retained plain-text lines from `TerminalScreen` without
 mutating the scrollback offset, then maps matching absolute lines back to viewport coordinates for
 jumping. ASCII letters match case-insensitively; non-ASCII text remains case-sensitive. This works
 regardless of the program running in the pane, because it reads rendered terminal lines rather
 than relying on an in-terminal highlight search.
+
+The scan reads a live terminal view rather than copying or locking history. New output or
+scrollback eviction can therefore shift absolute lines between slices; results already discovered
+remain stable, while later slices reflect the then-current retained view.
 
 ## Edit scrollback
 

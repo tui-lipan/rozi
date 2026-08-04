@@ -48,11 +48,7 @@ fn scrollback_search_palette(
     let current = search.current;
     let query = search.input.text().trim();
 
-    let empty_text = if query.is_empty() {
-        format!("Type to search scrollback ({})", search.scope.label())
-    } else {
-        format!("No matches for `{query}`")
-    };
+    let empty_text = scrollback_search_empty_text(search, query);
 
     shared_search_palette::<usize>(ctx, Length::Auto, true)
         .items_arc(Arc::clone(&search.items))
@@ -76,6 +72,16 @@ fn scrollback_search_palette(
             ctx.link()
                 .callback(|event: SearchEvent<usize>| Msg::SearchActivate(event.item.value)),
         )
+}
+
+fn scrollback_search_empty_text(search: &ScrollbackSearchState, query: &str) -> String {
+    if query.is_empty() {
+        format!("Type to search scrollback ({})", search.scope.label())
+    } else if search.scan.is_some() {
+        "Scanning…".to_string()
+    } else {
+        format!("No matches for `{query}`")
+    }
 }
 
 fn scrollback_search_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {

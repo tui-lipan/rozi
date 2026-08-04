@@ -138,6 +138,9 @@ pub enum Msg {
     ThemeError(String),
     CloseSearch,
     SearchQueryChanged(String),
+    SearchScanChunk {
+        epoch: u64,
+    },
     SearchNext(bool),
     SearchSelect(usize),
     SearchActivate(usize),

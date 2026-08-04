@@ -36,6 +36,7 @@ cargo bench --bench snapshot_rebuild -- terminal_pane_process_server_output
 cargo bench --bench protocol_framing -- control_frame_serde
 cargo bench --bench session_pipeline -- session_pipeline_memory/4096
 cargo bench --bench scrollback_search -- 'sparse/(1|8|16)'
+cargo bench --bench scrollback_search -- 'slice'
 cargo bench --bench server_fairness -- key_round_trip
 ```
 
@@ -138,7 +139,7 @@ every run:
 | `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
 | `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
-| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained deterministic lines per pane: sparse (one match per 100 lines), dense (every line), and no-match queries. |
+| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained deterministic lines per pane, plus explicit 512-line cooperative slices for sparse (one match per 100 lines), dense (every line), and no-match queries. `slice_*` isolates the range scanner; `full_slice_*` is the acceptance row and includes the production update-thread mapping, accumulated item-cache cloning, and description formatting. |
 | `server_fairness` | Public `SessionServer`/`SessionClient` key-to-helper acknowledgement latency while a real PTY continuously emits deterministic output. The helper and an owned, bounded-lifecycle server are modes of the benchmark executable itself, so no shell-specific command fixture or detached server is involved. |
 
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather

@@ -86,6 +86,10 @@ pub struct SessionServer {
     /// The generation the last *successful* snapshot persisted.
     snapshot_generation: u64,
     snapshot_worker: Option<resurrect::SnapshotWorker>,
+    /// Per-pane `content_generation` captured by the last *successful* snapshot, and therefore the
+    /// generation whose replay file the live snapshot directory currently holds. Cleared whenever
+    /// a snapshot fails, so a broken or externally removed directory self-heals into a full export.
+    persisted_replays: HashMap<PaneId, u64>,
     last_snapshot: Instant,
     last_runtime_poll: Instant,
     last_attached_count: u32,
@@ -164,7 +168,15 @@ pub struct ServerPane {
     pub command_completed: bool,
     pub palette: WirePalette,
     pub pty: Option<TerminalPty>,
-    pub screen: TerminalScreen,
+    /// Reached through [`ServerPane::screen_mut`] / [`ServerPane::screen_without_change`] rather
+    /// than directly, so a content change cannot silently skip `content_generation`.
+    terminal: TerminalScreen,
+    /// Bumped by every change to what this pane's replay bytes would contain.
+    ///
+    /// A snapshot reuses the replay file already on disk when this still matches the generation
+    /// that file was written from, which is what lets a session with one busy pane and a dozen
+    /// idle ones avoid re-exporting all thirteen.
+    content_generation: u64,
     pub cols: u16,
     pub rows: u16,
     /// Host cell size in pixels, as reported by the controller and handed to the PTY.
@@ -386,6 +398,7 @@ impl SessionServer {
             dirty_generation: 0,
             snapshot_generation: 0,
             snapshot_worker: None,
+            persisted_replays: HashMap::new(),
             last_snapshot: Instant::now(),
             last_runtime_poll: Instant::now(),
             last_attached_count: 0,
@@ -570,8 +583,33 @@ fn cell_size(width: u16, height: u16) -> Option<tui_lipan::TerminalCellSize> {
 }
 
 impl ServerPane {
+    /// The pane's terminal, for reading.
+    pub(super) fn screen(&self) -> &TerminalScreen {
+        &self.terminal
+    }
+
+    /// The pane's terminal, for an operation that changes what a snapshot would persist.
+    ///
+    /// Every content change goes through here. `content_generation` is the only thing telling a
+    /// snapshot that the replay file already on disk is stale, so a change that bypassed it would
+    /// be persisted-scrollback loss on the next resurrect.
+    pub(super) fn screen_mut(&mut self) -> &mut TerminalScreen {
+        self.content_generation = self.content_generation.saturating_add(1);
+        &mut self.terminal
+    }
+
+    /// The pane's terminal, for an operation that needs `&mut` but leaves persisted content
+    /// identical: rendering a snapshot, draining queued responses or semantic events, and
+    /// exporting replay bytes - which swaps the alt grid out and back but restores it.
+    ///
+    /// Prefer [`Self::screen_mut`] whenever there is any doubt; over-exporting a pane costs time,
+    /// while under-exporting one loses its scrollback.
+    pub(super) fn screen_without_change(&mut self) -> &mut TerminalScreen {
+        &mut self.terminal
+    }
+
     fn effective_title(&self) -> Option<String> {
-        self.screen
+        self.terminal
             .title()
             .and_then(crate::pane::sanitize_terminal_title)
             .or_else(|| self.title.clone())

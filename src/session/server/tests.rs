@@ -34,7 +34,8 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
         env: Vec::new(),
         palette: test_palette(),
         pty: None,
-        screen: TerminalScreen::new(5, 20, 100),
+        terminal: TerminalScreen::new(5, 20, 100),
+        content_generation: 0,
         cols: 20,
         rows: 5,
         exited,
@@ -1098,7 +1099,8 @@ fn resize_updates_screen_and_broadcasts_ack() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
+            terminal: TerminalScreen::new(5, 20, 100),
+            content_generation: 0,
             cols: 20,
             rows: 5,
             exited: None,
@@ -1137,7 +1139,14 @@ fn resize_updates_screen_and_broadcasts_ack() {
     ));
     let pane = server.panes.get_mut(&1).unwrap();
     assert_eq!((pane.cols, pane.rows), (80, 24));
-    assert_eq!(pane.screen.render_snapshot().text.lines().count(), 24);
+    assert_eq!(
+        pane.screen_without_change()
+            .render_snapshot()
+            .text
+            .lines()
+            .count(),
+        24
+    );
 }
 
 #[test]
@@ -1162,7 +1171,7 @@ fn resize_adopts_the_controllers_cell_size() {
     // images against the same cell - a mismatch is images overlapping the text below them.
     assert_eq!(pane.cell, tui_lipan::TerminalCellSize::new(9, 18));
     assert_eq!(
-        pane.screen.cell_size(),
+        pane.screen().cell_size(),
         tui_lipan::TerminalCellSize::new(9, 18)
     );
 
@@ -1199,7 +1208,8 @@ fn duplicate_spawn_is_rejected() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
+            terminal: TerminalScreen::new(5, 20, 100),
+            content_generation: 0,
             cols: 20,
             rows: 5,
             exited: None,
@@ -1249,7 +1259,8 @@ fn exited_pane_can_be_respawned() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
+            terminal: TerminalScreen::new(5, 20, 100),
+            content_generation: 0,
             cols: 20,
             rows: 5,
             exited: Some(0),
@@ -1305,7 +1316,8 @@ fn attach_reports_layout_and_panes() {
         env: Vec::new(),
         palette: test_palette(),
         pty: None,
-        screen: TerminalScreen::new(5, 20, 100),
+        terminal: TerminalScreen::new(5, 20, 100),
+        content_generation: 0,
         cols: 20,
         rows: 5,
         exited: None,
@@ -1316,7 +1328,7 @@ fn attach_reports_layout_and_panes() {
         last_git_read: None,
         initial_cursor_report_primed: false,
     };
-    pane.screen.process_bytes(b"ready");
+    pane.screen_mut().process_bytes(b"ready");
     server.panes.insert(4, pane);
     server.layout = Some(SharedLayout {
         version: 1,
@@ -1385,7 +1397,8 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
+            terminal: TerminalScreen::new(5, 20, 100),
+            content_generation: 0,
             cols: 20,
             rows: 5,
             exited: None,
@@ -1446,7 +1459,8 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
             env: Vec::new(),
             palette: test_palette(),
             pty: None,
-            screen: TerminalScreen::new(5, 20, 100),
+            terminal: TerminalScreen::new(5, 20, 100),
+            content_generation: 0,
             cols: 20,
             rows: 5,
             exited: None,
@@ -1510,7 +1524,8 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
                 env: Vec::new(),
                 palette: test_palette(),
                 pty: None,
-                screen,
+                terminal: screen,
+                content_generation: 0,
                 cols: 20,
                 rows: 5,
                 exited,
@@ -1551,7 +1566,7 @@ fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
             .panes
             .get_mut(&1)
             .unwrap()
-            .screen
+            .screen_without_change()
             .render_snapshot()
             .text
             .contains("marker-1")
@@ -1635,7 +1650,7 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
     // Scrollback continuity: the same TerminalScreen was kept, so the command's output is still
     // there - and the status it exited with was reported into it rather than swallowed.
     let pane = server.panes.get_mut(&1).expect("pane still exists");
-    let text = pane.screen.snapshot();
+    let text = pane.screen_without_change().snapshot();
     assert!(
         text.contains("hello from the command"),
         "the command's own output was lost across the replacement; screen was:\n{text}"
@@ -1697,7 +1712,7 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
         "a completed popup must remain read-only"
     );
     assert!(saw_exit, "the client must be told the popup completed");
-    let text = pane.screen.snapshot();
+    let text = pane.screen_without_change().snapshot();
     assert!(text.contains("popup result"));
     assert!(text.contains("[exit 3]  Enter/Esc/Space: close"));
 }

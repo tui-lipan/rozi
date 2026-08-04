@@ -263,13 +263,14 @@ impl SessionServer {
                 if let Some(pane) = self.live_pane_mut(pane_id, generation) {
                     pane.cols = cols.max(1);
                     pane.rows = rows.max(1);
-                    pane.screen.resize(pane.rows, pane.cols);
+                    let (rows, cols) = (pane.rows, pane.cols);
+                    pane.screen_mut().resize(rows, cols);
                     // The controller's cell size is canonical alongside its pane size: the child
                     // reads it out of the PTY to decide how many cells a picture needs, and the
                     // pane that renders that picture is measuring against the same value.
                     if let Some(cell) = cell_size(cell_width, cell_height) {
                         pane.cell = cell;
-                        pane.screen.set_cell_size(cell);
+                        pane.screen_mut().set_cell_size(cell);
                     }
                     if let Some(pty) = &pane.pty {
                         let _ = pty.resize_with_cell_size(pane.cols, pane.rows, pane.cell);
@@ -336,7 +337,7 @@ impl SessionServer {
                         pane.cwd = Some(cwd);
                     }
                     if let Some(palette) = palette {
-                        pane.screen.set_palette(palette.into());
+                        pane.screen_mut().set_palette(palette.into());
                     }
                 }
                 Vec::new()

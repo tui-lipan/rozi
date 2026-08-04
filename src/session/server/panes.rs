@@ -158,7 +158,8 @@ impl SessionServer {
                         command_completed: false,
                         palette: request.palette,
                         pty: Some(pty),
-                        screen,
+                        terminal: screen,
+                        content_generation: 0,
                         cols: cols.max(1),
                         rows: rows.max(1),
                         cell,
@@ -196,7 +197,8 @@ impl SessionServer {
                             command_completed: false,
                             palette: request.palette,
                             pty: None,
-                            screen,
+                            terminal: screen,
+                            content_generation: 0,
                             cols: cols.max(1),
                             rows: rows.max(1),
                             cell,
@@ -248,14 +250,15 @@ impl SessionServer {
                             pane.log = None;
                             format!("pane log write failed: {error}")
                         });
-                        pane.screen.process_bytes(&bytes);
+                        pane.screen_mut().process_bytes(&bytes);
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the
                         // borrow checker accepts here.
                         self.dirty_generation = self.dirty_generation.saturating_add(1);
-                        let semantic_events = pane.screen.drain_semantic_events();
+                        let semantic_events = pane.screen_without_change().drain_semantic_events();
+                        let responses = pane.screen_without_change().drain_responses();
                         if let Some(pty) = &pane.pty {
-                            for response in pane.screen.drain_responses() {
+                            for response in responses {
                                 if pane.initial_cursor_report_primed
                                     && is_cursor_position_report(&response)
                                 {
@@ -341,7 +344,7 @@ impl SessionServer {
         let banner = format!("\r\n\x1b[2m[{outcome}]  Enter/Esc/Space: close\x1b[0m\r\n");
         let bytes = banner.into_bytes();
         let pane = self.panes.get_mut(&id)?;
-        pane.screen.process_bytes(&bytes);
+        pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
             let _ = log.file.write_all(&bytes);
         }
@@ -389,7 +392,7 @@ impl SessionServer {
         let bytes = banner.into_bytes();
 
         let pane = self.panes.get_mut(&id)?;
-        pane.screen.process_bytes(&bytes);
+        pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
             let _ = log.file.write_all(&bytes);
         }
@@ -471,7 +474,7 @@ impl SessionServer {
 
     pub(super) fn apply_palette(&mut self, id: PaneId, generation: u64, palette: WirePalette) {
         if let Some(pane) = self.live_pane_mut(id, generation) {
-            pane.screen.set_palette(palette.into());
+            pane.screen_mut().set_palette(palette.into());
         }
     }
 

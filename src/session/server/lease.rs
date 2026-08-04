@@ -554,7 +554,7 @@ impl SessionServer {
                 .panes
                 .get_mut(&pane_id)
                 .expect("pane id came from map")
-                .screen
+                .screen_without_change()
                 .export_replay_bytes();
             for chunk in bytes.chunks(SEED_CHUNK) {
                 let Some(frame) = encode_pane_output(pane_id, generation, chunk) else {

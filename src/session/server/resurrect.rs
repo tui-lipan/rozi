@@ -12,6 +12,15 @@ const SNAPSHOT_VERSION: u32 = 1;
 /// How long shutdown waits for an in-flight durable write before abandoning it.
 const SNAPSHOT_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
+/// Where a pane's replay bytes for this snapshot come from.
+enum ReplaySource {
+    /// Freshly exported from the live screen, because the pane changed.
+    Exported(Vec<u8>),
+    /// Unchanged since the last successful snapshot, so the file already in the live snapshot
+    /// directory is still correct and is linked into the new one instead of being rebuilt.
+    Reuse,
+}
+
 /// One durable snapshot, owned outright so the write never touches live server state.
 struct SnapshotJob {
     /// The `dirty_generation` this capture describes.
@@ -23,13 +32,16 @@ struct SnapshotJob {
     session_name: String,
     meta: SnapshotMeta,
     layout: Option<SharedLayout>,
-    replays: Vec<(PaneId, Vec<u8>)>,
+    replays: Vec<(PaneId, ReplaySource)>,
+    /// Per-pane `content_generation` this snapshot persists, adopted once the write succeeds.
+    captured: Vec<(PaneId, u64)>,
 }
 
 struct SnapshotOutcome {
     generation: u64,
     result: io::Result<()>,
     total: Duration,
+    captured: Vec<(PaneId, u64)>,
 }
 
 /// A single background writer for durable snapshots.
@@ -55,12 +67,14 @@ impl SnapshotWorker {
                 for job in job_rx {
                     let generation = job.generation;
                     let started = job.started;
+                    let captured = job.captured.clone();
                     let result = write_snapshot_job(job);
                     if done_tx
                         .send(SnapshotOutcome {
                             generation,
                             result,
                             total: started.elapsed(),
+                            captured,
                         })
                         .is_err()
                     {
@@ -150,8 +164,21 @@ fn write_snapshot_job(job: SnapshotJob) -> io::Result<()> {
     let panes_dir = temp.join("panes");
     crate::platform::fs_security::ensure_private_dir(&panes_dir)?;
 
-    for (pane_id, replay) in &replays {
-        write_secure(&panes_dir.join(format!("{pane_id}.replay")), replay)?;
+    for (pane_id, source) in &replays {
+        let target = panes_dir.join(format!("{pane_id}.replay"));
+        match source {
+            ReplaySource::Exported(replay) => write_secure(&target, replay)?,
+            ReplaySource::Reuse => {
+                let existing = final_path.join("panes").join(format!("{pane_id}.replay"));
+                // A hard link keeps the bytes in place instead of copying them, and the old
+                // directory is only unlinked after the rename, so the inode outlives it. Copying
+                // is the fallback where linking is unavailable (a filesystem without it, or the
+                // snapshot root spanning a mount point).
+                if fs::hard_link(&existing, &target).is_err() {
+                    fs::copy(&existing, &target)?;
+                }
+            }
+        }
     }
     write_secure(
         &temp.join("meta.json"),
@@ -272,6 +299,7 @@ impl SessionServer {
             Err(err) => {
                 // Capture failed, so nothing reaches the worker and no completion will arrive.
                 self.record_snapshot_outcome(blocking, false);
+                self.forget_persisted_replays();
                 return Err(err);
             }
         };
@@ -295,11 +323,28 @@ impl SessionServer {
                 // Only the generation this job captured is persisted. Changes that arrived while
                 // it was being written keep the session dirty for the next snapshot.
                 self.snapshot_generation = outcome.generation;
-            } else if let Err(err) = outcome.result {
-                failure = Some(err);
+                self.adopt_persisted_replays(outcome.captured);
+            } else {
+                self.forget_persisted_replays();
+                if let Err(err) = outcome.result {
+                    failure = Some(err);
+                }
             }
         }
         failure.map_or(Ok(()), Err)
+    }
+
+    /// Record which replay files the snapshot directory now holds, or forget them all.
+    ///
+    /// Reuse is only ever as safe as this map, so a failed write drops every entry: whatever went
+    /// wrong may have left the directory without the files a later reuse would link against, and a
+    /// full re-export is the self-healing answer.
+    fn adopt_persisted_replays(&mut self, captured: Vec<(PaneId, u64)>) {
+        self.persisted_replays = captured.into_iter().collect();
+    }
+
+    fn forget_persisted_replays(&mut self) {
+        self.persisted_replays.clear();
     }
 
     /// Drive completion draining until every dispatched attempt is accounted for, returning the
@@ -349,8 +394,11 @@ impl SessionServer {
             for outcome in worker.finish(SNAPSHOT_SHUTDOWN_GRACE) {
                 let total = crate::runtime_metrics::duration_micros(outcome.total);
                 self.record_snapshot_outcome(total, outcome.result.is_ok());
-                if let Ok(()) = outcome.result {
+                if outcome.result.is_ok() {
                     self.snapshot_generation = outcome.generation;
+                    self.adopt_persisted_replays(outcome.captured);
+                } else {
+                    self.forget_persisted_replays();
                 }
             }
         }
@@ -362,6 +410,7 @@ impl SessionServer {
         let final_path = self.snapshot_path()?;
         let mut panes = Vec::new();
         let mut replays = Vec::new();
+        let mut captured = Vec::new();
         for (&pane_id, pane) in &mut self.panes {
             // The popup slot is a transient client-local overlay; resurrecting it would
             // revive an invisible orphan pane no client adopts.
@@ -379,7 +428,18 @@ impl SessionServer {
                 cols: pane.cols,
                 rows: pane.rows,
             });
-            replays.push((pane_id, pane.screen.export_replay_bytes()));
+            let content_generation = pane.content_generation;
+            // Exporting is the expensive half of a snapshot and it scales with retained history,
+            // so an idle pane reuses the file the last snapshot already wrote for this exact
+            // generation. `persisted_replays` only records generations a snapshot *succeeded* on,
+            // so a reuse can never point at a file that was never written.
+            let source = if self.persisted_replays.get(&pane_id) == Some(&content_generation) {
+                ReplaySource::Reuse
+            } else {
+                ReplaySource::Exported(pane.screen_without_change().export_replay_bytes())
+            };
+            replays.push((pane_id, source));
+            captured.push((pane_id, content_generation));
         }
         panes.sort_by_key(|pane| pane.pane_id);
         let layout = self.layout.clone().map(|mut layout| {
@@ -410,6 +470,7 @@ impl SessionServer {
             },
             layout,
             replays,
+            captured,
         })
     }
 
@@ -470,6 +531,7 @@ impl SessionServer {
         self.layout = layout;
         self.layout_rev = u64::from(self.layout.is_some());
         self.snapshot_generation = self.dirty_generation;
+        self.forget_persisted_replays();
         self.last_snapshot = Instant::now();
         Ok(restored)
     }
@@ -617,6 +679,169 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// An idle pane reuses its replay file; a pane that changed is re-exported.
+    ///
+    /// The reuse path is the one that can silently lose scrollback, so this asserts both halves:
+    /// that an untouched pane keeps the bytes it already had, and that a touched pane's new
+    /// output actually reaches the file.
+    #[test]
+    fn unchanged_panes_reuse_their_replay_and_changed_panes_do_not() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-reuse-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "reuse",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        for pane_id in [1, 2] {
+            let mut pane = test_pane();
+            pane.screen_mut()
+                .process_bytes(format!("pane-{pane_id}-original\r\n").as_bytes());
+            server.panes.insert(pane_id, pane);
+        }
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch first snapshot");
+        server.wait_for_snapshots().expect("first snapshot");
+
+        let replay = |pane_id: PaneId| {
+            fs::read(root.join(format!("reuse/panes/{pane_id}.replay"))).expect("replay file")
+        };
+        let idle_before = replay(2);
+        assert!(contains(&idle_before, b"pane-2-original"));
+
+        // Only pane 1 changes.
+        server
+            .panes
+            .get_mut(&1)
+            .expect("pane 1")
+            .screen_mut()
+            .process_bytes(b"pane-1-appended\r\n");
+        server.mark_dirty();
+        assert!(
+            matches!(
+                server
+                    .capture_snapshot(Instant::now())
+                    .expect("capture")
+                    .replays
+                    .iter()
+                    .find(|(id, _)| *id == 2)
+                    .map(|(_, source)| source),
+                Some(ReplaySource::Reuse)
+            ),
+            "an untouched pane must not be re-exported"
+        );
+
+        server.maybe_snapshot().expect("dispatch second snapshot");
+        server.wait_for_snapshots().expect("second snapshot");
+
+        assert_eq!(
+            replay(2),
+            idle_before,
+            "reused replay must be byte-identical"
+        );
+        let changed = replay(1);
+        assert!(
+            contains(&changed, b"pane-1-appended"),
+            "a changed pane must be re-exported with its new output"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A failed snapshot must not leave a reuse pointing at a directory that may not hold the file.
+    #[test]
+    fn a_failed_snapshot_forces_a_full_export_next_time() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprmux-snapshot-reuse-heal-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            "heal",
+            ServerSettings {
+                resurrect: true,
+                snapshot_dir: Some(root.clone()),
+                snapshot_interval: Duration::ZERO,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(1, test_pane());
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch first snapshot");
+        server.wait_for_snapshots().expect("first snapshot");
+        assert_eq!(server.persisted_replays.len(), 1);
+
+        let blocked = root.join("not-a-directory");
+        fs::write(&blocked, b"x").unwrap();
+        server.settings.snapshot_dir = Some(blocked);
+        server.mark_dirty();
+        server.maybe_snapshot().expect("dispatch failing snapshot");
+        assert!(server.wait_for_snapshots().is_err());
+        assert!(
+            server.persisted_replays.is_empty(),
+            "a failure must drop every reuse claim"
+        );
+
+        server.settings.snapshot_dir = Some(root.clone());
+        assert!(
+            server
+                .capture_snapshot(Instant::now())
+                .expect("capture")
+                .replays
+                .iter()
+                .all(|(_, source)| matches!(source, ReplaySource::Exported(_))),
+            "the attempt after a failure must export everything"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_pane() -> ServerPane {
+        ServerPane {
+            generation: 1,
+            title: None,
+            cwd: None,
+            command: None,
+            keep_open: false,
+            command_completed: false,
+            cell: tui_lipan::TerminalCellSize::default(),
+            shell: Vec::new(),
+            env: Vec::new(),
+            palette: WirePalette {
+                foreground: None,
+                background: None,
+                ansi: [tui_lipan::prelude::Color::Black; 16],
+            },
+            pty: None,
+            terminal: TerminalScreen::new(5, 40, 100),
+            content_generation: 0,
+            cols: 40,
+            rows: 5,
+            exited: None,
+            log: None,
+            runtime: protocol::PaneRuntimeState::default(),
+            last_agent_probe: None,
+            last_agent_detect: None,
+            last_git_read: None,
+            initial_cursor_report_primed: false,
+        }
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
     }
 
     /// Output arriving while a snapshot is being written must not be treated as already saved.

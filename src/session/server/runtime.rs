@@ -175,7 +175,7 @@ fn compute_runtime_state(
     detect_agent: bool,
     scan: &mut LazyProcessScan,
 ) -> PaneRuntimeState {
-    let semantic = pane.screen.semantic_state();
+    let semantic = pane.screen().semantic_state();
     let command_phase = PaneCommandPhase::from(semantic.command_phase);
     let last_exit_status = match command_phase {
         PaneCommandPhase::Completed { exit_status } => {
@@ -411,7 +411,7 @@ fn detect_pane_agent(
             }],
         });
     }
-    let screen = pane.screen.snapshot();
+    let screen = pane.screen_without_change().snapshot();
     let title = pane.effective_title().unwrap_or_default();
     crate::agent_detection::detect(foreground_job.as_ref(), screen.as_ref(), &title)
 }
@@ -501,7 +501,8 @@ mod tests {
             env: Vec::new(),
             palette: WirePalette::from(TerminalColorPalette::default()),
             pty: None,
-            screen: TerminalScreen::new(24, 80, 100),
+            terminal: TerminalScreen::new(24, 80, 100),
+            content_generation: 0,
             cols: 80,
             rows: 24,
             exited: None,
@@ -595,7 +596,7 @@ mod tests {
     #[test]
     fn a_local_osc7_report_wins_over_launch_cwd() {
         let mut pane = make_pane();
-        pane.screen
+        pane.screen_mut()
             .process_bytes(b"\x1b]7;file://localhost/reported/dir\x1b\\");
         let state = compute_runtime_state(
             &mut pane,
@@ -611,7 +612,7 @@ mod tests {
     #[test]
     fn a_remote_osc7_report_is_displayable_but_flagged_with_a_host() {
         let mut pane = make_pane();
-        pane.screen
+        pane.screen_mut()
             .process_bytes(b"\x1b]7;file://otherhost.example/remote/dir\x1b\\");
         let state = compute_runtime_state(
             &mut pane,
@@ -627,7 +628,7 @@ mod tests {
     #[test]
     fn a_non_absolute_osc7_report_falls_through_to_launch_cwd() {
         let mut pane = make_pane();
-        pane.screen
+        pane.screen_mut()
             .process_bytes(b"\x1b]7;file://localhost/relative%2fpath\x1b\\");
         // Force the report path itself to be non-absolute by using a bare relative form: OSC 7
         // URIs are always absolute per spec, so exercise the fallthrough via a directly
@@ -699,7 +700,7 @@ mod tests {
     #[test]
     fn completed_command_phase_sticks_the_exit_status() {
         let mut pane = make_pane();
-        pane.screen.process_bytes(b"\x1b]133;D;7\x1b\\");
+        pane.screen_mut().process_bytes(b"\x1b]133;D;7\x1b\\");
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
@@ -715,7 +716,7 @@ mod tests {
         assert_eq!(state.last_exit_status, Some(7));
 
         pane.runtime = state;
-        pane.screen.process_bytes(b"\x1b]133;A\x1b\\");
+        pane.screen_mut().process_bytes(b"\x1b]133;A\x1b\\");
         let next = compute_runtime_state(
             &mut pane,
             &StubInspector,
@@ -730,7 +731,7 @@ mod tests {
     fn agent_detection_uses_configured_hint_and_is_preserved_between_polls() {
         let mut pane = make_pane();
         pane.env.push(("HYPRMUX_AGENT".into(), "opencode".into()));
-        pane.screen.process_bytes(b"esc to interrupt");
+        pane.screen_mut().process_bytes(b"esc to interrupt");
 
         let detected = compute_runtime_state(
             &mut pane,

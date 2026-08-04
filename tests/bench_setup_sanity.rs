@@ -14,6 +14,9 @@ use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
+#[path = "../benches/support/mod.rs"]
+mod bench_support;
+
 const PANES: usize = 4;
 
 #[test]
@@ -88,4 +91,42 @@ fn bench_style_setup_renders_populated_tiled_panes() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn scrollback_search_fixture_pins_dimensions_corpus_and_matches() {
+    assert_eq!(bench_support::SEARCH_PANE_COUNTS, [1, 8, 16]);
+    assert_eq!(
+        (
+            bench_support::SEARCH_COLS,
+            bench_support::SEARCH_ROWS,
+            bench_support::SEARCH_SCROLLBACK,
+            bench_support::SEARCH_LINES,
+        ),
+        (250, 60, 5_000, 5_000)
+    );
+
+    let corpus = bench_support::scrollback_search_corpus();
+    assert_eq!(
+        corpus.windows(2).filter(|bytes| *bytes == b"\r\n").count(),
+        bench_support::SEARCH_LINES
+    );
+
+    let mut pane = hyprmux::pane::TerminalPane::new(bench_support::SEARCH_SCROLLBACK);
+    pane.apply_server_resize(bench_support::SEARCH_COLS, bench_support::SEARCH_ROWS);
+    pane.process_server_output(&corpus);
+    assert_eq!(
+        pane.search_scrollback(bench_support::SEARCH_SPARSE_QUERY)
+            .len(),
+        bench_support::SEARCH_SPARSE_MATCHES_PER_PANE
+    );
+    assert_eq!(
+        pane.search_scrollback(bench_support::SEARCH_DENSE_QUERY)
+            .len(),
+        bench_support::SEARCH_DENSE_MATCHES_PER_PANE
+    );
+    assert!(
+        pane.search_scrollback(bench_support::SEARCH_NO_MATCH_QUERY)
+            .is_empty()
+    );
 }

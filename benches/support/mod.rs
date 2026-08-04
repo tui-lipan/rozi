@@ -11,6 +11,16 @@ use hyprmux::shared_layout::{
 use tui_lipan::prelude::TerminalScreen;
 
 const CORPUS_BYTES: usize = 256 * 1024;
+pub const SEARCH_COLS: u16 = 250;
+pub const SEARCH_ROWS: u16 = 60;
+pub const SEARCH_SCROLLBACK: usize = 5_000;
+pub const SEARCH_LINES: usize = 5_000;
+pub const SEARCH_PANE_COUNTS: [usize; 3] = [1, 8, 16];
+pub const SEARCH_SPARSE_QUERY: &str = "styled-search-needle";
+pub const SEARCH_DENSE_QUERY: &str = "line-";
+pub const SEARCH_NO_MATCH_QUERY: &str = "absent-search-token";
+pub const SEARCH_SPARSE_MATCHES_PER_PANE: usize = SEARCH_LINES / 100;
+pub const SEARCH_DENSE_MATCHES_PER_PANE: usize = SEARCH_LINES;
 
 pub fn screen(cols: u16, rows: u16) -> TerminalScreen {
     TerminalScreen::new(rows, cols, 5_000)
@@ -68,6 +78,20 @@ pub fn cat_large() -> Vec<u8> {
 pub fn bytes_of_len(len: usize) -> Vec<u8> {
     let source = plain_lines();
     repeat_to_size(&source, len)
+}
+
+pub fn scrollback_search_corpus() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(SEARCH_LINES * 40);
+    for line in 0..SEARCH_LINES {
+        if line.is_multiple_of(100) {
+            bytes.extend_from_slice(
+                format!("line-{line:05} styled-search-needle payload\r\n").as_bytes(),
+            );
+        } else {
+            bytes.extend_from_slice(format!("line-{line:05} ordinary payload\r\n").as_bytes());
+        }
+    }
+    bytes
 }
 
 pub fn dirty_screen(cols: u16, rows: u16) -> TerminalScreen {

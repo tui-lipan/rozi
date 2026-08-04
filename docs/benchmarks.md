@@ -1,8 +1,9 @@
 # Benchmarks and profiling
 
 hyprmux uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
-framing, and the client session-output path. Run timing benchmarks on an otherwise idle machine;
-CI compiles them through `cargo check --all-targets` but does not use shared runners for timing.
+framing, scrollback search, the client session-output path, and server input fairness under
+continuous PTY ingress. Run timing benchmarks on an otherwise idle machine; CI compiles them
+through `cargo check --all-targets` but does not use shared runners for timing.
 For the broader CPU, memory, lifecycle, scaling, and interpretation procedure, see
 [Reproducing a performance audit](performance/audit-playbook.md).
 
@@ -21,6 +22,9 @@ cargo bench --bench terminal_ingest
 cargo bench --bench snapshot_rebuild
 cargo bench --bench protocol_framing
 cargo bench --bench session_pipeline
+cargo bench --bench app_render
+cargo bench --bench scrollback_search
+cargo bench --bench server_fairness
 ```
 
 Arguments after `--` go to Criterion. Use a benchmark ID substring or regular expression to select
@@ -31,6 +35,8 @@ cargo bench --bench terminal_ingest -- 'sgr_heavy/200x60'
 cargo bench --bench snapshot_rebuild -- terminal_pane_process_server_output
 cargo bench --bench protocol_framing -- control_frame_serde
 cargo bench --bench session_pipeline -- session_pipeline_memory/4096
+cargo bench --bench scrollback_search -- 'sparse/(1|8|16)'
+cargo bench --bench server_fairness -- key_round_trip
 ```
 
 List the benchmark IDs in a target without measuring them:
@@ -46,16 +52,26 @@ Criterion writes reports and measurements below `target/criterion/`. Do not comm
 `tools/memory-matrix.sh` is an opt-in process benchmark for release builds on Linux. It measures
 proportional set size (PSS) rather than attributing every shared mapping to every process. The quick
 matrix covers 80x24 and 253x64 viewports, 1/4/8 panes, empty or 1000-line histories, and plain or
-styled output. The full matrix adds 16 panes, 5000-line histories, two clients, pane closing, and a
-parked named session:
+styled output. The full matrix adds 16 panes, 5000-line histories, two clients, and explicit
+pane-close, client-disconnect, reconnect, and session-kill cleanup states. It also runs an
+image-heavy lifecycle using eight deterministic 384x256 Kitty images per pane:
 
 ```bash
 tools/memory-matrix.sh --quick
 tools/memory-matrix.sh --full --output target/memory-matrix/full
+tools/memory-matrix.sh --lifecycle --output target/memory-matrix/lifecycle
 ```
 
-Use `--smoke` before a long run to check local PTY, control-socket, `/proc`, and shutdown support.
-Use `--case ROWS COLS PANES HISTORY CONTENT CLIENTS` to reproduce one failed or noisy scenario.
+Use `--smoke` before a long run to check local PTY, control-socket, `/proc`, image parsing,
+disconnect, replay-complete reconnect, and session shutdown paths with a bounded two-pane workload.
+Use `--case ROWS COLS PANES HISTORY CONTENT CLIENTS [STATE]` to reproduce one failed or noisy
+scenario. `CONTENT` is `plain`, `styled`, or `images`; `STATE` is `steady` by default, or `closed`,
+`disconnected`, `reconnected`, or `killed`:
+
+```bash
+tools/memory-matrix.sh --case 60 250 8 5000 images 2 reconnected \
+  --output target/memory-matrix/reconnected
+```
 The runner requires `bash`, `python3`, util-linux `script`, and Linux `smaps_rollup`. It builds
 `target/release/hyprmux`, creates private temporary `HOME` and XDG config/state/cache/runtime
 directories per scenario, and passes every control command an explicit isolated socket. It never
@@ -63,12 +79,14 @@ discovers or connects to the user's normal sessions.
 
 Each pane emits deterministic output and a final marker. After the marker appears, the runner waits
 two seconds, takes five `/proc/<pid>/smaps_rollup` and `/proc/<pid>/status` samples 200 ms apart, and
-reports the median. Results include separate client, server, and child-process groups; RSS, PSS,
-anonymous, private, and file-backed memory; current/high-water RSS; thread/process counts; and
-per-pane application-PSS deltas. It writes both `results.json` and `results.md` below the selected
-output directory. Probe clients detach and the server receives a protocol shutdown before the
-private directory is removed; a trap targets only the PIDs owned by the runner if normal shutdown
-fails.
+reports the median. Results include separate client, server, and child-process groups; current RSS,
+PSS, anonymous, private, and file-backed memory; active-client and thread/process counts; and
+per-pane application-PSS deltas. The client group includes live probe UI processes even after a
+session kill; `active_clients` separately counts current session attachments. Cleanup evidence uses
+current RSS and PSS after quiescence, never `VmHWM`. It writes both `results.json` and `results.md`
+below the selected output directory. Probe clients detach and the server receives a protocol
+shutdown before the private directory is removed; a trap targets only the PIDs owned by the runner
+if normal shutdown fails.
 
 Memory numbers vary with the kernel, allocator, linked libraries, terminal dimensions, and host
 load. Compare two runs made from the same build on an otherwise idle machine. Scenario PSS within
@@ -103,10 +121,15 @@ cargo bench --bench terminal_ingest -- 'sgr_heavy' --baseline before-sgr
 `--save-baseline` replaces an existing baseline with the same name. Use a distinct name when the
 old measurement must remain available.
 
+Criterion's reported interval expresses uncertainty around its benchmark estimate. It is not a
+latency-distribution percentile: do not label either bound as p95 or infer tail latency from it.
+
 ## Deterministic suites
 
-All benchmark input is generated in `benches/support/mod.rs`; no terminal capture is checked in.
-The generators produce the same bytes on every run:
+Terminal, protocol, and scrollback-search corpora are generated in `benches/support/mod.rs`; no
+terminal capture is checked in. `server_fairness` has its own deterministic self-helper because it
+must generate live PTY output and acknowledge input. Every generator produces the same bytes on
+every run:
 
 | Suite | What it measures |
 | --- | --- |
@@ -115,9 +138,17 @@ The generators produce the same bytes on every run:
 | `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
 | `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
+| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained deterministic lines per pane: sparse (one match per 100 lines), dense (every line), and no-match queries. |
+| `server_fairness` | Public `SessionServer`/`SessionClient` key-to-helper acknowledgement latency while a real PTY continuously emits deterministic output. The helper and an owned, bounded-lifecycle server are modes of the benchmark executable itself, so no shell-specific command fixture or detached server is involved. |
 
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
 than comparing incompatible corpora.
+
+`server_fairness` deliberately has no resurrection snapshot-duration row yet. The public session
+protocol has no acknowledgement for completion of the durable snapshot write/rename/sync boundary.
+Polling the snapshot path would add observer polling and server scheduling delay, while timing a
+spawn response would include unrelated PTY spawn work. Add that matrix only after an honest public
+completion boundary exists.
 
 ## Live stress recipes
 

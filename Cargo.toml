@@ -69,6 +69,14 @@ harness = false
 name = "app_render"
 harness = false
 
+[[bench]]
+name = "scrollback_search"
+harness = false
+
+[[bench]]
+name = "server_fairness"
+harness = false
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

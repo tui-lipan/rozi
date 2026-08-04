@@ -83,6 +83,8 @@ At minimum, retain these representative rows:
 - `session_pipeline_unix_socketpair/4096` on Unix
 - `pane_output_frame_roundtrip/{4096,1048576}`
 - `control_frame_serde`
+- `scrollback_search/{sparse,dense,no_match}/{1,8,16}`
+- `server_fairness/key_round_trip/continuous_pty_ingress`
 
 Use a saved baseline when evaluating a change:
 
@@ -92,8 +94,9 @@ cargo bench --bench snapshot_rebuild -- --save-baseline before
 cargo bench --bench snapshot_rebuild -- --baseline before
 ```
 
-Criterion reports confidence intervals, not p95 latency. Do not describe its interval as a
-percentile. Treat small relative changes as harmless when the absolute cost remains immaterial.
+Criterion reports uncertainty around its benchmark estimate, not a latency-distribution
+percentile. Do not describe either confidence-interval bound as p95. Treat small relative changes
+as harmless when the absolute cost remains immaterial.
 
 ### Render-specific rerun
 
@@ -109,72 +112,44 @@ or a sampling profile for real draw costs.
 
 ## 4. Measure scrollback search
 
-There is not yet a permanent `scrollback_search` benchmark. The reference audit used a temporary
-release test with this deterministic fixture:
+Run the permanent deterministic target:
 
-- viewport: `250x60`
-- scrollback limit: 5,000 lines per pane
-- pane counts: 1, 8, and 16
-- line text: `line-NNNNN ordinary payload`
-- every hundredth line also contains `styled-search-needle`
-- queries:
-  - `needle` for sparse matches
-  - `line` for a match on every line
-- 11 repetitions per case, reporting the median
+```bash
+cargo bench --bench scrollback_search
+```
 
-The measured operation was the sum of `TerminalPane::search_scrollback(query)` across every pane.
-Create `tests/perf_audit_temp.rs` for the duration of the audit:
+The fixture is 250x60 with 5,000 retained lines in each of 1, 8, or 16 panes. It measures sparse
+(`styled-search-needle`, one match per hundred lines), dense (`line-`, every generated line), and
+no-match (`absent-search-token`) cases. `tests/bench_setup_sanity.rs` pins the dimensions, corpus
+line count, and expected match counts so a fixture drift cannot silently redefine the benchmark.
+
+Also retain the public-surface server fairness row:
+
+```bash
+cargo bench --bench server_fairness -- key_round_trip
+```
+
+It measures key input through `SessionClient` to an acknowledgement from a self-helper running in a
+real server-owned PTY while deterministic output flows continuously through PTY ingress. It does
+not claim queue saturation. It does not time resurrection snapshots: no public protocol response
+currently identifies completion of the durable snapshot write/rename/sync boundary. Filesystem
+polling would report polling and scheduling delay, not snapshot duration.
+
+### Picker-filter scaling
+
+There is no permanent picker-filter benchmark yet. Keep this independent diagnostic when an audit
+needs to cover palette filtering; do not infer it from scrollback search, which exercises unrelated
+terminal export and match construction. Create `tests/perf_audit_picker_temp.rs`:
 
 ```rust
 use std::time::{Duration, Instant};
 
-use hyprmux::pane::TerminalPane;
 use tui_lipan::prelude::SearchItem;
 use tui_lipan::rank_search_palette_indices;
-
-fn populated_pane(lines: usize) -> TerminalPane {
-    let mut pane = TerminalPane::new(lines);
-    pane.apply_server_resize(250, 60);
-    let mut output = String::with_capacity(lines * 48);
-    for line in 0..lines {
-        if line.is_multiple_of(100) {
-            output.push_str(&format!(
-                "line-{line:05} styled-search-needle payload\r\n"
-            ));
-        } else {
-            output.push_str(&format!("line-{line:05} ordinary payload\r\n"));
-        }
-    }
-    pane.process_server_output(output.as_bytes());
-    pane
-}
 
 fn median(mut values: Vec<Duration>) -> Duration {
     values.sort_unstable();
     values[values.len() / 2]
-}
-
-#[test]
-fn measure_scrollback_search_scaling() {
-    for panes in [1usize, 8, 16] {
-        let mut terminals: Vec<_> = (0..panes).map(|_| populated_pane(5_000)).collect();
-        for query in ["needle", "line"] {
-            let mut samples = Vec::new();
-            let mut match_count = 0;
-            for _ in 0..11 {
-                let started = Instant::now();
-                match_count = terminals
-                    .iter_mut()
-                    .map(|pane| pane.search_scrollback(query).len())
-                    .sum();
-                samples.push(started.elapsed());
-            }
-            eprintln!(
-                "scrollback_search panes={panes} query={query} matches={match_count} median_us={}",
-                median(samples).as_micros()
-            );
-        }
-    }
 }
 
 #[test]
@@ -203,19 +178,13 @@ fn measure_picker_filter_scaling() {
 }
 ```
 
-Run it in both profiles:
+Run it in both profiles, retain the source with the audit record, then remove it:
 
 ```bash
-cargo test --release --test perf_audit_temp -- --nocapture
-cargo test --test perf_audit_temp -- --nocapture
+cargo test --release --test perf_audit_picker_temp -- --nocapture
+cargo test --test perf_audit_picker_temp -- --nocapture
+rm tests/perf_audit_picker_temp.rs
 ```
-
-Remove the temporary test after collecting results. Until a permanent Criterion target replaces it,
-record its source or the complete fixture above with the audit so the result is not presented as a
-repository benchmark.
-
-For picker filtering, the same temporary diagnostic used `rank_search_palette_indices` over 100,
-1,000, and 10,000 deterministic `SearchItem`s and 31 repetitions.
 
 ## 5. Measure process memory with PSS
 
@@ -232,6 +201,7 @@ Run the broad matrix when time permits:
 
 ```bash
 tools/memory-matrix.sh --full --output target/perf-audit/memory-full
+tools/memory-matrix.sh --lifecycle --output target/perf-audit/memory-lifecycle
 ```
 
 The reference audit used these focused large-viewport cases:
@@ -245,6 +215,10 @@ tools/memory-matrix.sh --case 60 250 8 5000 styled 1 \
   --output target/perf-audit/memory-large-8pane
 tools/memory-matrix.sh --case 60 250 8 5000 styled 2 \
   --output target/perf-audit/memory-large-8pane-2client
+tools/memory-matrix.sh --case 60 250 8 5000 images 2 \
+  --output target/perf-audit/memory-images
+tools/memory-matrix.sh --case 60 250 8 5000 images 2 reconnected \
+  --output target/perf-audit/memory-images-reconnected
 ```
 
 Read `results.json` for the exact sample metadata and `results.md` for the table.
@@ -257,9 +231,9 @@ Report these groups separately:
 - child shell/process PSS
 
 Never include child processes in application memory. Prefer PSS for comparisons; RSS double-counts
-shared mappings. A high-water RSS that remains above current PSS is not evidence of a leak, and
-allocator-retained anonymous memory requires a steady-state or repeated-cycle test before it is
-called a leak.
+shared mappings. Cleanup comparisons use current PSS and current RSS after the two-second
+quiescence period, never `VmHWM`. Allocator-retained anonymous memory requires a steady-state or
+repeated-cycle test before it is called a leak.
 
 ## 6. Measure idle CPU and process resources
 
@@ -332,8 +306,9 @@ cargo test congested_flood_has_the_same_transcript_as_the_producer
 
 ## 8. Exercise lifecycle and cleanup
 
-The full memory matrix includes pane closing and a detached/parked server case. Also exercise these
-cycles manually or with an isolated diagnostic:
+The full memory matrix includes explicit pane-close, client-disconnect, reconnect, and session-kill
+states. `--lifecycle` runs the same state set with deterministic image-heavy panes. Also exercise
+longer cycles manually or with an isolated diagnostic:
 
 1. Fill scrollback, record PSS, close half the panes, settle, record PSS again.
 2. Disconnect one of two clients.
@@ -342,9 +317,10 @@ cycles manually or with an isolated diagnostic:
 5. Create and destroy sessions in a loop.
 6. Leave the application idle for at least one hour; use 24 hours for leak claims.
 
-Record both current PSS and high-water RSS. Memory need not return to its initial RSS for cleanup to
-be correct; the important evidence is that live objects, processes, descriptors, and PSS reach a
-stable plateau across repeated cycles.
+Record current PSS and current RSS after quiescence. Memory need not return to its initial RSS for
+cleanup to be correct; the important evidence is that live objects, processes, descriptors, and
+current PSS/RSS reach a stable plateau across repeated cycles. `VmHWM` cannot demonstrate cleanup
+because it cannot decrease.
 
 ## 9. Profile CPU when permitted
 

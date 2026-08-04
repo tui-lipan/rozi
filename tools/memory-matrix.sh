@@ -10,21 +10,28 @@ SAMPLE_INTERVAL=0.2
 
 usage() {
   cat <<'EOF'
-Usage: tools/memory-matrix.sh [--quick|--full|--smoke] [--case ROWS COLS PANES HISTORY CONTENT CLIENTS] [--output DIR]
+Usage: tools/memory-matrix.sh [--quick|--full|--lifecycle|--smoke] [--case ROWS COLS PANES HISTORY CONTENT CLIENTS [STATE]] [--output DIR]
 
-Linux-only, opt-in PSS benchmark. --quick is the default; --smoke runs one
-scenario to validate the local dependencies and lifecycle without measuring a matrix.
+Linux-only, opt-in PSS benchmark. --quick is the default; --smoke runs a bounded
+image lifecycle to validate dependencies, replay, cleanup, and shutdown.
+CONTENT is plain, styled, or images. STATE is steady (default), closed,
+disconnected, reconnected, or killed. --lifecycle records the full cleanup matrix.
 EOF
 }
 
 while (($#)); do
   case "$1" in
-    --quick|--full|--smoke) MODE=${1#--}; shift ;;
+    --quick|--full|--lifecycle|--smoke) MODE=${1#--}; shift ;;
     --case)
       (($# >= 7)) || { echo "--case requires ROWS COLS PANES HISTORY CONTENT CLIENTS" >&2; exit 2; }
       MODE=case
       CUSTOM_CASE=("$2" "$3" "$4" "$5" "$6" "$7")
-      shift 7
+      if (($# >= 8)) && [[ $8 != --* ]]; then
+        CUSTOM_CASE+=("$8")
+        shift 8
+      else
+        shift 7
+      fi
       ;;
     --output) OUTPUT_DIR=${2:?--output requires a directory}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -53,6 +60,9 @@ SERVER_PID=
 WRAPPER_PIDS=()
 SESSION=
 CONTROL_SOCKETS=()
+ACTIVE_CLIENTS=0
+PANE_IDS=()
+PANE_MARKERS=()
 
 cleanup_scenario() {
   set +e
@@ -85,8 +95,11 @@ cleanup_scenario() {
   done
   [[ -n ${ROOT:-} ]] && rm -rf -- "$ROOT"
   ROOT= SERVER_PID= SESSION=
+  ACTIVE_CLIENTS=0
   WRAPPER_PIDS=()
   CONTROL_SOCKETS=()
+  PANE_IDS=()
+  PANE_MARKERS=()
   set -e
 }
 trap cleanup_scenario EXIT INT TERM
@@ -119,6 +132,23 @@ wait_for_marker() {
   return 1
 }
 
+wait_for_replay() {
+  local socket=$1 index
+  for ((index=0; index<${#PANE_IDS[@]}; index++)); do
+    wait_for_marker "$socket" "${PANE_IDS[index]}" "${PANE_MARKERS[index]}"
+  done
+}
+
+wait_for_absent() {
+  local path=$1 deadline=$((SECONDS + 15))
+  while ((SECONDS < deadline)); do
+    [[ ! -e $path && ! -S $path ]] && return 0
+    sleep 0.05
+  done
+  echo "timed out waiting for $path to disappear" >&2
+  return 1
+}
+
 send_when_ready() {
   local socket=$1 text=$2 deadline=$((SECONDS + 15))
   while ((SECONDS < deadline)); do
@@ -132,28 +162,48 @@ send_when_ready() {
 }
 
 start_client() {
-  local rows=$1 cols=$2 before after socket wrapper
-  before=${#CONTROL_SOCKETS[@]}
-  script -qefc "stty rows $rows cols $cols; exec '$BIN' attach '$SESSION'" /dev/null </dev/null >/dev/null 2>&1 &
+  local rows=$1 cols=$2 after socket wrapper state status
+  local deadline=$((SECONDS + 15)) log="$ROOT/client-${#WRAPPER_PIDS[@]}.log"
+  script -qefc "stty rows $rows cols $cols; exec '$BIN' attach '$SESSION'" /dev/null </dev/null >"$log" 2>&1 &
   wrapper=$!
   WRAPPER_PIDS+=("$wrapper")
-  while :; do
-    mapfile -t after < <(wait_for_glob "$XDG_RUNTIME_DIR/hyprmux/control-*.sock")
-    if ((${#after[@]} > before)); then
-      for socket in "${after[@]}"; do
-        if [[ ! " ${CONTROL_SOCKETS[*]:-} " =~ " $socket " ]]; then
-          CONTROL_SOCKETS+=("$socket")
-          return 0
-        fi
-      done
+  while ((SECONDS < deadline)); do
+    shopt -s nullglob
+    after=("$XDG_RUNTIME_DIR"/hyprmux/control-*.sock)
+    shopt -u nullglob
+    for socket in "${after[@]}"; do
+      if [[ ! " ${CONTROL_SOCKETS[*]:-} " =~ " $socket " ]]; then
+        CONTROL_SOCKETS+=("$socket")
+        return 0
+      fi
+    done
+    if [[ ! -r /proc/$wrapper/stat ]]; then
+      status=0
+      wait "$wrapper" || status=$?
+      echo "client wrapper $wrapper exited before creating a control socket (status $status)" >&2
+      [[ -s $log ]] && while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$log"
+      return 1
+    fi
+    read -r _ _ state _ <"/proc/$wrapper/stat"
+    if [[ $state == Z || $state == X ]]; then
+      status=0
+      wait "$wrapper" || status=$?
+      echo "client wrapper $wrapper exited before creating a control socket (status $status)" >&2
+      [[ -s $log ]] && while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$log"
+      return 1
     fi
     sleep 0.05
   done
+  echo "timed out waiting for client wrapper $wrapper to create a control socket" >&2
+  [[ -s $log ]] && while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <"$log"
+  return 1
 }
 
 pane_command() {
   local history=$1 content=$2 marker=$3 marker_suffix=${3#M}
-  if [[ $content == styled ]]; then
+  if [[ $content == images ]]; then
+    printf '%s' "python3 -c 'import base64,sys,time; w=384; h=256; marker=\"M\"+\"${marker_suffix}\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,9)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
+  elif [[ $content == styled ]]; then
     printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmhyprmux-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   else
     printf "i=0; while [ \$i -lt %s ]; do printf 'hyprmux-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
@@ -162,7 +212,7 @@ pane_command() {
 
 measure_groups() {
   local scenario=$1 rows=$2 cols=$3 panes=$4 history=$5 content=$6 clients=$7 state=$8
-  local client_csv server_csv shell_csv
+  local client_csv server_csv shell_csv active_clients=$ACTIVE_CLIENTS
   client_csv=$(IFS=,; printf '%s' "${CLIENT_PIDS[*]:-}")
   server_csv=$SERVER_PID
   shell_csv=$(python3 - "$SERVER_PID" <<'PY'
@@ -186,17 +236,17 @@ print(",".join(map(str, children)))
 PY
   )
   sleep "$SETTLE_SECONDS"
-  python3 - "$JSONL" "$scenario" "$rows" "$cols" "$panes" "$history" "$content" "$clients" "$state" "$SAMPLE_COUNT" "$SAMPLE_INTERVAL" "client=$client_csv" "server=$server_csv" "shell=$shell_csv" <<'PY'
+  python3 - "$JSONL" "$scenario" "$rows" "$cols" "$panes" "$history" "$content" "$clients" "$active_clients" "$state" "$SAMPLE_COUNT" "$SAMPLE_INTERVAL" "client=$client_csv" "server=$server_csv" "shell=$shell_csv" <<'PY'
 import json, pathlib, statistics, sys, time
 
-out, scenario, rows, cols, panes, history, content, clients, state, count, interval, *groups = sys.argv[1:]
+out, scenario, rows, cols, panes, history, content, clients, active_clients, state, count, interval, *groups = sys.argv[1:]
 group_pids = {}
 for item in groups:
     name, raw = item.split("=", 1)
     group_pids[name] = [int(pid) for pid in raw.split(",") if pid and pathlib.Path(f"/proc/{pid}").exists()]
 
 def proc_metrics(pid):
-    values = {key: 0 for key in ("rss_kib", "pss_kib", "anonymous_kib", "private_kib", "file_pss_kib", "threads", "current_rss_kib", "high_water_rss_kib")}
+    values = {key: 0 for key in ("rss_kib", "pss_kib", "anonymous_kib", "private_kib", "file_pss_kib", "threads", "current_rss_kib")}
     fields = {}
     for line in pathlib.Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines():
         if ":" in line:
@@ -219,7 +269,6 @@ def proc_metrics(pid):
         file_pss_kib=fields.get("Pss_File", max(0, fields.get("Pss", 0) - fields.get("Pss_Anon", 0) - fields.get("Pss_Shmem", 0))),
         threads=int(status.get("Threads", 0)),
         current_rss_kib=int(status.get("VmRSS", 0)),
-        high_water_rss_kib=int(status.get("VmHWM", 0)),
     )
     return values
 
@@ -250,6 +299,7 @@ record = {
     "history_lines": int(history),
     "content": content,
     "clients": int(clients),
+    "active_clients": int(active_clients),
     "state": state,
     "samples": int(count),
     "sample_interval_ms": round(float(interval) * 1000),
@@ -262,6 +312,10 @@ PY
 
 run_scenario() {
   local rows=$1 cols=$2 panes=$3 history=$4 content=$5 clients=$6 state=${7:-steady}
+  [[ $content =~ ^(plain|styled|images)$ ]] ||
+    { echo "CONTENT must be plain, styled, or images" >&2; return 2; }
+  [[ $state =~ ^(steady|closed|disconnected|reconnected|killed)$ ]] ||
+    { echo "STATE must be steady, closed, disconnected, reconnected, or killed" >&2; return 2; }
   local label="${cols}x${rows}-p${panes}-h${history}-${content}-c${clients}-${state}"
   echo "Measuring $label" >&2
   cleanup_scenario
@@ -284,6 +338,9 @@ mode = "off"
 autosave = false
 resurrect = false
 
+[confirm]
+kill_session = false
+
 [animations]
 enabled = false
 EOF
@@ -293,32 +350,52 @@ EOF
   wait_for_glob "$XDG_RUNTIME_DIR/hyprmux/session-*.sock" >/dev/null
   local client
   for ((client=0; client<clients; client++)); do start_client "$rows" "$cols"; done
+  ACTIVE_CLIENTS=$clients
   local control=${CONTROL_SOCKETS[0]} command marker response pane id
   marker=M01
   command=$(pane_command "$history" "$content" "$marker")
   send_when_ready "$control" "$command"$'\n'
   wait_for_marker "$control" 1 "$marker"
   PANE_IDS=(1)
+  PANE_MARKERS=("$marker")
   for ((pane=2; pane<=panes; pane++)); do
     printf -v marker 'M%02d' "$pane"
     command=$(pane_command "$history" "$content" "$marker")
     response=$("$BIN" --socket "$control" new-pane "$command")
     id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<<"$response")
     PANE_IDS+=("$id")
+    PANE_MARKERS+=("$marker")
     wait_for_marker "$control" "$id" "$marker"
   done
+  local probe_socket
+  for probe_socket in "${CONTROL_SOCKETS[@]}"; do wait_for_replay "$probe_socket"; done
   if [[ $state == closed ]]; then
     for id in "${PANE_IDS[@]:$((panes / 2))}"; do
       "$BIN" --socket "$control" focus "$id" >/dev/null
       "$BIN" --socket "$control" run-action close >/dev/null
     done
     sleep 0.5
-  elif [[ $state == parked ]]; then
+  elif [[ $state == disconnected ]]; then
+    local disconnected=${CONTROL_SOCKETS[-1]}
+    "$BIN" --socket "$disconnected" run-action detach >/dev/null
+    wait_for_absent "$disconnected"
+    unset 'CONTROL_SOCKETS[-1]'
+    CONTROL_SOCKETS=("${CONTROL_SOCKETS[@]}")
+    ((ACTIVE_CLIENTS--))
+  elif [[ $state == reconnected ]]; then
     for control in "${CONTROL_SOCKETS[@]}"; do
       "$BIN" --socket "$control" run-action detach >/dev/null
+      wait_for_absent "$control"
     done
-    sleep 0.5
     CONTROL_SOCKETS=()
+    for ((client=0; client<clients; client++)); do start_client "$rows" "$cols"; done
+    for control in "${CONTROL_SOCKETS[@]}"; do wait_for_replay "$control"; done
+    ACTIVE_CLIENTS=$clients
+  elif [[ $state == killed ]]; then
+    local session_endpoint="$XDG_RUNTIME_DIR/hyprmux/session-$SESSION.sock"
+    "$BIN" --socket "$control" run-action kill-session >/dev/null
+    wait_for_absent "$session_endpoint"
+    ACTIVE_CLIENTS=0
   fi
   CLIENT_PIDS=()
   if ((${#CONTROL_SOCKETS[@]})); then
@@ -328,10 +405,26 @@ EOF
   cleanup_scenario
 }
 
+run_smoke_matrix() {
+  run_scenario 24 80 2 10 images 2 disconnected
+  run_scenario 24 80 2 10 images 2 reconnected
+  run_scenario 24 80 2 10 images 2 killed
+}
+
+run_lifecycle_matrix() {
+  run_scenario 64 253 8 5000 images 2 steady
+  run_scenario 64 253 8 5000 images 2 closed
+  run_scenario 64 253 8 5000 images 2 disconnected
+  run_scenario 64 253 8 5000 images 2 reconnected
+  run_scenario 64 253 8 5000 images 2 killed
+}
+
 if [[ $MODE == case ]]; then
   run_scenario "${CUSTOM_CASE[@]}"
 elif [[ $MODE == smoke ]]; then
-  run_scenario 24 80 1 10 plain 1
+  run_smoke_matrix
+elif [[ $MODE == lifecycle ]]; then
+  run_lifecycle_matrix
 else
   viewports=("24 80" "64 253")
   panes_values=(1 4 8)
@@ -356,7 +449,10 @@ else
   done
   if [[ $MODE == full ]]; then
     run_scenario 64 253 16 5000 styled 1 closed
-    run_scenario 64 253 16 5000 styled 1 parked
+    run_scenario 64 253 16 5000 styled 1 disconnected
+    run_scenario 64 253 16 5000 styled 1 reconnected
+    run_scenario 64 253 16 5000 styled 1 killed
+    run_lifecycle_matrix
   fi
 fi
 
@@ -381,19 +477,19 @@ for current in steady:
             "content": current["content"], "clients": current["clients"],
             "application_pss_kib_per_pane": round((current["application_pss_kib"] - base["application_pss_kib"]) / (current["panes"] - base["panes"]), 1),
         })
-document = {"schema_version": 1, "sampling": {"settling_seconds": 2, "samples": 5, "interval_ms": 200, "statistic": "median"}, "scenarios": rows, "derived_per_pane": slopes}
+document = {"schema_version": 2, "sampling": {"settling_seconds": 2, "samples": 5, "interval_ms": 200, "statistic": "median"}, "scenarios": rows, "derived_per_pane": slopes}
 json_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
-lines = ["# hyprmux memory matrix", "", "Values are median KiB from five samples; application PSS is server plus attached clients.", "", "| Scenario | Client PSS | Server PSS | Child PSS | App PSS | App RSS | Private | Anonymous | File PSS | Threads | Processes |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+lines = ["# hyprmux memory matrix", "", "Values are median KiB from five samples after quiescence; application PSS and current RSS are the session server plus live probe-client processes. Active clients counts session attachments. VmHWM is deliberately not a cleanup metric.", "", "| Scenario | Active clients | Client PSS | Server PSS | Child PSS | App PSS | Current app RSS | Private | Anonymous | File PSS | Threads | Processes |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
 for row in rows:
     groups = row["groups"]
     client, server, shell = (groups.get(name, {}) for name in ("client", "server", "shell"))
-    app_rss = client.get("rss_kib", 0) + server.get("rss_kib", 0)
+    app_rss = client.get("current_rss_kib", 0) + server.get("current_rss_kib", 0)
     private = client.get("private_kib", 0) + server.get("private_kib", 0)
     anonymous = client.get("anonymous_kib", 0) + server.get("anonymous_kib", 0)
     file_pss = client.get("file_pss_kib", 0) + server.get("file_pss_kib", 0)
     threads = client.get("threads", 0) + server.get("threads", 0)
     processes = sum(group.get("process_count", 0) for group in groups.values())
-    lines.append(f'| `{row["scenario"]}` | {client.get("pss_kib", 0)} | {server.get("pss_kib", 0)} | {shell.get("pss_kib", 0)} | {row["application_pss_kib"]} | {app_rss} | {private} | {anonymous} | {file_pss} | {threads} | {processes} |')
+    lines.append(f'| `{row["scenario"]}` | {row["active_clients"]} | {client.get("pss_kib", 0)} | {server.get("pss_kib", 0)} | {shell.get("pss_kib", 0)} | {row["application_pss_kib"]} | {app_rss} | {private} | {anonymous} | {file_pss} | {threads} | {processes} |')
 lines += ["", "## Per-pane application PSS deltas", "", "| From | To | Viewport | History | Content | Clients | KiB/pane |", "| ---: | ---: | --- | ---: | --- | ---: | ---: |"]
 for slope in slopes:
     viewport = slope["viewport"]

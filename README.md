@@ -74,6 +74,7 @@ Full docs live in [`docs/`](docs/):
 - [Control socket](docs/control.md) - pane environment, JSON control protocol, and CLI automation.
 - [Hooks](docs/hooks.md) - event-triggered commands, environment fields, and control callbacks.
 - [Benchmarks & profiling](docs/benchmarks.md) - Criterion suites, baselines, stress tests, and Samply.
+- [Performance records](docs/performance/README.md) - current assessment, dated audits, and reproduction guidance.
 - [Vim/Neovim navigator](integrations/vim-hyprmux-navigator/) - seamless editor split and hyprmux pane navigation.
 - [Sessions](docs/sessions.md) - always-server model, ephemeral vs named sessions, rename, and lifecycle.
 - [Remote SSH sessions](docs/remote.md) - `--remote` attach, bootstrap/install, and local-vs-remote features.

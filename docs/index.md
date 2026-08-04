@@ -26,6 +26,8 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
 | [Hooks](hooks.md) | Event-triggered commands, event fields, environment variables, and control-socket callbacks. |
 | [Benchmarks & profiling](benchmarks.md) | Criterion targets, baseline comparisons, live stress recipes, and Samply profiling. |
+| [Performance records](performance/README.md) | Current assessment, dated audit reports, and conventions for recording future results. |
+| [Performance audit playbook](performance/audit-playbook.md) | Reproduce a full CPU, memory, latency, scaling, lifecycle, and profiling audit. |
 | [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) | Seamless navigation between editor splits and hyprmux panes. |
 | [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
 | [Remote SSH sessions](remote.md) | `--remote` attach over SSH, bootstrap/install, protocol negotiation, and feature split. |

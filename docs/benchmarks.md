@@ -3,6 +3,8 @@
 hyprmux uses Criterion 0.8 benchmarks to measure terminal parsing, snapshot rebuilding, protocol
 framing, and the client session-output path. Run timing benchmarks on an otherwise idle machine;
 CI compiles them through `cargo check --all-targets` but does not use shared runners for timing.
+For the broader CPU, memory, lifecycle, scaling, and interpretation procedure, see
+[Reproducing a performance audit](performance/audit-playbook.md).
 
 ## Running benchmarks
 

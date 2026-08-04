@@ -7,8 +7,8 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 
 use crate::input::Action;
 use crate::state::{
-    AppearanceAction, ProfilePickerState, ScrollbackMatch, ScrollbackSearchState,
-    SessionPickerState, cap_style_label,
+    AppearanceAction, MAX_MATCHES, ProfilePickerState, ScrollbackSearchState, SessionPickerState,
+    cap_style_label,
 };
 use crate::{HyprmuxApp, Msg};
 

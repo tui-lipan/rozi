@@ -22,6 +22,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
         navigation: TerminalCopyMode::new(cursor_row, cursor_col, offset),
         search_matches: Vec::new(),
         search_current: 0,
+        search_truncated: false,
     });
     ctx.state.mode = Mode::Copy;
     ctx.state.show_help = false;

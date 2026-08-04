@@ -7,19 +7,38 @@ pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .child(scrollback_search_palette(ctx, search))
         .child(scrollback_search_hints(ctx, search));
 
-    action_palette_modal_with_width(ctx, "Search scrollback", 90)
-        .on_close(ctx.link().callback(|_| Msg::CloseSearch))
+    let panel: Element = Frame::new()
+        .header_left("Search scrollback")
+        .header_right(search.status.clone())
+        .header_style(ctx.state.theme.accent.bold())
+        .border_style(BorderStyle::Rounded)
+        .padding(0)
+        .style(Style::new().bg(ctx.state.theme.surface.element))
+        .height(Length::Auto)
         .child(action_palette_frame(body))
+        .into();
+    Modal::new()
+        .width(Length::Px(90))
+        .height(Length::Auto)
+        .max_height(Length::Percent(65))
+        .reserve_height(Length::Percent(65))
+        .border(false)
+        .padding(0)
+        .frame_style(Style::new().bg(ctx.state.theme.surface.element))
+        .on_close(ctx.link().callback(|_| Msg::CloseSearch))
+        .child(panel)
         .key(search_input_key())
 }
 
 fn scrollback_search_hints(ctx: &Context<HyprmuxApp>, search: &ScrollbackSearchState) -> Element {
     let theme = &ctx.state.theme;
-    hint_row()
+    let mut hints = hint_row()
         .child(hint_pill(theme, "next", "ctrl+n"))
-        .child(hint_pill(theme, "previous", "ctrl+p"))
-        .child(hint_pill(theme, search.scope.label(), "tab"))
-        .into()
+        .child(hint_pill(theme, "previous", "ctrl+p"));
+    if !search.from_copy_mode {
+        hints = hints.child(hint_pill(theme, search.scope.label(), "tab"));
+    }
+    hints.into()
 }
 
 fn scrollback_search_palette(
@@ -28,16 +47,6 @@ fn scrollback_search_palette(
 ) -> SearchPalette<usize> {
     let current = search.current;
     let query = search.input.text().trim();
-    let entries = search
-        .matches
-        .iter()
-        .enumerate()
-        .map(|(index, matched)| {
-            SearchEntry::item(search_match_label(matched), index)
-                .description(search_match_description(matched))
-                .active(index == current)
-        })
-        .collect::<Vec<_>>();
 
     let empty_text = if query.is_empty() {
         format!("Type to search scrollback ({})", search.scope.label())
@@ -46,10 +55,10 @@ fn scrollback_search_palette(
     };
 
     shared_search_palette::<usize>(ctx, Length::Auto, true)
-        .entries(entries)
+        .items_arc(Arc::clone(&search.items))
+        .sync_match_limit(MAX_MATCHES)
         .placeholder("Search scrollback...")
         .initial_query(query.to_string())
-        .preserve_groups(true)
         .initial_selected_item_index(Some(current))
         .sync_selection(true)
         .description_placement(DescriptionPlacement::Right)
@@ -83,22 +92,4 @@ fn scrollback_search_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             None
         }
     })
-}
-
-fn search_match_label(matched: &ScrollbackMatch) -> String {
-    let label = matched.text.trim();
-    if label.is_empty() {
-        "(blank line)".to_string()
-    } else {
-        label.to_string()
-    }
-}
-
-fn search_match_description(matched: &ScrollbackMatch) -> String {
-    format!(
-        "pane {} · row {} · col {}",
-        matched.pane,
-        matched.line + 1,
-        matched.start_col + 1
-    )
 }

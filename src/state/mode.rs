@@ -26,6 +26,8 @@ pub struct CopyModeState {
     /// Matches retained after a `/` search so `n`/`N` can cycle without reopening the overlay.
     pub search_matches: Vec<CopySearchMatch>,
     pub search_current: usize,
+    /// Whether additional matches existed beyond the bounded retained set.
+    pub search_truncated: bool,
 }
 
 /// One scrollback match parked on [`CopyModeState`] for `n`/`N` cycling.

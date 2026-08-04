@@ -1,7 +1,11 @@
 use std::cell::RefCell;
+use std::ops::ControlFlow;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use tui_lipan::prelude::*;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// A terminal pane. Its screen is a client-side `TerminalScreen` parser fed by raw PTY bytes
 /// broadcast from the session server; the server owns the actual PTY.
@@ -80,7 +84,25 @@ pub struct TerminalSearchMatch {
     /// Display-column range in the visible terminal grid.
     pub start_col: usize,
     pub end_col: usize,
-    pub text: String,
+    pub text: Arc<str>,
+}
+
+pub(crate) struct BoundedTerminalSearch {
+    pub matches: Vec<TerminalSearchMatch>,
+    pub truncated: bool,
+}
+
+fn display_col_at(text: &str, byte_index: usize) -> usize {
+    text[..byte_index]
+        .graphemes(true)
+        .map(|grapheme| {
+            if grapheme.chars().all(char::is_control) {
+                0
+            } else {
+                UnicodeWidthStr::width(grapheme)
+            }
+        })
+        .sum()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,56 +296,65 @@ impl TerminalPane {
         true
     }
 
-    pub fn search_scrollback(&mut self, query: &str) -> Vec<TerminalSearchMatch> {
+    pub fn search_scrollback(&self, query: &str) -> Vec<TerminalSearchMatch> {
+        self.search_scrollback_bounded(query, usize::MAX).matches
+    }
+
+    pub(crate) fn search_scrollback_bounded(
+        &self,
+        query: &str,
+        max_matches: usize,
+    ) -> BoundedTerminalSearch {
         let query = query.trim();
         if query.is_empty() {
-            return Vec::new();
+            return BoundedTerminalSearch {
+                matches: Vec::new(),
+                truncated: false,
+            };
         }
 
-        let total = self.screen.borrow().total_text_lines();
-        // `text_lines(start, count)` returns up to `count` lines beginning at absolute
-        // `start`. Indices below are `start + i` so a future clamp/shift in the exporter
-        // cannot silently renumber matches.
-        let start = 0;
-        let lines = self.screen.borrow().text_lines(start, total);
+        let needle = query.to_ascii_lowercase();
+        let screen = self.screen.borrow();
+        let total = screen.total_text_lines();
         let mut matches = Vec::new();
-        for (i, text) in lines.into_iter().enumerate() {
-            let absolute = start + i;
-            let Some((offset, line)) = self.screen.borrow().absolute_line_to_viewport(absolute)
-            else {
-                continue;
-            };
-            let needle = query.to_ascii_lowercase();
+        let mut truncated = false;
+        let _ = screen.try_for_each_text_line(0, total, |absolute, text| {
             let haystack = text.to_ascii_lowercase();
             let mut search_from = 0usize;
+            let mut viewport = None;
+            let mut shared_text = None;
             while search_from < haystack.len() {
                 let Some(relative_start) = haystack[search_from..].find(&needle) else {
                     break;
                 };
                 let start = search_from + relative_start;
                 let end = start + needle.len();
-                let line_spans = [Span::new(text.as_str())];
-                let start_col = tui_lipan::utils::spans::char_col_to_display_col(
-                    &line_spans,
-                    text[..start].chars().count(),
-                );
-                let end_col = tui_lipan::utils::spans::char_col_to_display_col(
-                    &line_spans,
-                    text[..end].chars().count(),
-                );
+                let Some((offset, line)) =
+                    *viewport.get_or_insert_with(|| screen.absolute_line_to_viewport(absolute))
+                else {
+                    break;
+                };
+                let start_col = display_col_at(text, start);
+                let end_col = display_col_at(text, end);
                 if start_col < end_col {
+                    if matches.len() == max_matches {
+                        truncated = true;
+                        return ControlFlow::Break(());
+                    }
+                    let text = Arc::clone(shared_text.get_or_insert_with(|| Arc::from(text)));
                     matches.push(TerminalSearchMatch {
                         offset,
                         line,
                         start_col,
                         end_col,
-                        text: text.clone(),
+                        text,
                     });
                 }
                 search_from = end;
             }
-        }
-        matches
+            ControlFlow::Continue(())
+        });
+        BoundedTerminalSearch { matches, truncated }
     }
 }
 
@@ -769,7 +800,7 @@ mod tests {
     }
 
     #[test]
-    fn search_scrollback_uses_text_export_without_mutating_offset() {
+    fn streaming_search_matches_owned_export_without_mutating_offset() {
         let mut pane = TerminalPane::new(50);
         pane.apply_server_resize(10, 4);
         // Drive enough lines to push content into history.
@@ -778,8 +809,52 @@ mod tests {
         }
         let offset_before = pane.scrollback_offset();
         let matches = pane.search_scrollback("line-1");
+        let expected = {
+            let screen = pane.screen.borrow();
+            let total = screen.total_text_lines();
+            let needle = "line-1".to_ascii_lowercase();
+            let mut expected = Vec::new();
+            for (absolute, text) in screen.text_lines(0, total).into_iter().enumerate() {
+                let Some((offset, line)) = screen.absolute_line_to_viewport(absolute) else {
+                    continue;
+                };
+                let haystack = text.to_ascii_lowercase();
+                let mut search_from = 0;
+                while let Some(relative) = haystack[search_from..].find(&needle) {
+                    let start = search_from + relative;
+                    let end = start + needle.len();
+                    let spans = [Span::new(text.as_str())];
+                    let start_col = tui_lipan::utils::spans::char_col_to_display_col(
+                        &spans,
+                        text[..start].chars().count(),
+                    );
+                    let end_col = tui_lipan::utils::spans::char_col_to_display_col(
+                        &spans,
+                        text[..end].chars().count(),
+                    );
+                    if start_col < end_col {
+                        expected.push((offset, line, start_col, end_col, text.clone()));
+                    }
+                    search_from = end;
+                }
+            }
+            expected
+        };
         assert!(!matches.is_empty());
         assert!(matches.iter().any(|m| m.text.contains("line-1")));
+        assert_eq!(
+            matches
+                .iter()
+                .map(|matched| (
+                    matched.offset,
+                    matched.line,
+                    matched.start_col,
+                    matched.end_col,
+                    matched.text.to_string(),
+                ))
+                .collect::<Vec<_>>(),
+            expected
+        );
         assert_eq!(pane.scrollback_offset(), offset_before);
 
         let full = pane.capture_scrollback_text(None);
@@ -796,6 +871,68 @@ mod tests {
                 .iter()
                 .any(|matched| matched.start_col == 3 && matched.end_col == 8)
         );
+    }
+
+    #[test]
+    fn repeated_hits_share_one_line_allocation() {
+        let mut pane = TerminalPane::new(10);
+        pane.apply_server_resize(40, 2);
+        pane.process_server_output(b"hit HIT hit\r\n");
+
+        let matches = pane.search_scrollback("hit");
+
+        assert_eq!(matches.len(), 3);
+        assert!(Arc::ptr_eq(&matches[0].text, &matches[1].text));
+        assert!(Arc::ptr_eq(&matches[1].text, &matches[2].text));
+        assert_eq!(
+            matches
+                .iter()
+                .map(|matched| (matched.start_col, matched.end_col))
+                .collect::<Vec<_>>(),
+            [(0, 3), (4, 7), (8, 11)]
+        );
+    }
+
+    #[test]
+    fn search_folds_ascii_only_and_keeps_non_ascii_case_sensitive() {
+        let mut pane = TerminalPane::new(10);
+        pane.apply_server_resize(40, 2);
+        pane.process_server_output("Äbc äBC ABC abc\r\n".as_bytes());
+
+        let ascii = pane.search_scrollback("aBc");
+        assert_eq!(ascii.len(), 2);
+        assert_eq!(
+            ascii
+                .iter()
+                .map(|matched| matched.start_col)
+                .collect::<Vec<_>>(),
+            [8, 12]
+        );
+
+        let upper_non_ascii = pane.search_scrollback("ÄBC");
+        assert_eq!(upper_non_ascii.len(), 1);
+        assert_eq!(upper_non_ascii[0].start_col, 0);
+        let lower_non_ascii = pane.search_scrollback("äbc");
+        assert_eq!(lower_non_ascii.len(), 1);
+        assert_eq!(lower_non_ascii[0].start_col, 4);
+    }
+
+    #[test]
+    fn search_columns_preserve_combining_wide_and_control_widths_without_allocating() {
+        let raw = "a\u{301}你\u{7}z";
+        let wide_end = raw.find('你').expect("wide character") + '你'.len_utf8();
+        let control_end = raw.find('\u{7}').expect("control") + 1;
+        assert_eq!(display_col_at(raw, "a\u{301}".len()), 1);
+        assert_eq!(display_col_at(raw, wide_end), 3);
+        assert_eq!(display_col_at(raw, control_end), 3);
+        assert_eq!(display_col_at(raw, raw.len()), 4);
+
+        let mut pane = TerminalPane::new(10);
+        pane.apply_server_resize(40, 2);
+        pane.process_server_output("a\u{301}你\u{7}needle\r\n".as_bytes());
+        let matches = pane.search_scrollback("needle");
+        assert_eq!(matches.len(), 1);
+        assert_eq!((matches[0].start_col, matches[0].end_col), (3, 9));
     }
 
     #[test]

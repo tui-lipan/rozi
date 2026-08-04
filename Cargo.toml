@@ -33,6 +33,8 @@ tar = { version = "0.4", default-features = false }
 ureq = { version = "3.3", default-features = false, features = ["rustls"] }
 url = "2"
 zip = { version = "5.1", default-features = false, features = ["deflate-flate2"] }
+unicode-width = "0.2.2"
+unicode-segmentation = "1.13.3"
 
 [features]
 release-tool = []

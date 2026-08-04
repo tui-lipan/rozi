@@ -115,7 +115,9 @@ end (these row-local motions reuse `tui-lipan`'s vim-mode `TextArea` motion algo
 `Ctrl-u`/`Ctrl-d` page by half a screen; and `g`/`G` jump to the top of history / the live
 bottom. Press `/` to search within the focused pane (same overlay as scrollback search, scoped
 to this pane); `Enter` parks the copy cursor on the match and returns to copy mode, `Esc`
-cancels back to copy mode, and `n`/`N` cycle later matches while keeping any selection anchor.
+cancels back to the prior copy position, and `n`/`N` cycle the retained matches while keeping any
+selection anchor. Copy-mode search never changes scope. At most 2000 matches are retained for
+cycling; a `+` in the search count indicates that later matches were omitted.
 With shell integration, `[`/`]` jump between prompt marks and `o` copies the last command's
 output. Press `v` (or `Space`) to start a selection, then `y` (or `Enter`) to copy it to the
 system clipboard and exit, or `Esc`/`q` to leave without copying. The workbar shows a **COPY**
@@ -178,19 +180,21 @@ cap because it may legitimately exceed the steady-state backlog.
 
 Press `/` (or *Search scrollback* in the palette) to search the focused pane's scrollback:
 
-- Type to search; the status line shows the match count (`1 / N matches`) and the active scope,
-  or "No matches".
-- `Enter` jumps to the **next** match; `Shift+Enter` jumps to the **previous** one.
+- Type to search; the modal header shows the match count (`1 / N matches`) and the active scope,
+  or "No matches". The first match is selected and shown immediately.
+- `Ctrl-n` and `Ctrl-p` select the next or previous retained match. `Enter` closes search at the
+  selected match.
 - `Tab` cycles the **scope**: the focused pane, the whole workspace, or all panes. Jumping to a
   match in another pane (or workspace) switches focus there before scrolling to it.
-- Selecting a match scrolls the pane to that position; `Esc` closes the search and the pane
-  returns to where it was.
+- Selecting a result row scrolls the pane to that position; `Esc` closes the search.
+- Search retains at most 2000 matches across the whole active scope. `2000+` means at least one
+  additional match exists; exactly 2000 matches are shown without the `+`.
 
-Search is **app-side**: `hyprmux` scans retained scrollback via `TerminalScreen`'s plain-text
-export (no scrollback-offset mutation), then maps absolute lines back to viewport coordinates
-for jumping. Matching is case-insensitive. This works regardless of the program running in the
-pane, because it reads rendered terminal lines rather than relying on an in-terminal highlight
-search.
+Search is **app-side**: `hyprmux` streams retained plain-text lines from `TerminalScreen` without
+mutating the scrollback offset, then maps matching absolute lines back to viewport coordinates for
+jumping. ASCII letters match case-insensitively; non-ASCII text remains case-sensitive. This works
+regardless of the program running in the pane, because it reads rendered terminal lines rather
+than relying on an in-terminal highlight search.
 
 ## Edit scrollback
 

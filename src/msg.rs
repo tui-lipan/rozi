@@ -36,8 +36,17 @@ pub enum Msg {
     AgentTick,
     /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
-    /// A `WorkbarSegment::Command` poller produced fresh output: (command string, first output line).
-    WorkbarCommandOutput(String, String),
+    /// Run one scheduled `WorkbarSegment::Command` refresh for the current configuration epoch.
+    WorkbarCommandPoll {
+        epoch: u64,
+        command: String,
+    },
+    /// A scheduled workbar command produced its first output line (or blank on failure).
+    WorkbarCommandOutput {
+        epoch: u64,
+        command: String,
+        output: String,
+    },
     SidebarTabSelected {
         panel: usize,
         index: usize,

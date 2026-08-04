@@ -520,7 +520,8 @@ fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<
         WorkbarSegment::Command { command, .. } => {
             let output = ctx
                 .state
-                .workbar_command_output
+                .workbar
+                .command_output
                 .get(command)
                 .map(String::as_str)
                 .unwrap_or("");

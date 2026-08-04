@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
@@ -20,6 +20,7 @@ mod search;
 mod session;
 mod sessions_view;
 mod sidebar;
+mod workbar;
 mod workspace;
 
 pub use appearance::*;
@@ -34,6 +35,7 @@ pub use search::*;
 pub use session::*;
 pub use sessions_view::*;
 pub use sidebar::*;
+pub use workbar::*;
 pub use workspace::*;
 
 pub type PaneId = u32;
@@ -79,6 +81,7 @@ pub struct State {
     pub last_clock_text: RefCell<Option<String>>,
     pub sidebar_visible: bool,
     pub sidebar: SidebarState,
+    pub workbar: WorkbarState,
     pub show_palette: bool,
     pub show_help: bool,
     pub show_appearance: bool,
@@ -171,14 +174,6 @@ pub struct State {
     /// Source of [`Attachment::parked_seq`] stamps, counting parkings so background attachments can
     /// be ordered by how recently they were used.
     next_parked_seq: u64,
-    /// Cached first-line stdout for each configured `WorkbarSegment::Command`, keyed by the raw
-    /// command string. Refreshed on a background timer per command; empty until the first run
-    /// completes.
-    pub workbar_command_output: HashMap<String, String>,
-    /// Commands that already have a background poller thread running (see
-    /// [`crate::pane_lifecycle::spawn_workbar_command_pollers`]). A config reload spawns pollers
-    /// only for commands newly added by the reload, since existing pollers never stop.
-    pub workbar_commands_running: HashSet<String>,
     /// Set whenever something `crate::commands::sync` needs to see (shortcuts, dynamic labels,
     /// or the `commands_active` gate) may have changed. Checked once per message at the tail of
     /// `update::handle_msg` rather than resyncing unconditionally, since high-frequency messages
@@ -236,6 +231,7 @@ impl State {
             last_clock_text: RefCell::new(None),
             sidebar_visible,
             sidebar,
+            workbar: WorkbarState::default(),
             show_palette: false,
             show_help: false,
             show_appearance: false,
@@ -282,8 +278,6 @@ impl State {
             pending_destructive: None,
             confirm_epoch: 0,
             next_parked_seq: 0,
-            workbar_command_output: HashMap::new(),
-            workbar_commands_running: HashSet::new(),
             commands_dirty: false,
         }
     }

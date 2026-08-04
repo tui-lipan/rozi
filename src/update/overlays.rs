@@ -32,6 +32,7 @@ pub(super) fn command_link_ready(ctx: &mut Context<HyprmuxApp>, link: CommandLin
     ctx.state.command_link = Some(link);
     crate::update::sidebar::request_sessions_refresh(ctx);
     crate::update::sidebar::request_command_poll(ctx);
+    crate::update::workbar::request_command_polls(ctx);
     Update::none()
 }
 
@@ -305,20 +306,6 @@ pub(super) fn workbar_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     } else {
         Update::command_only(command)
     }
-}
-
-pub(super) fn workbar_command_output(
-    ctx: &mut Context<HyprmuxApp>,
-    command: String,
-    output: String,
-) -> Update {
-    // Command segments re-run on a timer and usually report the same string (a battery percentage,
-    // a branch name). Only the runs that actually change the badge are worth a frame.
-    if ctx.state.workbar_command_output.get(&command) == Some(&output) {
-        return Update::none();
-    }
-    ctx.state.workbar_command_output.insert(command, output);
-    Update::full()
 }
 
 pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Update {

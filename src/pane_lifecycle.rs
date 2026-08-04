@@ -741,53 +741,6 @@ pub(crate) fn clear_pane_local_state(state: &mut State, id: PaneId) {
     }
 }
 
-/// Spawns one background thread per `(command, interval_secs)` pair that runs the shell
-/// command, sends its output, sleeps, and repeats for the life of the app - the same
-/// fire-and-forget pattern as the PTY read threads.
-///
-/// `command_shell` is the resolved command-runner argv (see
-/// [`crate::platform::command::resolve_command_shell`]), resolved once by the caller (which has
-/// the live config) rather than per-poller-thread.
-pub(crate) fn spawn_workbar_command_pollers(
-    workbar_commands: Vec<(String, u64)>,
-    command_shell: Vec<String>,
-    link: &CommandLink<Msg>,
-) {
-    for (command, interval_secs) in workbar_commands {
-        let poller_link = link.clone();
-        let command_shell = command_shell.clone();
-        std::thread::spawn(move || {
-            loop {
-                let output = run_workbar_command(&command, &command_shell);
-                poller_link.send(Msg::WorkbarCommandOutput(command.clone(), output));
-                std::thread::sleep(Duration::from_secs(interval_secs.max(1)));
-            }
-        });
-    }
-}
-
-/// Runs a `command:` workbar segment's shell command through the resolved command-runner shell
-/// and returns the first line of stdout, trimmed. Failures (missing shell, non-zero exit, no
-/// output) collapse to an empty string rather than surfacing an error in the workbar.
-fn run_workbar_command(command: &str, command_shell: &[String]) -> String {
-    let runner = crate::platform::command::ShellCommand::from_argv(command_shell)
-        .unwrap_or_else(|| crate::platform::command::ShellCommand::new("/bin/sh").arg("-c"));
-    std::process::Command::new(runner.program)
-        .args(runner.args)
-        .arg(command)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()
-                .map(str::trim)
-                .map(str::to_string)
-        })
-        .unwrap_or_default()
-}
-
 pub(crate) fn pane_env(
     control_socket_path: Option<&std::path::Path>,
     pane: &Pane,

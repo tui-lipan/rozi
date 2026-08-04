@@ -11,7 +11,7 @@ use crate::{HyprmuxApp, Msg};
 /// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
 /// that save via write-to-temp + rename; hyprmux's own persistence writes are filtered out in
 /// the `Msg::ConfigFileChanged` handler by comparing against the last text this process read
-/// or wrote. Fire-and-forget for the life of the app, like the workbar-command pollers.
+/// or wrote. Fire-and-forget for the life of the app.
 pub(crate) fn spawn_config_watcher(link: &CommandLink<Msg>) {
     let link = link.clone();
     std::thread::spawn(move || {
@@ -116,17 +116,6 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         new_config.pane.background_follows_terminal,
     );
 
-    // The workbar-command poller loop never stops itself, so only spawn one for commands that
-    // aren't already running rather than restarting everything on every reload.
-    let new_workbar_commands: Vec<(String, u64)> = new_config
-        .workbar
-        .command_specs()
-        .into_iter()
-        .filter(|(command, _)| !ctx.state.workbar_commands_running.contains(command))
-        .collect();
-    for (command, _) in &new_workbar_commands {
-        ctx.state.workbar_commands_running.insert(command.clone());
-    }
     // Same trick for the clock repaint loop: it reschedules itself only while a clock segment
     // is configured, so it needs a kick here exactly when it wasn't already running.
     let had_workbar_tick = ctx.state.config.workbar.has_clock();
@@ -134,6 +123,10 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
 
     ctx.state.sidebar_visible = new_config.sidebar.visible;
     ctx.state.sidebar.reconcile(&new_config.sidebar);
+    // Every reload invalidates scheduled/running results, including interval-only and
+    // command-shell-only changes. Keep matching in-flight guards until their old results arrive so
+    // the replacement polls cannot overlap them.
+    ctx.state.workbar.reconcile(&new_config.workbar);
     ctx.state.config = new_config;
     // Releasing focus when a reload hides the sidebar is part of the same visibility transition as
     // the interactive toggle. Refresh work is kicked explicitly below, so only the synchronous
@@ -143,6 +136,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         crate::update::sidebar::refocus_body(ctx);
     }
     crate::ops::theme::apply_terminal_palette_to_state(&mut ctx.state);
+    crate::update::workbar::request_command_polls(ctx);
 
     for warning in loaded.warnings.iter().chain(&resolved.warnings) {
         crate::pty_events::notify_error(ctx, "Config warning", warning.clone());
@@ -158,12 +152,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
         );
     }
 
-    if start_theme_tick || start_workbar_tick || !new_workbar_commands.is_empty() {
-        let command_shell = crate::platform::command::resolve_command_shell(
-            ctx.state.config.command_shell.as_deref(),
-            &crate::platform::command::ShellEnv::from_process(),
-        )
-        .as_argv();
+    if start_theme_tick || start_workbar_tick {
         Update::with_command(Command::spawn(move |link: CommandLink<Msg>| {
             if start_theme_tick {
                 // Arming the first tick must not hold this worker for 150ms while the pollers
@@ -173,11 +162,6 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
             if start_workbar_tick {
                 link.send(Msg::WorkbarTick);
             }
-            crate::pane_lifecycle::spawn_workbar_command_pollers(
-                new_workbar_commands,
-                command_shell,
-                &link,
-            );
         }))
     } else {
         Update::full()

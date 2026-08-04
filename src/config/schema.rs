@@ -1142,8 +1142,8 @@ impl WorkbarConfig {
             .any(|item| item.segment.is_clock())
     }
 
-    /// Unique `(command, interval_secs)` pairs across both workbar sides, one background poller
-    /// per distinct command string even if it appears in multiple segments.
+    /// Unique `(command, interval_secs)` pairs across both workbar sides, one scheduled run per
+    /// distinct command string even if it appears in multiple segments.
     pub fn command_specs(&self) -> Vec<(String, u64)> {
         let mut seen = std::collections::HashSet::new();
         self.left

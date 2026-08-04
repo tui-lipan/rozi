@@ -1119,7 +1119,8 @@ fn finish_session_install(ctx: &mut Context<HyprmuxApp>) {
 /// restart → replacement attach), so there is nothing to retain.
 ///
 /// Only the *current attachment* changes: everything else on [`State`] is client-global (theme,
-/// sidebar, background attachments, workbar pollers, control socket, event hub) and is left exactly
+/// sidebar, background attachments, workbar scheduling, control socket, event hub) and is left
+/// exactly
 /// as it was, so this no longer rebuilds — and silently loses — that state.
 pub(crate) fn install_fresh_attachment(
     ctx: &mut Context<HyprmuxApp>,
@@ -3171,11 +3172,15 @@ mod tests {
                     state.sidebar.command_epoch = 7;
                     state.sidebar.config_epoch = 11;
                     // Client-global chrome that must survive a create: an open sidebar on a chosen
-                    // tab, and a running workbar command poller.
+                    // tab, and live workbar command scheduling state.
                     state.sidebar_visible = true;
                     state.sidebar.panels[0].active_tab =
                         Some(crate::config::SidebarTabId::new("sessions"));
-                    state.workbar_commands_running.insert("date".to_string());
+                    state.workbar.command_epoch = 3;
+                    state
+                        .workbar
+                        .command_in_flight
+                        .insert("date".to_string(), 3);
                     // Simulate a profile-seeded session: the current pane carries a command.
                     state.current_mut().workspaces[0].panes[0].identity.command =
                         Some("nvim".to_string());
@@ -3214,7 +3219,7 @@ mod tests {
                 );
                 // Client-global state is not per-session, so installing a fresh attachment leaves it
                 // untouched: command/config epochs don't churn (command tabs keep polling, no
-                // flicker), the sidebar stays open on its tab, and workbar pollers keep running.
+                // flicker), the sidebar stays open on its tab, and workbar scheduling stays live.
                 // This is the whole point of installing an attachment instead of rebuilding State.
                 assert_eq!(state.sidebar.command_epoch, 7);
                 assert_eq!(state.sidebar.config_epoch, 11);
@@ -3223,7 +3228,8 @@ mod tests {
                     state.sidebar.active_tab(),
                     Some(&crate::config::SidebarTabId::new("sessions"))
                 );
-                assert!(state.workbar_commands_running.contains("date"));
+                assert_eq!(state.workbar.command_epoch, 3);
+                assert_eq!(state.workbar.command_in_flight.get("date"), Some(&3));
             })
             .expect("spawn test thread")
             .join()

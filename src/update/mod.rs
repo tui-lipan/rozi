@@ -5,6 +5,7 @@ mod panes;
 mod prompts;
 mod session;
 pub(crate) mod sidebar;
+pub(crate) mod workbar;
 
 use tui_lipan::prelude::*;
 
@@ -39,9 +40,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
-        Msg::WorkbarCommandOutput(command, output) => {
-            overlays::workbar_command_output(ctx, command, output)
-        }
+        Msg::WorkbarCommandPoll { epoch, command } => workbar::poll_command(ctx, epoch, command),
+        Msg::WorkbarCommandOutput {
+            epoch,
+            command,
+            output,
+        } => workbar::command_output(ctx, epoch, command, output),
         Msg::SidebarTabSelected { panel, index } => sidebar::tab_selected(ctx, panel, index),
         Msg::SidebarTabReordered { panel, event } => sidebar::tab_reordered(ctx, panel, event),
         Msg::SidebarTabTransferred(event) => sidebar::tab_transferred(ctx, event),

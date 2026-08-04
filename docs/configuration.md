@@ -763,10 +763,13 @@ remote attachment and `󰒍 2` for two retained remote attachments while the cur
 Connecting/reconnecting uses the warning role; an offline active remote uses the error role. The
 `location` and `session` badges are clickable and open the Sessions picker.
 
-A `command` segment runs through `$SHELL -c` on a background thread (never the UI thread) and
-refreshes every `interval_secs` (default `60`, minimum `1`); a failing command or one with no
-output renders as blank rather than an error. The same command string reuses one poller even if
-it appears in multiple segments.
+A `command` segment runs through the current resolved `command_shell` on a scheduled worker (never
+the UI thread) and refreshes every `interval_secs` (default `60`, minimum `1`). Each run has a
+5-second timeout and captures at most 64 KiB from each output stream. The first stdout line is
+trimmed for display; a timeout, spawn error, non-zero exit, or missing output renders as blank
+without a toast. The same command string shares one scheduled run even if it appears in multiple
+segments. Runs reschedule themselves only while the command remains configured, so config reloads
+apply command, interval, and `command_shell` changes without leaving persistent polling threads.
 
 ```toml
 [workbar]

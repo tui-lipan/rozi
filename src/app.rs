@@ -9,8 +9,8 @@ use crate::config::HyprmuxConfig;
 use crate::session::bootstrap::{SessionStart, attach_session_client, has_session_candidates};
 use crate::state::{Pane, PaneId, State, ThemePreset};
 use crate::{
-    anim, cli, commands, config, control, events, key_routing, ops, pane_lifecycle, platform,
-    profiles, state, update, view,
+    anim, cli, commands, config, control, events, key_routing, ops, platform, profiles, state,
+    update, view,
 };
 
 pub struct HyprmuxApp {
@@ -175,14 +175,6 @@ impl Component for HyprmuxApp {
         let event_hub = self.event_hub.clone();
         let theme_tick = ctx.state.theme_watcher.is_some();
         let workbar_tick = ctx.state.config.workbar.has_clock();
-        let workbar_commands = ctx.state.config.workbar.command_specs();
-        ctx.state.workbar_commands_running =
-            workbar_commands.iter().map(|(c, _)| c.clone()).collect();
-        let command_shell = crate::platform::command::resolve_command_shell(
-            ctx.state.config.command_shell.as_deref(),
-            &crate::platform::command::ShellEnv::from_process(),
-        )
-        .as_argv();
 
         let start = if self.want_startup_picker && self.remote.is_none() && has_session_candidates()
         {
@@ -338,7 +330,6 @@ impl Component for HyprmuxApp {
             if workbar_tick {
                 link.send(Msg::WorkbarTick);
             }
-            pane_lifecycle::spawn_workbar_command_pollers(workbar_commands, command_shell, &link);
         }))
     }
 

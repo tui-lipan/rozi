@@ -12,7 +12,8 @@ pub use keys::{
     search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
-    PaneKind, PaneMerge, divider_title_element, pane_element, pane_has_divider_above,
+    PaneKind, PaneMerge, divider_title_element, pane_element, pane_has_tile_above,
+    seam_title_element,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
 
@@ -99,6 +100,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let merge_layering = ctx.state.config.pane.border_mode.merges_frames();
     let divider_mode = ctx.state.config.pane.border_mode.draws_dividers();
     let mut divider_panes = Vec::new();
+    let mut seam_titles: Vec<(FloatRect, Element)> = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut floating_panes: Vec<(FloatRect, Element)> = Vec::new();
@@ -227,25 +229,33 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         } else {
             (None, None)
         };
-        let title_on_divider = divider_mode
-            && !pane.floating
+        let merge_enabled =
+            merge_layering && !pane.floating && !pane.fullscreen && moving.is_none() && settled;
+        // A border/integrated title lives on the pane's top row, and the tile above owns that row
+        // in both gapped modes: it is the divider row in dividers mode, and the overlapped seam row
+        // in merged mode. Either way the Frame cannot keep the title - it has to be drawn into the
+        // row separately, after the neighbor that shares it.
+        let title_row_shared_with_tile_above = !pane.floating
             && !pane.fullscreen
             && ctx.state.config.pane.show_titles
             && matches!(
                 ctx.state.config.pane.titlebar,
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             )
-            && pane_has_divider_above(&placements, pane.id, tile_gap.vertical);
+            && pane_has_tile_above(&placements, pane.id, tile_gap.vertical);
+        let title_on_divider = divider_mode && title_row_shared_with_tile_above;
+        // Whichever pane draws later owns the shared seam row, and `ordered_panes` draws the
+        // focused pane last - so a title below the focused pane would be painted over by its bottom
+        // border. It moves to a strip drawn above every tile instead. Unsettled tiles keep their
+        // in-frame header: they already draw above the settled layer, so nothing buries them.
+        let title_on_seam = merge_enabled && title_row_shared_with_tile_above;
         let merge = PaneMerge {
-            enabled: merge_layering
-                && !pane.floating
-                && !pane.fullscreen
-                && moving.is_none()
-                && settled,
+            enabled: merge_enabled,
             left_seam,
             seam_left_bg,
             seam_right_bg,
             title_on_divider,
+            title_on_seam,
         };
         let kind = if pane.fullscreen {
             PaneKind::Fullscreen
@@ -255,6 +265,17 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             PaneKind::Tiled
         };
         let element = pane_element(app, ctx, pane, render_rect, focused_pane, None, kind, merge);
+        if title_on_seam && let Some(seam) = seam_title_element(app, ctx, pane, focused_pane) {
+            seam_titles.push((
+                FloatRect {
+                    x: render_rect.x + seam.inset,
+                    y: render_rect.y,
+                    w: (render_rect.w - seam.inset * 2.0).max(0.0),
+                    h: 1.0,
+                },
+                seam.element,
+            ));
+        }
         if pane.fullscreen {
             fullscreen_panes.push((render_rect, element));
         } else if pane.floating {
@@ -345,6 +366,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         }
     }
 
+    // Above every settled tile, so the neighbor sharing their row can never paint its bottom border
+    // over them - but below the moving tiles, which sweep over the settled layer as one piece and
+    // must not be crossed by a stray row of someone else's chrome.
+    for (rect, element) in seam_titles {
+        canvas = canvas.child_at(rect.to_rect(), element);
+    }
     for (rect, element) in animating_tiles.into_iter().chain(dragged_tiles) {
         canvas = canvas.child_at(rect.to_rect(), element);
     }

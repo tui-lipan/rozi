@@ -30,6 +30,17 @@ pub(crate) struct PaneMerge {
     /// Dividers mode is carrying this pane's border/integrated title on the horizontal divider
     /// above it, so the Frame must not also paint a header row below that divider.
     pub title_on_divider: bool,
+    /// The pane's top row is a merged seam shared with the tile above it, so its border/integrated
+    /// title is painted by `view::render` as a strip above every tile instead of by the Frame.
+    pub title_on_seam: bool,
+}
+
+impl PaneMerge {
+    /// The pane's border/integrated title is painted outside its own Frame - on a dividers-mode
+    /// divider or on a merged seam - so the Frame must not also paint a header row.
+    fn title_outside_frame(self) -> bool {
+        self.title_on_divider || self.title_on_seam
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,9 +83,10 @@ pub(crate) fn pane_title_bg(
     app.chrome_color(ctx, pane_id, "title-bg", target)
 }
 
-/// Whether `pane` has another settled tile immediately above it across the dividers gap, so its
-/// border/integrated title can ride that divider instead of a Frame header below it.
-pub(crate) fn pane_has_divider_above(placements: &[PanePlacement], pane: PaneId, gap: f32) -> bool {
+/// Whether `pane` has another tile immediately above it across the vertical tile gap, so its
+/// border/integrated title has to leave the Frame: onto the divider in dividers mode (gap `1`), or
+/// onto the shared seam row in merged mode (gap `-1`, where the tiles overlap by a row).
+pub(crate) fn pane_has_tile_above(placements: &[PanePlacement], pane: PaneId, gap: f32) -> bool {
     let Some(rect) = placements
         .iter()
         .find(|placement| placement.id == pane)
@@ -94,29 +106,28 @@ pub(crate) fn pane_has_divider_above(placements: &[PanePlacement], pane: PaneId,
     })
 }
 
-/// Title content drawn into a horizontal divider above `pane` in dividers mode.
-///
-/// `border` embeds the icon and title in the line (like a Frame border header). `integrated`
-/// fills the whole divider row with the titlebar strip, replacing the line.
-pub(crate) fn divider_title_element(
+/// Text and colors for a pane titlebar that is drawn outside the pane's own Frame - on a
+/// dividers-mode divider or on a merged seam. Derived exactly like the in-frame header in
+/// `pane_element`, so a title looks the same wherever it ends up being painted.
+struct TitleParts {
+    icon: &'static str,
+    badge: Option<&'static str>,
+    title: String,
+    title_bg: Paint,
+    frame_bg: Paint,
+    fill_style: Style,
+    text_style: Style,
+}
+
+fn title_parts(
     app: &HyprmuxApp,
     ctx: &Context<HyprmuxApp>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
-) -> Option<Element> {
-    if !ctx.state.config.pane.show_titles {
-        return None;
-    }
-    let titlebar = ctx.state.config.pane.titlebar;
-    if !matches!(
-        titlebar,
-        PaneTitlebarMode::Border | PaneTitlebarMode::Integrated
-    ) {
-        return None;
-    }
-
+) -> TitleParts {
     let theme = &ctx.state.theme;
     let id = pane.id;
+    let titlebar = ctx.state.config.pane.titlebar;
     let focused = focused_pane == Some(id);
     let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
     let icon = if pane.fullscreen {
@@ -166,10 +177,7 @@ pub(crate) fn divider_title_element(
         crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
     };
     let title_bar_fg = app.chrome_color(ctx, id, "title-fg", title_fg_default);
-    let title_bar_bg = pane_title_bg(app, ctx, id, titlebar_focused);
-    let title_bar_fill_style = Style::new()
-        .bg(title_bar_bg)
-        .contrast_policy(ContrastPolicy::Off);
+    let title_bg = pane_title_bg(app, ctx, id, titlebar_focused);
     let text_style = if titlebar_focused {
         Style::new()
             .fg(title_bar_fg)
@@ -180,6 +188,50 @@ pub(crate) fn divider_title_element(
             .fg(title_bar_fg)
             .contrast_policy(ContrastPolicy::Off)
     };
+    TitleParts {
+        icon,
+        badge,
+        title,
+        title_bg,
+        frame_bg: app.chrome_color(ctx, id, "frame-bg", frame_bg_target),
+        fill_style: Style::new()
+            .bg(title_bg)
+            .contrast_policy(ContrastPolicy::Off),
+        text_style,
+    }
+}
+
+/// Title content drawn into a horizontal divider above `pane` in dividers mode.
+///
+/// `border` embeds the icon and title in the line (like a Frame border header). `integrated`
+/// fills the whole divider row with the titlebar strip, replacing the line.
+pub(crate) fn divider_title_element(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    pane: &Pane,
+    focused_pane: Option<PaneId>,
+) -> Option<Element> {
+    if !ctx.state.config.pane.show_titles {
+        return None;
+    }
+    let titlebar = ctx.state.config.pane.titlebar;
+    if !matches!(
+        titlebar,
+        PaneTitlebarMode::Border | PaneTitlebarMode::Integrated
+    ) {
+        return None;
+    }
+
+    let id = pane.id;
+    let TitleParts {
+        icon,
+        badge,
+        title,
+        title_bg: title_bar_bg,
+        frame_bg,
+        fill_style: title_bar_fill_style,
+        text_style,
+    } = title_parts(app, ctx, pane, focused_pane);
 
     match titlebar {
         PaneTitlebarMode::Border => {
@@ -210,7 +262,6 @@ pub(crate) fn divider_title_element(
             });
             let title_style = ctx.state.config.pane.title_style;
             let caps = title_style.glyphs();
-            let frame_bg = app.chrome_color(ctx, id, "frame-bg", frame_bg_target);
             let title_row: Element = match caps {
                 None => {
                     let mut row = HStack::new()
@@ -269,6 +320,130 @@ pub(crate) fn divider_title_element(
                     .child(title_row)
                     .into(),
             )
+        }
+        PaneTitlebarMode::Bar => None,
+    }
+}
+
+/// A titlebar lifted onto a merged-border seam, and how far it is inset from each side of the
+/// pane's rect.
+pub(crate) struct SeamTitle {
+    pub inset: f32,
+    pub element: Element,
+}
+
+/// The titlebar for a pane whose top row is a merged seam shared with the tile above it.
+///
+/// Merged tiles overlap by a row, so the pane's Frame cannot keep that row: the tile above paints
+/// its bottom border over it whenever it draws later, and `ordered_panes` draws the focused pane
+/// last. `view::render` therefore drops the in-frame header for these panes and paints this strip
+/// above every tile instead. The layouts mirror `pane_element`'s header (and the top-edge
+/// decoration that completes it) cell for cell, so a title looks the same on or off a seam.
+///
+/// Only plain tiles reach a seam - floating and fullscreen panes never merge - so there is no
+/// badge to place here.
+pub(crate) fn seam_title_element(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    pane: &Pane,
+    focused_pane: Option<PaneId>,
+) -> Option<SeamTitle> {
+    if !ctx.state.config.pane.show_titles {
+        return None;
+    }
+    let id = pane.id;
+    let title_style = ctx.state.config.pane.title_style;
+    let parts = title_parts(app, ctx, pane, focused_pane);
+    let label = format!("{}  {}", parts.icon, parts.title);
+
+    match ctx.state.config.pane.titlebar {
+        // The neighbour above redraws the border line itself, so only the label is missing. Place
+        // it where `BorderLabels::padding(1)` puts it: past the corner and its one `─` of padding.
+        PaneTitlebarMode::Border => Some(SeamTitle {
+            inset: 2.0,
+            element: Text::new(label)
+                .style(parts.text_style.bg(parts.frame_bg))
+                .overflow(Overflow::Ellipsis)
+                .height(Length::Px(1))
+                .into(),
+        }),
+        PaneTitlebarMode::Integrated => {
+            let title_text: Element = Text::new(label)
+                .style(parts.text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .into();
+            let cap_style = Style::new()
+                .fg(parts.title_bg)
+                .bg(parts.frame_bg)
+                .contrast_policy(ContrastPolicy::Off);
+            let cap = |glyph: &'static str| -> Element {
+                Text::new(glyph)
+                    .style(cap_style)
+                    .width(Length::Px(1))
+                    .height(Length::Px(1))
+                    .into()
+            };
+            let (inset, row): (f32, Element) = match title_style.glyphs() {
+                // `integrated_titlebar_top_edge` paints the corner cells in the title color too, so
+                // the strip owns the whole row. Padding 2 lands the text exactly where the frame's
+                // header (inset 1 past the corner, padded 1) would have put it.
+                None => (
+                    0.0,
+                    HStack::new()
+                        .style(parts.fill_style)
+                        .padding((0, 2))
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(title_text)
+                        .into(),
+                ),
+                // `integrated_half_titlebar_top_edge` turns the corner cells into half-block caps.
+                Some((left, right)) if title_style == CapStyle::Half => (
+                    0.0,
+                    HStack::new()
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(cap(left))
+                        .child(
+                            HStack::new()
+                                .style(parts.fill_style)
+                                .padding((0, 0, 0, 1))
+                                .width(Length::Flex(1))
+                                .height(Length::Px(1))
+                                .child(title_text),
+                        )
+                        .child(cap(right))
+                        .into(),
+                ),
+                // Round and arrow caps sit inside the frame's corner glyphs, which stay on the seam
+                // and keep fusing with the neighbours' borders - so inset past them.
+                Some((left, right)) => (
+                    1.0,
+                    HStack::new()
+                        .width(Length::Flex(1))
+                        .height(Length::Px(1))
+                        .child(cap(left))
+                        .child(
+                            HStack::new()
+                                .style(parts.fill_style)
+                                .width(Length::Flex(1))
+                                .height(Length::Px(1))
+                                .child(title_text),
+                        )
+                        .child(cap(right))
+                        .into(),
+                ),
+            };
+            Some(SeamTitle {
+                inset,
+                element: MouseRegion::new()
+                    .capture_click(true)
+                    .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
+                    .child(row)
+                    .into(),
+            })
         }
         PaneTitlebarMode::Bar => None,
     }
@@ -619,7 +794,7 @@ pub(crate) fn pane_element(
         .focus_style(Style::default());
     if show_titles {
         match titlebar {
-            PaneTitlebarMode::Border if !merge.title_on_divider => {
+            PaneTitlebarMode::Border if !merge.title_outside_frame() => {
                 let title = title.as_ref().expect("visible titlebar has a title");
                 let border_title = format!("{icon}  {title}");
                 let mut labels = BorderLabels::new()
@@ -631,7 +806,7 @@ pub(crate) fn pane_element(
                 }
                 body = body.header(labels);
             }
-            PaneTitlebarMode::Integrated if !merge.title_on_divider => {
+            PaneTitlebarMode::Integrated if !merge.title_outside_frame() => {
                 let title_text: Element = Text::new(format!(
                     "{icon}  {}",
                     title.as_ref().expect("visible titlebar has a title")
@@ -1395,7 +1570,8 @@ mod tests {
     }
 
     #[test]
-    fn pane_has_divider_above_requires_a_gap_and_overlap() {
+    fn pane_has_tile_above_requires_the_gap_and_a_horizontal_overlap() {
+        // Dividers mode: a `1` gap row between the tiles.
         let placements = vec![
             PanePlacement {
                 id: 1,
@@ -1410,9 +1586,32 @@ mod tests {
                 rect: rect(12.0, 11.0, 8.0, 10.0),
             },
         ];
-        assert!(pane_has_divider_above(&placements, 2, 1.0));
-        assert!(!pane_has_divider_above(&placements, 1, 1.0));
-        assert!(!pane_has_divider_above(&placements, 3, 1.0));
+        assert!(pane_has_tile_above(&placements, 2, 1.0));
+        assert!(!pane_has_tile_above(&placements, 1, 1.0));
+        // Pane 3 sits beside pane 1, not below it: no shared row.
+        assert!(!pane_has_tile_above(&placements, 3, 1.0));
+    }
+
+    #[test]
+    fn pane_has_tile_above_follows_the_merged_overlap_row() {
+        // Merged mode: a `-1` gap, so the lower tile's top row is the upper tile's bottom row.
+        let placements = vec![
+            PanePlacement {
+                id: 1,
+                rect: rect(0.0, 0.0, 10.0, 10.0),
+            },
+            PanePlacement {
+                id: 2,
+                rect: rect(0.0, 9.0, 10.0, 10.0),
+            },
+            PanePlacement {
+                id: 3,
+                rect: rect(12.0, 9.0, 8.0, 10.0),
+            },
+        ];
+        assert!(pane_has_tile_above(&placements, 2, -1.0));
+        assert!(!pane_has_tile_above(&placements, 1, -1.0));
+        assert!(!pane_has_tile_above(&placements, 3, -1.0));
     }
 
     #[test]

@@ -634,7 +634,11 @@ mod tests {
 
     #[test]
     fn shared_layout_round_trips_columns_and_scrollable_kinds() {
-        for kind in [SharedLayoutKind::Columns, SharedLayoutKind::Scrollable] {
+        for kind in [
+            SharedLayoutKind::Columns,
+            SharedLayoutKind::Rows,
+            SharedLayoutKind::Scrollable,
+        ] {
             let layout = SharedLayout {
                 version: SHARED_LAYOUT_VERSION,
                 canvas_cols: 80,
@@ -666,6 +670,7 @@ mod tests {
             let encoded = serde_json::to_value(&layout).expect("encode");
             let label = match kind {
                 SharedLayoutKind::Columns => "columns",
+                SharedLayoutKind::Rows => "rows",
                 SharedLayoutKind::Scrollable => "scrollable",
                 _ => unreachable!(),
             };

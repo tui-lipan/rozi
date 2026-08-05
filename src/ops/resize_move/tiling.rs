@@ -111,7 +111,8 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
     let workspace = state.active_workspace_mut();
     // Only dwindle renders the stored split axes: the other layouts place panes by
     // formula, so flipping would change nothing on screen while still scrambling the tree
-    // dwindle falls back to.
+    // dwindle falls back to. Reorienting a formula layout is a layout switch instead
+    // (columns <-> rows), not a per-pane axis flip.
     if workspace.layout_kind != LayoutKind::Dwindle {
         return;
     }

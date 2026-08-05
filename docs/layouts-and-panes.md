@@ -7,7 +7,7 @@ target rectangle. Each workspace carries its own layout.
 ## Tiled layouts
 
 Each workspace has a **layout kind**. `m` (*Switch layout* in the palette) **cycles** through
-them: dwindle → master → grid → columns → scrollable → monocle → dwindle. *Choose layout…* in the
+them: dwindle → master → grid → columns → rows → scrollable → monocle → dwindle. *Choose layout…* in the
 palette opens a picker to jump straight to any mode; highlighting a mode **previews it live** and
 leaving without pressing Enter restores the layout you opened on. `ctrl+f` there persists the
 highlighted mode as `[layout].default`, the layout every fresh workspace starts in (profiles
@@ -58,6 +58,13 @@ Every tiled pane is a full-height column. Widths are equal (aside from an unavoi
 remainder) and together fill the tile bounds, respecting horizontal gaps and border merging.
 Order-driven and ratio-less - new panes append; resize mode and grow/shrink have no effect.
 
+### Rows
+
+The transpose of Columns: every tiled pane is a full-width row of equal height, in the same order.
+Heights differ by at most one cell where the tile bounds do not divide evenly. With the default
+gaps the rows stack flush, because the tile gap carries a column between side-by-side panes but
+none between stacked ones. Order-driven and ratio-less, exactly like Columns.
+
 ### Scrollable
 
 Active tiled panes form ordered full-height columns on a horizontal strip. Each pane's stored
@@ -83,7 +90,7 @@ Every tiled pane fills the whole area; the focused pane is on top. Switch which 
 by cycling focus (`Tab`/`Shift+Tab`) or focusing directionally. PTYs for the hidden panes keep
 running. (For a quick one-pane maximize that restores afterward, use fullscreen `f` instead.)
 
-> **Resize and ratio-less layouts:** grid, columns, and monocle have no adjustable pane widths or
+> **Resize and ratio-less layouts:** grid, columns, rows, and monocle have no adjustable pane widths or
 > split ratios, so resize mode and the grow/shrink keys have no effect there. Scrollable panes
 > are independently width-resizable (see above).
 

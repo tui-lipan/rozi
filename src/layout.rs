@@ -4,8 +4,8 @@ use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_
 use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 use crate::tiling::{
     DwindleTree, PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
-    allocate_monocle, allocate_scrollable_with_visible, append_tiled_window, build_dwindle_tree,
-    insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
+    allocate_monocle, allocate_rows, allocate_scrollable_with_visible, append_tiled_window,
+    build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(
@@ -90,6 +90,10 @@ pub fn workspace_target_rects_excluding_with_visible(
             let ids = order_driven_ids(workspace, exclude_tiled);
             allocate_columns(&ids, tile_bounds, tile_gap, &mut placements);
         }
+        LayoutKind::Rows => {
+            let ids = order_driven_ids(workspace, exclude_tiled);
+            allocate_rows(&ids, tile_bounds, tile_gap, &mut placements);
+        }
         LayoutKind::Scrollable => {
             let ids = order_driven_ids(workspace, exclude_tiled);
             let panes: Vec<(PaneId, f32)> = ids
@@ -161,7 +165,7 @@ fn horizontal_tile_intersection(layout: FloatRect, local: FloatRect) -> Option<F
     })
 }
 
-/// Tiled ids for order-driven layouts (master/grid/columns/scrollable/monocle), in tree-leaf
+/// Tiled ids for order-driven layouts (master/grid/columns/rows/scrollable/monocle), in tree-leaf
 /// order with the optionally moving pane excluded.
 fn order_driven_ids(workspace: &Workspace, exclude_tiled: Option<PaneId>) -> Vec<PaneId> {
     workspace
@@ -371,6 +375,7 @@ pub fn place_spawned_pane(
         LayoutKind::Master
             | LayoutKind::Grid
             | LayoutKind::Columns
+            | LayoutKind::Rows
             | LayoutKind::Scrollable
             | LayoutKind::Monocle
     ) {

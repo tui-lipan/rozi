@@ -548,9 +548,16 @@ pub fn load_config() -> LoadedConfig {
     if let Some(name) = parsed.layout.default.as_deref() {
         match crate::state::LayoutKind::from_label(name) {
             Some(kind) => config.layout.default = kind,
-            None => warnings.push(format!(
-                "Ignored layout.default `{name}` (expected one of dwindle, master, grid, columns, scrollable, monocle)"
-            )),
+            None => {
+                let expected = crate::state::LayoutKind::all()
+                    .iter()
+                    .map(|kind| kind.label())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                warnings.push(format!(
+                    "Ignored layout.default `{name}` (expected one of {expected})"
+                ))
+            }
         }
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {

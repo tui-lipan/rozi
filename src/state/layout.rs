@@ -61,6 +61,7 @@ pub enum LayoutKind {
     Master,
     Grid,
     Columns,
+    Rows,
     Scrollable,
     Monocle,
 }
@@ -74,6 +75,7 @@ impl LayoutKind {
             Self::Master,
             Self::Grid,
             Self::Columns,
+            Self::Rows,
             Self::Scrollable,
             Self::Monocle,
         ]
@@ -85,6 +87,7 @@ impl LayoutKind {
             Self::Master => "master",
             Self::Grid => "grid",
             Self::Columns => "columns",
+            Self::Rows => "rows",
             Self::Scrollable => "scrollable",
             Self::Monocle => "monocle",
         }
@@ -117,10 +120,11 @@ mod tests {
         assert_eq!(LayoutKind::Dwindle.toggled(), LayoutKind::Master);
         assert_eq!(LayoutKind::Master.toggled(), LayoutKind::Grid);
         assert_eq!(LayoutKind::Grid.toggled(), LayoutKind::Columns);
-        assert_eq!(LayoutKind::Columns.toggled(), LayoutKind::Scrollable);
+        assert_eq!(LayoutKind::Columns.toggled(), LayoutKind::Rows);
+        assert_eq!(LayoutKind::Rows.toggled(), LayoutKind::Scrollable);
         assert_eq!(LayoutKind::Scrollable.toggled(), LayoutKind::Monocle);
         assert_eq!(LayoutKind::Monocle.toggled(), LayoutKind::Dwindle);
-        assert_eq!(LayoutKind::all().len(), 6);
+        assert_eq!(LayoutKind::all().len(), 7);
     }
 
     #[test]
@@ -133,6 +137,7 @@ mod tests {
                 "master",
                 "grid",
                 "columns",
+                "rows",
                 "scrollable",
                 "monocle"
             ]

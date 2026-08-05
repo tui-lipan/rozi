@@ -519,14 +519,35 @@ pub fn allocate_columns(
     gap: TileGap,
     placements: &mut Vec<PanePlacement>,
 ) {
+    allocate_strips(ids, rect, SplitAxis::Horizontal, gap, placements);
+}
+
+/// Rows: the transpose of [`allocate_columns`] - every tiled pane is a full-width row of equal
+/// height, in the same order-driven sequence.
+pub fn allocate_rows(
+    ids: &[PaneId],
+    rect: FloatRect,
+    gap: TileGap,
+    placements: &mut Vec<PanePlacement>,
+) {
+    allocate_strips(ids, rect, SplitAxis::Vertical, gap, placements);
+}
+
+fn allocate_strips(
+    ids: &[PaneId],
+    rect: FloatRect,
+    axis: SplitAxis,
+    gap: TileGap,
+    placements: &mut Vec<PanePlacement>,
+) {
     if ids.is_empty() {
         return;
     }
-    let rects = split_balanced(rect, SplitAxis::Horizontal, ids.len(), gap);
-    for (id, column) in ids.iter().zip(rects) {
+    let rects = split_balanced(rect, axis, ids.len(), gap);
+    for (id, strip) in ids.iter().zip(rects) {
         placements.push(PanePlacement {
             id: *id,
-            rect: column,
+            rect: strip,
         });
     }
 }
@@ -1527,6 +1548,30 @@ mod tests {
             "column widths must differ by at most one cell, got {widths:?}"
         );
         assert_eq!(widths, vec![33.0, 33.0, 32.0]);
+    }
+
+    /// Rows are the transpose of Columns: full-width strips of near-equal height. With the default
+    /// gaps they stack flush, because `TileGap::DEFAULT` carries a column gap but no row gap.
+    #[test]
+    fn rows_split_full_width_equal_heights_and_span_bounds() {
+        let rect = FloatRect {
+            x: 2.0,
+            y: 1.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let mut placements = Vec::new();
+        allocate_rows(&[1, 2, 3], rect, TileGap::DEFAULT, &mut placements);
+
+        assert_eq!(placements.len(), 3);
+        for placement in &placements {
+            assert_close(placement.rect.x, rect.x);
+            assert_close(placement.rect.w, rect.w);
+        }
+        assert_close(placements[0].rect.y, rect.y);
+        assert_close(placements[2].rect.y + placements[2].rect.h, rect.y + rect.h);
+        let heights: Vec<f32> = placements.iter().map(|p| p.rect.h).collect();
+        assert_eq!(heights, vec![14.0, 13.0, 13.0]);
     }
 
     #[test]

@@ -459,6 +459,6 @@ Known limitation: `list-sessions` reports connectable session sockets only; stal
 are skipped so the command does not hang.
 
 Client and server negotiate a session wire protocol version in a supported range (this build speaks
-protocol 19 only). After upgrading hyprmux, restart existing named session servers before attaching
+protocol 20 only). After upgrading hyprmux, restart existing named session servers before attaching
 when the new client's minimum is higher than the old server's maximum — otherwise attach fails with
 a message naming both sides. See [Remote SSH sessions](remote.md#protocol-negotiation).

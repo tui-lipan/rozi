@@ -32,6 +32,7 @@ pub enum SerializedLayoutKind {
     Master,
     Grid,
     Columns,
+    Rows,
     Scrollable,
     Monocle,
 }
@@ -43,6 +44,7 @@ impl From<LayoutKind> for SerializedLayoutKind {
             LayoutKind::Master => Self::Master,
             LayoutKind::Grid => Self::Grid,
             LayoutKind::Columns => Self::Columns,
+            LayoutKind::Rows => Self::Rows,
             LayoutKind::Scrollable => Self::Scrollable,
             LayoutKind::Monocle => Self::Monocle,
         }
@@ -56,6 +58,7 @@ impl From<SerializedLayoutKind> for LayoutKind {
             SerializedLayoutKind::Master => Self::Master,
             SerializedLayoutKind::Grid => Self::Grid,
             SerializedLayoutKind::Columns => Self::Columns,
+            SerializedLayoutKind::Rows => Self::Rows,
             SerializedLayoutKind::Scrollable => Self::Scrollable,
             SerializedLayoutKind::Monocle => Self::Monocle,
         }
@@ -152,6 +155,7 @@ mod tests {
     fn serialized_layout_kind_uses_kebab_case_for_new_variants() {
         for (kind, label) in [
             (SerializedLayoutKind::Columns, "columns"),
+            (SerializedLayoutKind::Rows, "rows"),
             (SerializedLayoutKind::Scrollable, "scrollable"),
         ] {
             let encoded = serde_json::to_value(kind).expect("encode");

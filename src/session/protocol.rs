@@ -27,6 +27,9 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
+/// 20 is a clean break: SharedLayout gains the `rows` layout kind. Older peers cannot deserialize
+/// that enum variant, so this build speaks protocol 20 only.
+///
 /// 19 is a clean break: SharedLayout gains `columns` and `scrollable` layout kinds. Older peers
 /// cannot deserialize those enum variants, so this build speaks protocol 19 only.
 ///
@@ -41,12 +44,12 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 /// Oldest wire protocol version this build can still speak.
 ///
-/// Protocol 19 is required: SharedLayout layout-kind variants are not backwards-compatible, so this
+/// Protocol 20 is required: SharedLayout layout-kind variants are not backwards-compatible, so this
 /// build rejects older peers rather than shimming wire aliases.
-pub const MIN_SUPPORTED_PROTOCOL: u32 = 19;
+pub const MIN_SUPPORTED_PROTOCOL: u32 = 20;
 /// First version carrying the file-tree browsing messages. A client must not send them below this.
 pub const FILE_TREE_PROTOCOL: u32 = 13;
 /// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
@@ -1186,13 +1189,13 @@ mod tests {
         const { assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION) };
 
         assert!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 18, 12).is_err(),
-            "protocol-19-only peers reject pre-19 ranges"
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 19, 12).is_err(),
+            "protocol-20-only peers reject pre-20 ranges"
         );
         assert_eq!(
-            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 19, 19)
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 20, 20)
                 .expect("same-version peers negotiate"),
-            19
+            20
         );
 
         let request = ClientMessage::RequestRuntimeMetrics;
@@ -1346,8 +1349,8 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":19,
-                "min_protocol_version":19,
+                "protocol_version":20,
+                "min_protocol_version":20,
                 "label":"alice",
                 "read_only":true
             })
@@ -1374,8 +1377,8 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":19,
-                "min_protocol_version":19
+                "protocol_version":20,
+                "min_protocol_version":20
             })
         );
     }
@@ -1460,7 +1463,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":19,
+                "effective_protocol":20,
                 "created_from_profile":"work"
             })
         );

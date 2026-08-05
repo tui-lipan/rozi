@@ -253,7 +253,7 @@ prefix is reported as a warning and the default is kept.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to compare a focused pane's visual width and height when choosing the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
-| `default` | string | `"dwindle"` | Layout mode every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `scrollable`, or `monocle`. Profiles override this per workspace. The *Choose layout…* picker can set it for you (`ctrl+f` on a mode). |
+| `default` | string | `"dwindle"` | Layout mode every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. Profiles override this per workspace. The *Choose layout…* picker can set it for you (`ctrl+f` on a mode). |
 
 ## `[pane]`
 

@@ -24,7 +24,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 ## Highlights
 
 - **Tiled layouts** - dwindle (new panes split the *focused* tile along its aspect ratio),
-  master/stack, grid, equal columns, scrollable columns, and monocle per workspace.
+  master/stack, grid, equal columns, equal rows, scrollable columns, and monocle per workspace.
 - **Floating & fullscreen panes** - toggle any pane to floating or fullscreen; move and
   resize floats with the mouse.
 - **9 workspaces** with a workbar tab strip showing live pane counts.

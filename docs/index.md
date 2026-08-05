@@ -2,7 +2,7 @@
 
 `hyprmux` is a Hyprland-style tiling terminal multiplexer built on the
 [`tui-lipan`](../../tui-lipan) TUI framework. Each pane is a live PTY shell; panes are
-arranged with dwindle, master, grid, columns, scrollable, or monocle tiling, with floating
+arranged with dwindle, master, grid, columns, rows, scrollable, or monocle tiling, with floating
 windows, fullscreen, 9 workspaces,
 animated geometry, and tmux-style prefix commands.
 
@@ -37,7 +37,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 
 - **Control paths** - a `Ctrl-a` prefix (always works) and a held `Alt`/`Super` modifier
   for active command keys. See [Keybindings](keybindings.md).
-- **Layouts** - dwindle by default; master, grid, columns, scrollable, and monocle per
+- **Layouts** - dwindle by default; master, grid, columns, rows, scrollable, and monocle per
   workspace; plus floating and fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
 - **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
 - **Named sessions** - `hyprmux <name>` creates/connects to a persistent PTY server.

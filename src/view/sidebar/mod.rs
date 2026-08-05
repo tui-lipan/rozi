@@ -91,8 +91,12 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
         .show_overflow_controls(true)
         .overflow_left_label(|_| std::sync::Arc::from("❮ "))
         .overflow_right_label(|_| std::sync::Arc::from(" ❯"))
-        .focusable(false)
         .height(Length::Px(1))
+        // An empty bar is still a drop target for the shared drag group, so the hint lives on the
+        // bar row itself rather than in the body below it. The leading space matches the pad a real
+        // tab label carries, so the hint starts in the same column a tab would.
+        .empty_text(" Drag tabs here")
+        .empty_text_style(super::fg_only(&ctx.state.theme.muted))
         .style(
             Style::new()
                 .fg(ctx.state.theme.surface.menu)
@@ -128,7 +132,9 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
         .on_transfer(ctx.link().callback(Msg::SidebarTabTransferred));
 
     let body = match tabs.get(active).copied() {
-        None => empty_body(ctx, panel, "No tabs in this panel"),
+        // No tabs at all: the bar's own placeholder says it, so the body stays blank rather than
+        // repeating the same fact one row lower.
+        None => empty_body(ctx, panel, None),
         Some(SidebarTab::Tree { view, config }) => tree::tree_tab(ctx, panel, *view, config),
         Some(tab) => row_list(ctx, panel, tab),
     };
@@ -168,12 +174,15 @@ pub(crate) fn panel_from_bar_id(id: &str) -> Option<usize> {
     id.strip_prefix("hyprmux-sidebar-panel-")?.parse().ok()
 }
 
-fn empty_body(ctx: &Context<HyprmuxApp>, panel: usize, text: &str) -> Element {
-    ScrollView::new()
+/// A body with nothing to list. Stays focusable so `focus-sidebar` still has a target here.
+fn empty_body(ctx: &Context<HyprmuxApp>, panel: usize, text: Option<&str>) -> Element {
+    let mut view = ScrollView::new()
         .focusable(true)
-        .scroll_keys(ScrollKeymap::NONE)
-        .child(placeholder(ctx, text))
-        .key(body_key(panel))
+        .scroll_keys(ScrollKeymap::NONE);
+    if let Some(text) = text {
+        view = view.child(placeholder(ctx, text));
+    }
+    view.key(body_key(panel))
 }
 
 /// A workspace's custom name, if it has a usable one.
@@ -309,7 +318,7 @@ fn empty_text(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> &'static str {
 fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Element {
     let rows = body_rows(ctx, tab);
     if rows.is_empty() {
-        return empty_body(ctx, panel, empty_text(ctx, tab));
+        return empty_body(ctx, panel, Some(empty_text(ctx, tab)));
     }
     let panel_state = &ctx.state.sidebar.panels[panel];
     let focused = ctx.state.sidebar.focused && ctx.state.sidebar.active_panel == panel;

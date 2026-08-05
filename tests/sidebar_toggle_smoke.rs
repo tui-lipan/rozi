@@ -192,6 +192,73 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
         .expect("split sidebar render completes");
 }
 
+/// An empty panel says so on its own tab bar — the row that actually accepts the drop — and leaves
+/// the body below it blank instead of repeating the fact one row lower.
+#[test]
+fn an_empty_panel_puts_its_drop_hint_on_the_tab_bar() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.tabs = vec![SidebarTab::Panes];
+                state.sidebar.panels = vec![
+                    SidebarPanelState {
+                        tabs: vec![SidebarTabId::new("panes")],
+                        active_tab: Some(SidebarTabId::new("panes")),
+                        ..Default::default()
+                    },
+                    SidebarPanelState::default(),
+                ];
+            }
+            backend.render();
+
+            // Only the sidebar columns matter here; the rest of each row is the pane canvas.
+            let lines: Vec<String> = backend
+                .capture_frame()
+                .to_fixed_grid_lines()
+                .iter()
+                .map(|line| line.chars().take(31).collect())
+                .collect();
+            let hint = lines
+                .iter()
+                .position(|line| line.contains("Drag tabs here"))
+                .unwrap_or_else(|| panic!("empty panel shows the drop hint: {lines:#?}"));
+            let filled = lines
+                .iter()
+                .position(|line| line.contains("Panes"))
+                .expect("filled panel shows its tab");
+
+            // The hint sits on the empty panel's bar row, in the column a tab label would occupy.
+            assert!(
+                hint > filled,
+                "hint is on the second panel's bar: {lines:#?}"
+            );
+            let column = |line: &str, needle: &str| line.find(needle).expect("needle is present");
+            assert_eq!(
+                column(&lines[hint], "Drag"),
+                column(&lines[filled], "Panes"),
+                "{lines:#?}"
+            );
+            // Nothing repeats it in the body underneath.
+            assert!(
+                lines[hint + 1..].iter().all(|line| line.trim().is_empty()),
+                "{lines:#?}"
+            );
+        })
+        .expect("spawn empty panel thread")
+        .join()
+        .expect("empty panel render completes");
+}
+
 #[test]
 fn split_flag_changes_presentation_without_changing_panel_recipe() {
     std::thread::Builder::new()

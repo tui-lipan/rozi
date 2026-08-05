@@ -129,7 +129,11 @@ scratchpad; fullscreen panes always follow the global mode.
 ## Focus and movement
 
 - **Focus** moves *spatially* to the nearest pane in a direction with `h/j/k/l` or the arrow
-  keys - not merely the next pane in a list.
+  keys - not merely the next pane in a list. In the single-axis layouts this means the cross axis
+  has nothing to land on: every tile spans the full extent, so `k`/`j` in columns or scrollable
+  (and `h`/`l` in rows) leave focus where it is rather than jumping to an arbitrary tile. Use the
+  layout's own axis, or `Tab` / `Shift+Tab` to walk the whole order. A *floating* pane genuinely
+  above or below the strip is still reachable that way, since it really does sit across the axis.
 - **Move** the focused pane with `Shift+h/j/k/l` (or `Shift`+arrows). In dwindle this
   rearranges the tile tree; floating panes move in the chosen direction.
 - **Swap** the focused pane with a neighbor (`modifier`+`Ctrl`+`h/j/k/l`) exchanges the two

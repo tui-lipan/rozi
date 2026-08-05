@@ -160,6 +160,18 @@ fn focus_in_direction_with_wrap(
         focus_pane(state, id);
         return Some(id);
     };
+    // Across a strip layout's single axis every tiled pane spans the full extent, so no tile sits
+    // ahead of another and `directional_score` rightly rejects them all. Wrapping there would fall
+    // through to an arbitrary equally-ranked pane, which is why this bounced between two panes no
+    // matter how many were open. Walking the whole order is what `cycle-focus` (Tab) already does,
+    // so the key simply finds nothing among the tiles instead of lying about their arrangement. A
+    // floating pane genuinely across the axis still scores normally and stays reachable.
+    let wrap = wrap
+        && !(strip_layout_cross_axis(workspace.layout_kind, direction)
+            && workspace
+                .panes
+                .iter()
+                .any(|pane| pane.id == focused && !pane.floating && !pane.closing));
     let continue_band = continue_focus_band(workspace, &candidates, focused, direction);
     let geometric = candidates
         .iter()
@@ -202,6 +214,19 @@ fn focus_in_direction_with_wrap(
         Some(next_id)
     } else {
         None
+    }
+}
+
+/// Whether `direction` runs across a strip layout's single axis: Columns and Scrollable lay panes
+/// out left to right, so vertical movement crosses them; Rows is the transpose. Grid and Dwindle
+/// arrange both axes, Master stacks beside its master tile, and Monocle has its own order walk.
+fn strip_layout_cross_axis(kind: LayoutKind, direction: Direction) -> bool {
+    match kind {
+        LayoutKind::Columns | LayoutKind::Scrollable => {
+            matches!(direction, Direction::Up | Direction::Down)
+        }
+        LayoutKind::Rows => matches!(direction, Direction::Left | Direction::Right),
+        _ => false,
     }
 }
 
@@ -1275,6 +1300,102 @@ mod tests {
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    /// A strip's cross axis has no tile ahead of any other, so the key finds nothing rather than
+    /// bouncing between the two panes that happened to sort first. Tab still walks the full order.
+    #[test]
+    fn strip_cross_axis_focus_finds_no_tile() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        for (kind, cross) in [
+            (LayoutKind::Columns, [Direction::Up, Direction::Down]),
+            (LayoutKind::Rows, [Direction::Left, Direction::Right]),
+            (LayoutKind::Scrollable, [Direction::Up, Direction::Down]),
+        ] {
+            let mut state = state_with_tiled(&[1, 2, 3, 4, 5]);
+            state.current_mut().workspaces[0].layout_kind = kind;
+            state.current_mut().focused_pane = Some(3);
+
+            for direction in cross {
+                assert_eq!(
+                    focus_in_direction(&mut state, direction, viewport),
+                    None,
+                    "{kind:?} must not move focus {direction:?}"
+                );
+                assert_eq!(
+                    state.current().focused_pane,
+                    Some(3),
+                    "{kind:?} must leave focus put on {direction:?}"
+                );
+            }
+        }
+    }
+
+    /// The main axis is untouched: it still reaches every pane and still wraps at the edges.
+    #[test]
+    fn strip_main_axis_focus_still_reaches_every_pane() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        for (kind, forward) in [
+            (LayoutKind::Columns, Direction::Right),
+            (LayoutKind::Rows, Direction::Down),
+        ] {
+            let mut state = state_with_tiled(&[1, 2, 3, 4, 5]);
+            state.current_mut().workspaces[0].layout_kind = kind;
+            state.current_mut().focused_pane = Some(1);
+
+            for expected in [2, 3, 4, 5, 1] {
+                assert_eq!(
+                    focus_in_direction(&mut state, forward, viewport),
+                    Some(expected),
+                    "{kind:?} main axis reaches every pane and wraps"
+                );
+            }
+        }
+    }
+
+    /// Suppressing the wrap must not strand floating panes: one genuinely above the columns is
+    /// still found, because that goes through ordinary directional scoring.
+    #[test]
+    fn strip_cross_axis_still_reaches_a_floating_pane_across_it() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Columns;
+        state.current_mut().focused_pane = Some(2);
+
+        // Park pane 3 as a floating window over the top strip of the canvas.
+        let floating = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 6.0,
+        };
+        for pane in &mut state.current_mut().workspaces[0].panes {
+            if pane.id == 3 {
+                pane.floating = true;
+                pane.floating_rect = floating;
+            }
+        }
+
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(3),
+            "a floating pane above the columns is still reachable"
+        );
     }
 
     /// Monocle stacks every tile on one rect, so geometric scoring cannot separate the panes and

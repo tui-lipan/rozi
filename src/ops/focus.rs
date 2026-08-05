@@ -128,6 +128,9 @@ fn focus_in_direction_with_wrap(
     if focus_locked_by_fullscreen(state) {
         return None;
     }
+    if monocle_order_focus_applies(state) {
+        return focus_in_monocle_order(state, direction, wrap);
+    }
     let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
     let workspace = &state.current().workspaces[state.current().active_workspace];
     let placements = workspace_target_rects(
@@ -200,6 +203,36 @@ fn focus_in_direction_with_wrap(
     } else {
         None
     }
+}
+
+/// Whether directional focus should walk the monocle stack instead of scoring geometry.
+///
+/// Monocle gives every tiled pane the same rect, so `directional_score` rejects every candidate
+/// and the wrap fallback ranks them all equally — focus then bounces between the focused pane and
+/// whichever pane sorts first. A floating focus keeps the geometric path, since floating panes
+/// still have rects of their own to move out of.
+fn monocle_order_focus_applies(state: &State) -> bool {
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    if workspace.layout_kind != LayoutKind::Monocle {
+        return false;
+    }
+    match state.current().focused_pane {
+        Some(focused) => workspace
+            .panes
+            .iter()
+            .any(|pane| pane.id == focused && !pane.floating && !pane.closing),
+        None => !workspace.tiled_ids().is_empty(),
+    }
+}
+
+/// Right/Down advance through the monocle stack, Left/Up step back. The directional hint is
+/// cleared because it only feeds the geometric path, where a stale entry pane recorded under
+/// monocle would misdirect the first move after switching to another layout.
+fn focus_in_monocle_order(state: &mut State, direction: Direction, wrap: bool) -> Option<PaneId> {
+    let forward = matches!(direction, Direction::Right | Direction::Down);
+    let next = step_focus_in_tiled_order(state, forward, wrap)?;
+    state.active_workspace_mut().last_directional_focus = None;
+    Some(next)
 }
 
 fn remembered_focus_target(
@@ -430,6 +463,12 @@ pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Op
     if focus_locked_by_fullscreen(state) {
         return None;
     }
+    step_focus_in_tiled_order(state, forward, true)
+}
+
+/// Step focus one pane along `tiled_ids()` order. Without `wrap`, a step past either end is a
+/// no-op instead of jumping to the opposite end.
+fn step_focus_in_tiled_order(state: &mut State, forward: bool, wrap: bool) -> Option<PaneId> {
     let ids = state.current().workspaces[state.current().active_workspace].tiled_ids();
     if ids.is_empty() {
         return None;
@@ -439,13 +478,16 @@ pub(crate) fn cycle_focus_in_tiled_order(state: &mut State, forward: bool) -> Op
         .focused_pane
         .and_then(|id| ids.iter().position(|c| *c == id))
     {
-        Some(index) => {
-            if forward {
-                (index + 1) % ids.len()
-            } else {
-                index.checked_sub(1).unwrap_or(ids.len() - 1)
-            }
-        }
+        Some(index) if forward => match index + 1 {
+            next if next < ids.len() => next,
+            _ if wrap => 0,
+            _ => return None,
+        },
+        Some(index) => match index.checked_sub(1) {
+            Some(previous) => previous,
+            None if wrap => ids.len() - 1,
+            None => return None,
+        },
         None => 0,
     };
     let id = ids[next];
@@ -1233,6 +1275,71 @@ mod tests {
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(3));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, true), Some(1));
         assert_eq!(cycle_focus_in_tiled_order(&mut state, false), Some(3));
+    }
+
+    /// Monocle stacks every tile on one rect, so geometric scoring cannot separate the panes and
+    /// used to bounce focus between two of them. Directional keys walk the whole stack instead.
+    #[test]
+    fn monocle_directional_focus_reaches_every_pane() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3, 4, 5]);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Monocle;
+        state.current_mut().focused_pane = Some(1);
+
+        for expected in [2, 3, 4, 5, 1] {
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Right, viewport),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Down, viewport),
+            Some(2)
+        );
+        for expected in [1, 5, 4] {
+            assert_eq!(
+                focus_in_direction(&mut state, Direction::Left, viewport),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            focus_in_direction(&mut state, Direction::Up, viewport),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn monocle_focus_without_wrap_stops_at_the_ends_of_the_stack() {
+        let viewport = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        };
+        let mut state = state_with_tiled(&[1, 2, 3]);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Monocle;
+        state.current_mut().focused_pane = Some(3);
+
+        assert_eq!(
+            focus_in_direction_no_wrap(&mut state, Direction::Right, viewport),
+            None
+        );
+        assert_eq!(state.current().focused_pane, Some(3));
+        for expected in [2, 1] {
+            assert_eq!(
+                focus_in_direction_no_wrap(&mut state, Direction::Left, viewport),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            focus_in_direction_no_wrap(&mut state, Direction::Left, viewport),
+            None
+        );
     }
 
     /// A fullscreen pane hides every tile behind it, so moving focus off it would put the keyboard

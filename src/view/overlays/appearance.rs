@@ -345,7 +345,11 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     // Built-in presets plus every custom theme file, selected by index into the same list.
     let choices = crate::config::theme_choices();
     let current = &ctx.state.config.theme.name;
-    let initial_selected = choices.iter().position(|choice| &choice.id() == current);
+    let current_index = choices.iter().position(|choice| &choice.id() == current);
+    // The highlight is user-owned once the picker opens: drive it from the remembered selection so
+    // filtering preserves it (or falls to the first match) rather than snapping back to the active
+    // theme. Fall back to the active theme only before the first selection is recorded.
+    let initial_selected = ctx.state.theme_picker_selected.or(current_index);
 
     let mut entries = Vec::with_capacity(choices.len() + 4);
     let mut previous_group = None;
@@ -364,7 +368,7 @@ pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         }
 
         let mut entry = SearchEntry::item(choice.label(), index);
-        if Some(index) == initial_selected {
+        if Some(index) == current_index {
             entry = entry.description(ItemDescription::new().right("current"));
         }
         entries.push(entry);

@@ -1148,6 +1148,10 @@ pub(crate) fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
     focus_key(ctx, view::theme_picker_key());
 }
 
+pub(crate) fn request_layout_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+    focus_key(ctx, view::layout_picker_key());
+}
+
 pub(crate) fn request_palette_focus(ctx: &mut Context<HyprmuxApp>) {
     focus_key(ctx, view::palette_key());
 }

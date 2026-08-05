@@ -151,6 +151,21 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
     Ok(path)
 }
 
+pub fn persist_layout_default(
+    kind: crate::state::LayoutKind,
+) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    let updated =
+        upsert_value_in_section(&text, "layout", "default", &format!("\"{}\"", kind.label()));
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
 pub fn persist_sidebar_width(width: u16) -> std::result::Result<PathBuf, String> {
     persist_sidebar_value("width", &width.to_string())
 }

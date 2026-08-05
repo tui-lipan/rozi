@@ -6,7 +6,7 @@ pub(crate) mod sidebar;
 mod workbar;
 
 pub use keys::{
-    appearance_palette_key, collaboration_key, follow_prompt_key, palette_key,
+    appearance_palette_key, collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
     pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
     profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
     search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
@@ -31,9 +31,9 @@ use pane::pane_title_bg;
 
 use overlays::{
     appearance_overlay, collaboration_overlay, follow_prompt_overlay, help_overlay,
-    palette_overlay, pane_padding_overlay, profile_picker_overlay, rename_overlay,
-    rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
-    theme_picker_overlay,
+    layout_picker_overlay, palette_overlay, pane_padding_overlay, profile_picker_overlay,
+    rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
+    session_picker_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -84,6 +84,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         || ctx.state.show_help
         || ctx.state.show_appearance
         || ctx.state.show_theme_picker
+        || ctx.state.show_layout_picker
         || ctx.state.rename.is_some()
         || ctx.state.rename_session.is_some()
         || ctx.state.save_profile_prompt.is_some()
@@ -482,6 +483,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.show_theme_picker {
         root = root.child(theme_picker_overlay(ctx));
+    }
+    if ctx.state.show_layout_picker {
+        root = root.child(layout_picker_overlay(ctx));
     }
     if ctx.state.search.is_some() {
         root = root.child(search_overlay(ctx));

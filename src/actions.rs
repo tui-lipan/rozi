@@ -421,6 +421,7 @@ fn execute_action_inner(
             toggle_layout(ctx, !ctx.state.show_palette);
             Update::full()
         }
+        Action::OpenLayoutPicker => crate::ops::layout_picker::open_layout_picker(ctx),
         Action::EnterCopyMode => crate::copy_mode::enter(ctx),
         Action::EnterHintMode => crate::hints::enter(ctx),
         Action::ToggleScratchpad => crate::scratchpad::toggle(ctx),
@@ -926,6 +927,117 @@ mod tests {
     /// The slot a content-keyed toast lands in, so a test can look it up the way `notify` does.
     fn content_slot(message: &str) -> crate::pty_events::ToastKey {
         crate::pty_events::ToastKey::Content(crate::pty_events::content_key(message))
+    }
+
+    #[test]
+    fn theme_picker_remembers_the_highlighted_row_across_its_lifetime() {
+        use crate::Msg;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::OpenThemePicker))
+                .expect("open theme picker");
+            // Opens highlighting the active theme, which drives the palette's initial selection.
+            assert!(
+                backend.state().theme_picker_selected.is_some(),
+                "the picker opens with a remembered selection",
+            );
+
+            // Previewing (what highlight changes emit) moves the remembered row, so a subsequent
+            // filter preserves this selection instead of snapping back to the active theme.
+            backend
+                .dispatch(Msg::PreviewTheme(0))
+                .expect("preview the first theme");
+            assert_eq!(backend.state().theme_picker_selected, Some(0));
+
+            backend
+                .dispatch(Msg::CloseThemePicker)
+                .expect("close theme picker");
+            assert_eq!(
+                backend.state().theme_picker_selected,
+                None,
+                "closing clears the remembered selection",
+            );
+        });
+    }
+
+    #[test]
+    fn layout_picker_opens_on_current_and_switches_the_active_workspace() {
+        use crate::Msg;
+        use crate::state::LayoutKind;
+
+        with_backend(|mut backend| {
+            // A fresh backend starts every workspace in the default (dwindle, index 0).
+            backend
+                .dispatch(Msg::RunAction(Action::OpenLayoutPicker))
+                .expect("open layout picker");
+            assert!(backend.state().show_layout_picker);
+            assert_eq!(
+                backend
+                    .state()
+                    .layout_picker
+                    .as_ref()
+                    .expect("picker state present")
+                    .selected,
+                0,
+                "the picker highlights the workspace's current layout",
+            );
+
+            let grid = LayoutKind::all()
+                .iter()
+                .position(|kind| *kind == LayoutKind::Grid)
+                .expect("grid is a layout");
+            backend
+                .dispatch(Msg::SelectLayout(grid))
+                .expect("select grid layout");
+
+            assert!(
+                !backend.state().show_layout_picker,
+                "selecting a layout closes the picker",
+            );
+            assert!(backend.state().layout_picker.is_none());
+            let active = backend.state().current().active_workspace;
+            assert_eq!(
+                backend.state().current().workspaces[active].layout_kind,
+                LayoutKind::Grid,
+            );
+        });
+    }
+
+    #[test]
+    fn layout_picker_previews_on_highlight_and_reverts_on_cancel() {
+        use crate::Msg;
+        use crate::state::LayoutKind;
+
+        with_backend(|mut backend| {
+            backend
+                .dispatch(Msg::RunAction(Action::OpenLayoutPicker))
+                .expect("open layout picker");
+
+            let columns = LayoutKind::all()
+                .iter()
+                .position(|kind| *kind == LayoutKind::Columns)
+                .expect("columns is a layout");
+            backend
+                .dispatch(Msg::LayoutPickerSelect(columns))
+                .expect("highlight columns");
+            let active = backend.state().current().active_workspace;
+            assert_eq!(
+                backend.state().current().workspaces[active].layout_kind,
+                LayoutKind::Columns,
+                "highlighting a row previews that layout live",
+            );
+
+            // Cancelling without Enter restores the layout the picker opened on.
+            backend
+                .dispatch(Msg::CloseLayoutPicker)
+                .expect("close layout picker");
+            assert!(!backend.state().show_layout_picker);
+            assert_eq!(
+                backend.state().current().workspaces[active].layout_kind,
+                LayoutKind::Dwindle,
+            );
+        });
     }
 
     // Both rejections depend only on `session_attached`, which is deterministically false in a

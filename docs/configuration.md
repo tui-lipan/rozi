@@ -73,6 +73,7 @@ modifier_shortcuts = true     # mirror each built-in default onto Alt+<key> (def
 
 [layout]
 split_width_multiplier = 2.3  # terminal cell height / width for dwindle splits (default: 2.3)
+default = "dwindle"           # layout mode new workspaces start in (default: dwindle)
 
 [pane]
 focus_on_hover = true         # mouse hover focuses panes (default: true)
@@ -252,6 +253,7 @@ prefix is reported as a warning and the default is kept.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to compare a focused pane's visual width and height when choosing the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
+| `default` | string | `"dwindle"` | Layout mode every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `scrollable`, or `monocle`. Profiles override this per workspace. The *Choose layout…* picker can set it for you (`ctrl+f` on a mode). |
 
 ## `[pane]`
 
@@ -856,7 +858,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `focus-down-no-wrap`, `focus-up-no-wrap`, `focus-right-no-wrap`,
 `move-left/down/up/right`, `swap-left/down/up/right`, `cycle-focus-next`, `cycle-focus-prev`, `promote-to-master`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
-`grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `copy-mode`, `scratchpad`, `search`,
+`grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `choose-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `collaborators`, `request-control`, `grant-control`, `toggle-input-lock`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`, `restart-session`,
 `choose-theme`, `command-palette`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,

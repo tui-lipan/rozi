@@ -145,12 +145,15 @@ pub struct HyprmuxProfileConfig {
 pub struct HyprmuxLayoutConfig {
     /// Terminal cell height divided by cell width, used to compare tile dimensions visually.
     pub split_width_multiplier: f32,
+    /// Layout mode every fresh workspace starts in. Profiles override this per workspace.
+    pub default: crate::state::LayoutKind,
 }
 
 impl Default for HyprmuxLayoutConfig {
     fn default() -> Self {
         Self {
             split_width_multiplier: DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+            default: crate::state::LayoutKind::Dwindle,
         }
     }
 }

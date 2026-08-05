@@ -129,6 +129,11 @@ pub(crate) fn attachment_from_profile(
 
     let scrollback = config.scrollback;
     let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
+    // Workspaces the profile does not name inherit the configured default; the ones it does name
+    // overwrite `layout_kind` from the saved profile below.
+    for workspace in &mut workspaces {
+        workspace.layout_kind = config.layout.default;
+    }
     let mut next_pane_id = 1;
 
     for workspace_profile in profile.workspaces {

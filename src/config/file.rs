@@ -274,6 +274,7 @@ struct RemoteHostFileConfig {
 #[serde(default, deny_unknown_fields)]
 struct LayoutFileConfig {
     split_width_multiplier: Option<f32>,
+    default: Option<String>,
 }
 
 /// `[pane] padding` value: a single number applies to all four sides, or a CSS-style array of
@@ -542,6 +543,14 @@ pub fn load_config() -> LoadedConfig {
             warnings.push(format!(
                 "Ignored layout.split_width_multiplier {multiplier} (expected a positive finite number)"
             ));
+        }
+    }
+    if let Some(name) = parsed.layout.default.as_deref() {
+        match crate::state::LayoutKind::from_label(name) {
+            Some(kind) => config.layout.default = kind,
+            None => warnings.push(format!(
+                "Ignored layout.default `{name}` (expected one of dwindle, master, grid, columns, scrollable, monocle)"
+            )),
         }
     }
     if let Some(highlight_focused_background) = parsed.pane.highlight_focused_background {
@@ -878,6 +887,22 @@ mod file_tests {
         assert_eq!(
             HyprmuxLayoutConfig::default().split_width_multiplier,
             DEFAULT_SPLIT_WIDTH_MULTIPLIER
+        );
+    }
+
+    #[test]
+    fn layout_default_mode_parses_and_maps() {
+        let parsed: FileConfig =
+            toml::from_str("[layout]\ndefault = \"master\"").expect("config parses");
+        assert_eq!(parsed.layout.default.as_deref(), Some("master"));
+        assert_eq!(
+            crate::state::LayoutKind::from_label(parsed.layout.default.as_deref().unwrap()),
+            Some(crate::state::LayoutKind::Master)
+        );
+        // The built-in fallback stays dwindle when the key is absent.
+        assert_eq!(
+            HyprmuxLayoutConfig::default().default,
+            crate::state::LayoutKind::Dwindle
         );
     }
 

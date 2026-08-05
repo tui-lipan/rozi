@@ -5,6 +5,7 @@ pub(crate) mod exit;
 pub(crate) mod focus;
 pub(crate) mod identity;
 pub(crate) mod last_output;
+pub(crate) mod layout_picker;
 pub(crate) mod overlay_return;
 pub(crate) mod profile;
 pub(crate) mod resize_move;

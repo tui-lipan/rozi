@@ -66,7 +66,7 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
         Action::OpenSearch => request_search_focus(ctx),
         Action::RenamePane => request_rename_focus(ctx),
         Action::RenameWorkspace | Action::RenameSession => request_rename_session_focus(ctx),
-        Action::OpenAppearance | Action::OpenThemePicker => {}
+        Action::OpenAppearance | Action::OpenThemePicker | Action::OpenLayoutPicker => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
         | Action::ApplyProfile

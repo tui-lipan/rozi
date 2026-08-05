@@ -198,3 +198,18 @@ impl SaveProfileState {
         }
     }
 }
+
+/// The open layout-mode picker. The list is the fixed [`crate::state::LayoutKind::all`] set, so this
+/// only tracks the highlighted row — the row set is derived at render time. `selected` lets the
+/// `set default` key act on whichever mode is highlighted; `original` is the active workspace's
+/// layout when the picker opened, restored if the user leaves without committing (live preview).
+pub struct LayoutPickerState {
+    pub selected: usize,
+    pub original: super::LayoutKind,
+}
+
+impl LayoutPickerState {
+    pub fn new(selected: usize, original: super::LayoutKind) -> Self {
+        Self { selected, original }
+    }
+}

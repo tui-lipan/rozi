@@ -48,6 +48,10 @@ pub fn theme_picker_key() -> &'static str {
     "hyprmux-theme-picker"
 }
 
+pub fn layout_picker_key() -> &'static str {
+    "hyprmux-layout-picker"
+}
+
 pub fn palette_key() -> &'static str {
     "hyprmux-command-palette"
 }

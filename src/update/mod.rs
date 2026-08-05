@@ -140,6 +140,12 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ProfilePickerOpenAs => prompts::profile_picker_open_as(ctx),
         Msg::ProfilePickerNew => prompts::profile_picker_new(ctx),
         Msg::SelectProfile(index) => prompts::select_profile(ctx, index),
+        Msg::CloseLayoutPicker => crate::ops::layout_picker::cancel_layout_picker(ctx),
+        Msg::LayoutPickerSelect(index) => {
+            crate::ops::layout_picker::layout_picker_selection_changed(ctx, index)
+        }
+        Msg::SelectLayout(index) => crate::ops::layout_picker::select_layout(ctx, index),
+        Msg::LayoutPickerSetDefault => crate::ops::layout_picker::layout_picker_set_default(ctx),
         Msg::ProfileSessionsDiscovered { epoch, rows } => {
             prompts::profile_sessions_discovered(ctx, epoch, rows)
         }

@@ -90,6 +90,17 @@ impl LayoutKind {
         }
     }
 
+    /// Parse a config `[layout] default` spelling back into a mode. Matching is
+    /// case-insensitive against [`Self::label`]; unknown names yield `None` so the caller can
+    /// warn and keep the built-in default.
+    pub fn from_label(name: &str) -> Option<Self> {
+        let name = name.trim().to_ascii_lowercase();
+        Self::all()
+            .iter()
+            .copied()
+            .find(|kind| kind.label() == name)
+    }
+
     pub fn toggled(self) -> Self {
         let all = Self::all();
         let index = all.iter().position(|kind| *kind == self).unwrap_or(0);
@@ -126,5 +137,19 @@ mod tests {
                 "monocle"
             ]
         );
+    }
+
+    #[test]
+    fn from_label_round_trips_every_layout_case_insensitively() {
+        for kind in LayoutKind::all() {
+            assert_eq!(LayoutKind::from_label(kind.label()), Some(*kind));
+        }
+        assert_eq!(
+            LayoutKind::from_label("  Master "),
+            Some(LayoutKind::Master)
+        );
+        assert_eq!(LayoutKind::from_label("GRID"), Some(LayoutKind::Grid));
+        assert_eq!(LayoutKind::from_label("spiral"), None);
+        assert_eq!(LayoutKind::from_label(""), None);
     }
 }

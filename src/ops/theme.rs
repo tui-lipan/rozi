@@ -115,6 +115,12 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
             theme: ctx.state.theme.clone(),
         });
     }
+    // Open highlighting the active theme; from here the highlight is user-owned (see
+    // `theme_picker_selected`), so filtering no longer snaps back to this row.
+    let current = &ctx.state.config.theme.name;
+    ctx.state.theme_picker_selected = crate::config::theme_choices()
+        .iter()
+        .position(|choice| &choice.id() == current);
     ctx.state.show_theme_picker = true;
     // Opened from the Appearance dialog's `Theme` row, cancelling or picking a theme returns
     // there; opened standalone (keybinding, palette) it leads back to the pane.
@@ -140,6 +146,8 @@ pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
     let Some(choice) = choices.get(index) else {
         return Update::none();
     };
+    // Remember the highlighted row so the palette stays on it across query changes.
+    ctx.state.theme_picker_selected = Some(index);
     if ctx.state.theme_picker_preview.is_none() {
         ctx.state.theme_picker_preview = Some(ThemePickerPreview {
             theme: ctx.state.theme.clone(),
@@ -162,6 +170,7 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
         ctx.state.theme = preview.theme;
         apply_terminal_palette_to_state(&mut ctx.state);
     }
+    ctx.state.theme_picker_selected = None;
     ctx.state.show_theme_picker = false;
     ctx.state.commands_dirty = true;
 }
@@ -178,6 +187,7 @@ fn close_after_theme_pick(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     let choices = crate::config::theme_choices();
     let Some(choice) = choices.get(index) else {
+        ctx.state.theme_picker_selected = None;
         ctx.state.show_theme_picker = false;
         ctx.state.commands_dirty = true;
         return close_after_theme_pick(ctx);
@@ -214,6 +224,7 @@ pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Updat
         ctx.state.config.pane.background_follows_terminal,
     );
     ctx.state.theme_picker_preview = None;
+    ctx.state.theme_picker_selected = None;
     apply_terminal_palette_to_state(&mut ctx.state);
     ctx.state.show_theme_picker = false;
     ctx.state.commands_dirty = true;

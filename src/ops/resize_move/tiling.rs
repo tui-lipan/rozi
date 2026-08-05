@@ -206,11 +206,25 @@ fn signed_step(grow: bool, available: f32) -> f32 {
 /// [`ToastChannel::LayoutMode`], so cycling several steps replaces one message instead of stacking
 /// a name per press.
 pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
+    let workspace_index = ctx.state.current().active_workspace;
+    let next = ctx.state.current().workspaces[workspace_index]
+        .layout_kind
+        .toggled();
+    set_layout(ctx, next, show_toast);
+}
+
+/// Switch the active workspace to a specific layout mode. Shared by the cycle command
+/// ([`toggle_layout`]) and the layout picker's direct selection.
+pub(crate) fn set_layout(
+    ctx: &mut Context<HyprmuxApp>,
+    kind: crate::state::LayoutKind,
+    show_toast: bool,
+) {
     finish_pointer_layout_interaction(ctx);
     let workspace_index = ctx.state.current().active_workspace;
     let layout_label = {
         let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-        workspace.layout_kind = workspace.layout_kind.toggled();
+        workspace.layout_kind = kind;
         workspace.last_move_swap = None;
         workspace.last_directional_focus = None;
         workspace.layout_kind.label()

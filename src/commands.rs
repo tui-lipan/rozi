@@ -206,6 +206,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenLayoutPicker,
+        label: "Choose layout…",
+        category: "Layout",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::RenameWorkspace,
         label: "Rename workspace",
         category: "Layout",

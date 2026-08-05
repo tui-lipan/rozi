@@ -163,6 +163,13 @@ pub enum Msg {
     ProfilePickerOpenAs,
     ProfilePickerNew,
     SelectProfile(usize),
+    CloseLayoutPicker,
+    /// Highlight moved to a different layout row (keeps `set default` acting on the visible row).
+    LayoutPickerSelect(usize),
+    /// Enter: switch the active workspace to the highlighted layout and close the picker.
+    SelectLayout(usize),
+    /// Ctrl+F: persist the highlighted layout as the configured default.
+    LayoutPickerSetDefault,
     ProfileSessionsDiscovered {
         epoch: u64,
         rows: Vec<crate::session::discovery::DiscoveredSession>,

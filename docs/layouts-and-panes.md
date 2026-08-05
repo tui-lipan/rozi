@@ -6,8 +6,12 @@ target rectangle. Each workspace carries its own layout.
 
 ## Tiled layouts
 
-Each workspace has a **layout kind**. `m` (*Toggle layout* in the palette) **cycles** through
-them: dwindle → master → grid → columns → scrollable → monocle → dwindle.
+Each workspace has a **layout kind**. `m` (*Switch layout* in the palette) **cycles** through
+them: dwindle → master → grid → columns → scrollable → monocle → dwindle. *Choose layout…* in the
+palette opens a picker to jump straight to any mode; highlighting a mode **previews it live** and
+leaving without pressing Enter restores the layout you opened on. `ctrl+f` there persists the
+highlighted mode as `[layout].default`, the layout every fresh workspace starts in (profiles
+override it per workspace).
 
 ### Dwindle (default)
 

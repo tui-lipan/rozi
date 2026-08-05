@@ -90,6 +90,12 @@ pub struct State {
     pub pane_padding_editor: Option<PanePaddingEditorState>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
+    /// The theme picker's highlighted row, index into `theme_choices()`. Drives the palette's
+    /// `initial_selected_item_index` so filtering preserves the user's selection (or falls to the
+    /// first match) instead of snapping back to the active theme. `None` when the picker is closed.
+    pub theme_picker_selected: Option<usize>,
+    pub show_layout_picker: bool,
+    pub layout_picker: Option<LayoutPickerState>,
     pub theme: Theme,
     pub system_theme: Option<Theme>,
     pub theme_watcher: Option<ThemeWatcher>,
@@ -193,6 +199,9 @@ pub struct State {
 /// rebuilding the whole [`State`].
 pub fn fresh_default_attachment(config: &HyprmuxConfig) -> Attachment {
     let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
+    for workspace in &mut workspaces {
+        workspace.layout_kind = config.layout.default;
+    }
     let initial_id = 1;
     let initial_rect = FloatRect {
         x: 4.0,
@@ -244,6 +253,9 @@ impl State {
             pane_padding_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,
+            theme_picker_selected: None,
+            show_layout_picker: false,
+            layout_picker: None,
             theme,
             system_theme: None,
             theme_watcher: None,
@@ -642,6 +654,20 @@ mod render_visibility_tests {
     use super::*;
     use crate::config::HyprmuxConfig;
     use tui_lipan::prelude::Theme;
+
+    #[test]
+    fn fresh_workspaces_adopt_the_configured_default_layout() {
+        let mut config = HyprmuxConfig::default();
+        config.layout.default = LayoutKind::Master;
+        let attachment = fresh_default_attachment(&config);
+        assert!(
+            attachment
+                .workspaces
+                .iter()
+                .all(|workspace| workspace.layout_kind == LayoutKind::Master),
+            "every fresh workspace should start in the configured default layout",
+        );
+    }
 
     fn state_with_two_workspaces() -> State {
         let mut state = State::new(HyprmuxConfig::default(), Theme::default());

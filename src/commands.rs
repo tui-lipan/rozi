@@ -1105,15 +1105,9 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleWorkbarPowerline => {
             enable_disable_label("workbar powerline", state.config.pane.workbar_powerline)
         }
-        // Lead with "Sidebar" so Hybrid ranks query "sidebar" as a label prefix above other
-        // commands that only contain the word mid-label ("Focus/Next/Previous sidebar …").
-        Action::ToggleSidebar => {
-            if state.sidebar_visible {
-                "Sidebar · disable".to_string()
-            } else {
-                "Sidebar · enable".to_string()
-            }
-        }
+        // Ranking for the query "sidebar" comes from the exact `sidebar` palette alias, not from the
+        // label, so this stays parallel with every other toggle instead of leading with the noun.
+        Action::ToggleSidebar => enable_disable_label("sidebar", state.sidebar_visible),
         Action::ToggleSidebarSplit => {
             enable_disable_label("sidebar split", state.config.sidebar.split)
         }

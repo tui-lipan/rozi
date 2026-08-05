@@ -1500,6 +1500,15 @@ pub(crate) fn activate_discovered_session(
     attach_session_by_name(ctx, entry.name, entry.host, entry.remote_target, false)
 }
 
+/// The launcher's one offer: start this client's ephemeral session now. Reached by `Enter` on the
+/// launcher panel and by the pinned *start a shell* row in the session picker, which is why it also
+/// drops any deferred PTY action — asking for a plain shell replaces whatever spawn was queued
+/// against a session that never arrived.
+pub(crate) fn start_launcher_shell(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_session_action(ctx, None);
+    attach_startup_ephemeral(ctx)
+}
+
 /// Attach this process's ephemeral session, seeded with the panes the launch had prepared (its
 /// initial shell, or a restored profile/autosave layout). Used when the user explicitly starts a
 /// shell from the launcher, so the layout the launch intended is still what they get.
@@ -3085,6 +3094,61 @@ mod tests {
             .expect("spawn last-session kill test")
             .join()
             .expect("last-session kill test completes");
+    }
+
+    #[test]
+    fn starting_a_shell_from_the_picker_attaches_the_ephemeral_with_the_launch_seed() {
+        use crate::HyprmuxApp;
+        use crate::Msg;
+        use crate::state::SessionPickerState;
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                {
+                    let state = backend.state_mut();
+                    // The startup picker parks the panes the launch prepared and leaves the
+                    // foreground empty, which is the launcher this row is offered in.
+                    let mut seed = crate::state::fresh_default_attachment(&state.config);
+                    seed.workspaces[0].panes[0].identity.cwd = Some("/seeded".into());
+                    *state.current_mut() = crate::state::Attachment::new();
+                    state.launcher_seed = Some(seed);
+                    state.show_session_picker = true;
+                    state.session_picker =
+                        Some(SessionPickerState::new(vec![session_row("dev", None)]));
+                }
+                assert!(backend.state().is_launcher());
+
+                backend
+                    .dispatch(Msg::SessionPickerStartShell)
+                    .expect("start a shell from the picker");
+
+                let state = backend.state();
+                assert!(!state.show_session_picker && state.session_picker.is_none());
+                let pending = state
+                    .current()
+                    .pending_session_attach
+                    .as_ref()
+                    .expect("attaching the ephemeral session");
+                assert_eq!(pending.name, crate::state::ephemeral_session_name());
+                assert!(
+                    state.launcher_seed.is_none(),
+                    "the parked launch panes are consumed, not left for a second start"
+                );
+                assert_eq!(
+                    state.current().workspaces[0].panes[0]
+                        .identity
+                        .cwd
+                        .as_deref(),
+                    Some("/seeded"),
+                    "the shell starts with the layout the launch intended"
+                );
+            })
+            .expect("spawn picker start-shell test")
+            .join()
+            .expect("picker start-shell test completes");
     }
 
     #[test]

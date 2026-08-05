@@ -197,6 +197,9 @@ pub(super) fn sessions_discovered(
 pub(super) fn session_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.input.set_text(query);
+        // Typing re-ranks the list under the highlight, so a recorded landing on the pinned
+        // *start a shell* row is stale: the view re-derives it from what the new query leaves.
+        picker.start_shell = false;
     }
     crate::ops::session::clear_pending_session_arms(ctx);
     Update::full()
@@ -205,6 +208,7 @@ pub(super) fn session_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
 pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.selected = index.min(picker.entries.len().saturating_sub(1));
+        picker.start_shell = false;
     }
     // Moving the highlight off an armed kill/restart row cancels its confirmation.
     let moved_off_armed = ctx.state.session_picker.as_ref().is_some_and(|picker| {
@@ -223,6 +227,16 @@ pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize)
 
 pub(super) fn session_picker_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
     crate::ops::session::activate_selected_session(ctx, index)
+}
+
+/// The highlight moved onto the pinned *start a shell* row. Nothing there can be killed or
+/// restarted, so any armed confirmation aimed at a session row is cancelled on the way in.
+pub(super) fn session_picker_select_start_shell(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if let Some(picker) = ctx.state.session_picker.as_mut() {
+        picker.start_shell = true;
+    }
+    crate::ops::session::clear_pending_session_arms(ctx);
+    Update::full()
 }
 
 pub(super) fn session_picker_create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {

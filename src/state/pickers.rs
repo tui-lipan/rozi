@@ -36,6 +36,11 @@ pub struct SessionPickerState {
     pub pending_kill: Option<usize>,
     /// Entry index awaiting a second Ctrl+E to confirm its restart (warning highlight, no strike).
     pub pending_restart: Option<usize>,
+    /// Whether the pinned *start a shell* row is highlighted instead of a session row. That row
+    /// only exists in the launcher, and it is not a session, so it is tracked beside
+    /// [`Self::selected`] rather than folded into it: every per-session operation keeps addressing
+    /// a plain entry index, and this flag is what suppresses them.
+    pub start_shell: bool,
 }
 
 /// The open *Manage collaborators* dialog: the roster of everyone else on the session. The
@@ -171,6 +176,7 @@ impl SessionPickerState {
             selected: 0,
             pending_kill: None,
             pending_restart: None,
+            start_shell: false,
         }
     }
 }

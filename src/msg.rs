@@ -184,6 +184,10 @@ pub enum Msg {
     SessionPickerQueryChanged(String),
     SessionPickerSelect(usize),
     SessionPickerActivate(usize),
+    /// The pinned *start a shell* row was highlighted / activated. Only reachable from a launcher
+    /// picker, where that row is the one thing offered besides the sessions themselves.
+    SessionPickerSelectStartShell,
+    SessionPickerStartShell,
     SessionPickerCreateFromQuery,
     SessionPickerKillSelected,
     SessionPickerRestartSelected,

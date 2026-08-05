@@ -121,6 +121,11 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
   removed completely.
 - **Restart** (`Ctrl+E` twice) — shut the highlighted session down and recreate it as the active
   session, with fresh panes.
+- **Start a shell** (`Enter` on the pinned top row) — only in the launcher, where there is no
+  session in the foreground. It starts this client's ephemeral session with whatever layout the
+  launch prepared, the same as `Enter` on the launcher panel, so the startup picker does not have
+  to be dismissed first. With nothing discovered, that row is the whole list. Per-session chords
+  (`Ctrl+K` / `Ctrl+E` / `Ctrl+W` / `Ctrl+X`) do nothing while it is highlighted.
 
 Switching retains the current attachment in the background. Its client, screens, scrollback,
 layout, and focus remain live, and background output continues to be parsed. Selecting it again is

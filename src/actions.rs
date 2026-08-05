@@ -320,8 +320,7 @@ fn execute_action_inner(
         // queueing the spawn against a client that will never arrive would look like a hang. Asking
         // for a shell there is the explicit "start a new session" the launcher advertises.
         Action::Spawn if crate::ops::session::needs_session_for_pty(&ctx.state) => {
-            crate::ops::session::clear_pending_session_action(ctx, None);
-            crate::ops::session::attach_startup_ephemeral(ctx)
+            crate::ops::session::start_launcher_shell(ctx)
         }
         Action::Spawn => spawn_pane(ctx),
         Action::RespawnPane => crate::pane_lifecycle::respawn_focused_pane(ctx),

@@ -182,7 +182,7 @@ mappings.
 | Shrink split | `-` |
 | Enter resize mode | `r` |
 | Cycle layout (dwindle → master → grid → columns → rows → scrollable → monocle) | `m` |
-| Choose layout (picker; `ctrl+f` sets the default) | *(command palette / bindable `choose-layout`)* |
+| Choose layout (picker; `ctrl+f` sets the default) | `Shift+M` |
 
 See [Layouts and panes](layouts-and-panes.md) for what each layout does. "Zoom" is provided by
 *Toggle fullscreen* (`f`), which temporarily maximizes the focused pane.

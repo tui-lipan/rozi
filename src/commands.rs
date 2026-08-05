@@ -202,14 +202,16 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::ToggleLayout,
         label: "Switch layout",
         category: "Layout",
-        default_keys: &["m", "shift-m"],
+        default_keys: &["m"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::OpenLayoutPicker,
         label: "Choose layout…",
         category: "Layout",
-        default_keys: &[],
+        // The shifted sibling of the `m` cycle: same key, one step up from blind cycling to
+        // picking a layout outright.
+        default_keys: &["shift-m"],
         palette: true,
     },
     BuiltinCommand {
@@ -1253,6 +1255,27 @@ mod tests {
         }
     }
 
+    fn shift(ch: char) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(ch),
+            mods: KeyMods {
+                shift: true,
+                ..KeyMods::NONE
+            },
+        }
+    }
+
+    fn alt_shift(ch: char) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(ch),
+            mods: KeyMods {
+                alt: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        }
+    }
+
     #[test]
     fn default_shortcuts_mirror_prefix_chord_and_modifier() {
         let config = HyprmuxConfig::default();
@@ -1365,6 +1388,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `m` cycles layouts and its shifted sibling opens the picker, so the two layout commands
+    /// share one key rather than the cycle owning both spellings.
+    #[test]
+    fn layout_cycle_and_picker_split_the_m_key() {
+        let config = HyprmuxConfig::default();
+        let keys_for = |id: &str| {
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.action.id() == Some(id))
+                .expect("layout command is registered")
+                .default_keys
+        };
+
+        assert_eq!(keys_for("toggle-layout"), &["m"]);
+        assert_eq!(keys_for("choose-layout"), &["shift-m"]);
+
+        // The picker key follows the `[input]` scheme like any other: leader chord plus mirror.
+        let picker = default_shortcuts_for(&config, keys_for("choose-layout"));
+        assert!(
+            picker
+                .iter()
+                .any(|binding| binding.matches_sequence(&[ctrl('a'), shift('m')])),
+            "expected a ctrl-a shift-m leader chord in {picker:?}"
+        );
+        assert!(
+            picker
+                .iter()
+                .any(|binding| binding.matches_sequence(&[alt_shift('m')])),
+            "expected an alt-shift-m modifier mirror in {picker:?}"
+        );
     }
 
     #[test]

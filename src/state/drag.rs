@@ -22,6 +22,8 @@ pub struct ResizeSession {
     pub start_tile_tree: Option<DwindleTree>,
     pub start_split_ratios: Vec<f32>,
     pub start_floating_rect: Option<FloatRect>,
+    /// Snapshot of the pane's Scrollable width fraction at drag start (absolute deltas).
+    pub start_scrollable_width: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

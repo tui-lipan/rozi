@@ -23,8 +23,8 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 
 ## Highlights
 
-- **Dwindle + master tiling** - new panes split the *focused* tile along its aspect ratio
-  (Hyprland dwindle), or switch to a master/stack layout per workspace.
+- **Tiled layouts** - dwindle (new panes split the *focused* tile along its aspect ratio),
+  master/stack, grid, equal columns, scrollable columns, and monocle per workspace.
 - **Floating & fullscreen panes** - toggle any pane to floating or fullscreen; move and
   resize floats with the mouse.
 - **9 workspaces** with a workbar tab strip showing live pane counts.
@@ -66,7 +66,7 @@ Full docs live in [`docs/`](docs/):
 - [Installation & releases](docs/installation.md) - bootstrap, signed update/rollback, and signing workflow.
 - [Keybindings](docs/keybindings.md) - prefix, held modifier, mouse, and the full key reference.
 - [Configuration](docs/configuration.md) - the complete `hyprmux.toml` reference.
-- [Layouts & panes](docs/layouts-and-panes.md) - dwindle, master, floating, fullscreen, resize.
+- [Layouts & panes](docs/layouts-and-panes.md) - tiled layouts, floating, fullscreen, resize.
 - [Themes](docs/themes.md) - presets, custom theme files, hot reload, and terminal colors.
 - [Terminal features](docs/terminal.md) - PTY, mouse, selection, clipboard, and scrollback search.
 - [Project profiles & pane identity](docs/project-profiles.md) - save and restore layouts.

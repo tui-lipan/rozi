@@ -10,7 +10,7 @@ use crate::ops::focus::{
     request_current_pane_focus,
 };
 use crate::ops::theme::pane_frame_background;
-use crate::state::{Pane, PaneId, PaneIdentity, State};
+use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
 use crate::tiling::remove_tiled_window;
 use crate::{HyprmuxApp, Msg};
 
@@ -283,11 +283,86 @@ fn apply_spawn_focus(
     id: PaneId,
     placement: SpawnPlacement,
 ) {
-    state.current_mut().workspaces[workspace_index].focused_pane = Some(id);
+    let active_workspace = state.current().active_workspace;
+    let global_focus = state.current().focused_pane;
+    let spawned_tiled = state.current().workspaces[workspace_index]
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.floating && !pane.closing);
+
     if placement.focus {
         state.current_mut().active_workspace = workspace_index;
         state.current_mut().focused_pane = Some(id);
+        state.current_mut().workspaces[workspace_index].focused_pane = Some(id);
+        if spawned_tiled {
+            set_scrollable_anchor_for_spawned(
+                &mut state.current_mut().workspaces[workspace_index],
+                id,
+            );
+        }
+        return;
     }
+
+    if workspace_index != active_workspace {
+        // Inactive workspace may remember the new pane without stealing the visible focus.
+        state.current_mut().workspaces[workspace_index].focused_pane = Some(id);
+        if spawned_tiled {
+            set_scrollable_anchor_for_spawned(
+                &mut state.current_mut().workspaces[workspace_index],
+                id,
+            );
+        }
+        return;
+    }
+
+    // Active workspace, focus=false: keep workspace + global focus where they are so render
+    // styling/z-order and Scrollable viewport stay on the real focus.
+    if !spawned_tiled {
+        return;
+    }
+    let ws = &mut state.current_mut().workspaces[workspace_index];
+    let anchor_still_valid = ws.scrollable_anchor.is_some_and(|anchor| {
+        ws.panes
+            .iter()
+            .any(|pane| pane.id == anchor && !pane.floating && !pane.closing)
+    });
+    if anchor_still_valid {
+        return;
+    }
+    let from_focused_tiled =
+        [global_focus, ws.focused_pane]
+            .into_iter()
+            .flatten()
+            .find(|&candidate| {
+                candidate != id
+                    && ws
+                        .panes
+                        .iter()
+                        .any(|pane| pane.id == candidate && !pane.floating && !pane.closing)
+            });
+    let from_existing_tiled = ws
+        .panes
+        .iter()
+        .find(|pane| pane.id != id && !pane.floating && !pane.closing)
+        .map(|pane| pane.id);
+    let anchor = from_focused_tiled
+        .or(from_existing_tiled)
+        .or(spawned_tiled.then_some(id));
+    if let Some(anchor) = anchor {
+        set_scrollable_anchor_for_spawned(ws, anchor);
+    } else {
+        ws.set_scrollable_viewport(None, ScrollableRevealEdge::Left);
+    }
+}
+
+/// Spawn/close paths without a rendered visibility classify: first tiled → Left, else Right.
+fn set_scrollable_anchor_for_spawned(ws: &mut crate::state::Workspace, id: PaneId) {
+    let edge = if ws.tiled_ids().first() == Some(&id) {
+        ScrollableRevealEdge::Left
+    } else {
+        ScrollableRevealEdge::Right
+    };
+    ws.set_scrollable_viewport(Some(id), edge);
 }
 
 pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
@@ -1210,6 +1285,122 @@ mod tests {
         apply_spawn_focus(&mut state, 2, 8, SpawnPlacement::default());
         assert_eq!(state.current().active_workspace, 2);
         assert_eq!(state.current().focused_pane, Some(8));
+    }
+
+    #[test]
+    fn non_focusing_spawn_on_active_scrollable_keeps_viewport_anchor() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        {
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+            for id in [1_u32, 2] {
+                workspace.panes.push(Pane::new(id, 100, bounds));
+                crate::tiling::append_tiled_window(workspace, id);
+            }
+            workspace.focused_pane = Some(1);
+            workspace.scrollable_anchor = Some(1);
+            workspace.panes.push(Pane::new(3, 100, bounds));
+            crate::tiling::append_tiled_window(workspace, 3);
+        }
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(1);
+
+        apply_spawn_focus(
+            &mut state,
+            0,
+            3,
+            SpawnPlacement {
+                focus: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(state.current().focused_pane, Some(1));
+        assert_eq!(state.current().workspaces[0].focused_pane, Some(1));
+        assert_eq!(state.current().workspaces[0].scrollable_anchor, Some(1));
+        let render_focus = state.current().workspaces[0]
+            .focused_pane
+            .or(state.current().focused_pane);
+        assert_eq!(render_focus, Some(1));
+
+        let placements = crate::layout::workspace_target_rects(
+            &state.current().workspaces[0],
+            bounds,
+            0.0,
+            crate::state::TileGap::DEFAULT,
+        );
+        let anchored = placements.iter().find(|p| p.id == 1).expect("pane A");
+        assert!(
+            (anchored.rect.x - bounds.x).abs() < f32::EPSILON,
+            "viewport must stay on A after a non-focusing spawn"
+        );
+    }
+
+    #[test]
+    fn non_focusing_tiled_spawn_with_floating_focus_anchors_existing_tiled() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        {
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+            workspace.panes.push(Pane::new(1, 100, bounds));
+            crate::tiling::append_tiled_window(workspace, 1);
+            let mut floating = Pane::new(2, 100, bounds);
+            floating.floating = true;
+            workspace.panes.push(floating);
+            workspace.focused_pane = Some(2);
+            workspace.scrollable_anchor = Some(99);
+            workspace.panes.push(Pane::new(3, 100, bounds));
+            crate::tiling::append_tiled_window(workspace, 3);
+        }
+        state.current_mut().active_workspace = 0;
+        state.current_mut().focused_pane = Some(2);
+
+        apply_spawn_focus(
+            &mut state,
+            0,
+            3,
+            SpawnPlacement {
+                focus: false,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(state.current().focused_pane, Some(2));
+        assert_eq!(state.current().workspaces[0].focused_pane, Some(2));
+        assert_eq!(state.current().workspaces[0].scrollable_anchor, Some(1));
+        assert_eq!(
+            state.current().workspaces[0]
+                .focused_pane
+                .or(state.current().focused_pane),
+            Some(2)
+        );
+
+        let placements = crate::layout::workspace_target_rects(
+            &state.current().workspaces[0],
+            bounds,
+            0.0,
+            crate::state::TileGap::DEFAULT,
+        );
+        let anchored = placements
+            .iter()
+            .find(|p| p.id == 1)
+            .expect("existing tiled");
+        assert!(
+            (anchored.rect.x - bounds.x).abs() < f32::EPSILON,
+            "stale/missing anchor must fall back to a pre-existing tiled pane, not the spawn"
+        );
     }
 
     #[test]

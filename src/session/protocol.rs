@@ -27,6 +27,9 @@ use crate::state::PaneId;
 
 /// Maximum wire protocol version this build speaks.
 ///
+/// 19 is a clean break: SharedLayout gains `columns` and `scrollable` layout kinds. Older peers
+/// cannot deserialize those enum variants, so this build speaks protocol 19 only.
+///
 /// 18 adds protocol-gated runtime resource metric requests and samples.
 ///
 /// 16 adds [`ClientMessage::EvictClient`], the controller's way to remove another client.
@@ -38,12 +41,12 @@ use crate::state::PaneId;
 ///
 /// 13 adds the filesystem browsing messages ([`ClientMessage::ListDirectory`],
 /// [`ClientMessage::ListChanges`]) that back the sidebar file tree under `--remote`.
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 19;
 /// Oldest wire protocol version this build can still speak.
 ///
-/// Negotiation only works against peers that also advertise a range (protocol 12+). A protocol-11
-/// server still rejects anything other than exact equality.
-pub const MIN_SUPPORTED_PROTOCOL: u32 = 12;
+/// Protocol 19 is required: SharedLayout layout-kind variants are not backwards-compatible, so this
+/// build rejects older peers rather than shimming wire aliases.
+pub const MIN_SUPPORTED_PROTOCOL: u32 = 19;
 /// First version carrying the file-tree browsing messages. A client must not send them below this.
 pub const FILE_TREE_PROTOCOL: u32 = 13;
 /// First version carrying [`ClientMessage::SetParked`]. Against an older server the message is not
@@ -1026,6 +1029,7 @@ mod tests {
                     floating: false,
                     fullscreen: false,
                     rect: None,
+                    scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
                 }],
             }],
         };
@@ -1042,7 +1046,7 @@ mod tests {
                 "rev": 4,
                 "author": 3,
                 "layout": {
-                    "version": 1,
+                    "version": 2,
                     "canvas_cols": 120,
                     "canvas_rows": 40,
                     "workspaces": [{
@@ -1070,7 +1074,8 @@ mod tests {
                             "keep_open": false,
                             "floating": false,
                             "fullscreen": false,
-                            "rect": null
+                            "rect": null,
+                            "scrollable_width": 0.44999998807907104
                         }]
                     }]
                 }
@@ -1174,31 +1179,21 @@ mod tests {
         );
     }
 
-    /// The file-tree messages were added in 13 while the minimum stayed 12, so negotiating against
-    /// a 12-only server must land on 12 — which is what gates the client off sending them.
     #[test]
-    fn file_tree_protocol_is_above_the_supported_minimum() {
-        const { assert!(FILE_TREE_PROTOCOL > MIN_SUPPORTED_PROTOCOL) };
+    fn file_tree_and_runtime_metrics_remain_in_the_supported_range() {
         const { assert!(FILE_TREE_PROTOCOL <= PROTOCOL_VERSION) };
-
-        let effective = negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 12, 12)
-            .expect("13-client against a 12-server must still negotiate");
-        assert_eq!(effective, 12);
-        assert!(
-            effective < FILE_TREE_PROTOCOL,
-            "a 12-server must not be sent file-tree messages"
-        );
-    }
-
-    #[test]
-    fn runtime_metrics_protocol_preserves_legacy_negotiation() {
-        const { assert!(RUNTIME_METRICS_PROTOCOL > MIN_SUPPORTED_PROTOCOL) };
         const { assert!(RUNTIME_METRICS_PROTOCOL <= PROTOCOL_VERSION) };
+        const { assert!(MIN_SUPPORTED_PROTOCOL == PROTOCOL_VERSION) };
 
-        let effective = negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 17, 12)
-            .expect("protocol-18 client can attach to protocol-17 server");
-        assert_eq!(effective, 17);
-        assert!(effective < RUNTIME_METRICS_PROTOCOL);
+        assert!(
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 18, 12).is_err(),
+            "protocol-19-only peers reject pre-19 ranges"
+        );
+        assert_eq!(
+            negotiate_protocol(PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL, 19, 19)
+                .expect("same-version peers negotiate"),
+            19
+        );
 
         let request = ClientMessage::RequestRuntimeMetrics;
         let mut bytes = Vec::new();
@@ -1351,8 +1346,8 @@ mod tests {
             serde_json::json!({
                 "type":"attach",
                 "session":"dev",
-                "protocol_version":18,
-                "min_protocol_version":12,
+                "protocol_version":19,
+                "min_protocol_version":19,
                 "label":"alice",
                 "read_only":true
             })
@@ -1379,8 +1374,8 @@ mod tests {
             serde_json::json!({
                 "type":"query",
                 "session":"dev",
-                "protocol_version":18,
-                "min_protocol_version":12
+                "protocol_version":19,
+                "min_protocol_version":19
             })
         );
     }
@@ -1465,7 +1460,7 @@ mod tests {
                 "panes":2,
                 "clients":1,
                 "has_layout":true,
-                "effective_protocol":18,
+                "effective_protocol":19,
                 "created_from_profile":"work"
             })
         );

@@ -2,9 +2,15 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::geometry::{closest_pane_to_rect, directional_score};
-use crate::layout::{placement_for, workspace_target_rects};
-use crate::state::{Direction, DirectionalFocusHint, Pane, PaneId, State, Workspace};
+use crate::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
+use crate::layout::{
+    placement_for, scrollable_viewport_anchor, workspace_target_rects,
+    workspace_target_rects_with_visible_bounds,
+};
+use crate::state::{
+    Direction, DirectionalFocusHint, LayoutKind, Pane, PaneId, ScrollableRevealEdge, State,
+    Workspace,
+};
 use crate::tiling::{self, append_tiled_window, remove_tiled_window};
 use crate::view;
 
@@ -45,8 +51,15 @@ pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId)
     }) else {
         return false;
     };
-    ctx.state.current_mut().active_workspace = workspace_index;
+    let cross_workspace = workspace_index != ctx.state.current().active_workspace;
+    if cross_workspace {
+        switch_workspace(&mut ctx.state, workspace_index);
+    }
     focus_pane(&mut ctx.state, target);
+    if cross_workspace {
+        // Cross-workspace jumps stay instant even when focus_pane arms Scrollable AxisChange.
+        ctx.state.animation = GeometryAnimation::None;
+    }
     if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, target) {
         pane.activity.has_unseen_output = false;
     }
@@ -450,29 +463,33 @@ pub(crate) fn promote_focused_to_master(state: &mut State) -> bool {
     if active_pane_is_fullscreen(state, focused) {
         return false;
     }
-    let workspace = state.active_workspace_mut();
-    let ids = workspace.tiled_ids();
-    let Some(&master) = ids.first() else {
-        return false;
+    let swapped = {
+        let workspace = state.active_workspace_mut();
+        let ids = workspace.tiled_ids();
+        let Some(&master) = ids.first() else {
+            return false;
+        };
+        if master == focused || !ids.contains(&focused) {
+            return false;
+        }
+        if workspace.tile_tree.is_none() {
+            workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
+        }
+        let Some(tree) = workspace.tile_tree.as_mut() else {
+            return false;
+        };
+        crate::tiling::swap_tree_leaves(tree, focused, master)
     };
-    if master == focused || !ids.contains(&focused) {
+    if !swapped {
         return false;
     }
-    if workspace.tile_tree.is_none() {
-        workspace.tile_tree = crate::layout::effective_tile_tree(workspace, None);
-    }
-    let Some(tree) = workspace.tile_tree.as_mut() else {
-        return false;
-    };
-    if crate::tiling::swap_tree_leaves(tree, focused, master) {
-        state.current_mut().focused_pane = Some(focused);
-        state.active_workspace_mut().focused_pane = Some(focused);
-        state.active_workspace_mut().last_move_swap = None;
-        state.active_workspace_mut().last_directional_focus = None;
-        true
-    } else {
-        false
-    }
+    state.current_mut().focused_pane = Some(focused);
+    state.active_workspace_mut().focused_pane = Some(focused);
+    state.active_workspace_mut().last_move_swap = None;
+    state.active_workspace_mut().last_directional_focus = None;
+    // Reorder can clip the focused pane under a preserved non-focus anchor.
+    sync_scrollable_reveal(state, focused, false);
+    true
 }
 
 pub(crate) fn switch_workspace(state: &mut State, index: usize) {
@@ -484,6 +501,12 @@ pub(crate) fn switch_workspace(state: &mut State, index: usize) {
     state.animation = GeometryAnimation::None;
     choose_fallback_focus(state);
     clear_focused_activity(state);
+    if let Some(focus) = state.current().focused_pane {
+        // Normalize Scrollable viewport for the newly active focus (covers inactive reconcile
+        // fallback under a surviving foreign anchor, and other stale local viewport state).
+        sync_scrollable_reveal(state, focus, false);
+    }
+    state.animation = GeometryAnimation::None;
     if previous != index {
         emit_workspace_switched(state, index);
     }
@@ -542,9 +565,31 @@ pub(crate) fn move_focused_to_workspace(state: &mut State, target_index: usize) 
         .push(pane);
 
     state.current_mut().active_workspace = target_index;
+    let scrollable = state.current().workspaces[target_index].layout_kind == LayoutKind::Scrollable;
+    let (prior_anchor, prior_edge, reveal_decision) = if tiled && scrollable {
+        let ws = &state.current().workspaces[target_index];
+        let prior = scrollable_viewport_anchor(ws, &ws.tiled_ids());
+        let edge = ws.scrollable_reveal_edge;
+        // Classify before overwriting target focus so a missing stored anchor still uses the
+        // previous tiled focus as the strip reference.
+        let decision = classify_scrollable_reveal(state, focused, prior);
+        (prior, Some(edge), decision)
+    } else {
+        (None, None, None)
+    };
     state.current_mut().focused_pane = Some(focused);
     state.current_mut().workspaces[target_index].focused_pane = Some(focused);
     clear_focused_activity(state);
+    if tiled && scrollable {
+        apply_scrollable_reveal_decision(
+            state,
+            focused,
+            prior_anchor,
+            prior_edge,
+            reveal_decision,
+            false,
+        );
+    }
     state.animation = GeometryAnimation::None;
     emit_workspace_switched(state, target_index);
 }
@@ -636,6 +681,8 @@ fn swap_workspace_fields(a: &mut Workspace, b: &mut Workspace) {
     std::mem::swap(&mut a.split_ratios, &mut b.split_ratios);
     std::mem::swap(&mut a.last_move_swap, &mut b.last_move_swap);
     std::mem::swap(&mut a.last_directional_focus, &mut b.last_directional_focus);
+    std::mem::swap(&mut a.scrollable_anchor, &mut b.scrollable_anchor);
+    std::mem::swap(&mut a.scrollable_reveal_edge, &mut b.scrollable_reveal_edge);
     std::mem::swap(&mut a.name, &mut b.name);
 }
 
@@ -649,6 +696,8 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
     to.split_ratios.clone_from(&from.split_ratios);
     to.last_move_swap = from.last_move_swap.take();
     to.last_directional_focus = from.last_directional_focus.take();
+    to.scrollable_anchor = from.scrollable_anchor.take();
+    to.scrollable_reveal_edge = std::mem::take(&mut from.scrollable_reveal_edge);
     to.name = from.name.take();
 }
 
@@ -693,22 +742,55 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
 
 pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
     let previous = state.current().focused_pane;
+    let scrollable = state.current().workspaces[state.current().active_workspace].layout_kind
+        == LayoutKind::Scrollable;
+    // Capture before mutation so same-workspace Scrollable focus-scroll can detect a real
+    // anchor/viewport change (and overwrite stale None left by resize) without re-arming on
+    // reaffirm or when the target is already fully visible.
+    let prior_scrollable_anchor = scrollable
+        .then(|| {
+            let ws = &state.current().workspaces[state.current().active_workspace];
+            scrollable_viewport_anchor(ws, &ws.tiled_ids())
+        })
+        .flatten();
+    let prior_reveal_edge = scrollable.then(|| {
+        state.current().workspaces[state.current().active_workspace].scrollable_reveal_edge
+    });
+    let reveal_decision = scrollable
+        .then(|| classify_scrollable_reveal(state, id, prior_scrollable_anchor))
+        .flatten();
     // Only drop axis sticky when focus actually moves. Framework focus sync (and other
     // re-affirmations of the current pane) call this on every key and must not erase the hint
     // that keeps 4→3→1→4 on the entry row.
     if previous != Some(id) {
         state.active_workspace_mut().last_directional_focus = None;
     }
+    let mut anchored_tiled = false;
     if let Some(pane) = state
         .active_workspace_mut()
         .panes
         .iter_mut()
         .find(|pane| pane.id == id && !pane.closing)
     {
+        anchored_tiled = !pane.floating;
         pane.activity.has_unseen_output = false;
         pane.activity.bell = false;
         state.current_mut().focused_pane = Some(id);
         state.active_workspace_mut().focused_pane = Some(id);
+    }
+    if anchored_tiled {
+        if scrollable {
+            apply_scrollable_reveal_decision(
+                state,
+                id,
+                prior_scrollable_anchor,
+                prior_reveal_edge,
+                reveal_decision,
+                true,
+            );
+        } else {
+            state.active_workspace_mut().scrollable_anchor = Some(id);
+        }
     }
     if previous != state.current().focused_pane && state.current().focused_pane == Some(id) {
         crate::events::emit(
@@ -718,6 +800,159 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
                 vec![("pane", id.to_string())],
             ),
         );
+    }
+}
+
+/// Sync Scrollable local viewport for an already-focused tiled pane (move / reconcile).
+/// When `arm_axis_change` is false, animation is left alone for the caller to set.
+pub(crate) fn sync_scrollable_reveal(state: &mut State, id: PaneId, arm_axis_change: bool) {
+    let ws = &state.current().workspaces[state.current().active_workspace];
+    if ws.layout_kind != LayoutKind::Scrollable {
+        return;
+    }
+    if !ws
+        .panes
+        .iter()
+        .any(|pane| pane.id == id && !pane.floating && !pane.closing)
+    {
+        return;
+    }
+    let prior_scrollable_anchor = scrollable_viewport_anchor(ws, &ws.tiled_ids());
+    let prior_reveal_edge = Some(ws.scrollable_reveal_edge);
+    let reveal_decision = classify_scrollable_reveal(state, id, prior_scrollable_anchor);
+    apply_scrollable_reveal_decision(
+        state,
+        id,
+        prior_scrollable_anchor,
+        prior_reveal_edge,
+        reveal_decision,
+        arm_axis_change,
+    );
+}
+
+fn apply_scrollable_reveal_decision(
+    state: &mut State,
+    id: PaneId,
+    prior_scrollable_anchor: Option<PaneId>,
+    prior_reveal_edge: Option<ScrollableRevealEdge>,
+    reveal_decision: Option<ScrollableRevealDecision>,
+    arm_axis_change: bool,
+) {
+    match reveal_decision {
+        Some(ScrollableRevealDecision::Preserve) => {
+            // Keep the strip put: materialize the pre-focus effective anchor so a
+            // None/stale stored value cannot flip the fallback after focus mutates.
+            if let Some(anchor) = prior_scrollable_anchor {
+                state.active_workspace_mut().set_scrollable_viewport(
+                    Some(anchor),
+                    prior_reveal_edge.unwrap_or(ScrollableRevealEdge::Left),
+                );
+            }
+        }
+        Some(ScrollableRevealDecision::Align(edge)) => {
+            state
+                .active_workspace_mut()
+                .set_scrollable_viewport(Some(id), edge);
+            if arm_axis_change {
+                let ws = &state.current().workspaces[state.current().active_workspace];
+                let new_anchor = scrollable_viewport_anchor(ws, &ws.tiled_ids());
+                let edge_changed = prior_reveal_edge.is_some_and(|prior| prior != edge);
+                if new_anchor != prior_scrollable_anchor || edge_changed {
+                    state.animation = GeometryAnimation::AxisChange;
+                }
+            }
+        }
+        None => {
+            state
+                .active_workspace_mut()
+                .set_scrollable_viewport(Some(id), ScrollableRevealEdge::Left);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScrollableRevealDecision {
+    Preserve,
+    Align(ScrollableRevealEdge),
+}
+
+/// Classify how Scrollable focus should adjust the local viewport before mutation.
+///
+/// Uses the current rendered visible interval when available; otherwise tiled order relative to
+/// the prior effective anchor (leftward → Left, rightward → Right, same → keep current edge).
+fn classify_scrollable_reveal(
+    state: &State,
+    target: PaneId,
+    prior_anchor: Option<PaneId>,
+) -> Option<ScrollableRevealDecision> {
+    let ws = &state.current().workspaces[state.current().active_workspace];
+    if ws.layout_kind != LayoutKind::Scrollable {
+        return None;
+    }
+    if !ws
+        .panes
+        .iter()
+        .any(|pane| pane.id == target && !pane.floating && !pane.closing)
+    {
+        return None;
+    }
+
+    let current_edge = ws.scrollable_reveal_edge;
+    let tiled = ws.tiled_ids();
+    let order_edge =
+        || scrollable_reveal_edge_from_order(&tiled, target, prior_anchor, current_edge);
+
+    let Some(viewport) = state.last_viewport.get() else {
+        return Some(ScrollableRevealDecision::Align(order_edge()));
+    };
+
+    // Same allocation path as `view::render`: canonical/letterbox layout + local visible clamp.
+    let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+    let local = state.canvas_bounds_from_terminal_viewport(viewport);
+    let top_gap = state.workspace_top_gap();
+    let tile_gap = state.tile_gap();
+    let placements =
+        workspace_target_rects_with_visible_bounds(ws, letterbox, local, top_gap, tile_gap);
+    let Some(rect) = placement_for(&placements, target) else {
+        return Some(ScrollableRevealDecision::Align(order_edge()));
+    };
+
+    let tile_letterbox = workspace_tile_bounds(letterbox, top_gap);
+    let tile_local = workspace_tile_bounds(local, top_gap);
+    let visible_left = tile_letterbox.x.max(tile_local.x);
+    let visible_right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
+    if visible_right <= visible_left {
+        return Some(ScrollableRevealDecision::Align(order_edge()));
+    }
+
+    // Cell-safe epsilon: whole-cell placement rounding must not flip containment.
+    const EPS: f32 = 0.5;
+    let left_clipped = rect.x < visible_left - EPS;
+    let right_clipped = rect.x + rect.w > visible_right + EPS;
+    match (left_clipped, right_clipped) {
+        (false, false) => Some(ScrollableRevealDecision::Preserve),
+        (true, false) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Left)),
+        (false, true) => Some(ScrollableRevealDecision::Align(ScrollableRevealEdge::Right)),
+        (true, true) => Some(ScrollableRevealDecision::Align(order_edge())),
+    }
+}
+
+/// Reveal edge from tiled order when there is no usable rendered clip side (no viewport, both
+/// edges clipped / wider than visible, or degenerate visible interval).
+fn scrollable_reveal_edge_from_order(
+    tiled: &[PaneId],
+    target: PaneId,
+    prior: Option<PaneId>,
+    current_edge: ScrollableRevealEdge,
+) -> ScrollableRevealEdge {
+    let target_idx = tiled.iter().position(|id| *id == target);
+    let prior_idx = prior.and_then(|id| tiled.iter().position(|pane| *pane == id));
+    match (target_idx, prior_idx) {
+        (Some(t), Some(p)) if t < p => ScrollableRevealEdge::Left,
+        (Some(t), Some(p)) if t > p => ScrollableRevealEdge::Right,
+        (Some(_), Some(_)) => current_edge,
+        (Some(0), _) | (None, _) => ScrollableRevealEdge::Left,
+        (Some(_), None) => ScrollableRevealEdge::Right,
     }
 }
 
@@ -1418,6 +1653,84 @@ mod tests {
     }
 
     #[test]
+    fn move_focused_into_occupied_scrollable_reveals_at_right_edge() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::HyprmuxApp;
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].panes.clear();
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(Pane::new(10, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[0], 10);
+                    state.current_mut().workspaces[0].focused_pane = Some(10);
+
+                    state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[1].panes.clear();
+                    for id in [1, 2, 3, 4] {
+                        state.current_mut().workspaces[1]
+                            .panes
+                            .push(Pane::new(id, 100, rect));
+                        append_tiled_window(&mut state.current_mut().workspaces[1], id);
+                    }
+                    state.current_mut().active_workspace = 1;
+                    focus_pane(state, 4);
+                    state.current_mut().active_workspace = 0;
+                    state.current_mut().focused_pane = Some(10);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.state_mut().current_mut().active_workspace = 1;
+                backend.render();
+                assert_eq!(
+                    backend.state().current().workspaces[1].scrollable_anchor,
+                    Some(4)
+                );
+                backend.state_mut().current_mut().active_workspace = 0;
+                backend.state_mut().current_mut().focused_pane = Some(10);
+                backend.state_mut().animation = GeometryAnimation::None;
+
+                move_focused_to_workspace(backend.state_mut(), 1);
+                assert_eq!(backend.state().current().active_workspace, 1);
+                assert_eq!(backend.state().current().focused_pane, Some(10));
+                assert_eq!(
+                    backend.state().animation,
+                    GeometryAnimation::None,
+                    "cross-workspace move stays instant"
+                );
+                assert_eq!(
+                    backend.state().current().workspaces[1].scrollable_reveal_edge,
+                    ScrollableRevealEdge::Right
+                );
+                assert_eq!(
+                    backend.state().current().workspaces[1].scrollable_anchor,
+                    Some(10)
+                );
+                backend.render();
+                assert_right_edge_aligned(backend.state(), 10);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
     fn switching_workspaces_restores_each_workspaces_focused_pane() {
         let mut state = state_with_tiled(&[1, 2]);
         focus_pane(&mut state, 2);
@@ -1536,6 +1849,68 @@ mod tests {
         assert!(!promote_focused_to_master(&mut state));
     }
 
+    #[test]
+    fn promote_scrollable_reveals_focused_under_preserved_non_focus_anchor() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2, 3, 4] {
+                        let mut pane = Pane::new(id, 100, rect);
+                        pane.scrollable_width = 0.30;
+                        state.current_mut().workspaces[0].panes.push(pane);
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    focus_pane(state, 4);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::FocusPane(3))
+                    .expect("visible under right");
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(4)
+                );
+                assert!(promote_focused_to_master(backend.state_mut()));
+                backend.state_mut().animation = GeometryAnimation::AxisChange;
+                assert_eq!(backend.state().current().focused_pane, Some(3));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(3)
+                );
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_reveal_edge,
+                    ScrollableRevealEdge::Left
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                backend.render();
+                assert_left_edge_aligned(backend.state(), 3);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
     fn set_reported_status(pane: &mut Pane, value: &str) {
         pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
             value: value.to_string(),
@@ -1581,5 +1956,695 @@ mod tests {
             .terminal
             .reported_status = None;
         assert_eq!(next_blocked_pane(&state), None);
+    }
+
+    fn scrollable_state(ids: &[PaneId], focus: PaneId) -> State {
+        let mut state = state_with_tiled(ids);
+        state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+        focus_pane(&mut state, focus);
+        state.animation = GeometryAnimation::None;
+        state
+    }
+
+    fn placement_x(state: &State, id: PaneId) -> f32 {
+        placement_of(state, id).x
+    }
+
+    fn placement_of(state: &State, id: PaneId) -> FloatRect {
+        let viewport = state.last_viewport.get().expect("viewport");
+        let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+        let local = state.canvas_bounds_from_terminal_viewport(viewport);
+        let placements = workspace_target_rects_with_visible_bounds(
+            &state.current().workspaces[state.current().active_workspace],
+            letterbox,
+            local,
+            state.workspace_top_gap(),
+            state.tile_gap(),
+        );
+        placement_for(&placements, id).expect("placement")
+    }
+
+    fn visible_tile(state: &State) -> FloatRect {
+        let viewport = state.last_viewport.get().expect("viewport");
+        let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+        let local = state.canvas_bounds_from_terminal_viewport(viewport);
+        let top_gap = state.workspace_top_gap();
+        let tile_letterbox = workspace_tile_bounds(letterbox, top_gap);
+        let tile_local = workspace_tile_bounds(local, top_gap);
+        let left = tile_letterbox.x.max(tile_local.x);
+        let right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
+        FloatRect {
+            x: left,
+            y: tile_local.y,
+            w: (right - left).max(0.0),
+            h: tile_local.h,
+        }
+    }
+
+    fn assert_fully_in_visible(state: &State, id: PaneId) {
+        let visible = visible_tile(state);
+        let rect = placement_of(state, id);
+        assert!(
+            rect.x >= visible.x - 0.5 && rect.x + rect.w <= visible.x + visible.w + 0.5,
+            "pane {id} {rect:?} not inside visible {visible:?}"
+        );
+    }
+
+    fn assert_left_edge_aligned(state: &State, id: PaneId) {
+        let visible = visible_tile(state);
+        let rect = placement_of(state, id);
+        assert!(
+            (rect.x - visible.x).abs() < 0.5,
+            "pane {id} left edge {rect:?} must meet visible left {visible:?}"
+        );
+    }
+
+    fn assert_right_edge_aligned(state: &State, id: PaneId) {
+        let visible = visible_tile(state);
+        let rect = placement_of(state, id);
+        assert!(
+            (rect.x + rect.w - (visible.x + visible.w)).abs() < 0.5,
+            "pane {id} right edge {rect:?} must meet visible right {visible:?}"
+        );
+    }
+
+    #[test]
+    fn scrollable_focus_pane_arms_axis_change_only_when_anchor_moves() {
+        let mut state = scrollable_state(&[1, 2, 3, 4], 1);
+        assert_eq!(state.animation, GeometryAnimation::None);
+        focus_pane(&mut state, 1);
+        assert_eq!(
+            state.animation,
+            GeometryAnimation::None,
+            "reaffirming the focused/anchored pane must not re-arm"
+        );
+
+        // No last_viewport yet: fall back to scroll-to-target.
+        focus_pane(&mut state, 4);
+        assert_eq!(state.animation, GeometryAnimation::AxisChange);
+        assert_eq!(state.current().workspaces[0].scrollable_anchor, Some(4));
+
+        state.animation = GeometryAnimation::None;
+        focus_pane(&mut state, 4);
+        assert_eq!(state.animation, GeometryAnimation::None);
+
+        let anchor = state.current().workspaces[0].scrollable_anchor;
+        let mut floating = Pane::new(
+            99,
+            100,
+            FloatRect {
+                x: 5.0,
+                y: 5.0,
+                w: 20.0,
+                h: 10.0,
+            },
+        );
+        floating.floating = true;
+        floating.opening = false;
+        state.current_mut().workspaces[0].panes.push(floating);
+        state.animation = GeometryAnimation::None;
+        focus_pane(&mut state, 99);
+        assert_eq!(state.current().focused_pane, Some(99));
+        assert_eq!(
+            state.current().workspaces[0].scrollable_anchor,
+            anchor,
+            "floating focus must not rewrite the tiled Scrollable anchor"
+        );
+        assert_eq!(
+            state.animation,
+            GeometryAnimation::None,
+            "floating focus must not arm strip animation"
+        );
+
+        focus_pane(&mut state, 999);
+        assert_eq!(state.animation, GeometryAnimation::None);
+        assert_eq!(state.current().focused_pane, Some(99));
+    }
+
+    #[test]
+    fn scrollable_focus_preserves_viewport_for_fully_visible_targets() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    state.current_mut().workspaces[0].tile_tree = None;
+                    for id in [1, 2, 3, 4] {
+                        state.current_mut().workspaces[0]
+                            .panes
+                            .push(Pane::new(id, 100, rect));
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+
+                let before = placement_x(backend.state(), 1);
+                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1),
+                    "fully visible focus materializes/preserves the pre-focus effective anchor"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert!(
+                    (placement_x(backend.state(), 1) - before).abs() < 1e-5,
+                    "fully visible focus must not shift placements"
+                );
+
+                let before = placement_x(backend.state(), 1);
+                backend.dispatch(Msg::FocusPane(3)).expect("focus clipped");
+                assert_eq!(backend.state().current().focused_pane, Some(3));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(3)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                assert!(
+                    (placement_x(backend.state(), 1) - before).abs() > 0.5,
+                    "partly/outside focus must scroll the strip"
+                );
+                assert_right_edge_aligned(backend.state(), 3);
+                let sibling = &backend.state().current().workspaces[0].panes[0];
+                let cfg = HyprmuxApp::geometry_transition_for_pane(backend.state(), sibling, false);
+                assert!(cfg.duration > std::time::Duration::ZERO);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn scrollable_focus_from_right_scroll_preserves_visible_and_scrolls_clipped() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2, 3, 4] {
+                        let mut pane = Pane::new(id, 100, rect);
+                        // Narrow enough that panes 2 and 3 stay fully visible under a right
+                        // anchor on 4, while pane 1 stays left-clipped.
+                        pane.scrollable_width = 0.30;
+                        state.current_mut().workspaces[0].panes.push(pane);
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    focus_pane(state, 4);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(4)
+                );
+                {
+                    let visible = visible_tile(backend.state());
+                    let p2 = placement_of(backend.state(), 2);
+                    let p1 = placement_of(backend.state(), 1);
+                    assert!(
+                        p2.x >= visible.x - 0.5 && p2.x + p2.w <= visible.x + visible.w + 0.5,
+                        "precondition: pane 2 fully visible"
+                    );
+                    assert!(p1.x < visible.x - 0.5, "precondition: pane 1 left-clipped");
+                }
+
+                let before = placement_x(backend.state(), 4);
+                backend.dispatch(Msg::FocusPane(3)).expect("focus visible");
+                assert_eq!(backend.state().current().focused_pane, Some(3));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(4)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
+
+                // Adjacent still-visible pane to the left of 3 must not move the strip.
+                let before = placement_x(backend.state(), 4);
+                backend
+                    .dispatch(Msg::FocusPane(2))
+                    .expect("focus adjacent visible");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(4),
+                    "fully visible leftward focus keeps the right-scrolled anchor"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert!((placement_x(backend.state(), 4) - before).abs() < 1e-5);
+
+                let before = placement_x(backend.state(), 4);
+                backend
+                    .dispatch(Msg::FocusPane(1))
+                    .expect("focus left-clipped");
+                assert_eq!(backend.state().current().focused_pane, Some(1));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1)
+                );
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_reveal_edge,
+                    ScrollableRevealEdge::Left
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                assert!((placement_x(backend.state(), 4) - before).abs() > 0.5);
+                assert_left_edge_aligned(backend.state(), 1);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn scrollable_focus_materializes_stale_none_anchor_without_scrolling() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2] {
+                        state.current_mut().workspaces[0]
+                            .panes
+                            .push(Pane::new(id, 100, rect));
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    state.current_mut().workspaces[0].focused_pane = Some(1);
+                    state.current_mut().focused_pane = Some(1);
+                    state.current_mut().workspaces[0].scrollable_anchor = None;
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                let before = placement_x(backend.state(), 1);
+                backend.dispatch(Msg::FocusPane(2)).expect("focus visible");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1),
+                    "None/stale stored anchor must materialize the pre-focus effective fallback"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn scrollable_follower_letterbox_uses_local_visible_intersection() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::state::SharedSessionState;
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                // Local viewport narrower than the controller canvas → letterbox overhang.
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 50,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().session_attached = true;
+                    let mut shared = SharedSessionState::new(1);
+                    shared.controller = Some(2);
+                    shared.canonical_canvas = Some((100, 28));
+                    state.current_mut().shared = Some(shared);
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2] {
+                        let mut pane = Pane::new(id, 100, rect);
+                        // Wide enough that pane 2 sits inside the canonical tile but past the
+                        // local visible edge when anchored on pane 1.
+                        pane.scrollable_width = 0.45;
+                        state.current_mut().workspaces[0].panes.push(pane);
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                let before = placement_of(backend.state(), 2);
+                assert!(
+                    before.x + before.w
+                        > visible_tile(backend.state()).x + visible_tile(backend.state()).w,
+                    "precondition: pane 2 must start locally clipped"
+                );
+
+                backend
+                    .dispatch(Msg::FocusPane(2))
+                    .expect("focus locally clipped");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(2),
+                    "local letterbox clip must not count as fully visible"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                let after = placement_of(backend.state(), 2);
+                assert!(
+                    (after.x - before.x).abs() > 0.5,
+                    "follower scroll must actually move placements"
+                );
+                assert_fully_in_visible(backend.state(), 2);
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+
+                // First pane starts left of the local viewport under canonical letterbox; focusing
+                // it must use negative scroll range to reveal it.
+                {
+                    let state = backend.state_mut();
+                    focus_pane(state, 2);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                let before_first = placement_of(backend.state(), 1);
+                assert!(
+                    before_first.x < visible_tile(backend.state()).x - 0.5,
+                    "precondition: first pane left-clipped by letterbox"
+                );
+                backend
+                    .dispatch(Msg::FocusPane(1))
+                    .expect("reveal first pane");
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                assert_fully_in_visible(backend.state(), 1);
+                assert!((placement_of(backend.state(), 1).x - before_first.x).abs() > 0.5);
+
+                // Narrower panes with a third column so 1–2 stay preferred (no two-pane flex)
+                // and both fit inside the local visible interval under a left anchor.
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    for pane in &mut state.current_mut().workspaces[0].panes {
+                        pane.scrollable_width = 0.20;
+                    }
+                    let mut third = Pane::new(3, 100, rect);
+                    third.scrollable_width = 0.20;
+                    state.current_mut().workspaces[0].panes.push(third);
+                    append_tiled_window(&mut state.current_mut().workspaces[0], 3);
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                let before = placement_x(backend.state(), 1);
+                backend
+                    .dispatch(Msg::FocusPane(2))
+                    .expect("focus locally visible");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(1)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+                assert!((placement_x(backend.state(), 1) - before).abs() < 1e-5);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn scrollable_focus_reveals_partly_left_clipped_local_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2, 3, 4, 5] {
+                        let mut pane = Pane::new(id, 100, rect);
+                        pane.scrollable_width = 0.35;
+                        state.current_mut().workspaces[0].panes.push(pane);
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    // Anchor near the right so pane 2 straddles the left visible edge.
+                    focus_pane(state, 4);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                let visible = visible_tile(backend.state());
+                let pane2 = placement_of(backend.state(), 2);
+                assert!(
+                    pane2.x < visible.x - 0.5 && pane2.x + pane2.w > visible.x + 0.5,
+                    "precondition: pane 2 partly left-clipped ({pane2:?} vs {visible:?})"
+                );
+                let before = pane2.x;
+                backend.dispatch(Msg::FocusPane(2)).expect("focus partial");
+                assert_eq!(backend.state().current().focused_pane, Some(2));
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_anchor,
+                    Some(2)
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                assert!((placement_of(backend.state(), 2).x - before).abs() > 0.5);
+                assert_fully_in_visible(backend.state(), 2);
+                assert_left_edge_aligned(backend.state(), 2);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn scrollable_focus_wide_pane_reaffirm_keeps_reveal_edge() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 40,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[0].panes.clear();
+                    for id in [1, 2] {
+                        let mut pane = Pane::new(id, 100, rect);
+                        // Wider than the local viewport so both edges stay clipped.
+                        pane.scrollable_width = 0.80;
+                        state.current_mut().workspaces[0].panes.push(pane);
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+                backend
+                    .dispatch(Msg::FocusPane(2))
+                    .expect("focus wide rightward");
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_reveal_edge,
+                    ScrollableRevealEdge::Right
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+                backend.state_mut().animation = GeometryAnimation::None;
+                backend.dispatch(Msg::FocusPane(2)).expect("reaffirm");
+                assert_eq!(
+                    backend.state().current().workspaces[0].scrollable_reveal_edge,
+                    ScrollableRevealEdge::Right
+                );
+                assert_eq!(
+                    backend.state().animation,
+                    GeometryAnimation::None,
+                    "reaffirming a wide anchored pane must not re-arm"
+                );
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+    }
+
+    #[test]
+    fn focus_pane_anywhere_cross_workspace_finishes_instant() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use std::sync::mpsc;
+
+                use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
+                use crate::{HyprmuxApp, Msg};
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                {
+                    let state = backend.state_mut();
+                    let rect = FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    };
+                    state.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+                    for id in [2, 3, 4] {
+                        state.current_mut().workspaces[0]
+                            .panes
+                            .push(Pane::new(id, 100, rect));
+                        append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                    }
+                    state.current_mut().workspaces[1].layout_kind = LayoutKind::Scrollable;
+                    state.current_mut().workspaces[1]
+                        .panes
+                        .push(Pane::new(10, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[1], 10);
+                    state.current_mut().workspaces[1]
+                        .panes
+                        .push(Pane::new(11, 100, rect));
+                    append_tiled_window(&mut state.current_mut().workspaces[1], 11);
+                    focus_pane(state, 1);
+                    state.animation = GeometryAnimation::None;
+                }
+                backend.render();
+
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::Focus { target: 10 },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("cross-workspace focus");
+                assert!(response.recv().unwrap().ok);
+                assert_eq!(backend.state().current().active_workspace, 1);
+                assert_eq!(backend.state().current().focused_pane, Some(10));
+                assert_eq!(
+                    backend.state().animation,
+                    GeometryAnimation::None,
+                    "cross-workspace focus_pane_anywhere must finish instant"
+                );
+
+                backend.state_mut().animation = GeometryAnimation::None;
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::Focus { target: 11 },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("same-workspace focus");
+                assert!(response.recv().unwrap().ok);
+                assert_eq!(backend.state().current().active_workspace, 1);
+                assert_eq!(backend.state().current().focused_pane, Some(11));
+                assert_eq!(
+                    backend.state().current().workspaces[1].scrollable_anchor,
+                    Some(10),
+                    "same-workspace fully visible focus preserves the viewport"
+                );
+                assert_eq!(backend.state().animation, GeometryAnimation::None);
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
     }
 }

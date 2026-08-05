@@ -1142,8 +1142,9 @@ fn active_search_match_style() -> Style {
 
 /// Draggable strips on the boundary between adjacent tiled panes. Each strip resizes the split
 /// on that boundary. Only dwindle (both axes) and master (the master/stack divider) have
-/// adjustable ratios, so grid and monocle get no strips. With border merging on the gap is zero,
-/// so the strip straddles the shared seam column/row (one cell thick) instead of filling a gap.
+/// adjustable ratios, so grid/columns/scrollable/monocle get no strips. With border merging on
+/// the gap is zero, so the strip straddles the shared seam column/row (one cell thick) instead of
+/// filling a gap.
 pub(crate) fn tiled_resize_strips(
     ctx: &Context<HyprmuxApp>,
     placements: &[PanePlacement],

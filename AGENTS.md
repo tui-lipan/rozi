@@ -1,8 +1,8 @@
 # Project Overview
 
 `hyprmux` is a Hyprland-style tiling terminal multiplexer built on `tui-lipan`.
-It runs real PTY-backed panes inside a TUI window manager with dwindle/master/grid/monocle
-layouts, floating panes, workspaces, scrollback tools, command palettes, profiles, and optional
+It runs real PTY-backed panes inside a TUI window manager with dwindle/master/grid/columns/
+scrollable/monocle layouts, floating panes, workspaces, scrollback tools, command palettes, profiles, and optional
 server-backed named sessions for detach/reattach workflows.
 
 ## Repository Structure
@@ -213,7 +213,7 @@ Profiles restore layout and launch intent only, while a live session preserves P
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and
 share a revisioned `SharedLayout` (`src/shared_layout.rs`, wire protocol negotiated in a supported
-range; this build max 17, min 12). One client holds the
+range; this build max 19, min 19). One client holds the
 layout-control lease (the *controller*) and commits layout changes; the rest are *followers* that
 reconcile via `apply_shared_layout` without touching live screens, letterbox to the controller's
 canonical PTY size, and take control instantly with `take-control` (`prefix g`). Local view state

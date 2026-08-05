@@ -22,7 +22,7 @@ use tui_lipan::prelude::*;
 use crate::geometry::{
     clamp_float_rect, clamp_floating_rect, close_rect, empty_workspace_rect, viewport_bounds,
 };
-use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding};
+use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
 use crate::state::{PaneId, WORKBAR_HEIGHT};
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
@@ -53,6 +53,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     // (letterboxed); everyone else uses the full local canvas. Every downstream placement, float,
     // and empty-state rect derives from `bounds`, so centering here centers the whole workspace.
     let bounds = follower_letterbox_bounds(&ctx.state, viewport);
+    let local_bounds = ctx.state.canvas_bounds_from_terminal_viewport(viewport);
     let top_offset = ctx.state.content_top_offset();
     let top_gap = ctx.state.workspace_top_gap();
     let tile_gap = ctx.state.tile_gap();
@@ -62,8 +63,16 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         .moving_pane
         .filter(|session| !session.was_floating)
         .map(|session| session.id);
-    let placements =
-        workspace_target_rects_excluding(workspace, bounds, moving_tiled, top_gap, tile_gap);
+    // Scrollable needs the local canvas as the scroll clamp so follower letterbox overhang can
+    // still reveal clipped columns; other layouts ignore visible_bounds.
+    let placements = workspace_target_rects_excluding_with_visible(
+        workspace,
+        bounds,
+        Some(local_bounds),
+        moving_tiled,
+        top_gap,
+        tile_gap,
+    );
     let focused_pane = workspace.focused_pane.or(ctx.state.current().focused_pane);
     // Sampled every frame (even while closed) so the slide transition is seeded at 0.0 and the
     // first open animates up from below.
@@ -738,7 +747,7 @@ fn push_internal_divider(dividers: &mut Vec<InternalDivider>, mut divider: Inter
 /// canonical canvas centered in its own viewport (letterboxed; the origin may be negative when the
 /// canonical canvas is larger than the local one, clipping at the viewport edges). The controller
 /// and local/unattached sessions return their own full canvas.
-fn follower_letterbox_bounds(state: &crate::state::State, viewport: Rect) -> FloatRect {
+pub(crate) fn follower_letterbox_bounds(state: &crate::state::State, viewport: Rect) -> FloatRect {
     let local = state.canvas_bounds_from_terminal_viewport(viewport);
     let Some((cols, rows)) = state.follower_canonical_canvas() else {
         return local;

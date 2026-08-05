@@ -10,7 +10,7 @@ use crate::layout::{
     self, placement_for, target_tiled_pane_for_drop, workspace_target_rects,
     workspace_target_rects_excluding,
 };
-use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus};
+use crate::ops::focus::{active_pane_mut, focus_pane, request_pane_focus, sync_scrollable_reveal};
 use crate::state::{
     self, Direction, LayoutKind, MoveSession, PaneId, ResizeCorner, ResizeSession, State, TileGap,
     Workspace,
@@ -19,7 +19,9 @@ use crate::tiling::{
     SplitEdge, allocate_dwindle, move_tiled_window_around_target, resize_tiled_split_for_edge,
 };
 
-use super::tiling::{master_available_width, resize_master_split_by_pixels};
+use super::tiling::{
+    master_available_width, resize_master_split_by_pixels, resize_scrollable_width_by_pixels,
+};
 
 /// Whether tree-based split resizing applies to this layout. Grid and monocle place panes
 /// purely by formula - there is no ratio to adjust, and writing into the dwindle tree
@@ -255,14 +257,28 @@ pub(crate) fn begin_resize(
     if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
+    let workspace = ctx.state.current().active_workspace;
+    let scrollable_layout =
+        ctx.state.current().workspaces[workspace].layout_kind == LayoutKind::Scrollable;
+    // Clear first; focus_pane re-arms AxisChange only when Scrollable focus/anchor actually moves.
     ctx.state.animation = GeometryAnimation::None;
     focus_pane(&mut ctx.state, id);
     request_pane_focus(ctx, id);
-    let workspace = ctx.state.current().active_workspace;
     ensure_tile_tree(&mut ctx.state.current_mut().workspaces[workspace]);
     let start_floating_rect = active_pane_mut(&mut ctx.state, id)
         .filter(|pane| pane.floating)
         .map(|pane| pane.floating_rect);
+    let start_scrollable_width = {
+        let ws = &ctx.state.current().workspaces[workspace];
+        (scrollable_layout && start_floating_rect.is_none())
+            .then(|| {
+                ws.panes
+                    .iter()
+                    .find(|pane| pane.id == id && !pane.floating && !pane.closing)
+                    .map(|pane| pane.scrollable_width)
+            })
+            .flatten()
+    };
     ctx.state.resizing_pane = Some(ResizeSession {
         id,
         corner,
@@ -274,6 +290,7 @@ pub(crate) fn begin_resize(
             .split_ratios
             .clone(),
         start_floating_rect,
+        start_scrollable_width,
     });
     Update::full()
 }
@@ -300,12 +317,18 @@ pub(crate) fn resize_pane(
     }) else {
         return Update::none();
     };
-    ctx.state.animation = GeometryAnimation::None;
     let corner = session.corner;
     let ws_index = session.workspace;
     let start_tile_tree = session.start_tile_tree.clone();
     let start_split_ratios = session.start_split_ratios.clone();
     let start_floating_rect = session.start_floating_rect;
+    let start_scrollable_width = session.start_scrollable_width;
+    let scrollable_resize = start_scrollable_width.is_some();
+    if !scrollable_resize {
+        // Scrollable mouse resize retains an AxisChange armed by begin_resize so strip siblings
+        // can animate; other layouts keep snapping during the drag.
+        ctx.state.animation = GeometryAnimation::None;
+    }
     let workspace = &mut ctx.state.current_mut().workspaces[ws_index];
     workspace.tile_tree = start_tile_tree;
     workspace.split_ratios = start_split_ratios;
@@ -314,8 +337,18 @@ pub(crate) fn resize_pane(
     {
         pane.floating_rect = rect;
     }
-    let dx = (current.0 as i32 - from.0 as i32) as i16;
-    let dy = (current.1 as i32 - from.1 as i32) as i16;
+    if let Some(width) = start_scrollable_width
+        && let Some(pane) = ctx.state.current_mut().workspaces[ws_index]
+            .panes
+            .iter_mut()
+            .find(|pane| pane.id == id)
+    {
+        pane.scrollable_width = width;
+    }
+    // Keep signed deltas in i32: casting through i16 wraps for |delta| > 32767 and can flip
+    // grow/shrink direction on extreme pointer coordinates.
+    let dx = i32::from(current.0) - i32::from(from.0);
+    let dy = i32::from(current.1) - i32::from(from.1);
     let viewport = ctx.viewport();
     resize_pane_state(&mut ctx.state, id, corner, dx, dy, viewport);
     Update::full()
@@ -325,8 +358,8 @@ fn resize_pane_state(
     state: &mut State,
     id: PaneId,
     corner: ResizeCorner,
-    dx: i16,
-    dy: i16,
+    dx: i32,
+    dy: i32,
     viewport: Rect,
 ) {
     focus_pane(state, id);
@@ -340,13 +373,8 @@ fn resize_pane_state(
     }
 
     if pane.floating {
-        pane.floating_rect = resize_float_rect_from_corner(
-            pane.floating_rect,
-            corner,
-            f32::from(dx),
-            f32::from(dy),
-            bounds,
-        );
+        pane.floating_rect =
+            resize_float_rect_from_corner(pane.floating_rect, corner, dx as f32, dy as f32, bounds);
         return;
     }
 
@@ -381,10 +409,27 @@ fn resize_pane_state(
         resize_master_split_by_pixels(
             state.active_workspace_mut(),
             id,
-            f32::from(effective_dx),
+            effective_dx as f32,
             master_available_width(tile_bounds, tile_gap),
         );
         state.animation = GeometryAnimation::None;
+        return;
+    }
+    if layout_kind == LayoutKind::Scrollable {
+        // Horizontal delta only; vertical is ignored. Corner convention matches dwindle/master.
+        let bounds = state.canvas_bounds_from_terminal_viewport(viewport);
+        let tile_bounds = workspace_tile_bounds(bounds, state.workspace_top_gap());
+        let resized = resize_scrollable_width_by_pixels(
+            state.active_workspace_mut(),
+            id,
+            effective_dx as f32,
+            tile_bounds.w.max(1.0),
+        );
+        if resized {
+            // Sync local reveal from post-resize geometry without arming AxisChange. Do not force
+            // None here — begin_resize may have armed AxisChange so strip siblings still animate.
+            sync_scrollable_reveal(state, id, false);
+        }
         return;
     }
     if !layout_has_resizable_splits(layout_kind) {
@@ -409,8 +454,8 @@ fn resize_pane_state(
     };
 
     for (axis, pixels) in [
-        (state::SplitAxis::Horizontal, f32::from(effective_dx)),
-        (state::SplitAxis::Vertical, f32::from(effective_dy)),
+        (state::SplitAxis::Horizontal, effective_dx as f32),
+        (state::SplitAxis::Vertical, effective_dy as f32),
     ] {
         if pixels == 0.0 {
             continue;
@@ -696,6 +741,426 @@ mod tests {
             assert!(
                 state.resizing_pane.is_none(),
                 "no resize session should be opened for a follower"
+            );
+        });
+    }
+
+    fn scrollable_backend(focus: PaneId) -> TestBackend<HyprmuxApp> {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        backend.set_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 28.0,
+        };
+        {
+            let state = backend.state_mut();
+            let workspace = state.active_workspace_mut();
+            workspace.layout_kind = LayoutKind::Scrollable;
+            workspace.panes.clear();
+            for id in 1..=4 {
+                workspace.panes.push(Pane::new(id, 100, bounds));
+                crate::tiling::append_tiled_window(workspace, id);
+            }
+            workspace.focused_pane = Some(focus);
+            workspace.scrollable_anchor = Some(focus);
+            workspace.scrollable_reveal_edge = if focus == 1 {
+                crate::state::ScrollableRevealEdge::Left
+            } else {
+                crate::state::ScrollableRevealEdge::Right
+            };
+            state.current_mut().focused_pane = Some(focus);
+        }
+        backend.render();
+        backend
+    }
+
+    #[test]
+    fn scrollable_mouse_resize_uses_horizontal_corners_and_ignores_dy() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            let before = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            backend
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerRight, 10, 10, true))
+                .expect("begin");
+            backend
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::LowerRight,
+                    10,
+                    10,
+                    20,
+                    40,
+                    true,
+                ))
+                .expect("resize right");
+            let after_right = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            assert!(after_right > before, "right corner grows with +dx");
+
+            backend.state_mut().current_mut().workspaces[0].panes[0].scrollable_width = before;
+            backend
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerLeft, 50, 10, true))
+                .expect("begin left");
+            backend
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::LowerLeft,
+                    50,
+                    10,
+                    60,
+                    40,
+                    true,
+                ))
+                .expect("resize left");
+            let after_left = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            assert!(
+                after_left < before,
+                "left corner uses -dx so +pointer-x shrinks"
+            );
+        });
+    }
+
+    #[test]
+    fn mouse_resize_extreme_delta_keeps_grow_direction() {
+        // u16 delta 40000 narrows through i16 to a negative value and would flip grow→shrink.
+        const EXTREME: u16 = 40_000;
+        in_test_stack(|| {
+            let mut scrollable = scrollable_backend(1);
+            let before = scrollable.state().current().workspaces[0].panes[0].scrollable_width;
+            scrollable
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerRight, 0, 0, true))
+                .expect("begin scrollable");
+            scrollable
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::LowerRight,
+                    0,
+                    0,
+                    EXTREME,
+                    0,
+                    true,
+                ))
+                .expect("extreme scrollable resize");
+            let after = scrollable.state().current().workspaces[0].panes[0].scrollable_width;
+            assert!(
+                after > before,
+                "scrollable LowerRight +{EXTREME} must grow (got {after}, before {before}); i16 wrap would shrink"
+            );
+            assert_eq!(after, crate::state::MAX_SPLIT_RATIO);
+
+            let start = FloatRect {
+                x: 10.0,
+                y: 4.0,
+                w: 20.0,
+                h: 10.0,
+            };
+            let mut floating = floating_backend(start);
+            floating
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerRight, 0, 0, true))
+                .expect("begin float");
+            floating
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::LowerRight,
+                    0,
+                    0,
+                    EXTREME,
+                    EXTREME,
+                    true,
+                ))
+                .expect("extreme float resize");
+            let grown = floating_rect(&mut floating);
+            assert!(
+                grown.w > start.w && grown.h > start.h,
+                "floating LowerRight extreme delta must grow, got {grown:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_mouse_resize_deltas_do_not_compound() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            backend
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerRight, 10, 10, true))
+                .expect("begin");
+            for step in [5u16, 10, 15, 20] {
+                backend
+                    .dispatch(Msg::ResizePane(
+                        1,
+                        ResizeCorner::LowerRight,
+                        10,
+                        10,
+                        10 + step,
+                        10,
+                        true,
+                    ))
+                    .expect("resize step");
+            }
+            let width = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            let expected =
+                crate::tiling::sanitize_scrollable_width(crate::tiling::cell_split_ratio(
+                    crate::tiling::scrollable_column_width(
+                        100.0,
+                        crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    ) + 20.0,
+                    100.0,
+                ));
+            assert!(
+                (width - expected).abs() < 1e-5,
+                "absolute delta from start, got {width} expected ~{expected}"
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_resize_start_anchor_change_keeps_axis_change_for_siblings() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            let sibling_before = {
+                let state = backend.state();
+                let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let placements = workspace_target_rects(
+                    &state.current().workspaces[0],
+                    bounds,
+                    state.workspace_top_gap(),
+                    state.tile_gap(),
+                );
+                placement_for(&placements, 1).expect("sibling placement")
+            };
+            let sibling_width = backend.state().current().workspaces[0].panes[0].scrollable_width;
+
+            backend
+                .dispatch(Msg::BeginResize(4, ResizeCorner::LowerRight, 10, 10, true))
+                .expect("begin resize on later pane");
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert_eq!(backend.state().current().focused_pane, Some(4));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            assert!(
+                backend
+                    .state()
+                    .resizing_pane
+                    .as_ref()
+                    .is_some_and(|session| session.id == 4),
+                "active resize session keeps the resized pane on the instant transition gate"
+            );
+
+            {
+                let state = backend.state();
+                let resized = &state.current().workspaces[0].panes[3];
+                let sibling = &state.current().workspaces[0].panes[0];
+                let resized_cfg = HyprmuxApp::geometry_transition_for_pane(state, resized, false);
+                let sibling_cfg = HyprmuxApp::geometry_transition_for_pane(state, sibling, false);
+                assert_eq!(
+                    resized_cfg.duration,
+                    std::time::Duration::ZERO,
+                    "resized pane stays instant via resizing_pane gate"
+                );
+                assert_eq!(
+                    sibling_cfg.duration, state.config.animations.geometry_duration,
+                    "non-resized sibling keeps configured AxisChange duration"
+                );
+            }
+
+            backend
+                .dispatch(Msg::ResizePane(
+                    4,
+                    ResizeCorner::LowerRight,
+                    10,
+                    10,
+                    18,
+                    10,
+                    true,
+                ))
+                .expect("drag");
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::AxisChange,
+                "scrollable drag must retain the armed axis transition for strip siblings"
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].panes[0].scrollable_width,
+                sibling_width,
+                "sibling width is pane-owned and unchanged by a peer resize"
+            );
+            let sibling_after = {
+                let state = backend.state();
+                let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 30,
+                });
+                let placements = workspace_target_rects(
+                    &state.current().workspaces[0],
+                    bounds,
+                    state.workspace_top_gap(),
+                    state.tile_gap(),
+                );
+                placement_for(&placements, 1).expect("sibling placement after")
+            };
+            assert!(
+                (sibling_after.w - sibling_before.w).abs() < 1e-5,
+                "sibling target width unchanged; only strip x should move"
+            );
+            assert!(
+                (sibling_after.x - sibling_before.x).abs() > 0.5,
+                "anchor change must shift sibling x (before {} after {})",
+                sibling_before.x,
+                sibling_after.x
+            );
+        });
+    }
+
+    fn placement_of(state: &crate::state::State, id: PaneId) -> FloatRect {
+        let bounds = state.canvas_bounds_from_terminal_viewport(Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 30,
+        });
+        let placements = workspace_target_rects(
+            &state.current().workspaces[state.current().active_workspace],
+            bounds,
+            state.workspace_top_gap(),
+            state.tile_gap(),
+        );
+        placement_for(&placements, id).expect("placement")
+    }
+
+    #[test]
+    fn scrollable_focus_after_resize_rearms_axis_change() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            backend
+                .dispatch(Msg::BeginResize(1, ResizeCorner::LowerRight, 10, 10, true))
+                .expect("begin");
+            backend
+                .dispatch(Msg::ResizePane(
+                    1,
+                    ResizeCorner::LowerRight,
+                    10,
+                    10,
+                    30,
+                    10,
+                    true,
+                ))
+                .expect("resize");
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "same-pane scrollable resize leaves animation None"
+            );
+            backend
+                .dispatch(Msg::EndResize(1))
+                .expect("end resize session");
+            let before = placement_of(backend.state(), 1);
+
+            for _ in 0..8 {
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::Focus(
+                        Direction::Right,
+                    )))
+                    .expect("directional focus");
+                if backend.state().current().focused_pane == Some(4) {
+                    break;
+                }
+            }
+            assert_eq!(backend.state().current().focused_pane, Some(4));
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            let after = placement_of(backend.state(), 1);
+            assert!(
+                (after.x - before.x).abs() > 0.5,
+                "focus-scroll must shift placements (before.x={} after.x={})",
+                before.x,
+                after.x
+            );
+            let sibling = &backend.state().current().workspaces[0].panes[0];
+            let cfg = HyprmuxApp::geometry_transition_for_pane(backend.state(), sibling, false);
+            assert_eq!(
+                cfg.duration,
+                backend.state().config.animations.geometry_duration
+            );
+            assert!(cfg.duration > std::time::Duration::ZERO);
+        });
+    }
+
+    #[test]
+    fn scrollable_cycle_and_click_focus_rearm_axis_change_after_none() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            backend.state_mut().animation = GeometryAnimation::None;
+            let before = placement_of(backend.state(), 1);
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::CycleFocus(true)))
+                .expect("cycle");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1),
+                "cycle onto a fully visible neighbor must preserve the viewport anchor"
+            );
+            assert_eq!(backend.state().animation, GeometryAnimation::None);
+            assert!((placement_of(backend.state(), 1).x - before.x).abs() < 1e-5);
+
+            backend.state_mut().animation = GeometryAnimation::None;
+            let before = placement_of(backend.state(), 1);
+            backend.dispatch(Msg::FocusPane(4)).expect("click focus");
+            assert_eq!(backend.state().current().focused_pane, Some(4));
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            assert!(
+                (placement_of(backend.state(), 1).x - before.x).abs() > 0.5,
+                "clicking an off-viewport pane must shift the strip"
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_resize_drag_does_not_rearm_when_anchor_unchanged() {
+        in_test_stack(|| {
+            let mut backend = scrollable_backend(1);
+            backend
+                .dispatch(Msg::BeginResize(4, ResizeCorner::LowerRight, 10, 10, true))
+                .expect("begin on other pane");
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            backend.state_mut().animation = GeometryAnimation::None;
+            backend
+                .dispatch(Msg::ResizePane(
+                    4,
+                    ResizeCorner::LowerRight,
+                    10,
+                    10,
+                    20,
+                    10,
+                    true,
+                ))
+                .expect("drag");
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "drag must not re-arm once the Scrollable anchor is unchanged"
             );
         });
     }

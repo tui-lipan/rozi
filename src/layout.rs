@@ -3,9 +3,9 @@ use tui_lipan::prelude::FloatRect;
 use crate::geometry::{clamp_floating_rect, float_rect_contains_point, workspace_tile_bounds};
 use crate::state::{LayoutKind, Pane, PaneId, SplitAxis, TileGap, Workspace};
 use crate::tiling::{
-    DwindleTree, PanePlacement, allocate_dwindle, allocate_grid, allocate_master, allocate_monocle,
-    append_tiled_window, build_dwindle_tree, insert_leaf_around_target, prune_tree_to_ids,
-    ratio_at, tree_contains,
+    DwindleTree, PanePlacement, allocate_columns, allocate_dwindle, allocate_grid, allocate_master,
+    allocate_monocle, allocate_scrollable_with_visible, append_tiled_window, build_dwindle_tree,
+    insert_leaf_around_target, prune_tree_to_ids, ratio_at, tree_contains,
 };
 
 pub fn workspace_target_rects(
@@ -17,9 +17,49 @@ pub fn workspace_target_rects(
     workspace_target_rects_excluding(workspace, bounds, None, top_gap, tile_gap)
 }
 
+/// Like [`workspace_target_rects`], but Scrollable scrolling is clamped to `visible_bounds`
+/// (local canvas) while column widths still use canonical `bounds`. Non-Scrollable layouts ignore
+/// `visible_bounds`.
+pub fn workspace_target_rects_with_visible_bounds(
+    workspace: &Workspace,
+    bounds: FloatRect,
+    visible_bounds: FloatRect,
+    top_gap: f32,
+    tile_gap: TileGap,
+) -> Vec<PanePlacement> {
+    workspace_target_rects_excluding_with_visible(
+        workspace,
+        bounds,
+        Some(visible_bounds),
+        None,
+        top_gap,
+        tile_gap,
+    )
+}
+
 pub fn workspace_target_rects_excluding(
     workspace: &Workspace,
     bounds: FloatRect,
+    exclude_tiled: Option<PaneId>,
+    top_gap: f32,
+    tile_gap: TileGap,
+) -> Vec<PanePlacement> {
+    workspace_target_rects_excluding_with_visible(
+        workspace,
+        bounds,
+        None,
+        exclude_tiled,
+        top_gap,
+        tile_gap,
+    )
+}
+
+/// `visible_bounds` is the actually on-screen canvas (follower local viewport). When `None`,
+/// Scrollable scrolling uses `bounds` alone — the historical local/controller path.
+pub fn workspace_target_rects_excluding_with_visible(
+    workspace: &Workspace,
+    bounds: FloatRect,
+    visible_bounds: Option<FloatRect>,
     exclude_tiled: Option<PaneId>,
     top_gap: f32,
     tile_gap: TileGap,
@@ -46,6 +86,41 @@ pub fn workspace_target_rects_excluding(
             let ids = order_driven_ids(workspace, exclude_tiled);
             allocate_grid(&ids, tile_bounds, tile_gap, &mut placements);
         }
+        LayoutKind::Columns => {
+            let ids = order_driven_ids(workspace, exclude_tiled);
+            allocate_columns(&ids, tile_bounds, tile_gap, &mut placements);
+        }
+        LayoutKind::Scrollable => {
+            let ids = order_driven_ids(workspace, exclude_tiled);
+            let panes: Vec<(PaneId, f32)> = ids
+                .iter()
+                .map(|id| {
+                    let width = workspace
+                        .panes
+                        .iter()
+                        .find(|pane| pane.id == *id)
+                        .map(|pane| pane.scrollable_width)
+                        .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH);
+                    (*id, width)
+                })
+                .collect();
+            let anchor = scrollable_viewport_anchor(workspace, &ids);
+            // Scroll against the on-screen intersection of canonical and local tiles — not the
+            // whole local tile — so a wider follower viewport keeps letterbox centering.
+            let visible_tile = visible_bounds.map_or(tile_bounds, |visible| {
+                horizontal_tile_intersection(tile_bounds, workspace_tile_bounds(visible, top_gap))
+                    .unwrap_or(tile_bounds)
+            });
+            allocate_scrollable_with_visible(
+                &panes,
+                tile_bounds,
+                visible_tile,
+                tile_gap,
+                anchor,
+                workspace.scrollable_reveal_edge,
+                &mut placements,
+            );
+        }
         LayoutKind::Monocle => {
             let ids = order_driven_ids(workspace, exclude_tiled);
             allocate_monocle(&ids, tile_bounds, &mut placements);
@@ -66,14 +141,56 @@ pub fn workspace_target_rects_excluding(
     placements
 }
 
-/// Tiled ids for order-driven layouts (master/grid/monocle), in tree-leaf order with the
-/// optionally moving pane excluded.
+/// Horizontal intersection of canonical/layout and local tile bounds used as the Scrollable
+/// visible scroll clamp. `None` when the intervals do not overlap.
+fn horizontal_tile_intersection(layout: FloatRect, local: FloatRect) -> Option<FloatRect> {
+    let left = layout.x.max(local.x);
+    let right = (layout.x + layout.w).min(local.x + local.w);
+    if !left.is_finite() || !right.is_finite() {
+        return None;
+    }
+    let width = right - left;
+    if width <= 0.0 || !width.is_finite() {
+        return None;
+    }
+    Some(FloatRect {
+        x: left,
+        y: layout.y,
+        w: width,
+        h: layout.h,
+    })
+}
+
+/// Tiled ids for order-driven layouts (master/grid/columns/scrollable/monocle), in tree-leaf
+/// order with the optionally moving pane excluded.
 fn order_driven_ids(workspace: &Workspace, exclude_tiled: Option<PaneId>) -> Vec<PaneId> {
     workspace
         .tiled_ids()
         .into_iter()
         .filter(|id| Some(*id) != exclude_tiled)
         .collect()
+}
+
+/// Scrollable strip anchor: valid local anchor first (so a non-focusing spawn that only updates
+/// remembered `focused_pane` cannot steal the viewport), then focused tiled pane, then first tiled.
+pub(crate) fn scrollable_viewport_anchor(
+    workspace: &Workspace,
+    tiled_ids: &[PaneId],
+) -> Option<PaneId> {
+    if let Some(anchor) = workspace
+        .scrollable_anchor
+        .filter(|id| tiled_ids.contains(id))
+    {
+        return Some(anchor);
+    }
+    if let Some(focused) = workspace.focused_pane.filter(|id| {
+        workspace.panes.iter().any(|pane| {
+            pane.id == *id && !pane.floating && !pane.closing && tiled_ids.contains(&pane.id)
+        })
+    }) {
+        return Some(focused);
+    }
+    tiled_ids.first().copied()
 }
 
 pub fn effective_tile_tree(
@@ -247,11 +364,15 @@ pub fn place_spawned_pane(
     tile_gap: TileGap,
     split_width_multiplier: f32,
 ) -> SpawnPlacement {
-    // Order-driven layouts (master/grid/monocle) read pane order, not split structure, so a
-    // new pane simply appends to the end. Dwindle splits the focused tile.
+    // Order-driven layouts read pane order, not split structure, so a new pane simply appends.
+    // Dwindle splits the focused tile.
     if matches!(
         workspace.layout_kind,
-        LayoutKind::Master | LayoutKind::Grid | LayoutKind::Monocle
+        LayoutKind::Master
+            | LayoutKind::Grid
+            | LayoutKind::Columns
+            | LayoutKind::Scrollable
+            | LayoutKind::Monocle
     ) {
         append_tiled_window(workspace, id);
         return SpawnPlacement::Appended;
@@ -394,6 +515,77 @@ mod tests {
     }
 
     #[test]
+    fn columns_and_scrollable_spawns_append_not_split() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 120.0,
+            h: 40.0,
+        };
+        for kind in [LayoutKind::Columns, LayoutKind::Scrollable] {
+            let mut workspace = Workspace::new(0);
+            workspace.layout_kind = kind;
+            for id in 1..=3 {
+                let previous_focused = workspace.focused_pane;
+                workspace.panes.push(Pane::new(id, 100, bounds));
+                let placement = place_spawned_pane(
+                    &mut workspace,
+                    id,
+                    previous_focused,
+                    bounds,
+                    0.0,
+                    crate::state::TileGap::DEFAULT,
+                    crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER,
+                );
+                assert_eq!(placement, SpawnPlacement::Appended);
+                workspace.focused_pane = Some(id);
+            }
+            assert_eq!(workspace.tiled_ids(), vec![1, 2, 3]);
+        }
+    }
+
+    #[test]
+    fn scrollable_anchor_fallback_uses_local_anchor_when_focus_is_floating() {
+        let bounds = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let mut workspace = Workspace::new(0);
+        workspace.layout_kind = LayoutKind::Scrollable;
+        for id in 1..=3 {
+            workspace.panes.push(Pane::new(id, 100, bounds));
+            append_tiled_window(&mut workspace, id);
+        }
+        workspace.panes.push({
+            let mut floating = Pane::new(4, 100, bounds);
+            floating.floating = true;
+            floating
+        });
+        workspace.focused_pane = Some(4);
+        workspace.scrollable_anchor = Some(3);
+        workspace.scrollable_reveal_edge = crate::state::ScrollableRevealEdge::Right;
+
+        let placements =
+            workspace_target_rects(&workspace, bounds, 0.0, crate::state::TileGap::DEFAULT);
+        let anchored = placements.iter().find(|p| p.id == 3).unwrap();
+        assert!(
+            anchored.rect.x >= bounds.x - f32::EPSILON
+                && anchored.rect.x + anchored.rect.w <= bounds.x + bounds.w + f32::EPSILON,
+            "floating focus keeps the tiled scroll anchor fully visible"
+        );
+        assert!(
+            (anchored.rect.x + anchored.rect.w - (bounds.x + bounds.w)).abs() < f32::EPSILON,
+            "right reveal edge keeps later tiled anchors right-aligned under floating focus"
+        );
+
+        workspace.scrollable_anchor = Some(99);
+        let fallback = scrollable_viewport_anchor(&workspace, &workspace.tiled_ids());
+        assert_eq!(fallback, Some(1));
+    }
+
+    #[test]
     fn ordered_panes_draws_tiled_closing_panes_under_expanding_panes() {
         fn pane(id: PaneId) -> Pane {
             Pane::new(
@@ -434,5 +626,82 @@ mod tests {
             .collect();
 
         assert_eq!(ids, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn scrollable_wider_local_visible_keeps_canonical_centering() {
+        // Canonical letterbox centered in a wider local viewport: intersection == canonical tile.
+        let canonical = FloatRect {
+            x: 25.0,
+            y: 0.0,
+            w: 100.0,
+            h: 28.0,
+        };
+        let local = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 150.0,
+            h: 28.0,
+        };
+        let mut workspace = Workspace::new(0);
+        workspace.layout_kind = LayoutKind::Scrollable;
+        for id in [1, 2] {
+            let mut pane = Pane::new(id, 100, canonical);
+            pane.scrollable_width = 0.20;
+            workspace.panes.push(pane);
+            append_tiled_window(&mut workspace, id);
+        }
+        workspace.scrollable_anchor = Some(1);
+        workspace.focused_pane = Some(1);
+        // Three panes keep preferred widths so the strip stays short of the canonical tile.
+        workspace.panes.push({
+            let mut pane = Pane::new(3, 100, canonical);
+            pane.scrollable_width = 0.20;
+            pane
+        });
+        append_tiled_window(&mut workspace, 3);
+
+        let with_visible = workspace_target_rects_with_visible_bounds(
+            &workspace,
+            canonical,
+            local,
+            0.0,
+            TileGap::DEFAULT,
+        );
+        let canonical_only = workspace_target_rects(&workspace, canonical, 0.0, TileGap::DEFAULT);
+        assert_eq!(with_visible.len(), canonical_only.len());
+        for (got, expected) in with_visible.iter().zip(canonical_only.iter()) {
+            assert_eq!(got.id, expected.id);
+            assert!(
+                (got.rect.x - expected.rect.x).abs() < 1e-5,
+                "wider local must not shift strip: got {} expected {}",
+                got.rect.x,
+                expected.rect.x
+            );
+            assert!(got.rect.x >= canonical.x - 0.5);
+            assert!(got.rect.x + got.rect.w <= canonical.x + canonical.w + 0.5);
+        }
+        assert!(
+            (with_visible[0].rect.x - canonical.x).abs() < 1e-5,
+            "short strip stays left-aligned to canonical tile, not local edge"
+        );
+
+        assert!(
+            horizontal_tile_intersection(
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 10.0,
+                    h: 10.0
+                },
+                FloatRect {
+                    x: 20.0,
+                    y: 0.0,
+                    w: 10.0,
+                    h: 10.0
+                },
+            )
+            .is_none()
+        );
     }
 }

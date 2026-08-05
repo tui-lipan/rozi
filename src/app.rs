@@ -375,14 +375,22 @@ impl HyprmuxApp {
         pane: &Pane,
         viewport_changed: bool,
     ) -> TransitionConfig {
-        if !ctx.state.is_controller()
+        Self::geometry_transition_for_pane(&ctx.state, pane, viewport_changed)
+    }
+
+    /// Geometry transition policy for a pane. Extracted so tests can assert Scrollable resize
+    /// instant-vs-AxisChange behavior without constructing a live [`Context`].
+    pub(crate) fn geometry_transition_for_pane(
+        state: &State,
+        pane: &Pane,
+        viewport_changed: bool,
+    ) -> TransitionConfig {
+        if !state.is_controller()
             || viewport_changed
-            || ctx
-                .state
+            || state
                 .moving_pane
                 .is_some_and(|session| session.id == pane.id)
-            || ctx
-                .state
+            || state
                 .resizing_pane
                 .as_ref()
                 .is_some_and(|session| session.id == pane.id)
@@ -390,12 +398,12 @@ impl HyprmuxApp {
             return anim::instant_transition();
         }
 
-        let animations = ctx.state.config.animations;
+        let animations = state.config.animations;
         if !animations.enabled {
             return anim::instant_transition();
         }
 
-        let enabled = match ctx.state.animation {
+        let enabled = match state.animation {
             GeometryAnimation::None => false,
             GeometryAnimation::Spawn => animations.spawn,
             GeometryAnimation::Close => animations.close,

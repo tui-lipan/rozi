@@ -189,7 +189,7 @@ fn aggregate_outbox_high_water_survives_flush_and_disconnect() {
 }
 
 #[test]
-fn runtime_metrics_request_is_protocol_gated() {
+fn runtime_metrics_request_serves_protocol_19_peers() {
     let mut server = SessionServer::new_named("dev");
     let (current, _stream) = attach_client(&mut server);
     assert!(matches!(
@@ -200,27 +200,22 @@ fn runtime_metrics_request_is_protocol_gated() {
     ));
 
     let (legacy, _stream) = add_client(&mut server);
-    server.handle_message(
+    let responses = server.handle_message(
         legacy,
         ClientMessage::Attach {
             session: "dev".into(),
-            protocol_version: 17,
-            min_protocol_version: protocol::MIN_SUPPORTED_PROTOCOL,
+            protocol_version: 18,
+            min_protocol_version: 12,
             label: "legacy".into(),
             read_only: true,
         },
     );
-    assert_eq!(
-        server
-            .client_mut(legacy)
-            .expect("legacy attached")
-            .effective_protocol,
-        17
-    );
     assert!(
-        server
-            .handle_message(legacy, ClientMessage::RequestRuntimeMetrics)
-            .is_empty()
+        matches!(
+            responses.as_slice(),
+            [(_, ServerMessage::Error { code, .. })] if code == "protocol-mismatch"
+        ),
+        "pre-19 peers are rejected"
     );
 }
 

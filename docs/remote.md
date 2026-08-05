@@ -180,13 +180,11 @@ Client and server advertise a max and min protocol version on attach/query. They
 minimum. Within a supported range, wire changes are additive (`#[serde(default)]`); breaking changes
 bump `MIN_SUPPORTED_PROTOCOL`.
 
-This build speaks protocol **16**, with **12** as the minimum. Each version above the minimum adds
-messages the client sends only once negotiation reaches it: 13 the file-tree browsing messages, 14
-the parked flag, 15 the runtime control-takeover policy, 16 removing a client from a session. A
-16-client attached to a 12-server negotiates 12 and simply does not send them — everything else
-works, and the UI leaves out the affordances that would have needed them. Servers at v11 and
-earlier still do strict equality, so attaching to one surfaces the usual “kill it and start a new
-one” message, after which a fresh remote server speaks the negotiated range.
+This build speaks protocol **19** only (`MIN_SUPPORTED_PROTOCOL` is also 19). SharedLayout gained
+`columns` and `scrollable` layout kinds that older peers cannot deserialize, so pre-19 servers and
+clients are rejected rather than shimmed. Within 19, messages introduced earlier in the lineage
+remain available (13 file-tree browsing, 14 parked, 15 control-takeover policy, 16 evict client, 18
+runtime metrics). Restart existing session servers after upgrading.
 
 ## Local vs remote feature split
 

@@ -7,7 +7,7 @@ target rectangle. Each workspace carries its own layout.
 ## Tiled layouts
 
 Each workspace has a **layout kind**. `m` (*Toggle layout* in the palette) **cycles** through
-them: dwindle → master → grid → monocle → dwindle.
+them: dwindle → master → grid → columns → scrollable → monocle → dwindle.
 
 ### Dwindle (default)
 
@@ -48,14 +48,40 @@ Panes fill a near-square grid (`ceil(√N)` columns), row-major over the tiled p
 row stretches its (possibly fewer) cells to fill the width. Order-driven, like master - there
 are no split ratios to adjust.
 
+### Columns
+
+Every tiled pane is a full-height column. Widths are equal (aside from an unavoidable cell
+remainder) and together fill the tile bounds, respecting horizontal gaps and border merging.
+Order-driven and ratio-less - new panes append; resize mode and grow/shrink have no effect.
+
+### Scrollable
+
+Active tiled panes form ordered full-height columns on a horizontal strip. Each pane's stored
+width fraction (default `0.45`, clamped to `0.20`–`0.80`) is a flex basis rounded to whole cells of
+the canonical tile viewport - not a follower-local width. One tiled pane fills the whole tile
+regardless of its stored basis. Two panes whose preferred widths plus the gap fit share the
+remaining free cells evenly (order-balanced whole-cell remainder) so they exactly span the tile
+while preserving their basis difference; if they overflow, they keep independent preferred widths
+and the strip scrolls. Three or more panes always keep independent preferred widths (the default
+strip). Grow/shrink (`=`/`-`), resize mode Left/Right, and modifier+mouse horizontal corner drag
+adjust the focused pane's stored basis; Up/Down and vertical drag are no-ops, and there are no
+shared split-divider strips. The viewport stays put when the focused tiled pane is already fully
+visible; it scrolls only when that pane is horizontally clipped or outside the visible workspace.
+Reveal is mirrored and minimal: a target clipped on the left aligns its left edge with the visible
+left edge, and a target clipped on the right aligns its right edge with the visible right edge
+(clamped to the valid scroll range). A pane wider than the viewport picks the edge matching the
+focus movement direction and does not re-arm on reaffirm. Focusing a floating pane keeps the last
+tiled anchor and reveal edge. Off-viewport columns are clipped by the canvas. Order-driven.
+
 ### Monocle
 
 Every tiled pane fills the whole area; the focused pane is on top. Switch which pane is shown
 by cycling focus (`Tab`/`Shift+Tab`) or focusing directionally. PTYs for the hidden panes keep
 running. (For a quick one-pane maximize that restores afterward, use fullscreen `f` instead.)
 
-> **Resize and grid/monocle:** grid and monocle have no split ratios, so resize mode and the
-> grow/shrink keys have no effect there.
+> **Resize and ratio-less layouts:** grid, columns, and monocle have no adjustable pane widths or
+> split ratios, so resize mode and the grow/shrink keys have no effect there. Scrollable panes
+> are independently width-resizable (see above).
 
 ## Floating panes
 

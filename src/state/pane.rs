@@ -4,7 +4,7 @@ use tui_lipan::prelude::FloatRect;
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
-use super::{PaneId, PaneIdentity};
+use super::{DEFAULT_SCROLLABLE_WIDTH, PaneId, PaneIdentity};
 
 pub struct Pane {
     pub id: PaneId,
@@ -14,6 +14,8 @@ pub struct Pane {
     pub floating: bool,
     pub fullscreen: bool,
     pub floating_rect: FloatRect,
+    /// Scrollable layout column width as a fraction of the tile viewport.
+    pub scrollable_width: f32,
     pub opening: bool,
     pub terminal_active: bool,
     /// Removed from the layout but still described, so its close animation can run.
@@ -40,6 +42,7 @@ impl Pane {
             floating: false,
             fullscreen: false,
             floating_rect,
+            scrollable_width: DEFAULT_SCROLLABLE_WIDTH,
             opening: true,
             terminal_active: false,
             closing: false,

@@ -20,9 +20,9 @@ use crate::tiling::DwindleTree;
 /// Stable identity for an attached client, assigned by the server on attach.
 pub type ClientId = u64;
 
-/// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes; protocol v6
-/// carries version 1.
-pub const SHARED_LAYOUT_VERSION: u32 = 1;
+/// Wire-format version for [`SharedLayout`]. Bumped if the document shape changes.
+/// Version 2 adds per-pane `scrollable_width`.
+pub const SHARED_LAYOUT_VERSION: u32 = 2;
 
 /// The complete shared window-manager document for a session. Fractions in [`FracRect`] are
 /// relative to the controller's canonical pane canvas (`canvas_cols` × `canvas_rows`, excluding
@@ -65,6 +65,13 @@ pub struct SharedPane {
     pub fullscreen: bool,
     /// Fractions of the canonical canvas; `Some` only for floating panes.
     pub rect: Option<FracRect>,
+    /// Scrollable column width as a fraction of the tile viewport.
+    #[serde(default = "default_shared_scrollable_width")]
+    pub scrollable_width: f32,
+}
+
+fn default_shared_scrollable_width() -> f32 {
+    crate::state::DEFAULT_SCROLLABLE_WIDTH
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,6 +151,7 @@ fn shared_workspace_from_state(
                     w: pane.floating_rect.w / cols,
                     h: pane.floating_rect.h / rows,
                 }),
+                scrollable_width: crate::tiling::sanitize_scrollable_width(pane.scrollable_width),
             })
             .collect(),
     }
@@ -366,17 +374,31 @@ pub(crate) fn apply_shared_layout(
     }
 
     // Fix up focus per workspace: keep the current focus when it survived, else fall back to the
-    // first live pane.
-    for ws in &mut ctx.state.current_mut().workspaces {
+    // first live pane. Local scrollable anchors survive only while their tiled pane still exists.
+    // When focus falls back but a different Scrollable anchor remains, the fallback may sit under
+    // a right-scrolled viewport — remember to sync reveal for that workspace after active is known.
+    let mut scrollable_reveal_after_focus_fallback = [false; WORKSPACE_COUNT];
+    for (index, ws) in ctx.state.current_mut().workspaces.iter_mut().enumerate() {
         let focus_valid = ws
             .focused_pane
             .is_some_and(|id| ws.panes.iter().any(|pane| pane.id == id && !pane.closing));
-        if !focus_valid {
+        let focus_invalid = !focus_valid;
+        if focus_invalid {
             ws.focused_pane = ws
                 .panes
                 .iter()
                 .find(|pane| !pane.closing)
                 .map(|pane| pane.id);
+        }
+        let anchor_valid = ws.scrollable_anchor.is_some_and(|id| {
+            ws.panes
+                .iter()
+                .any(|pane| pane.id == id && !pane.closing && !pane.floating)
+        });
+        if !anchor_valid {
+            ws.set_scrollable_viewport(None, crate::state::ScrollableRevealEdge::Left);
+        } else if focus_invalid && ws.layout_kind == crate::state::LayoutKind::Scrollable {
+            scrollable_reveal_after_focus_fallback[index] = true;
         }
     }
     let active = ctx
@@ -386,6 +408,13 @@ pub(crate) fn apply_shared_layout(
         .min(WORKSPACE_COUNT - 1);
     ctx.state.current_mut().active_workspace = active;
     ctx.state.current_mut().focused_pane = ctx.state.current_mut().workspaces[active].focused_pane;
+    // Local-only reveal for a focus fallback under a surviving Scrollable anchor. Does not arm
+    // AxisChange — reconciler keeps Close/TileFloat below.
+    if scrollable_reveal_after_focus_fallback[active]
+        && let Some(focus) = ctx.state.current().focused_pane
+    {
+        crate::ops::focus::sync_scrollable_reveal(&mut ctx.state, focus, false);
+    }
 
     ctx.state.current_mut().next_pane_id = ctx.state.current_mut().next_pane_id.max(max_pane_id);
     ctx.state.current_mut().next_pty_generation = ctx
@@ -448,6 +477,7 @@ fn apply_shared_pane_fields(
     pane.identity.command = shared_pane.command.clone();
     pane.identity.replay = shared_pane.replay;
     pane.identity.keep_open = shared_pane.keep_open;
+    pane.scrollable_width = crate::tiling::sanitize_scrollable_width(shared_pane.scrollable_width);
 }
 
 #[cfg(test)]
@@ -473,6 +503,59 @@ mod tests {
         }))
         .expect("pre-replay shared pane parses");
         assert!(!pane.replay);
+        assert_eq!(
+            pane.scrollable_width,
+            crate::state::DEFAULT_SCROLLABLE_WIDTH
+        );
+    }
+
+    #[test]
+    fn shared_pane_scrollable_width_round_trips_and_sanitizes() {
+        let mut pane = SharedPane {
+            pane_id: 1,
+            generation: 1,
+            title: None,
+            profile_name: None,
+            cwd: None,
+            command: None,
+            replay: false,
+            keep_open: false,
+            floating: false,
+            fullscreen: false,
+            rect: None,
+            scrollable_width: 0.67,
+        };
+        let encoded = serde_json::to_value(&pane).unwrap();
+        assert!((encoded["scrollable_width"].as_f64().unwrap() - 0.67).abs() < 1e-6);
+        let decoded: SharedPane = serde_json::from_value(encoded).unwrap();
+        assert!((decoded.scrollable_width - 0.67).abs() < 1e-6);
+
+        pane.scrollable_width = f32::NAN;
+        let mut runtime = Pane::new(
+            1,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        apply_shared_pane_fields(
+            &mut runtime,
+            &pane,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        assert_eq!(
+            runtime.scrollable_width,
+            crate::state::DEFAULT_SCROLLABLE_WIDTH
+        );
+        assert_eq!(SHARED_LAYOUT_VERSION, 2);
     }
 
     fn state_with_split() -> State {
@@ -548,6 +631,50 @@ mod tests {
         let rebuilt = dwindle_from_shared(&tree, &known);
         assert_eq!(rebuilt, Some(DwindleTree::Leaf(1)));
     }
+
+    #[test]
+    fn shared_layout_round_trips_columns_and_scrollable_kinds() {
+        for kind in [SharedLayoutKind::Columns, SharedLayoutKind::Scrollable] {
+            let layout = SharedLayout {
+                version: SHARED_LAYOUT_VERSION,
+                canvas_cols: 80,
+                canvas_rows: 24,
+                workspaces: vec![SharedWorkspace {
+                    index: 0,
+                    name: None,
+                    synchronized: false,
+                    layout: kind,
+                    start_axis: SharedSplitAxis::Horizontal,
+                    split_ratios: Vec::new(),
+                    tree: None,
+                    panes: vec![SharedPane {
+                        pane_id: 1,
+                        generation: 1,
+                        title: None,
+                        profile_name: None,
+                        cwd: None,
+                        command: None,
+                        replay: false,
+                        keep_open: false,
+                        floating: false,
+                        fullscreen: false,
+                        rect: None,
+                        scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                    }],
+                }],
+            };
+            let encoded = serde_json::to_value(&layout).expect("encode");
+            let label = match kind {
+                SharedLayoutKind::Columns => "columns",
+                SharedLayoutKind::Scrollable => "scrollable",
+                _ => unreachable!(),
+            };
+            assert_eq!(encoded["workspaces"][0]["layout"], label);
+            assert!(!encoded.to_string().contains("scrollable_anchor"));
+            let decoded: SharedLayout = serde_json::from_value(encoded).expect("decode");
+            assert_eq!(decoded.workspaces[0].layout, kind);
+        }
+    }
 }
 
 /// Reconciler behavior driven through the real runtime (a follower/controller applying commits).
@@ -557,6 +684,7 @@ mod reconciler_tests {
     use crate::HyprmuxApp;
     use crate::Msg;
     use crate::input::Action;
+    use crate::ops::focus::focus_pane;
     use crate::pane_lifecycle::{find_pane, find_pane_mut};
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::ClientMessage;
@@ -597,6 +725,7 @@ mod reconciler_tests {
                         floating: false,
                         fullscreen: false,
                         rect: None,
+                        scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
                     })
                     .collect(),
             }],
@@ -831,6 +960,386 @@ mod reconciler_tests {
             assert_eq!(
                 shared.take_orphan_output(2, 6),
                 Some(b"future\r\n".to_vec())
+            );
+        });
+    }
+
+    #[test]
+    fn shared_layout_reconcile_preserves_or_clears_scrollable_anchor() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let layout = layout_with_panes(&[(1, 0), (2, 0)]);
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("seed shared layout");
+
+            backend.state_mut().current_mut().workspaces[0].scrollable_anchor = Some(2);
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 2,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("reconcile with survivor");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(2)
+            );
+
+            let mut without_anchor = layout_with_panes(&[(1, 0)]);
+            without_anchor.workspaces[0].layout = SharedLayoutKind::Scrollable;
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 3,
+                    author: 2,
+                    layout: without_anchor,
+                })
+                .expect("reconcile without survivor");
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                None
+            );
+        });
+    }
+
+    #[test]
+    fn shared_layout_focus_fallback_reveals_under_surviving_scrollable_anchor() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let mut layout = layout_with_panes(&[(1, 0), (2, 0), (3, 0), (4, 0)]);
+            layout.workspaces[0].layout = SharedLayoutKind::Scrollable;
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("seed scrollable");
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 4);
+                state.animation = crate::anim::GeometryAnimation::None;
+            }
+            backend.render();
+            // Focus a still-visible pane so the right anchor survives when that focus is removed.
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 3);
+                state.animation = crate::anim::GeometryAnimation::None;
+            }
+            backend.render();
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(3));
+
+            let mut without_focus = layout_with_panes(&[(1, 0), (2, 0), (4, 0)]);
+            without_focus.workspaces[0].layout = SharedLayoutKind::Scrollable;
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 2,
+                    author: 2,
+                    layout: without_focus,
+                })
+                .expect("remove focused pane");
+
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1),
+                "fallback focus must become the Scrollable reveal anchor"
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                crate::state::ScrollableRevealEdge::Left
+            );
+            assert_eq!(
+                backend.state().animation,
+                crate::anim::GeometryAnimation::Close,
+                "removing a pane keeps reconciler Close animation"
+            );
+            backend.render();
+            let visible = {
+                let state = backend.state();
+                let viewport = state.last_viewport.get().expect("viewport");
+                let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+                let local = state.canvas_bounds_from_terminal_viewport(viewport);
+                let top_gap = state.workspace_top_gap();
+                let tile_letterbox = crate::geometry::workspace_tile_bounds(letterbox, top_gap);
+                let tile_local = crate::geometry::workspace_tile_bounds(local, top_gap);
+                let left = tile_letterbox.x.max(tile_local.x);
+                let right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
+                FloatRect {
+                    x: left,
+                    y: tile_local.y,
+                    w: (right - left).max(0.0),
+                    h: tile_local.h,
+                }
+            };
+            let placements = crate::layout::workspace_target_rects_with_visible_bounds(
+                &backend.state().current().workspaces[0],
+                crate::view::follower_letterbox_bounds(
+                    backend.state(),
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().canvas_bounds_from_terminal_viewport(
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().workspace_top_gap(),
+                backend.state().tile_gap(),
+            );
+            let rect = crate::layout::placement_for(&placements, 1).expect("fallback placement");
+            assert!(
+                (rect.x - visible.x).abs() < 0.5,
+                "fallback pane must meet the left visible edge, got {rect:?} vs {visible:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn inactive_scrollable_focus_fallback_reveals_on_workspace_switch() {
+        in_stack(|| {
+            use crate::ops::focus::switch_workspace;
+            use crate::state::LayoutKind;
+
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            // Seed scrollable content on workspace 1 while staying active on 0.
+            let mut layout = SharedLayout {
+                version: SHARED_LAYOUT_VERSION,
+                canvas_cols: 100,
+                canvas_rows: 28,
+                workspaces: vec![
+                    SharedWorkspace {
+                        index: 0,
+                        name: None,
+                        synchronized: false,
+                        layout: SharedLayoutKind::Dwindle,
+                        start_axis: SharedSplitAxis::Horizontal,
+                        split_ratios: Vec::new(),
+                        tree: None,
+                        panes: vec![SharedPane {
+                            pane_id: 99,
+                            generation: 0,
+                            title: None,
+                            profile_name: None,
+                            cwd: None,
+                            command: None,
+                            replay: false,
+                            keep_open: false,
+                            floating: false,
+                            fullscreen: false,
+                            rect: None,
+                            scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                        }],
+                    },
+                    SharedWorkspace {
+                        index: 1,
+                        name: None,
+                        synchronized: false,
+                        layout: SharedLayoutKind::Scrollable,
+                        start_axis: SharedSplitAxis::Horizontal,
+                        split_ratios: Vec::new(),
+                        tree: None,
+                        panes: [1, 2, 3, 4]
+                            .into_iter()
+                            .map(|pane_id| SharedPane {
+                                pane_id,
+                                generation: 0,
+                                title: None,
+                                profile_name: None,
+                                cwd: None,
+                                command: None,
+                                replay: false,
+                                keep_open: false,
+                                floating: false,
+                                fullscreen: false,
+                                rect: None,
+                                scrollable_width: crate::state::DEFAULT_SCROLLABLE_WIDTH,
+                            })
+                            .collect(),
+                    },
+                ],
+            };
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout: layout.clone(),
+                })
+                .expect("seed multi-ws");
+            assert_eq!(backend.state().current().active_workspace, 0);
+
+            // Prepare ws1 viewport state as if it had been right-scrolled with focus on 3.
+            {
+                let state = backend.state_mut();
+                state.current_mut().active_workspace = 1;
+                focus_pane(state, 4);
+                state.animation = crate::anim::GeometryAnimation::None;
+            }
+            backend.render();
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 3);
+                state.animation = crate::anim::GeometryAnimation::None;
+                state.current_mut().active_workspace = 0;
+                state.current_mut().focused_pane = Some(99);
+                state.current_mut().workspaces[0].focused_pane = Some(99);
+            }
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(4)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].focused_pane,
+                Some(3)
+            );
+
+            // Remove focused pane 3 on inactive ws1; anchor 4 survives; active stays 0 so
+            // reconcile does not sync reveal for ws1.
+            layout.workspaces[1].panes.retain(|pane| pane.pane_id != 3);
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 2,
+                    author: 2,
+                    layout,
+                })
+                .expect("inactive focus fallback");
+            assert_eq!(backend.state().current().active_workspace, 0);
+            assert_eq!(
+                backend.state().current().workspaces[1].focused_pane,
+                Some(1)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(4),
+                "inactive ws keeps surviving right anchor until activation"
+            );
+
+            switch_workspace(backend.state_mut(), 1);
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(
+                backend.state().animation,
+                crate::anim::GeometryAnimation::None
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(1));
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_anchor,
+                Some(1)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].scrollable_reveal_edge,
+                crate::state::ScrollableRevealEdge::Left
+            );
+            assert_eq!(
+                backend.state().current().workspaces[1].layout_kind,
+                LayoutKind::Scrollable
+            );
+            backend.render();
+            let visible = {
+                let state = backend.state();
+                let viewport = state.last_viewport.get().expect("viewport");
+                let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+                let local = state.canvas_bounds_from_terminal_viewport(viewport);
+                let top_gap = state.workspace_top_gap();
+                let tile_letterbox = crate::geometry::workspace_tile_bounds(letterbox, top_gap);
+                let tile_local = crate::geometry::workspace_tile_bounds(local, top_gap);
+                let left = tile_letterbox.x.max(tile_local.x);
+                let right = (tile_letterbox.x + tile_letterbox.w).min(tile_local.x + tile_local.w);
+                FloatRect {
+                    x: left,
+                    y: tile_local.y,
+                    w: (right - left).max(0.0),
+                    h: tile_local.h,
+                }
+            };
+            let placements = crate::layout::workspace_target_rects_with_visible_bounds(
+                &backend.state().current().workspaces[1],
+                crate::view::follower_letterbox_bounds(
+                    backend.state(),
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().canvas_bounds_from_terminal_viewport(
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().workspace_top_gap(),
+                backend.state().tile_gap(),
+            );
+            let rect = crate::layout::placement_for(&placements, 1).expect("fallback");
+            assert!(
+                (rect.x - visible.x).abs() < 0.5,
+                "switch must left-align inactive fallback, got {rect:?} vs {visible:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn follower_reconcile_retains_scrollable_width_through_reemit() {
+        in_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(VIEWPORT);
+            let (client, _rx) = SessionClient::test_channel();
+            attach_follower(&mut backend, client);
+            backend.render();
+
+            let mut layout = layout_with_panes(&[(1, 0), (2, 0)]);
+            layout.workspaces[0].layout = SharedLayoutKind::Scrollable;
+            layout.workspaces[0].panes[0].scrollable_width = 0.62;
+            layout.workspaces[0].panes[1].scrollable_width = 9.0; // sanitize to MAX
+            backend
+                .dispatch(Msg::SessionLayoutCommitted {
+                    epoch: 0,
+                    rev: 1,
+                    author: 2,
+                    layout,
+                })
+                .expect("commit scrollable widths");
+
+            let ws = &backend.state().current().workspaces[0];
+            assert_eq!(ws.layout_kind, crate::state::LayoutKind::Scrollable);
+            assert!((ws.panes[0].scrollable_width - 0.62).abs() < 1e-6);
+            assert_eq!(
+                ws.panes[1].scrollable_width,
+                crate::state::MAX_SPLIT_RATIO,
+                "follower applies sanitize at the state boundary"
+            );
+
+            let reemitted = shared_layout_from_state(backend.state(), (100, 28));
+            assert_eq!(reemitted.version, SHARED_LAYOUT_VERSION);
+            assert_eq!(reemitted.workspaces[0].layout, SharedLayoutKind::Scrollable);
+            assert!(
+                (reemitted.workspaces[0].panes[0].scrollable_width - 0.62).abs() < 1e-6,
+                "commit → follower → re-serialize must retain non-default width"
+            );
+            assert_eq!(
+                reemitted.workspaces[0].panes[1].scrollable_width,
+                crate::state::MAX_SPLIT_RATIO
             );
         });
     }

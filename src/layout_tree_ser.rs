@@ -31,6 +31,8 @@ pub enum SerializedLayoutKind {
     Dwindle,
     Master,
     Grid,
+    Columns,
+    Scrollable,
     Monocle,
 }
 
@@ -40,6 +42,8 @@ impl From<LayoutKind> for SerializedLayoutKind {
             LayoutKind::Dwindle => Self::Dwindle,
             LayoutKind::Master => Self::Master,
             LayoutKind::Grid => Self::Grid,
+            LayoutKind::Columns => Self::Columns,
+            LayoutKind::Scrollable => Self::Scrollable,
             LayoutKind::Monocle => Self::Monocle,
         }
     }
@@ -51,6 +55,8 @@ impl From<SerializedLayoutKind> for LayoutKind {
             SerializedLayoutKind::Dwindle => Self::Dwindle,
             SerializedLayoutKind::Master => Self::Master,
             SerializedLayoutKind::Grid => Self::Grid,
+            SerializedLayoutKind::Columns => Self::Columns,
+            SerializedLayoutKind::Scrollable => Self::Scrollable,
             SerializedLayoutKind::Monocle => Self::Monocle,
         }
     }
@@ -134,6 +140,32 @@ where
                 (Some(only), None) | (None, Some(only)) if collapse_missing => Some(only),
                 _ => None,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialized_layout_kind_uses_kebab_case_for_new_variants() {
+        for (kind, label) in [
+            (SerializedLayoutKind::Columns, "columns"),
+            (SerializedLayoutKind::Scrollable, "scrollable"),
+        ] {
+            let encoded = serde_json::to_value(kind).expect("encode");
+            assert_eq!(encoded, label);
+            let decoded: SerializedLayoutKind = serde_json::from_value(encoded).expect("decode");
+            assert_eq!(decoded, kind);
+            assert_eq!(LayoutKind::from(kind).label(), label);
+
+            let toml = format!("layout = \"{label}\"\n");
+            #[derive(serde::Deserialize)]
+            struct Wrap {
+                layout: SerializedLayoutKind,
+            }
+            assert_eq!(toml::from_str::<Wrap>(&toml).unwrap().layout, kind);
         }
     }
 }

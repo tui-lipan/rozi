@@ -60,6 +60,8 @@ pub enum LayoutKind {
     Dwindle,
     Master,
     Grid,
+    Columns,
+    Scrollable,
     Monocle,
 }
 
@@ -67,7 +69,14 @@ impl LayoutKind {
     /// Every layout in cycle order. `toggled` walks this list, so the order here
     /// is the order `Action::ToggleLayout` rotates through.
     pub fn all() -> &'static [LayoutKind] {
-        &[Self::Dwindle, Self::Master, Self::Grid, Self::Monocle]
+        &[
+            Self::Dwindle,
+            Self::Master,
+            Self::Grid,
+            Self::Columns,
+            Self::Scrollable,
+            Self::Monocle,
+        ]
     }
 
     pub fn label(self) -> &'static str {
@@ -75,6 +84,8 @@ impl LayoutKind {
             Self::Dwindle => "dwindle",
             Self::Master => "master",
             Self::Grid => "grid",
+            Self::Columns => "columns",
+            Self::Scrollable => "scrollable",
             Self::Monocle => "monocle",
         }
     }
@@ -94,14 +105,26 @@ mod tests {
     fn layout_kind_cycles_through_every_layout() {
         assert_eq!(LayoutKind::Dwindle.toggled(), LayoutKind::Master);
         assert_eq!(LayoutKind::Master.toggled(), LayoutKind::Grid);
-        assert_eq!(LayoutKind::Grid.toggled(), LayoutKind::Monocle);
+        assert_eq!(LayoutKind::Grid.toggled(), LayoutKind::Columns);
+        assert_eq!(LayoutKind::Columns.toggled(), LayoutKind::Scrollable);
+        assert_eq!(LayoutKind::Scrollable.toggled(), LayoutKind::Monocle);
         assert_eq!(LayoutKind::Monocle.toggled(), LayoutKind::Dwindle);
-        assert_eq!(LayoutKind::all().len(), 4);
+        assert_eq!(LayoutKind::all().len(), 6);
     }
 
     #[test]
     fn layout_kind_labels_are_distinct() {
         let labels: Vec<&str> = LayoutKind::all().iter().map(|k| k.label()).collect();
-        assert_eq!(labels, ["dwindle", "master", "grid", "monocle"]);
+        assert_eq!(
+            labels,
+            [
+                "dwindle",
+                "master",
+                "grid",
+                "columns",
+                "scrollable",
+                "monocle"
+            ]
+        );
     }
 }

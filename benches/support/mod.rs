@@ -220,6 +220,7 @@ fn large_layout() -> SharedLayout {
                                 w: 0.7,
                                 h: 0.75,
                             }),
+                            scrollable_width: hyprmux::state::DEFAULT_SCROLLABLE_WIDTH,
                         }
                     })
                     .collect();

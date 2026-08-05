@@ -2,7 +2,8 @@
 
 `hyprmux` is a Hyprland-style tiling terminal multiplexer built on the
 [`tui-lipan`](../../tui-lipan) TUI framework. Each pane is a live PTY shell; panes are
-arranged with dwindle (or master) tiling, with floating windows, fullscreen, 9 workspaces,
+arranged with dwindle, master, grid, columns, scrollable, or monocle tiling, with floating
+windows, fullscreen, 9 workspaces,
 animated geometry, and tmux-style prefix commands.
 
 `hyprmux` runs an always-server model: a background session server owns every PTY and the UI
@@ -17,7 +18,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Installation & releases](installation.md) | Bootstrap installers, signed updates, rollback, managed layout, and release signing. |
 | [Keybindings](keybindings.md) | Prefix mode, held modifier, mouse gestures, resize mode, and the full key table. |
 | [Configuration](configuration.md) | The complete `hyprmux.toml` reference: shell, input, animations, theme, profile, clipboard. |
-| [Layouts & panes](layouts-and-panes.md) | Dwindle vs master tiling, floating, fullscreen, split ratios, focus and movement. |
+| [Layouts & panes](layouts-and-panes.md) | Tiled layout kinds, floating, fullscreen, split ratios, focus and movement. |
 | [Sidebar](sidebar.md) | Docked sidebar configuration, built-in tabs, navigation, and shared-session sizing. |
 | [Themes](themes.md) | The 29 selectable presets, the `system` theme and ANSI fallback, custom theme files, live hot-reload, and terminal colors. |
 | [Terminal features](terminal.md) | The live terminal: mouse reporting, selection, clipboard (OSC52), titles, and scrollback search. |
@@ -36,8 +37,8 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 
 - **Control paths** - a `Ctrl-a` prefix (always works) and a held `Alt`/`Super` modifier
   for active command keys. See [Keybindings](keybindings.md).
-- **Layouts** - dwindle tiling by default, master/stack per workspace, plus floating and
-  fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
+- **Layouts** - dwindle by default; master, grid, columns, scrollable, and monocle per
+  workspace; plus floating and fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
 - **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
 - **Named sessions** - `hyprmux <name>` creates/connects to a persistent PTY server.
 - **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See

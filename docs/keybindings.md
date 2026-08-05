@@ -181,7 +181,7 @@ mappings.
 | Grow split | `=` |
 | Shrink split | `-` |
 | Enter resize mode | `r` |
-| Cycle layout (dwindle → master → grid → monocle) | `m` |
+| Cycle layout (dwindle → master → grid → columns → scrollable → monocle) | `m` |
 
 See [Layouts and panes](layouts-and-panes.md) for what each layout does. "Zoom" is provided by
 *Toggle fullscreen* (`f`), which temporarily maximizes the focused pane.

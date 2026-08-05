@@ -178,6 +178,11 @@ pub(crate) fn attachment_from_profile(
             pane.identity.keep_open = pane_profile.keep_open;
             pane.floating = pane_profile.floating;
             pane.fullscreen = pane_profile.fullscreen;
+            pane.scrollable_width = crate::tiling::sanitize_scrollable_width(
+                pane_profile
+                    .scrollable_width
+                    .unwrap_or(crate::state::DEFAULT_SCROLLABLE_WIDTH),
+            );
             workspace.panes.push(pane);
         }
 
@@ -322,6 +327,10 @@ fn workspace_profile_from_state(
                 floating: pane.floating,
                 fullscreen: pane.fullscreen,
                 rect: pane.floating.then_some(pane.floating_rect.into()),
+                scrollable_width: {
+                    let width = crate::tiling::sanitize_scrollable_width(pane.scrollable_width);
+                    (width != crate::state::DEFAULT_SCROLLABLE_WIDTH).then_some(width)
+                },
             })
             .collect(),
     }
@@ -452,6 +461,9 @@ pub struct PaneProfile {
     pub floating: bool,
     pub fullscreen: bool,
     pub rect: Option<ProfileRect>,
+    /// Scrollable column width fraction; absent restores as [`crate::state::DEFAULT_SCROLLABLE_WIDTH`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrollable_width: Option<f32>,
 }
 
 pub type ProfileTree = SerializedTree<PaneId>;
@@ -1097,6 +1109,64 @@ mod tests {
         assert!(contents.contains("version = 1"), "contents: {contents}");
 
         std::fs::remove_dir_all(root).expect("temporary profile directory removed");
+    }
+
+    #[test]
+    fn profile_scrollable_width_defaults_and_round_trips() {
+        let absent = r#"
+version = 1
+active_workspace = 0
+[[workspaces]]
+index = 0
+layout = "scrollable"
+[[workspaces.panes]]
+id = 0
+"#;
+        let profile = HyprmuxProfile::from_toml_str(absent).expect("parse");
+        assert_eq!(profile.workspaces[0].panes[0].scrollable_width, None);
+        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        assert_eq!(
+            state.current().workspaces[0].panes[0].scrollable_width,
+            crate::state::DEFAULT_SCROLLABLE_WIDTH
+        );
+
+        let mut live = State::new(HyprmuxConfig::default(), Theme::default());
+        live.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
+        live.current_mut().workspaces[0].panes[0].scrollable_width =
+            crate::state::DEFAULT_SCROLLABLE_WIDTH;
+        let quiet = profile_from_state(&live);
+        assert_eq!(
+            quiet.workspaces[0].panes[0].scrollable_width, None,
+            "default width must omit from saved profiles"
+        );
+        let toml = quiet.to_toml_string().expect("encode");
+        assert!(
+            !toml.contains("scrollable_width"),
+            "default width must stay out of TOML: {toml}"
+        );
+
+        live.current_mut().workspaces[0].panes[0].scrollable_width = 0.62;
+        let captured = profile_from_state(&live);
+        assert_eq!(captured.workspaces[0].panes[0].scrollable_width, Some(0.62));
+        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), captured);
+        assert!((restored.current().workspaces[0].panes[0].scrollable_width - 0.62).abs() < 1e-6);
+
+        let invalid = r#"
+version = 1
+active_workspace = 0
+[[workspaces]]
+index = 0
+layout = "scrollable"
+[[workspaces.panes]]
+id = 0
+scrollable_width = 9.0
+"#;
+        let profile = HyprmuxProfile::from_toml_str(invalid).expect("parse");
+        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        assert_eq!(
+            state.current().workspaces[0].panes[0].scrollable_width,
+            crate::state::MAX_SPLIT_RATIO
+        );
     }
 
     #[test]

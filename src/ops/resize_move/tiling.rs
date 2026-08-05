@@ -6,12 +6,14 @@ use crate::geometry::{
     clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
 };
 use crate::layout::{self, insert_tiled_pane_at_point, placement_for, workspace_target_rects};
-use crate::ops::focus::{active_pane_is_fullscreen, active_pane_mut, request_pane_focus};
+use crate::ops::focus::{
+    active_pane_is_fullscreen, active_pane_mut, request_pane_focus, sync_scrollable_reveal,
+};
 use crate::state::{Direction, LayoutKind, MoveSwapHint, PaneId, State, TileGap, Workspace};
 use crate::tiling::{
     append_tiled_window, cell_split_ratio, flip_tree_split_for_focused, innermost_split_for,
     move_tiled_window_around_target, ratio_at, remove_tiled_window, resize_tiled_split,
-    swap_tree_leaves, usable_axis_extent,
+    sanitize_scrollable_width, scrollable_column_width, swap_tree_leaves, usable_axis_extent,
 };
 
 use super::float::{
@@ -107,7 +109,7 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
         return;
     };
     let workspace = state.active_workspace_mut();
-    // Only dwindle renders the stored split axes: master/grid/monocle place panes by
+    // Only dwindle renders the stored split axes: the other layouts place panes by
     // formula, so flipping would change nothing on screen while still scrambling the tree
     // dwindle falls back to.
     if workspace.layout_kind != LayoutKind::Dwindle {
@@ -146,11 +148,12 @@ pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<HyprmuxApp>, grow: bo
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let tile_gap = ctx.state.tile_gap();
-    let workspace = ctx.state.active_workspace_mut();
+    let layout_kind = ctx.state.active_workspace_ref().layout_kind;
 
     // Both resize entry points take pixels that are positive when the *focused* pane grows; the
     // split's own orientation is applied further down.
-    if workspace.layout_kind == LayoutKind::Master {
+    if layout_kind == LayoutKind::Master {
+        let workspace = ctx.state.active_workspace_mut();
         let available = master_available_width(tile_bounds, tile_gap);
         let pixels = signed_step(grow, available);
         if resize_master_split_by_pixels(workspace, focused, pixels, available) {
@@ -158,6 +161,22 @@ pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<HyprmuxApp>, grow: bo
         }
         return;
     }
+    if layout_kind == LayoutKind::Scrollable {
+        let available = tile_bounds.w.max(1.0);
+        let pixels = signed_step(grow, available);
+        let resized = resize_scrollable_width_by_pixels(
+            ctx.state.active_workspace_mut(),
+            focused,
+            pixels,
+            available,
+        );
+        if resized {
+            sync_scrollable_reveal(&mut ctx.state, focused, false);
+            ctx.state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+    let workspace = ctx.state.active_workspace_mut();
     if !layout_has_resizable_splits(workspace.layout_kind) {
         return;
     }
@@ -202,7 +221,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
             ctx,
             crate::state::ToastChannel::LayoutMode,
             None,
-            layout_label,
+            format!("Layout mode: {layout_label}"),
         );
     }
 }
@@ -241,6 +260,31 @@ pub(super) fn master_available_width(tile_bounds: FloatRect, gap: TileGap) -> f3
     usable_axis_extent(tile_bounds.w, crate::state::SplitAxis::Horizontal, gap).max(1.0)
 }
 
+/// Grow or shrink one Scrollable pane's width by whole cells of the tile viewport.
+pub(crate) fn resize_scrollable_width_by_pixels(
+    workspace: &mut Workspace,
+    pane_id: PaneId,
+    pixels: f32,
+    viewport_w: f32,
+) -> bool {
+    let viewport_w = viewport_w.max(1.0);
+    if pixels == 0.0 {
+        return false;
+    }
+    let Some(pane) = workspace
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == pane_id && !pane.floating && !pane.closing)
+    else {
+        return false;
+    };
+    let current = scrollable_column_width(viewport_w, pane.scrollable_width);
+    pane.scrollable_width = cell_split_ratio(current + pixels, viewport_w);
+    // cell_split_ratio clamps via DEFAULT_RATIO for non-finite; keep Scrollable's own default.
+    pane.scrollable_width = sanitize_scrollable_width(pane.scrollable_width);
+    true
+}
+
 /// Lift the focused pane out of its slot and re-insert it beside its directional neighbor,
 /// reshaping the tree — the keyboard equivalent of dropping a pane onto another with the mouse.
 /// A floating pane has no slot to leave, so it slides instead.
@@ -261,29 +305,36 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         return;
     }
 
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-    let tiled_ids = workspace.active_tiled_ids_by_pane_order();
-    if !tiled_ids.contains(&focused) {
-        return;
-    }
-    let placements: Vec<_> = workspace_target_rects(workspace, bounds, top_gap, tile_gap)
-        .into_iter()
-        .filter(|placement| tiled_ids.contains(&placement.id))
-        .collect();
-    // Unlike a swap, this never consults `last_move_swap`: a move reshapes the tree, so there is no
-    // slot left to return to. `move_tiled_window_around_target` clears the hint for the same reason.
-    let Some(target) = strict_directional_neighbor(&placements, focused, direction) else {
-        return;
-    };
+    let moved = {
+        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let tiled_ids = workspace.active_tiled_ids_by_pane_order();
+        if !tiled_ids.contains(&focused) {
+            return;
+        }
+        let placements: Vec<_> = workspace_target_rects(workspace, bounds, top_gap, tile_gap)
+            .into_iter()
+            .filter(|placement| tiled_ids.contains(&placement.id))
+            .collect();
+        // Unlike a swap, this never consults `last_move_swap`: a move reshapes the tree, so there is no
+        // slot left to return to. `move_tiled_window_around_target` clears the hint for the same reason.
+        let Some(target) = strict_directional_neighbor(&placements, focused, direction) else {
+            return;
+        };
 
-    // The pane travels past its neighbor and docks on the far side, so moving left/up lands it
-    // first (leading) in the new split and right/down lands it second — the same convention
-    // `layout::drop_split_for_target` uses for a mouse drop.
-    let axis = crate::ops::focus::split_axis_for_direction(direction);
-    let moving_first = matches!(direction, Direction::Left | Direction::Up);
-    if move_tiled_window_around_target(workspace, focused, target, axis, moving_first) {
-        workspace.focused_pane = Some(focused);
+        // The pane travels past its neighbor and docks on the far side, so moving left/up lands it
+        // first (leading) in the new split and right/down lands it second — the same convention
+        // `layout::drop_split_for_target` uses for a mouse drop.
+        let axis = crate::ops::focus::split_axis_for_direction(direction);
+        let moving_first = matches!(direction, Direction::Left | Direction::Up);
+        let moved = move_tiled_window_around_target(workspace, focused, target, axis, moving_first);
+        if moved {
+            workspace.focused_pane = Some(focused);
+        }
+        moved
+    };
+    if moved {
         ctx.state.current_mut().focused_pane = Some(focused);
+        sync_scrollable_reveal(&mut ctx.state, focused, false);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -307,10 +358,19 @@ pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
         return;
     }
 
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-    if swap_tiled_neighbor_in_direction(workspace, bounds, top_gap, tile_gap, focused, direction) {
-        workspace.focused_pane = Some(focused);
+    let swapped = {
+        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+        let ok = swap_tiled_neighbor_in_direction(
+            workspace, bounds, top_gap, tile_gap, focused, direction,
+        );
+        if ok {
+            workspace.focused_pane = Some(focused);
+        }
+        ok
+    };
+    if swapped {
         ctx.state.current_mut().focused_pane = Some(focused);
+        sync_scrollable_reveal(&mut ctx.state, focused, false);
         ctx.state.animation = GeometryAnimation::AxisChange;
     }
 }
@@ -804,6 +864,253 @@ mod tests {
                 state.current().workspaces[state.current().active_workspace]
                     .tiled_ids()
                     .contains(&1)
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_move_and_swap_reveal_focused_under_non_focus_anchor() {
+        in_test_stack(|| {
+            use crate::geometry::workspace_tile_bounds;
+            use crate::layout::workspace_target_rects_with_visible_bounds;
+            use crate::ops::focus::focus_pane;
+            use crate::state::{LayoutKind, ScrollableRevealEdge};
+            use crate::tiling::append_tiled_window;
+
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                let workspace = state.active_workspace_mut();
+                workspace.layout_kind = LayoutKind::Scrollable;
+                workspace.panes.clear();
+                for id in [1, 2, 3, 4] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    pane.scrollable_width = 0.30;
+                    workspace.panes.push(pane);
+                    append_tiled_window(workspace, id);
+                }
+                focus_pane(state, 4);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 2);
+                state.animation = GeometryAnimation::None;
+            }
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(4)
+            );
+
+            backend
+                .dispatch(Msg::RunAction(Action::Move(Direction::Left)))
+                .expect("move left under right anchor");
+            assert_eq!(backend.state().current().focused_pane, Some(2));
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(2)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Left
+            );
+            backend.render();
+            let visible = {
+                let state = backend.state();
+                let viewport = state.last_viewport.get().unwrap();
+                let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+                let local = state.canvas_bounds_from_terminal_viewport(viewport);
+                let top_gap = state.workspace_top_gap();
+                let a = workspace_tile_bounds(letterbox, top_gap);
+                let b = workspace_tile_bounds(local, top_gap);
+                let left = a.x.max(b.x);
+                let right = (a.x + a.w).min(b.x + b.w);
+                FloatRect {
+                    x: left,
+                    y: b.y,
+                    w: (right - left).max(0.0),
+                    h: b.h,
+                }
+            };
+            let placements = workspace_target_rects_with_visible_bounds(
+                &backend.state().current().workspaces[0],
+                crate::view::follower_letterbox_bounds(
+                    backend.state(),
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().canvas_bounds_from_terminal_viewport(
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().workspace_top_gap(),
+                backend.state().tile_gap(),
+            );
+            let rect = placement_for(&placements, 2).unwrap();
+            assert!(
+                (rect.x - visible.x).abs() < 0.5,
+                "moved pane must meet left edge under prior right anchor"
+            );
+
+            // Re-seed a right anchor and swap the focused pane leftward into a clipped slot.
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 4);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 3);
+                state.animation = GeometryAnimation::None;
+            }
+            backend
+                .dispatch(Msg::RunAction(Action::Swap(Direction::Left)))
+                .expect("swap left");
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+            let focused = backend.state().current().focused_pane.unwrap();
+            backend.render();
+            let placements = workspace_target_rects_with_visible_bounds(
+                &backend.state().current().workspaces[0],
+                crate::view::follower_letterbox_bounds(
+                    backend.state(),
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().canvas_bounds_from_terminal_viewport(
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().workspace_top_gap(),
+                backend.state().tile_gap(),
+            );
+            let rect = placement_for(&placements, focused).unwrap();
+            let visible = {
+                let state = backend.state();
+                let viewport = state.last_viewport.get().unwrap();
+                let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+                let local = state.canvas_bounds_from_terminal_viewport(viewport);
+                let top_gap = state.workspace_top_gap();
+                let a = workspace_tile_bounds(letterbox, top_gap);
+                let b = workspace_tile_bounds(local, top_gap);
+                let left = a.x.max(b.x);
+                let right = (a.x + a.w).min(b.x + b.w);
+                FloatRect {
+                    x: left,
+                    y: b.y,
+                    w: (right - left).max(0.0),
+                    h: b.h,
+                }
+            };
+            assert!(
+                rect.x >= visible.x - 0.5 && rect.x + rect.w <= visible.x + visible.w + 0.5,
+                "swapped focused pane must be fully visible"
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_grow_non_anchor_pane_syncs_reveal_when_clipped() {
+        in_test_stack(|| {
+            use crate::geometry::workspace_tile_bounds;
+            use crate::layout::workspace_target_rects_with_visible_bounds;
+            use crate::ops::focus::focus_pane;
+            use crate::state::{LayoutKind, ScrollableRevealEdge};
+            use crate::tiling::append_tiled_window;
+
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(TEST_VIEWPORT);
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                let workspace = state.active_workspace_mut();
+                workspace.layout_kind = LayoutKind::Scrollable;
+                workspace.panes.clear();
+                for id in [1, 2, 3, 4] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    pane.scrollable_width = 0.30;
+                    workspace.panes.push(pane);
+                    append_tiled_window(workspace, id);
+                }
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+            }
+            backend.render();
+            {
+                let state = backend.state_mut();
+                focus_pane(state, 2);
+                state.animation = GeometryAnimation::None;
+            }
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(1),
+                "precondition: visible non-anchor focus preserves left anchor"
+            );
+
+            for _ in 0..20 {
+                backend
+                    .dispatch(Msg::RunAction(Action::AdjustRatio(true)))
+                    .expect("grow");
+                assert_eq!(
+                    backend.state().animation,
+                    GeometryAnimation::None,
+                    "width resize must stay snapping"
+                );
+            }
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_anchor,
+                Some(2)
+            );
+            assert_eq!(
+                backend.state().current().workspaces[0].scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            backend.render();
+            let visible = {
+                let state = backend.state();
+                let viewport = state.last_viewport.get().unwrap();
+                let letterbox = crate::view::follower_letterbox_bounds(state, viewport);
+                let local = state.canvas_bounds_from_terminal_viewport(viewport);
+                let top_gap = state.workspace_top_gap();
+                let a = workspace_tile_bounds(letterbox, top_gap);
+                let b = workspace_tile_bounds(local, top_gap);
+                let left = a.x.max(b.x);
+                let right = (a.x + a.w).min(b.x + b.w);
+                FloatRect {
+                    x: left,
+                    y: b.y,
+                    w: (right - left).max(0.0),
+                    h: b.h,
+                }
+            };
+            let placements = workspace_target_rects_with_visible_bounds(
+                &backend.state().current().workspaces[0],
+                crate::view::follower_letterbox_bounds(
+                    backend.state(),
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().canvas_bounds_from_terminal_viewport(
+                    backend.state().last_viewport.get().unwrap(),
+                ),
+                backend.state().workspace_top_gap(),
+                backend.state().tile_gap(),
+            );
+            let rect = placement_for(&placements, 2).unwrap();
+            assert!(
+                (rect.x + rect.w - (visible.x + visible.w)).abs() < 0.5
+                    || (rect.x >= visible.x - 0.5
+                        && rect.x + rect.w <= visible.x + visible.w + 0.5),
+                "grown pane must be right-aligned or fully visible, got {rect:?} vs {visible:?}"
             );
         });
     }

@@ -1127,16 +1127,16 @@ probe_done=1
 
     #[test]
     fn select_requires_overlapping_protocol_range() {
-        let report = parse_probe_output(
+        let report = parse_probe_output(&format!(
             "\
 candidate=/old
 speaks_remote=1
 candidate=/new
 speaks_remote=1
-protocol_min=12
-protocol_max=12
-",
-        );
+protocol_min={MIN_SUPPORTED_PROTOCOL}
+protocol_max={PROTOCOL_VERSION}
+"
+        ));
         match select_compatible(&report) {
             ProbeResult::Found { path, .. } => assert_eq!(path, "/new"),
             other => panic!("expected found, got {other:?}"),

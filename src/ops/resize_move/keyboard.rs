@@ -3,14 +3,16 @@ use tui_lipan::prelude::*;
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
 use crate::geometry::workspace_tile_bounds;
-use crate::ops::focus::active_pane_is_fullscreen;
+use crate::ops::focus::{active_pane_is_fullscreen, sync_scrollable_reveal};
 use crate::state::{self, Direction, LayoutKind};
 use crate::tiling::{
     focused_is_first_in_nearest_axis_split, nearest_split_available, resize_tiled_split,
 };
 
 use super::float::{ensure_tile_tree, layout_has_resizable_splits, resize_focused_float};
-use super::tiling::{master_available_width, resize_master_split_by_pixels};
+use super::tiling::{
+    master_available_width, resize_master_split_by_pixels, resize_scrollable_width_by_pixels,
+};
 
 pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
     let Some(focused) = ctx.state.current().focused_pane else {
@@ -29,15 +31,16 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         .canvas_bounds_from_terminal_viewport(ctx.viewport());
     let tile_bounds = workspace_tile_bounds(bounds, ctx.state.workspace_top_gap());
     let tile_gap = ctx.state.tile_gap();
-    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
-    if !workspace
+    let layout_kind = ctx.state.current().workspaces[workspace_index].layout_kind;
+    if !ctx.state.current().workspaces[workspace_index]
         .active_tiled_ids_by_pane_order()
         .contains(&focused)
     {
         return;
     }
 
-    if workspace.layout_kind == LayoutKind::Master {
+    if layout_kind == LayoutKind::Master {
+        let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
         let axis = crate::ops::focus::split_axis_for_direction(direction);
         if axis != state::SplitAxis::Horizontal {
             return;
@@ -51,10 +54,35 @@ pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, directi
         }
         return;
     }
-    if !layout_has_resizable_splits(workspace.layout_kind) {
+    if layout_kind == LayoutKind::Scrollable {
+        let axis = crate::ops::focus::split_axis_for_direction(direction);
+        if axis != state::SplitAxis::Horizontal {
+            return;
+        }
+        let available = tile_bounds.w.max(1.0);
+        // Right grows, Left shrinks — independent column, not a shared divider side.
+        let pixels = match direction {
+            Direction::Right => super::keyboard_step_cells(available),
+            Direction::Left => -super::keyboard_step_cells(available),
+            Direction::Up | Direction::Down => return,
+        };
+        let resized = resize_scrollable_width_by_pixels(
+            &mut ctx.state.current_mut().workspaces[workspace_index],
+            focused,
+            pixels,
+            available,
+        );
+        if resized {
+            sync_scrollable_reveal(&mut ctx.state, focused, false);
+            ctx.state.animation = GeometryAnimation::None;
+        }
+        return;
+    }
+    if !layout_has_resizable_splits(layout_kind) {
         return;
     }
 
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
     ensure_tile_tree(workspace);
     let Some(tree) = workspace.tile_tree.as_ref() else {
         return;
@@ -90,7 +118,7 @@ mod tests {
     use crate::ops::resize_move::test_util::{
         first_pane_extent, in_test_stack, steps, two_pane_backend,
     };
-    use crate::state::SplitAxis;
+    use crate::state::{LayoutKind, SplitAxis};
     use crate::{HyprmuxApp, Msg};
     use tui_lipan::TestBackend;
     use tui_lipan::core::event::{KeyCode, KeyEvent, KeyMods};
@@ -171,6 +199,78 @@ mod tests {
                 }
                 assert_eq!(first_pane_extent(&mut backend, axis), before, "{axis:?}");
             }
+        });
+    }
+
+    #[test]
+    fn scrollable_grow_shrink_keys_are_reversible() {
+        in_test_stack(|| {
+            let mut backend = two_pane_backend(SplitAxis::Horizontal);
+            {
+                let state = backend.state_mut();
+                let workspace = state.active_workspace_mut();
+                workspace.layout_kind = LayoutKind::Scrollable;
+                for pane in &mut workspace.panes {
+                    pane.scrollable_width = crate::state::DEFAULT_SCROLLABLE_WIDTH;
+                }
+            }
+            backend.render();
+            let before = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            backend
+                .dispatch(Msg::RunAction(Action::AdjustRatio(true)))
+                .expect("grow");
+            let grown = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            assert!(grown > before);
+            backend
+                .dispatch(Msg::RunAction(Action::AdjustRatio(false)))
+                .expect("shrink");
+            assert!(
+                (backend.state().current().workspaces[0].panes[0].scrollable_width - before).abs()
+                    < 1e-5
+            );
+        });
+    }
+
+    #[test]
+    fn scrollable_resize_mode_left_right_are_reversible_and_vertical_is_noop() {
+        in_test_stack(|| {
+            let mut backend = two_pane_backend(SplitAxis::Horizontal);
+            {
+                let state = backend.state_mut();
+                let workspace = state.active_workspace_mut();
+                workspace.layout_kind = LayoutKind::Scrollable;
+                for pane in &mut workspace.panes {
+                    pane.scrollable_width = crate::state::DEFAULT_SCROLLABLE_WIDTH;
+                }
+            }
+            backend.render();
+            let before = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            let press = |backend: &mut TestBackend<HyprmuxApp>, code| {
+                backend
+                    .dispatch(Msg::RunAction(Action::EnterResizeMode))
+                    .expect("enter resize mode");
+                backend
+                    .send_key(KeyEvent {
+                        code,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("resize key");
+            };
+            press(&mut backend, KeyCode::Char('l'));
+            let grown = backend.state().current().workspaces[0].panes[0].scrollable_width;
+            assert!(grown > before);
+            press(&mut backend, KeyCode::Char('h'));
+            assert!(
+                (backend.state().current().workspaces[0].panes[0].scrollable_width - before).abs()
+                    < 1e-5
+            );
+            press(&mut backend, KeyCode::Char('j'));
+            press(&mut backend, KeyCode::Char('k'));
+            assert!(
+                (backend.state().current().workspaces[0].panes[0].scrollable_width - before).abs()
+                    < 1e-5,
+                "Up/Down must not change Scrollable width"
+            );
         });
     }
 

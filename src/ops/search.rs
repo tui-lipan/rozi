@@ -4,7 +4,7 @@ use tui_lipan::prelude::*;
 
 use crate::HyprmuxApp;
 use crate::anim::GeometryAnimation;
-use crate::ops::focus::{focus_pane, request_search_focus};
+use crate::ops::focus::{focus_pane, request_search_focus, switch_workspace};
 use crate::pane_lifecycle::{find_pane, find_pane_mut};
 use crate::state::{
     MAX_MATCHES, PaneId, ScrollbackMatch, ScrollbackSearchScan, ScrollbackSearchState, SearchScope,
@@ -457,13 +457,18 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
     }
 
     // Bring the matching pane's workspace forward and focus it before scrolling.
-    if let Some(workspace_index) = pane_workspace(&ctx.state, matched.pane)
-        && workspace_index != ctx.state.current().active_workspace
-    {
-        ctx.state.current_mut().active_workspace = workspace_index;
-        ctx.state.animation = GeometryAnimation::None;
+    if let Some(workspace_index) = pane_workspace(&ctx.state, matched.pane) {
+        let cross_workspace = workspace_index != ctx.state.current().active_workspace;
+        if cross_workspace {
+            switch_workspace(&mut ctx.state, workspace_index);
+        }
+        focus_pane(&mut ctx.state, matched.pane);
+        if cross_workspace {
+            ctx.state.animation = GeometryAnimation::None;
+        }
+    } else {
+        focus_pane(&mut ctx.state, matched.pane);
     }
-    focus_pane(&mut ctx.state, matched.pane);
 
     if let Some(pane) = find_pane_mut(&mut ctx.state, matched.pane) {
         pane.terminal.set_scrollback(matched.offset);
@@ -1191,5 +1196,84 @@ mod tests {
             .expect("spawn copy scope test")
             .join()
             .expect("copy scope test completes");
+    }
+
+    #[test]
+    fn search_jump_scrollable_animation_policy_by_workspace() {
+        on_large_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            let rect = FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            };
+            {
+                let state = backend.state_mut();
+                state.current_mut().workspaces[0].layout_kind =
+                    crate::state::LayoutKind::Scrollable;
+                for id in [2, 3, 4] {
+                    state.current_mut().workspaces[0]
+                        .panes
+                        .push(Pane::new(id, 100, rect));
+                    crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[0], id);
+                }
+                state.current_mut().workspaces[1].layout_kind =
+                    crate::state::LayoutKind::Scrollable;
+                state.current_mut().workspaces[1]
+                    .panes
+                    .push(Pane::new(10, 100, rect));
+                crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[1], 10);
+                focus_pane(state, 1);
+                state.animation = GeometryAnimation::None;
+                let mut search = ScrollbackSearchState::new(1);
+                search.matches = vec![
+                    ScrollbackMatch {
+                        offset: 0,
+                        line: 0,
+                        start_col: 0,
+                        end_col: 1,
+                        text: Arc::from("a"),
+                        pane: 4,
+                    },
+                    ScrollbackMatch {
+                        offset: 0,
+                        line: 0,
+                        start_col: 0,
+                        end_col: 1,
+                        text: Arc::from("b"),
+                        pane: 10,
+                    },
+                ];
+                search.current = 0;
+                state.search = Some(search);
+            }
+            backend.render();
+
+            backend
+                .dispatch(crate::Msg::SearchSelect(0))
+                .expect("same-workspace search jump");
+            assert_eq!(backend.state().current().active_workspace, 0);
+            assert_eq!(backend.state().current().focused_pane, Some(4));
+            assert_eq!(backend.state().animation, GeometryAnimation::AxisChange);
+
+            backend.state_mut().animation = GeometryAnimation::None;
+            backend
+                .dispatch(crate::Msg::SearchSelect(1))
+                .expect("cross-workspace search jump");
+            assert_eq!(backend.state().current().active_workspace, 1);
+            assert_eq!(backend.state().current().focused_pane, Some(10));
+            assert_eq!(
+                backend.state().animation,
+                GeometryAnimation::None,
+                "cross-workspace search jump must finish instant"
+            );
+        });
     }
 }

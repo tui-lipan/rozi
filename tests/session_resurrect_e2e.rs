@@ -272,6 +272,7 @@ fn pane_layout() -> SharedLayout {
                 floating: false,
                 fullscreen: false,
                 rect: None,
+                scrollable_width: hyprmux::state::DEFAULT_SCROLLABLE_WIDTH,
             }],
         }],
     }

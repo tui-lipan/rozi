@@ -1,7 +1,8 @@
 use tui_lipan::prelude::FloatRect;
 
 use crate::state::{
-    DEFAULT_RATIO, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, PaneId, SplitAxis, TileGap, Workspace,
+    DEFAULT_RATIO, DEFAULT_SCROLLABLE_WIDTH, MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, PaneId,
+    ScrollableRevealEdge, SplitAxis, TileGap, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -509,10 +510,222 @@ pub fn allocate_grid(
     }
 }
 
+/// Columns: every tiled pane is a full-height column of equal width filling `rect`.
+/// Whole-cell remainder is spread so widths differ by at most one cell (unlike
+/// [`split_evenly`], which dumps the remainder into the last segment).
+pub fn allocate_columns(
+    ids: &[PaneId],
+    rect: FloatRect,
+    gap: TileGap,
+    placements: &mut Vec<PanePlacement>,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let rects = split_balanced(rect, SplitAxis::Horizontal, ids.len(), gap);
+    for (id, column) in ids.iter().zip(rects) {
+        placements.push(PanePlacement {
+            id: *id,
+            rect: column,
+        });
+    }
+}
+
+/// Split `rect` into `count` gapped segments along `axis` with whole-cell sizes that differ by at
+/// most one. The first `remainder` segments receive the extra cell so the union still spans
+/// `rect` exactly.
+fn split_balanced(rect: FloatRect, axis: SplitAxis, count: usize, gap: TileGap) -> Vec<FloatRect> {
+    if count == 0 {
+        return Vec::new();
+    }
+    if count == 1 {
+        return vec![rect];
+    }
+
+    let gap = gap.for_axis(axis);
+    let extent = match axis {
+        SplitAxis::Horizontal => rect.w,
+        SplitAxis::Vertical => rect.h,
+    };
+    let usable_gap = if extent > gap { gap } else { 0.0 };
+    let available = (extent - usable_gap * (count - 1) as f32).max(0.0);
+    let base = (available / count as f32).floor();
+    let mut extras = (available - base * count as f32).round().max(0.0) as usize;
+
+    let mut rects = Vec::with_capacity(count);
+    let mut start = match axis {
+        SplitAxis::Horizontal => rect.x,
+        SplitAxis::Vertical => rect.y,
+    };
+    for _ in 0..count {
+        let size = base
+            + if extras > 0 {
+                extras -= 1;
+                1.0
+            } else {
+                0.0
+            };
+        rects.push(match axis {
+            SplitAxis::Horizontal => FloatRect {
+                x: start,
+                y: rect.y,
+                w: size,
+                h: rect.h,
+            },
+            SplitAxis::Vertical => FloatRect {
+                x: rect.x,
+                y: start,
+                w: rect.w,
+                h: size,
+            },
+        });
+        start += size + usable_gap;
+    }
+    rects
+}
+
+/// Sanitize a Scrollable width fraction: non-finite → default, else clamp to split bounds.
+pub fn sanitize_scrollable_width(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(MIN_SPLIT_RATIO, MAX_SPLIT_RATIO)
+    } else {
+        DEFAULT_SCROLLABLE_WIDTH
+    }
+}
+
+/// Whole-cell column width for a Scrollable pane from its viewport fraction.
+pub fn scrollable_column_width(viewport_w: f32, width_frac: f32) -> f32 {
+    let viewport_w = viewport_w.max(1.0);
+    let ratio = sanitize_scrollable_width(width_frac);
+    let lowest = (MIN_SPLIT_RATIO * viewport_w).ceil().max(1.0);
+    let highest = (MAX_SPLIT_RATIO * viewport_w).floor().max(lowest);
+    (viewport_w * ratio).round().clamp(lowest, highest)
+}
+
+/// Scrollable: ordered full-height columns with per-pane widths on a horizontal strip.
+/// `panes` is `(id, width_fraction)` in tiled order. `anchor` is the pane the viewport follows;
+/// placements may extend outside `rect` (Canvas clips overflow).
+///
+/// Widths are fractions of `rect.w`. Scrolling is clamped to keep the strip aligned within `rect`
+/// itself (local/controller). Prefer [`allocate_scrollable_with_visible`] when the actually visible
+/// interval differs from the layout rect (follower letterbox).
+pub fn allocate_scrollable(
+    panes: &[(PaneId, f32)],
+    rect: FloatRect,
+    gap: TileGap,
+    anchor: Option<PaneId>,
+    reveal_edge: ScrollableRevealEdge,
+    placements: &mut Vec<PanePlacement>,
+) {
+    allocate_scrollable_with_visible(panes, rect, rect, gap, anchor, reveal_edge, placements);
+}
+
+/// Like [`allocate_scrollable`], but clamps scrolling against `visible` while deriving column
+/// widths from canonical `layout.w`.
+///
+/// `visible` is the horizontal interval that is actually on screen (local tile bounds for a
+/// follower; normally equal to `layout`). `reveal_edge` left-aligns the anchor pane to
+/// `visible.x` or right-aligns it to `visible.right`, then clamps to the valid scroll range.
+/// When the strip fits inside `visible`, scroll is stable (no anchor-dependent drift).
+///
+/// Stored fractions are flex bases: one pane fills `layout.w`; two panes whose bases plus gap fit
+/// share free cells evenly (order-balanced remainder) so they exactly span `layout`; three or more
+/// (or an overflowing pair) keep independent preferred widths.
+pub fn allocate_scrollable_with_visible(
+    panes: &[(PaneId, f32)],
+    layout: FloatRect,
+    visible: FloatRect,
+    gap: TileGap,
+    anchor: Option<PaneId>,
+    reveal_edge: ScrollableRevealEdge,
+    placements: &mut Vec<PanePlacement>,
+) {
+    let n = panes.len();
+    if n == 0 {
+        return;
+    }
+    let gap = gap.for_axis(SplitAxis::Horizontal);
+    let usable_gap = if layout.w > gap { gap } else { 0.0 };
+    let widths = scrollable_allocated_widths(panes, layout.w, usable_gap);
+    let mut prefix = Vec::with_capacity(n + 1);
+    prefix.push(0.0);
+    for (index, width) in widths.iter().enumerate() {
+        prefix.push(prefix[index] + width + if index + 1 < n { usable_gap } else { 0.0 });
+    }
+    let strip_w = prefix[n];
+    let vis_left = visible.x;
+    let vis_right = visible.x + visible.w.max(1.0);
+    let vis_w = (vis_right - vis_left).max(1.0);
+
+    let scroll = if strip_w <= vis_w + 0.5 {
+        // Strip fits: one stable origin (left-align into visible). Equals 0 when layout==visible.
+        layout.x - vis_left
+    } else {
+        // May be negative when layout overhangs left of the local viewport (follower letterbox).
+        let scroll_min = layout.x - vis_left;
+        let scroll_max = layout.x + strip_w - vis_right;
+        let anchor_index = anchor
+            .and_then(|id| panes.iter().position(|(pane, _)| *pane == id))
+            .unwrap_or(0);
+        let desired = match reveal_edge {
+            ScrollableRevealEdge::Left => layout.x + prefix[anchor_index] - vis_left,
+            ScrollableRevealEdge::Right => {
+                let focused_right = prefix[anchor_index] + widths[anchor_index];
+                layout.x + focused_right - vis_right
+            }
+        };
+        desired.clamp(scroll_min.min(scroll_max), scroll_max.max(scroll_min))
+    };
+
+    for (index, (id, _)) in panes.iter().enumerate() {
+        placements.push(PanePlacement {
+            id: *id,
+            rect: FloatRect {
+                x: layout.x + prefix[index] - scroll,
+                y: layout.y,
+                w: widths[index],
+                h: layout.h,
+            },
+        });
+    }
+}
+
+/// Whole-cell column widths from preferred fractions of canonical `viewport_w`.
+///
+/// One pane fills the viewport. Two panes whose bases plus `usable_gap` fit share free cells
+/// evenly (first gets `floor(free/2)`, second the remainder) so widths + gap equal `viewport_w`.
+/// Overflowing pairs and 3+ panes keep independent preferred widths.
+fn scrollable_allocated_widths(
+    panes: &[(PaneId, f32)],
+    viewport_w: f32,
+    usable_gap: f32,
+) -> Vec<f32> {
+    let viewport_w = viewport_w.max(1.0);
+    let bases: Vec<f32> = panes
+        .iter()
+        .map(|(_, frac)| scrollable_column_width(viewport_w, *frac))
+        .collect();
+    match bases.as_slice() {
+        [_] => vec![viewport_w],
+        [a, b] if a + b + usable_gap <= viewport_w + 0.5 => {
+            let free = (viewport_w - usable_gap - a - b).max(0.0);
+            let extra0 = (free / 2.0).floor();
+            let extra1 = free - extra0;
+            vec![a + extra0, b + extra1]
+        }
+        _ => bases,
+    }
+}
+
 /// Split `rect` into `count` flush, gapped segments along `axis`, keeping boundaries on
 /// whole cells the way [`split_float_rect`] does. The last segment absorbs the rounding
 /// remainder so the segments exactly tile `rect`.
-fn split_evenly(rect: FloatRect, axis: SplitAxis, count: usize, gap: TileGap) -> Vec<FloatRect> {
+pub(crate) fn split_evenly(
+    rect: FloatRect,
+    axis: SplitAxis,
+    count: usize,
+    gap: TileGap,
+) -> Vec<FloatRect> {
     if count == 0 {
         return Vec::new();
     }
@@ -1275,6 +1488,325 @@ mod tests {
         assert_eq!(placements.len(), 3);
         for placement in placements {
             assert_eq!(placement.rect, rect);
+        }
+    }
+
+    #[test]
+    fn columns_split_full_height_equal_widths_and_span_bounds() {
+        // 100 wide with two unit gaps leaves 98 cells for 3 columns. `split_evenly` would yield
+        // 32/32/34; Columns must spread the remainder so widths differ by at most one cell.
+        let rect = FloatRect {
+            x: 0.0,
+            y: 1.0,
+            w: 100.0,
+            h: 40.0,
+        };
+        let mut placements = Vec::new();
+        allocate_columns(&[1, 2, 3], rect, TileGap::DEFAULT, &mut placements);
+
+        assert_eq!(placements.len(), 3);
+        for placement in &placements {
+            assert_close(placement.rect.y, rect.y);
+            assert_close(placement.rect.h, rect.h);
+        }
+        assert_close(placements[0].rect.x, 0.0);
+        assert_close(placements[2].rect.x + placements[2].rect.w, rect.w);
+        assert_close(
+            placements[1].rect.x,
+            placements[0].rect.x + placements[0].rect.w + 1.0,
+        );
+        assert_close(
+            placements[2].rect.x,
+            placements[1].rect.x + placements[1].rect.w + 1.0,
+        );
+        let widths: Vec<f32> = placements.iter().map(|p| p.rect.w).collect();
+        let max_w = widths.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let min_w = widths.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(
+            max_w - min_w <= 1.0 + f32::EPSILON,
+            "column widths must differ by at most one cell, got {widths:?}"
+        );
+        assert_eq!(widths, vec![33.0, 33.0, 32.0]);
+    }
+
+    #[test]
+    fn columns_respect_positive_and_merged_horizontal_gaps() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 20.0,
+        };
+
+        let mut positive = Vec::new();
+        allocate_columns(&[1, 2], rect, TileGap::DEFAULT, &mut positive);
+        assert_close(
+            positive[1].rect.x,
+            positive[0].rect.x + positive[0].rect.w + 1.0,
+        );
+        assert_close(positive[1].rect.x + positive[1].rect.w, rect.w);
+
+        let mut merged = Vec::new();
+        allocate_columns(
+            &[1, 2],
+            rect,
+            TileGap {
+                horizontal: -1.0,
+                vertical: 0.0,
+            },
+            &mut merged,
+        );
+        assert_close(merged[1].rect.x, merged[0].rect.x + merged[0].rect.w - 1.0);
+        assert_close(merged[1].rect.x + merged[1].rect.w, rect.w);
+    }
+
+    #[test]
+    fn scrollable_default_width_is_forty_five_percent() {
+        assert_close(DEFAULT_SCROLLABLE_WIDTH, 0.45);
+        let cells = scrollable_column_width(100.0, DEFAULT_SCROLLABLE_WIDTH);
+        assert_close(cells, 45.0);
+        assert_close(
+            sanitize_scrollable_width(f32::NAN),
+            DEFAULT_SCROLLABLE_WIDTH,
+        );
+        assert_close(sanitize_scrollable_width(0.05), MIN_SPLIT_RATIO);
+        assert_close(sanitize_scrollable_width(0.95), MAX_SPLIT_RATIO);
+    }
+
+    #[test]
+    fn scrollable_one_and_two_panes_flex_to_fill_canonical_width() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let mut one = Vec::new();
+        allocate_scrollable(
+            &[(1, 0.45)],
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut one,
+        );
+        assert_close(one[0].rect.w, rect.w);
+        assert_close(one[0].rect.x, rect.x);
+
+        let mut two = Vec::new();
+        allocate_scrollable(
+            &[(1, 0.45), (2, 0.30)],
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut two,
+        );
+        let gap = TileGap::DEFAULT.for_axis(SplitAxis::Horizontal);
+        assert_close(two[0].rect.w + gap + two[1].rect.w, rect.w);
+        assert_close(two[0].rect.w - two[1].rect.w, 45.0 - 30.0);
+        assert!(two[0].rect.w >= 45.0 - f32::EPSILON);
+        assert!(two[1].rect.w >= 30.0 - f32::EPSILON);
+
+        let mut overflow = Vec::new();
+        allocate_scrollable(
+            &[(1, 0.80), (2, 0.80)],
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut overflow,
+        );
+        assert_close(overflow[0].rect.w, 80.0);
+        assert_close(overflow[1].rect.w, 80.0);
+    }
+
+    #[test]
+    fn scrollable_widths_are_heterogeneous_and_stable_across_pane_count() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let panes = [(1, 0.45), (2, 0.30), (3, 0.60)];
+        let mut before = Vec::new();
+        allocate_scrollable(
+            &panes,
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut before,
+        );
+        assert_eq!(
+            before.iter().map(|p| p.rect.w).collect::<Vec<_>>(),
+            vec![45.0, 30.0, 60.0]
+        );
+
+        let mut after = Vec::new();
+        let mut appended = panes.to_vec();
+        appended.push((99, 0.50));
+        allocate_scrollable(
+            &appended,
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut after,
+        );
+        for (id, frac) in panes {
+            let w = after.iter().find(|p| p.id == id).expect("survivor").rect.w;
+            assert_close(w, scrollable_column_width(rect.w, frac));
+        }
+    }
+
+    #[test]
+    fn scrollable_anchor_translation_keeps_focused_pane_visible() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let panes = [(1, 0.45), (2, 0.45), (3, 0.45), (4, 0.45)];
+
+        let mut first = Vec::new();
+        allocate_scrollable(
+            &panes,
+            rect,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut first,
+        );
+        assert_close(first[0].rect.x, 0.0);
+        assert!(first[0].rect.x + first[0].rect.w <= rect.x + rect.w + f32::EPSILON);
+
+        let mut middle_right = Vec::new();
+        allocate_scrollable(
+            &panes,
+            rect,
+            TileGap::DEFAULT,
+            Some(3),
+            ScrollableRevealEdge::Right,
+            &mut middle_right,
+        );
+        let mid = middle_right.iter().find(|p| p.id == 3).unwrap();
+        assert!(mid.rect.x >= rect.x - f32::EPSILON);
+        assert_close(mid.rect.x + mid.rect.w, rect.x + rect.w);
+
+        // Pane 2 can left-align without hitting scroll_max (pane 3 cannot).
+        let mut early_left = Vec::new();
+        allocate_scrollable(
+            &panes,
+            rect,
+            TileGap::DEFAULT,
+            Some(2),
+            ScrollableRevealEdge::Left,
+            &mut early_left,
+        );
+        let early = early_left.iter().find(|p| p.id == 2).unwrap();
+        assert_close(early.rect.x, rect.x);
+        assert!(early.rect.x + early.rect.w <= rect.x + rect.w + f32::EPSILON);
+
+        let mut last = Vec::new();
+        allocate_scrollable(
+            &panes,
+            rect,
+            TileGap::DEFAULT,
+            Some(4),
+            ScrollableRevealEdge::Right,
+            &mut last,
+        );
+        let end = last.iter().find(|p| p.id == 4).unwrap();
+        assert!(end.rect.x >= rect.x - f32::EPSILON);
+        assert_close(end.rect.x + end.rect.w, rect.x + rect.w);
+        assert!(
+            last[0].rect.x < rect.x,
+            "earlier columns may leave the viewport"
+        );
+        assert_close(end.rect.w, 45.0);
+    }
+
+    #[test]
+    fn scrollable_visible_interval_allows_negative_scroll_for_letterbox() {
+        let layout = FloatRect {
+            x: -25.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let visible = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 50.0,
+            h: 24.0,
+        };
+        let panes = [(1, 0.45), (2, 0.45)];
+
+        let mut first = Vec::new();
+        allocate_scrollable_with_visible(
+            &panes,
+            layout,
+            visible,
+            TileGap::DEFAULT,
+            Some(1),
+            ScrollableRevealEdge::Left,
+            &mut first,
+        );
+        assert_close(first[0].rect.x, 0.0);
+        assert!(first[0].rect.x + first[0].rect.w <= visible.x + visible.w + 0.5);
+
+        let mut second = Vec::new();
+        allocate_scrollable_with_visible(
+            &panes,
+            layout,
+            visible,
+            TileGap::DEFAULT,
+            Some(2),
+            ScrollableRevealEdge::Right,
+            &mut second,
+        );
+        let pane2 = second.iter().find(|p| p.id == 2).unwrap();
+        assert!(pane2.rect.x >= visible.x - 0.5);
+        assert_close(pane2.rect.x + pane2.rect.w, visible.x + visible.w);
+        assert!(
+            (pane2.rect.x - first[1].rect.x).abs() > 0.5,
+            "changing anchor must move the strip when visible is narrower than canonical"
+        );
+    }
+
+    #[test]
+    fn scrollable_visible_equals_layout_matches_allocate_scrollable() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 24.0,
+        };
+        let panes = [(1, 0.45), (2, 0.45), (3, 0.45), (4, 0.45)];
+        for anchor in [1, 2, 3, 4] {
+            for edge in [ScrollableRevealEdge::Left, ScrollableRevealEdge::Right] {
+                let mut a = Vec::new();
+                let mut b = Vec::new();
+                allocate_scrollable(&panes, rect, TileGap::DEFAULT, Some(anchor), edge, &mut a);
+                allocate_scrollable_with_visible(
+                    &panes,
+                    rect,
+                    rect,
+                    TileGap::DEFAULT,
+                    Some(anchor),
+                    edge,
+                    &mut b,
+                );
+                assert_eq!(a.len(), b.len());
+                for (left, right) in a.iter().zip(b.iter()) {
+                    assert_eq!(left.id, right.id);
+                    assert_close(left.rect.x, right.rect.x);
+                    assert_close(left.rect.w, right.rect.w);
+                }
+            }
         }
     }
 

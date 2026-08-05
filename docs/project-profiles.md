@@ -69,8 +69,8 @@ later does not rewrite that origin.
 
 Each profile has a version, the active workspace, and workspace entries. A workspace entry may
 set `name` (its custom name, settable at runtime with *Rename workspace* - see
-[Keybindings](keybindings.md#workspaces)) and `layout`, one of `dwindle`, `master`, `grid`, or
-`monocle`. Pane entries can use these fields:
+[Keybindings](keybindings.md#workspaces)) and `layout`, one of `dwindle`, `master`, `grid`,
+`columns`, `scrollable`, or `monocle`. Pane entries can use these fields:
 
 - `name`: pane title shown by `hyprmux` and restored on startup.
 - `cwd`: directory used when launching that pane's fresh shell or command. `~` and `~/...` expand to `HOME`.
@@ -79,6 +79,8 @@ set `name` (its custom name, settable at runtime with *Rename workspace* - see
 - `floating`: whether the pane is floating instead of tiled.
 - `fullscreen`: whether the pane starts fullscreen.
 - `rect`: floating geometry as `{ x, y, w, h }`; used for floating panes.
+- `scrollable_width`: optional Scrollable column width as a fraction of the tile viewport
+  (default `0.45` when absent; clamped to `0.20`–`0.80`).
 
 Example:
 
@@ -141,7 +143,7 @@ resolution, or `hyprmux new <name>` for explicit creation (see [Sessions](sessio
 ## Saving limitations
 
 Saving preserves pane names, workspace layout, split tree/ratios, floating state, fullscreen
-state, floating geometry, and each pane's detected local working directory. A cwd reported by a
+state, floating geometry, Scrollable pane widths, and each pane's detected local working directory. A cwd reported by a
 remote host, such as an SSH session, is never saved as a local path; hyprmux falls back to the
 pane's original local launch directory instead.
 

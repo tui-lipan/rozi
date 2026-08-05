@@ -49,6 +49,8 @@ pub const TILE_GAP: f32 = 1.0;
 pub const OUTER_GAP: f32 = 1.0;
 pub const OFFSCREEN_MIN_VISIBLE: f32 = 6.0;
 pub const DEFAULT_RATIO: f32 = 0.58;
+/// Default Scrollable column width as a fraction of the tile viewport.
+pub const DEFAULT_SCROLLABLE_WIDTH: f32 = 0.45;
 pub const MIN_SPLIT_RATIO: f32 = 0.20;
 pub const MAX_SPLIT_RATIO: f32 = 0.80;
 pub const RATIO_STEP: f32 = 0.04;

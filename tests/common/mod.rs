@@ -183,6 +183,16 @@ impl ListenerGuard {
             shutdown_sent,
             "could not acquire control to stop test server"
         );
+        // Bound the join too. Every other wait here has a deadline, and a listener that misses the
+        // shutdown would otherwise park the whole test binary indefinitely instead of failing.
+        let join_deadline = Instant::now() + IO_TIMEOUT;
+        while !thread.is_finished() {
+            assert!(
+                Instant::now() < join_deadline,
+                "session listener thread did not exit after shutdown"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let result = thread.join().expect("session listener thread panicked");
         result.expect("session listener failed");
         self.endpoint.remove_stale();

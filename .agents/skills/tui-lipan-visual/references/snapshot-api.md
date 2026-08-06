@@ -2,11 +2,84 @@
 
 Quick reference for agent visual design workflows. Confirm against `docs/components.md` and `docs/enums.md` in the workspace version you are using.
 
+## Headless snapshot from the environment (no code)
+
+Set `TUI_LIPAN_SNAPSHOT` and run any app or example normally. `AppRunner::run`
+renders off-screen, writes one artifact, and returns without entering raw mode -
+so it needs no tty and works on CI.
+
+```bash
+TUI_LIPAN_SNAPSHOT=/tmp/app.png cargo snap todo
+```
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `TUI_LIPAN_SNAPSHOT` | unset | Output path; enables headless mode. Format from extension |
+| `TUI_LIPAN_SNAPSHOT_VIEWPORT` | `100x30` | `WIDTHxHEIGHT` layout size |
+| `TUI_LIPAN_SNAPSHOT_FRAMES` | `1` | Render/message passes before capture |
+| `TUI_LIPAN_SNAPSHOT_FOCUS` | `0` | Focus advances before capture |
+| `TUI_LIPAN_SNAPSHOT_KEYS` | unset | Key script, e.g. `tab,tab,enter` |
+| `TUI_LIPAN_SNAPSHOT_DIAGNOSTIC` | unset | `1` uses `UiSnapshotOptions::diagnostic()` |
+
+`cargo snap <example>` = `cargo run --features ui-snapshot-png,ui-snapshot-json --example`.
+
+## Sketch (kept design captures)
+
+```rust
+use tui_lipan::{Result, Sketch};
+
+Sketch::view("login", view)      // Fn() -> Element, via Mockup
+    .viewport(80, 24)
+    .fit(20, 8)
+    .focus_next(1)
+    .write()?;
+```
+
+| Method | Effect |
+|--------|--------|
+| `Sketch::view(name, fn)` | Sketch a plain `Fn() -> Element` |
+| `Sketch::component(name, c)` | Sketch a `Component` with default props |
+| `.viewport(w, h)` | Exact-size capture; repeatable |
+| `.fit(margin_w, margin_h)` | Content-minimum plus margin capture |
+| `.focus_next(n)` | Advance focus `n` times before capturing |
+| `.keys(script)` | Dispatch a key script, e.g. `"tab,enter"` |
+| `.options(opts)` | Describe options (e.g. `diagnostic()`) |
+| `.markdown(b)` / `.png(b)` / `.json(b)` | Toggle formats; md + png default on |
+| `.dir(path)` | Override output directory |
+| `.baseline(dir)` | Compare captures against stored baseline images |
+| `.tolerance(r)` | Max differing-pixel fraction counted as a match (default `0.0`) |
+| `.quiet(b)` | Suppress printing written paths |
+| `.write()` | Run every pass; returns `Result<Vec<PathBuf>>` |
+| `.check()` | Run and return `Vec<BaselineComparison>` |
+| `.assert_baseline()` | Run and fail if any capture regressed |
+
+## Visual baselines
+
+```rust
+Sketch::view("login", view)
+    .viewport(80, 24)
+    .baseline("tests/ui-baselines")
+    .assert_baseline()?;      // first run records, later runs compare
+```
+
+`TUI_LIPAN_UPDATE_BASELINES=1` accepts current output as the new baseline.
+Changed captures write a `*.diff.png` beside the baseline: unchanged pixels
+dimmed, changed pixels magenta.
+
+Baseline captures force `PngTextRenderer::Bitmap` - the default font discovery
+differs per machine, which makes pixel comparison meaningless across CI and
+local. `BaselineOutcome::is_regression()` is the single check for pass/fail;
+`Created` (first run) is not a failure.
+
+Defaults: `80x24` plus a fit-to-content pass, written to `target/ui-sketches/`
+(override with `TUI_LIPAN_SKETCH_DIR`). Live in `examples/sketches/`, registered
+in that directory's `main.rs` - no `Cargo.toml` entry required.
+
 ## Headless capture
 
 ```rust
-use tui_lipan::{TestBackend, UiSnapshotOptions};
 use tui_lipan::prelude::*;
+use tui_lipan::{TestBackend, UiSnapshotOptions};
 
 let mut backend = TestBackend::new(MyComponent);
 backend.set_viewport(Rect { x: 0, y: 0, w: 80, h: 24 });
@@ -38,10 +111,8 @@ let frame = backend.capture_frame();
 | `to_json()` | `ui-snapshot-json` | Compact JSON |
 | `to_json_pretty()` | `ui-snapshot-json` | Pretty JSON |
 | `to_json_with_options(&fmt)` | `ui-snapshot-json` | Optional `include_cells` |
-| `to_png(&PngOptions)` | `ui-snapshot-png` | PNG bytes with custom font/bitmap options |
-| `to_png_default()` | `ui-snapshot-png` | PNG bytes with `PngOptions::default()` |
-| `try_to_png(&PngOptions)` | `ui-snapshot-png` | PNG bytes with encoder errors surfaced |
-| `try_to_png_default()` | `ui-snapshot-png` | Default PNG bytes with encoder errors surfaced |
+| `to_png(&PngOptions)` | `ui-snapshot-png` | `Result<Vec<u8>>` with custom font/bitmap options |
+| `to_png_default()` | `ui-snapshot-png` | `Result<Vec<u8>>` with `PngOptions::default()` |
 
 `Cargo.toml` for JSON in app or test:
 
@@ -59,8 +130,7 @@ tui-lipan = { version = "...", features = ["ui-snapshot-json"] }
 | `to_fixed_grid_lines()` | Row vec |
 | `to_ansi()` | Full ANSI repaint |
 | `to_ansi_diff(prev)` | Incremental ANSI |
-| `to_png(&PngOptions)` | PNG bytes (`ui-snapshot-png`) |
-| `try_to_png(&PngOptions)` | PNG bytes with encoder errors surfaced (`ui-snapshot-png`) |
+| `to_png(&PngOptions)` | `Result<Vec<u8>>` (`ui-snapshot-png`) |
 | `cell(x, y)` | Single cell colors/symbol |
 | `styled_lines()` | Style runs per row |
 
@@ -68,7 +138,7 @@ tui-lipan = { version = "...", features = ["ui-snapshot-json"] }
 
 | Field | Meaning |
 |-------|---------|
-| `kind` | `UiWidgetKind` (Frame, List, Input, …) |
+| `kind` | `UiWidgetKind` (Frame, List, Input, ...) |
 | `key` | Reconciliation key |
 | `rect` | Bounds in viewport |
 | `focused` / `hovered` | Interaction flags |
@@ -113,8 +183,9 @@ use tui_lipan::{PngOptions, PngTextRenderer};
 
 For design review, prefer `capture_ui_snapshot_with_margin(20, 8,
 &UiSnapshotOptions::default())` or `capture_frame_with_margin(20, 8)`, then write
-`snapshot.to_png_default()` to inspect spacing, color, focus chrome, and flex
-behavior.
+`snapshot.to_png_default()?` to inspect spacing, color, focus chrome, and flex
+behavior. Both PNG methods return `Result`, so an encoder failure surfaces at the
+call instead of landing as a 0-byte file.
 
 PNG output uses antialiased real-font text by default when a system font is
 available, with font8x8 bitmap rendering as the fallback. Use `font_family` or
@@ -132,11 +203,11 @@ deterministic coarse cell output and fallback-style screenshot deliverables.
 | `UiSnapshotSlot::take()` | Consume delivered snapshot |
 | `UiSnapshotSlot::is_ready()` | Poll without consuming |
 
-Pending requests are **last-writer-wins**. Both request methods schedule a **full repaint** so idle apps still deliver.
+Pending requests are last-writer-wins. Both request methods schedule a full repaint so idle apps still deliver.
 
 ## JSON wire conventions (ui-snapshot-json)
 
-- Colors: stable strings - `rgb(r,g,b)`, `indexed(n)`, snake_case names (not `Debug`)
+- Colors: stable strings: `rgb(r,g,b)`, `indexed(n)`, snake_case names (not `Debug`)
 - Checkbox: `"unchecked"`, `"checked"`, `"indeterminate"`
 - Keys: reconciliation key strings via `Key::as_ref()`
 

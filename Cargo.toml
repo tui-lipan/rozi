@@ -38,6 +38,11 @@ unicode-segmentation = "1.13.3"
 
 [features]
 release-tool = []
+# Headless PNG/JSON capture for visual review. Opt-in so release builds do not
+# carry the font and image-encoding dependencies. Use `cargo snap`.
+# JSON export is omitted: it pulls a serde_json newer than this crate's pinned
+# lock. Add "tui-lipan/ui-snapshot-json" plus `cargo update -p serde_json` for it.
+ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 
 [[bin]]
 name = "hyprmux-release"

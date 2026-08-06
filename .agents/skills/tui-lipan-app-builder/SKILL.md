@@ -1,27 +1,25 @@
 ---
 name: tui-lipan-app-builder
 description: >-
-  Build, refactor, and review stateful end-user applications with tui-lipan in
-  any repository. Use when a task needs component structure, state/messages,
-  props, callback boundaries, focus routing, async commands, reusable shells,
-  app-author docs/examples, or integration with project patterns. Use
-  `tui-lipan-ui-sketch` first for design-only creation of new screens whose look
-  is not settled; use `tui-lipan-visual-design` for snapshot review/polish of
-  existing UIs.
+  Build and refactor stateful end-user applications with tui-lipan in any
+  repository. Use when a task needs Component/State/Message structure, props,
+  callback boundaries, focus routing, async commands, reusable shells,
+  app-specific styled widget helpers, app-author docs/examples, or integration
+  with project patterns. Use `tui-lipan-visual` for anything about how a screen
+  looks: sketching a new one, or reviewing and polishing a rendered UI.
 ---
 
 # TUI-lipan App Building
 
-Build with current project and framework patterns, not generic Rust TUI habits. Prefer concise `ui!`, minimal configuration, reusable view shells, keyed focus routing, and command-driven async work.
+Build with current project and framework patterns, not generic Rust TUI habits. Prefer concise `ui!`, minimal configuration, reusable styled helpers, keyed focus routing, and command-driven async work.
 
 If this skill conflicts with the current workspace docs or source, follow the workspace.
 
 ## Scope and handoffs
 
 - Use this skill for the application layer: `Component`, `State`, `Message`, props, callbacks, focus routing, commands, composition, and project integration.
-- Hand off to `tui-lipan-ui-sketch` when the user wants a brand-new screen and the visual composition is still undecided. Bring the stable view helper back here for promotion.
-- Hand off to `tui-lipan-visual-design` when a screen already exists and the task is to review, compare, or polish its rendered appearance.
-- Hand off to `tui-lipan-layout-debug` when the rendered result points to measurement, rect allocation, or cache bugs.
+- Hand off to `tui-lipan-visual` for anything visual: sketching a brand-new screen whose composition is undecided, or reviewing, comparing, and polishing a rendered UI. Bring the stable view helper back here for promotion.
+- If the rendered result points to wrong rects, measurement, or allocation, treat it as a sizing-usage bug first: re-check `Length` choices (`Auto` vs `Flex` vs fixed), container-vs-leaf defaults, padding, and gaps before suspecting the framework. Confirm a widget's documented `Length` defaults before overriding them.
 
 ## Start With Project Truth
 
@@ -57,13 +55,37 @@ Read bundled references only when needed:
 
 1. Inspect the nearest existing app entry point, screen module, or example before introducing new structure.
 2. Decide whether the task is a design sketch, a reusable app shell, or a full stateful component.
-3. If the look is unsettled, sketch first with `tui-lipan-ui-sketch`; do not bury layout experiments inside state/message plumbing.
+3. If the look is unsettled, sketch first with `tui-lipan-visual`; do not bury layout experiments inside state/message plumbing.
 4. Convert the stable sketch or view helper to a `Component` only when state, messages, lifecycle, keyboard handling, or async work are needed.
 5. Write view code in `ui!` by default; use builder helpers where parameterized reuse is clearer.
-6. Extract repeated chrome and configured widgets into helper functions or composite widgets that return `Element`.
+6. Extract repeated chrome and configured widgets into named helper functions or composite widgets that return `Element`.
 7. Add stable keys before wiring focus, overlays, or dynamic children.
 8. Push blocking work into `ctx.link().command(...)`; use keyed commands with `TaskPolicy::LatestOnly` for live search or filtering.
-9. Verify with the project-local workflow at the end.
+9. For user-visible UI changes, run a visual checkpoint before final validation.
+10. Verify with the project-local workflow at the end.
+
+## Full App Delivery Rules
+
+When building a complete tui-lipan app, treat the framework's test and render loop
+as core development infrastructure, not optional polish.
+
+- Use `tui-lipan-rag` or local upstream docs/source to confirm current widget APIs, defaults, feature flags, and examples before guessing.
+- Tell delegated subagents which tui-lipan skills and project rules apply; do not assume they inherited the visual/testing workflow.
+- Make behavior tests the source of truth for keyboard flows, message routing, async commands, and regression-prone state transitions.
+- Make visual evidence mandatory for meaningful UI work: sketch uncertain screens first, then inspect `TestBackend` snapshots and PNGs at narrow, realistic, and roomy viewports.
+- If the app needs a clean pattern that tui-lipan lacks, either improve tui-lipan in the framework repo or document the framework gap instead of hiding a brittle workaround in app code.
+- Keep app docs/examples aligned with user-visible behavior, especially controls, keybindings, setup, and validation commands.
+
+## Use Visual Checkpoints
+
+Do not judge a visible UI change from source alone when tui-lipan can render the result headlessly.
+
+- For a brand-new screen whose visual shape is still moving, switch to `tui-lipan-visual` and iterate on a kept `Sketch` plus PNGs before adding state plumbing.
+- For an existing or newly implemented screen, capture it with no code at all: `TUI_LIPAN_SNAPSHOT=/tmp/app.png cargo snap <example>`, then inspect artifacts at realistic, narrow, and roomy viewports.
+- When layout vanishes or a bar/panel is suspiciously sized, capture with `UiSnapshotOptions::diagnostic()` so zero-area nodes and chrome appear in markdown snapshots.
+- Bring stable view helpers and app-specific styled helpers back here for `Component`, props, callback, focus, command, and integration work.
+- Never write a snapshot harness you intend to delete. Capture a running app through `TUI_LIPAN_SNAPSHOT`, or keep the sketch file.
+- Keep this skill focused on app structure. Let `tui-lipan-visual` own the detailed `Sketch`, `TestBackend`, `UiSnapshot`, and PNG workflow.
 
 ## Prefer These App-Building Rules
 
@@ -80,7 +102,7 @@ Read bundled references only when needed:
 
 - Do not set defaults explicitly. If docs mark a value as default, omit it.
 - Do not repeat `bg` on every child or sub-style. Set shared background on the nearest parent that paints it.
-- Do not use `Frame` for plain layout. Use it only for border, title, status, tabs, clipping, or decoration.
+- Do not use `Frame` for plain layout. Use it only for border, header/footer labels, tabs, clipping, or decoration.
 - Do not block in `update()` or `view()`.
 - Do not use `TaskPolicy::QueueAll` for filter-as-you-type.
 - Do not forget stable `.key(...)` values on dynamic children and focus targets.
@@ -89,6 +111,20 @@ Read bundled references only when needed:
 ## Reuse UI Intentionally
 
 When the same configured UI appears in multiple places, extract it instead of copying props around.
+
+Treat these helpers as the app's small design-system layer. A helper can be as
+small as `primary_button(label)` or `panel(title, child)`, but it should own the
+colors, padding, borders, focus chrome, spacing, default sizing, and widget
+variant choices that define this app's visual language. Call sites should pass
+semantic differences such as labels, keys, selected state, children, and
+callbacks; they should not repeat long builder chains just to recreate the same
+look.
+
+This prevents UI drift: the same action button, panel, toolbar, badge, or list
+row should not slowly acquire different padding, colors, borders, or focus styles
+in different screens. Before adding another raw widget chain, look for the local
+helper that already represents that app-specific primitive, or create one at the
+first repeated use.
 
 Prefer this progression:
 
@@ -110,6 +146,8 @@ Keep `ui!` focused on composition. Move chrome, repeated styling, and prepared w
 ## Handle Interaction Correctly
 
 - Use `ctx.request_focus(...)` and `ctx.has_focus_within_key(...)` for panel routing.
+- Focused `Button` activates `on_click` on plain `Enter` and `Space`; custom `on_key` runs first and can consume the key.
+- In headless tests, use `TestBackend::focus_next()` / `focus_prev()` for traversal and `TestBackend::focused_key()` to assert the keyed focus target.
 - Use `KeyUpdate::handled(...)` to stop bubbling and `KeyUpdate::unhandled(...)` to allow it.
 - Mirror controlled widget state in the parent only when the parent truly needs ownership.
 - Emit child-to-parent communication through callback props, not shared mutable access.

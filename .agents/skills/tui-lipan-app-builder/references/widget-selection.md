@@ -5,7 +5,7 @@ Check for project-local wrapper widgets, re-exports, and theme helpers before re
 ## Pick By Use Case
 
 - Layout: `VStack`, `HStack`, `Grid`, `ScrollView`, `Splitter`, `ZStack`, `Center`
-- Chrome: `Frame` when you need border, title, status, tabs, or clipping
+- Chrome: `Frame` when you need border, header/footer labels, tabs, or clipping
 - Text and display: `Text`, `DocumentView`, `Chart`, `Sparkline`, `Heatmap`, `BigText`, `Image`
 - Input: `Button`, `Input`, `TextArea`, `Checkbox`, `Radio`, `Select`, `ComboBox`, `MultiSelect`, `Slider`, `DatePicker`, `HexArea`
 - Data: `List`, `Table`, `Tree`, `FileTree`, `LogView`

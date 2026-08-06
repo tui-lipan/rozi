@@ -121,8 +121,9 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
   removed completely.
 - **Restart** (`Ctrl+E` twice) — shut the highlighted session down and recreate it as the active
   session, with fresh panes.
-- **Shell** (`Ctrl+T`, or `Enter` when the list is empty) — go to this client's scratch (ephemeral)
-  session: start it when there is none, switch to it when there already is. Started from the
+- **Ephemeral shell** (`Ctrl+T`, or `Enter` when the list is empty) — go to this client's scratch
+  session: start it when there is none, switch to it when there already is. The hint borrows the
+  word the rows use, so it names the same thing the session becomes once it exists. Started from the
   launcher it takes whatever layout the launch prepared, the same as `Enter` on the launcher panel,
   so the startup picker need not be dismissed first. The key always works; the footer only spends a
   pill on it when the list cannot point the way itself — with nothing to pick, `Enter` is free and

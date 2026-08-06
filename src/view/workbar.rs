@@ -786,7 +786,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
     let prefix = input.prefix.to_string();
     let rows = [
-        (format!("Enter / {prefix} Enter"), "start a shell"),
+        (format!("Enter / {prefix} Enter"), "ephemeral shell"),
         (format!("{prefix} s"), "pick a session"),
         (format!("{prefix} d"), "detach"),
     ];

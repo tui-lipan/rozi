@@ -289,10 +289,11 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 /// establishing a connection; **disconnect** closes this client's attachment; **kill** destroys the
 /// session; **restart** recreates it.
 ///
-/// `shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always reaches this
-/// client's scratch session, but saying so is only worth a pill when the list cannot say it
-/// already. With nothing to pick, Enter is free and carries it; with the scratch session itself on
-/// the list, its own row is the obvious way to it.
+/// `ephemeral shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always
+/// reaches this client's scratch session, but saying so is only worth a pill when the list cannot
+/// say it already. With nothing to pick, Enter is free and carries it; with the scratch session
+/// itself on the list, its own row is the obvious way to it. The label borrows the word the rows
+/// use (`ephemeral`) so the hint and the session it lands on read as the same thing.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
@@ -311,7 +312,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
 
     let mut row = hint_row();
     if picker_list_is_empty(picker) {
-        row = row.child(hint_pill(theme, "shell", "enter"));
+        row = row.child(hint_pill(theme, "ephemeral shell", "enter"));
     }
     if let Some(entry) = selected {
         let is_current = current == Some(entry.name.as_str())
@@ -332,7 +333,7 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     if !picker_list_is_empty(picker)
         && crate::ops::session::held_ephemeral_session(&ctx.state).is_none()
     {
-        row = row.child(hint_pill(theme, "shell", "ctrl+t"));
+        row = row.child(hint_pill(theme, "ephemeral shell", "ctrl+t"));
     }
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));

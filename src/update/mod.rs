@@ -23,7 +23,9 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ClosePalette => overlays::close_palette(ctx),
         Msg::CloseHelp => overlays::close_help(ctx),
         Msg::CloseAppearance => overlays::close_appearance(ctx),
+        Msg::AppearanceSelect(action) => overlays::appearance_select(ctx, action),
         Msg::AppearanceActivate(action) => overlays::appearance_activate(ctx, action),
+        Msg::AppearanceStep { reverse } => overlays::appearance_step(ctx, reverse),
         Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),
         Msg::PanePaddingVerticalChanged(event) => {
             overlays::pane_padding_vertical_changed(ctx, event)

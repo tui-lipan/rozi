@@ -117,7 +117,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
             ],
         ),
         (
-            "Borders",
+            "Pane borders",
             vec![
                 row(
                     "Mode",
@@ -137,10 +137,22 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
     let item_style = fg_only(&ctx.state.theme.primary);
     let description_style = fg_only(&ctx.state.theme.muted);
     let disabled_style = fg_only(&ctx.state.theme.muted);
+    let selected_index = ctx.state.appearance_selected.and_then(|selected| {
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                SearchEntry::Item(item) => Some(item.value.0),
+                _ => None,
+            })
+            .position(|action| action == selected)
+    });
     let palette = shared_search_palette::<(AppearanceAction, String)>(ctx, Length::Auto, false)
         .entries(entries)
         .placeholder("Search appearance…")
         .preserve_groups(true)
+        .initial_selected_item_index(selected_index)
+        .sync_selection(true)
+        .input_key_interceptor(appearance_palette_key_interceptor(ctx))
         .render_item(Arc::new(
             move |item: &SearchItem<(AppearanceAction, String)>, _highlight| {
                 let disabled_reason = item.value.0.disabled_reason(&pane_flags);
@@ -160,6 +172,12 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
                     .into()
             },
         ))
+        .on_select(
+            ctx.link()
+                .callback(|event: SearchEvent<(AppearanceAction, String)>| {
+                    Msg::AppearanceSelect(event.item.value.0)
+                }),
+        )
         .on_activate(
             ctx.link()
                 .callback(|event: SearchEvent<(AppearanceAction, String)>| {
@@ -207,6 +225,22 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         .child(panel)
         .key(appearance_palette_key())
 }
+
+fn appearance_palette_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+    // Always claim bare Left/Right; `appearance_step` reads live selection so a stale
+    // render-time capture cannot step the wrong row (or miss a move after Up/Down).
+    ctx.link().key_handler(|key| {
+        if key.mods != KeyMods::default() {
+            return None;
+        }
+        match key.code {
+            KeyCode::Left => Some(Msg::AppearanceStep { reverse: true }),
+            KeyCode::Right => Some(Msg::AppearanceStep { reverse: false }),
+            _ => None,
+        }
+    })
+}
+
 fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
     if top == bottom && right == left {
         format!("V{top} · H{right}")

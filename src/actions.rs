@@ -466,6 +466,7 @@ fn execute_action_inner(
         Action::OpenAppearance => {
             ctx.state.pane_padding_editor = None;
             ctx.state.show_appearance = true;
+            ctx.state.appearance_selected = Some(crate::state::AppearanceAction::Theme);
             ctx.state.show_palette = false;
             ctx.state.show_help = false;
             ctx.state.show_theme_picker = false;

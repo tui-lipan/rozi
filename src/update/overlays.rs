@@ -100,92 +100,175 @@ pub(super) fn close_help(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(super) fn close_appearance(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.show_appearance = false;
+    ctx.state.appearance_selected = None;
     ctx.state.pane_padding_editor = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
+pub(super) fn appearance_select(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::AppearanceAction,
+) -> Update {
+    ctx.state.appearance_selected = Some(action);
+    Update::none()
+}
+
+pub(super) fn appearance_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> Update {
+    let Some(action) = ctx.state.appearance_selected else {
+        return Update::none();
+    };
+    if !action.steps_horizontally() {
+        return Update::none();
+    }
+    appearance_activate_dir(ctx, action, reverse)
+}
+
 pub(super) fn appearance_activate(
     ctx: &mut Context<HyprmuxApp>,
     action: crate::state::AppearanceAction,
+) -> Update {
+    appearance_activate_dir(ctx, action, false)
+}
+
+fn appearance_activate_dir(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::AppearanceAction,
+    reverse: bool,
 ) -> Update {
     // A greyed row (its parent feature is off) is inert: keep the overlay open and focused but
     // change nothing. Otherwise dispatch the row's underlying action.
     if action.disabled_reason(&ctx.state.config.pane).is_some() {
         ctx.request_focus(crate::view::appearance_palette_key());
-    } else {
-        match action {
-            crate::state::AppearanceAction::Theme => {
-                execute_action(ctx, Action::OpenThemePicker);
-            }
-            crate::state::AppearanceAction::EditPadding => {
-                ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
-                    ctx.state.config.pane.padding,
-                ));
-                ctx.request_focus(crate::view::pane_padding_vertical_key());
-            }
-            crate::state::AppearanceAction::ToggleTitles => {
-                execute_action(ctx, Action::ToggleTitles);
-            }
-            crate::state::AppearanceAction::CycleTitlebar => {
-                execute_action(ctx, Action::CycleTitlebar);
-            }
-            crate::state::AppearanceAction::ToggleWorkbar => {
-                execute_action(ctx, Action::ToggleWorkbar);
-            }
-            crate::state::AppearanceAction::ToggleWorkbarGap => {
-                execute_action(ctx, Action::ToggleWorkbarGap);
-            }
-            crate::state::AppearanceAction::ToggleWorkbarPosition => {
-                execute_action(ctx, Action::ToggleWorkbarPosition);
-            }
-            crate::state::AppearanceAction::ToggleWorkbarPowerline => {
-                execute_action(ctx, Action::ToggleWorkbarPowerline);
-            }
-            crate::state::AppearanceAction::ToggleAnimations => {
-                execute_action(ctx, Action::ToggleAnimations);
-            }
-            crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
-                execute_action(ctx, Action::ToggleHighlightFocusedBackground);
-            }
-            crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
-                execute_action(ctx, Action::ToggleHighlightFocusedBorder);
-            }
-            crate::state::AppearanceAction::ToggleHighlightFocusedTitlebar => {
-                execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
-            }
-            crate::state::AppearanceAction::CycleBorderMode => {
-                execute_action(ctx, Action::CycleBorderMode);
-            }
-            crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
-                execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
-            }
-            crate::state::AppearanceAction::CycleBorderStyle => {
-                execute_action(ctx, Action::CycleBorderStyle);
-            }
-            crate::state::AppearanceAction::CycleTitleStyle => {
-                execute_action(ctx, Action::CycleTitleStyle);
-            }
-            crate::state::AppearanceAction::CycleWorkbarBadgeStyle => {
-                execute_action(ctx, Action::CycleWorkbarBadgeStyle);
-            }
-            crate::state::AppearanceAction::CycleWorkbarTabStyle => {
-                execute_action(ctx, Action::CycleWorkbarTabStyle);
-            }
-            crate::state::AppearanceAction::CycleWorkbarStyle => {
-                execute_action(ctx, Action::CycleWorkbarStyle);
-            }
-        };
-        if !matches!(
-            action,
-            crate::state::AppearanceAction::Theme | crate::state::AppearanceAction::EditPadding
-        ) {
-            ctx.state.show_appearance = true;
-            ctx.request_focus(crate::view::appearance_palette_key());
+        return Update::full();
+    }
+    match action {
+        crate::state::AppearanceAction::Theme => {
+            execute_action(ctx, Action::OpenThemePicker);
         }
+        crate::state::AppearanceAction::EditPadding => {
+            ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
+                ctx.state.config.pane.padding,
+            ));
+            ctx.request_focus(crate::view::pane_padding_vertical_key());
+        }
+        crate::state::AppearanceAction::ToggleTitles => {
+            execute_action(ctx, Action::ToggleTitles);
+        }
+        crate::state::AppearanceAction::CycleTitlebar if reverse => {
+            let prev = ctx.state.config.pane.titlebar.prev();
+            ctx.state.config.pane.titlebar = prev;
+            persist_pane_string_or_toast(ctx, "titlebar", prev.id());
+        }
+        crate::state::AppearanceAction::CycleTitlebar => {
+            execute_action(ctx, Action::CycleTitlebar);
+        }
+        crate::state::AppearanceAction::ToggleWorkbar => {
+            execute_action(ctx, Action::ToggleWorkbar);
+        }
+        crate::state::AppearanceAction::ToggleWorkbarGap => {
+            execute_action(ctx, Action::ToggleWorkbarGap);
+        }
+        crate::state::AppearanceAction::ToggleWorkbarPosition => {
+            execute_action(ctx, Action::ToggleWorkbarPosition);
+        }
+        crate::state::AppearanceAction::ToggleWorkbarPowerline => {
+            execute_action(ctx, Action::ToggleWorkbarPowerline);
+        }
+        crate::state::AppearanceAction::ToggleAnimations => {
+            execute_action(ctx, Action::ToggleAnimations);
+        }
+        crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
+            execute_action(ctx, Action::ToggleHighlightFocusedBackground);
+        }
+        crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
+            execute_action(ctx, Action::ToggleHighlightFocusedBorder);
+        }
+        crate::state::AppearanceAction::ToggleHighlightFocusedTitlebar => {
+            execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
+        }
+        crate::state::AppearanceAction::CycleBorderMode if reverse => {
+            let prev = ctx.state.config.pane.border_mode.prev();
+            ctx.state.config.pane.border_mode = prev;
+            persist_pane_string_or_toast(ctx, "border_mode", prev.id());
+        }
+        crate::state::AppearanceAction::CycleBorderMode => {
+            execute_action(ctx, Action::CycleBorderMode);
+        }
+        crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
+            execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
+        }
+        crate::state::AppearanceAction::CycleBorderStyle if reverse => {
+            let prev = ctx.state.config.pane.border_style.prev();
+            ctx.state.config.pane.border_style = prev;
+            persist_pane_string_or_toast(ctx, "border_style", prev.id());
+        }
+        crate::state::AppearanceAction::CycleBorderStyle => {
+            execute_action(ctx, Action::CycleBorderStyle);
+        }
+        crate::state::AppearanceAction::CycleTitleStyle if reverse => {
+            let prev = crate::state::prev_cap_style(ctx.state.config.pane.title_style);
+            ctx.state.config.pane.title_style = prev;
+            persist_pane_string_or_toast(ctx, "title_style", crate::state::cap_style_id(prev));
+        }
+        crate::state::AppearanceAction::CycleTitleStyle => {
+            execute_action(ctx, Action::CycleTitleStyle);
+        }
+        crate::state::AppearanceAction::CycleWorkbarBadgeStyle if reverse => {
+            let prev =
+                crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
+            ctx.state.config.pane.workbar_badge_style = prev;
+            persist_pane_string_or_toast(
+                ctx,
+                "workbar_badge_style",
+                crate::state::cap_style_id(prev),
+            );
+        }
+        crate::state::AppearanceAction::CycleWorkbarBadgeStyle => {
+            execute_action(ctx, Action::CycleWorkbarBadgeStyle);
+        }
+        crate::state::AppearanceAction::CycleWorkbarTabStyle if reverse => {
+            let prev = crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
+            ctx.state.config.pane.workbar_tab_style = prev;
+            persist_pane_string_or_toast(
+                ctx,
+                "workbar_tab_style",
+                crate::state::cap_style_id(prev),
+            );
+        }
+        crate::state::AppearanceAction::CycleWorkbarTabStyle => {
+            execute_action(ctx, Action::CycleWorkbarTabStyle);
+        }
+        crate::state::AppearanceAction::CycleWorkbarStyle if reverse => {
+            let prev = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
+            ctx.state.config.pane.workbar_style = prev;
+            persist_pane_string_or_toast(ctx, "workbar_style", crate::state::cap_style_id(prev));
+        }
+        crate::state::AppearanceAction::CycleWorkbarStyle => {
+            execute_action(ctx, Action::CycleWorkbarStyle);
+        }
+    };
+    if !matches!(
+        action,
+        crate::state::AppearanceAction::Theme | crate::state::AppearanceAction::EditPadding
+    ) {
+        ctx.state.show_appearance = true;
+        ctx.state.appearance_selected = Some(action);
+        ctx.request_focus(crate::view::appearance_palette_key());
     }
     Update::full()
+}
+
+fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_pane_string(key, value) {
+        crate::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
 }
 
 pub(super) fn close_pane_padding_editor(ctx: &mut Context<HyprmuxApp>) -> Update {

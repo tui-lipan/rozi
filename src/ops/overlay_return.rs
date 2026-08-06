@@ -47,6 +47,9 @@ pub(crate) fn restore(ctx: &mut Context<HyprmuxApp>) -> Option<Update> {
     match ctx.state.overlay_return.take()? {
         OverlayOrigin::Appearance => {
             ctx.state.show_appearance = true;
+            if ctx.state.appearance_selected.is_none() {
+                ctx.state.appearance_selected = Some(crate::state::AppearanceAction::Theme);
+            }
             ctx.state.commands_dirty = true;
             ctx.request_focus(crate::view::appearance_palette_key());
             Some(Update::full())

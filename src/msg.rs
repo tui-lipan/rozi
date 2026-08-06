@@ -18,7 +18,12 @@ pub enum Msg {
     ClosePalette,
     CloseHelp,
     CloseAppearance,
+    AppearanceSelect(crate::state::AppearanceAction),
     AppearanceActivate(crate::state::AppearanceAction),
+    /// Left/Right on a steppable appearance row. `reverse` is Left.
+    AppearanceStep {
+        reverse: bool,
+    },
     ClosePanePaddingEditor,
     PanePaddingVerticalChanged(InputEvent),
     PanePaddingHorizontalChanged(InputEvent),

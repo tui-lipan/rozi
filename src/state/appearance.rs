@@ -48,9 +48,11 @@ impl PaneTitlebarMode {
     }
 
     pub fn next(self) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
-        all[(index + 1) % all.len()]
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
     }
 
     /// Only the separate bar consumes a row in addition to the frame border.
@@ -118,9 +120,11 @@ impl PaneBorderMode {
     }
 
     pub fn next(self) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
-        all[(index + 1) % all.len()]
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
     }
 
     pub fn draws_frames(self) -> bool {
@@ -177,9 +181,11 @@ impl PaneBorderStyle {
     }
 
     pub fn next(self) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|style| *style == self).unwrap_or(0);
-        all[(index + 1) % all.len()]
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
     }
 
     pub fn to_border_style(self) -> BorderStyle {
@@ -230,23 +236,34 @@ pub(crate) const fn cap_style_label(style: CapStyle) -> &'static str {
     }
 }
 
-/// Cycle all title/workbar styles in the app's established order.
-pub(crate) fn next_cap_style(style: CapStyle) -> CapStyle {
-    let all = CapStyle::all();
+fn step_ring<T: Copy + PartialEq>(all: &[T], current: T, reverse: bool) -> T {
     let index = all
         .iter()
-        .position(|candidate| *candidate == style)
+        .position(|candidate| *candidate == current)
         .unwrap_or(0);
-    all[(index + 1) % all.len()]
+    if reverse {
+        all[(index + all.len() - 1) % all.len()]
+    } else {
+        all[(index + 1) % all.len()]
+    }
+}
+
+/// Cycle all title/workbar styles in the app's established order.
+pub(crate) fn next_cap_style(style: CapStyle) -> CapStyle {
+    step_ring(CapStyle::all(), style, false)
+}
+
+pub(crate) fn prev_cap_style(style: CapStyle) -> CapStyle {
+    step_ring(CapStyle::all(), style, true)
 }
 
 /// Cycle workbar badges and tabs without exposing the unsupported half-block option.
 pub(crate) fn next_badge_cap_style(style: CapStyle) -> CapStyle {
-    let index = BADGE_CAP_STYLES
-        .iter()
-        .position(|candidate| *candidate == style)
-        .unwrap_or(0);
-    BADGE_CAP_STYLES[(index + 1) % BADGE_CAP_STYLES.len()]
+    step_ring(BADGE_CAP_STYLES, style, false)
+}
+
+pub(crate) fn prev_badge_cap_style(style: CapStyle) -> CapStyle {
+    step_ring(BADGE_CAP_STYLES, style, true)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,6 +323,12 @@ impl PanePaddingEditorState {
 }
 
 impl AppearanceAction {
+    /// Rows whose value can be nudged with Left/Right in the appearance palette. Theme and padding
+    /// open nested UI, so arrows stay with the search caret there.
+    pub fn steps_horizontally(self) -> bool {
+        !matches!(self, Self::Theme | Self::EditPadding)
+    }
+
     /// Whether this row configures a feature that is currently switched off, so the row is inert:
     /// it still renders (greyed) but activating it does nothing. Keeps the appearance list stable
     /// instead of hiding dependent rows as their parent toggles.
@@ -316,10 +339,11 @@ impl AppearanceAction {
             Self::CycleTitleStyle if pane.titlebar == PaneTitlebarMode::Border => {
                 Some("Needs bar or integrated titlebar")
             }
-            Self::ToggleHighlightFocusedBorder | Self::CycleBorderStyle
-                if !pane.border_mode.draws_frames() =>
-            {
-                Some("Needs pane frames")
+            Self::ToggleHighlightFocusedBorder if pane.border_mode == PaneBorderMode::None => {
+                Some("Needs pane borders")
+            }
+            Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
+                Some("Unsupported in this mode")
             }
             Self::ToggleWorkbarGap
             | Self::ToggleWorkbarPosition
@@ -600,6 +624,8 @@ mod tests {
         assert_eq!(PaneBorderMode::Merged.next(), PaneBorderMode::None);
         assert_eq!(PaneBorderMode::None.next(), PaneBorderMode::Dividers);
         assert_eq!(PaneBorderMode::Dividers.next(), PaneBorderMode::Separate);
+        assert_eq!(PaneBorderMode::Separate.prev(), PaneBorderMode::Dividers);
+        assert_eq!(PaneBorderMode::Dividers.prev(), PaneBorderMode::None);
     }
 
     #[test]
@@ -609,13 +635,19 @@ mod tests {
             pane.border_mode = mode;
             assert_eq!(
                 AppearanceAction::CycleBorderStyle.disabled_reason(&pane),
-                Some("Needs pane frames")
-            );
-            assert_eq!(
-                AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
-                Some("Needs pane frames")
+                Some("Unsupported in this mode")
             );
         }
+        pane.border_mode = PaneBorderMode::None;
+        assert_eq!(
+            AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
+            Some("Needs pane borders")
+        );
+        pane.border_mode = PaneBorderMode::Dividers;
+        assert_eq!(
+            AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
+            None
+        );
     }
 
     #[test]

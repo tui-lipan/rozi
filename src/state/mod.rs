@@ -87,6 +87,9 @@ pub struct State {
     pub show_palette: bool,
     pub show_help: bool,
     pub show_appearance: bool,
+    /// Highlighted appearance-palette row. Drives Left/Right stepping and
+    /// `initial_selected_item_index` while the overlay is open.
+    pub appearance_selected: Option<AppearanceAction>,
     pub pane_padding_editor: Option<PanePaddingEditorState>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
@@ -250,6 +253,7 @@ impl State {
             show_palette: false,
             show_help: false,
             show_appearance: false,
+            appearance_selected: None,
             pane_padding_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,

@@ -66,10 +66,14 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
             "the chord goes unsaid while Enter already offers it:\n{rendered}"
         );
 
-        // Unadvertised, but live.
+        // The key itself, not just the message it sends: the palette must let a bare Enter
+        // through once it has no row of its own to activate.
         backend
-            .dispatch(Msg::SessionPickerEphemeral)
-            .expect("start the scratch session");
+            .send_key(KeyEvent {
+                code: KeyCode::Enter,
+                mods: KeyMods::NONE,
+            })
+            .expect("press enter on the empty picker");
         let state = backend.state();
         assert!(!state.show_session_picker);
         assert_eq!(

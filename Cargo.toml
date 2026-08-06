@@ -106,19 +106,15 @@ windows-sys = { version = "0.59", features = [
 strip = true
 lto = "thin"
 codegen-units = 1
+# Unwinding tables cost ~2MB of binary with nothing to catch them: the only
+# catch_unwind is tui-lipan's input worker, and terminal restore runs from the
+# panic hook, which still fires under abort.
+panic = "abort"
 
 [profile.release-debug]
 inherits = "release"
 debug = true
 strip = false
-
-[profile.release-size]
-inherits = "release"
-opt-level = "z"
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-strip = "symbols"
 
 [profile.dev-fast]
 inherits = "dev"

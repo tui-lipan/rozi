@@ -243,8 +243,8 @@ fn render_pending_confirm_item(
         .style(Style::new().bg(accent).fg(fg))
 }
 
-fn render_ephemeral_session_item<T>(
-    item: &SearchItem<T>,
+fn render_ephemeral_session_item(
+    item: &SearchItem<usize>,
     label_style: &Style,
     description_style: &Style,
 ) -> ListItem {

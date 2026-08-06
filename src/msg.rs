@@ -184,10 +184,9 @@ pub enum Msg {
     SessionPickerQueryChanged(String),
     SessionPickerSelect(usize),
     SessionPickerActivate(usize),
-    /// The pinned *start a shell* row was highlighted / activated. Only reachable from a launcher
-    /// picker, where that row is the one thing offered besides the sessions themselves.
-    SessionPickerSelectStartShell,
-    SessionPickerStartShell,
+    /// Go to this client's scratch session from the picker (`Ctrl+T`, or `Enter` with nothing to
+    /// pick): start it when there is none, switch to it when there already is.
+    SessionPickerEphemeral,
     SessionPickerCreateFromQuery,
     SessionPickerKillSelected,
     SessionPickerRestartSelected,

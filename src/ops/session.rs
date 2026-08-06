@@ -1501,12 +1501,71 @@ pub(crate) fn activate_discovered_session(
 }
 
 /// The launcher's one offer: start this client's ephemeral session now. Reached by `Enter` on the
-/// launcher panel and by the pinned *start a shell* row in the session picker, which is why it also
-/// drops any deferred PTY action — asking for a plain shell replaces whatever spawn was queued
-/// against a session that never arrived.
+/// launcher panel and by the session picker's scratch-session key, which is why it also drops any
+/// deferred PTY action — asking for a plain shell replaces whatever spawn was queued against a
+/// session that never arrived.
 pub(crate) fn start_launcher_shell(ctx: &mut Context<HyprmuxApp>) -> Update {
     clear_pending_session_action(ctx, None);
     attach_startup_ephemeral(ctx)
+}
+
+/// This client's own scratch session, when it already has one: the ephemeral it holds in the
+/// foreground or parked in the background.
+///
+/// The name is read back off the attachment rather than recomputed from the pid, because a
+/// restarted ephemeral is salted (`eph-<pid>-<salt>`) and would not be found by name. Other
+/// clients' ephemerals are deliberately not counted — they are somebody else's scratch session, and
+/// the picker already lists them as rows.
+pub(crate) fn held_ephemeral_session(
+    state: &crate::state::State,
+) -> Option<&crate::state::Attachment> {
+    std::iter::once(state.current())
+        .chain(state.background.values())
+        .find(|attachment| {
+            attachment
+                .session_name
+                .as_deref()
+                .is_some_and(crate::state::is_ephemeral_session_name)
+        })
+}
+
+/// Go to this client's scratch session: the session picker's `Ctrl+T`, and its `Enter` when there
+/// is nothing on the list to activate.
+///
+/// One key covers both directions — start the ephemeral when there is none, switch to it when there
+/// already is — because from the keyboard they are the same request. Already being on it is a
+/// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
+pub(crate) fn open_ephemeral_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+    clear_pending_session_arms(ctx);
+    // Checked before the launcher case: the session on screen being the scratch one settles this
+    // whether or not its client is live, and re-attaching what is already attached is never right.
+    if ctx.state.is_ephemeral_session() {
+        return close_session_picker(ctx);
+    }
+    // In the launcher there is nothing to park, and the panes the launch prepared are still waiting
+    // to be handed to the session that starts.
+    if ctx.state.needs_session_for_pty() {
+        return start_launcher_shell(ctx);
+    }
+    let held = held_ephemeral_session(&ctx.state).map(|attachment| {
+        (
+            attachment.session_name.clone().unwrap_or_default(),
+            attachment.remote_host.clone(),
+            attachment.remote_target.clone(),
+        )
+    });
+    let (name, remote_host, remote_target) = held.unwrap_or_else(|| {
+        // Nothing held: create the one this client would launch. Under `--remote` the ephemeral
+        // lives on the remote host, so it takes the host-qualified name and that host's target.
+        let remote_target = ctx.state.current().remote_target.clone();
+        let name = if remote_target.is_some() {
+            crate::state::remote_ephemeral_session_name()
+        } else {
+            crate::state::ephemeral_session_name()
+        };
+        (name, ctx.state.current().remote_host.clone(), remote_target)
+    });
+    attach_session_by_name(ctx, name, remote_host, remote_target, true)
 }
 
 /// Attach this process's ephemeral session, seeded with the panes the launch had prepared (its
@@ -3110,7 +3169,7 @@ mod tests {
                 {
                     let state = backend.state_mut();
                     // The startup picker parks the panes the launch prepared and leaves the
-                    // foreground empty, which is the launcher this row is offered in.
+                    // foreground empty, which is the launcher the scratch key starts from.
                     let mut seed = crate::state::fresh_default_attachment(&state.config);
                     seed.workspaces[0].panes[0].identity.cwd = Some("/seeded".into());
                     *state.current_mut() = crate::state::Attachment::new();
@@ -3122,7 +3181,7 @@ mod tests {
                 assert!(backend.state().is_launcher());
 
                 backend
-                    .dispatch(Msg::SessionPickerStartShell)
+                    .dispatch(Msg::SessionPickerEphemeral)
                     .expect("start a shell from the picker");
 
                 let state = backend.state();

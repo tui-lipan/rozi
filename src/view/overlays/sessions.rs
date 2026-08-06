@@ -288,28 +288,30 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 /// hint never lies. Enter is **switch** for a background-connected session and **connect** when
 /// establishing a connection; **disconnect** closes this client's attachment; **kill** destroys the
 /// session; **restart** recreates it.
+///
+/// `shell` is the exception that is deliberately *under*-advertised: `Ctrl+T` always reaches this
+/// client's scratch session, but saying so is only worth a pill when the list cannot say it
+/// already. With nothing to pick, Enter is free and carries it; with the scratch session itself on
+/// the list, its own row is the obvious way to it.
 fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
-    let query = picker.input.text().trim();
-    let query_lower = query.to_ascii_lowercase();
+    let query_lower = picker.input.text().trim().to_ascii_lowercase();
     let current = ctx.state.current().session_name.as_deref();
     let current_remote = &ctx.state.current().remote_target;
     let visible = |entry: &crate::session::discovery::DiscoveredSession| {
-        query_lower.is_empty() || entry.name.to_ascii_lowercase().contains(&query_lower)
+        matches_session_query(entry, &query_lower)
     };
-    let start_shell = start_shell_highlighted(ctx, picker);
     let selected = picker
         .entries
         .get(picker.selected)
-        .filter(|_| !start_shell)
         .filter(|entry| visible(entry));
 
     let mut row = hint_row();
-    if start_shell {
-        row = row.child(hint_pill(theme, START_SHELL_LABEL, "enter"));
+    if picker_list_is_empty(picker) {
+        row = row.child(hint_pill(theme, "shell", "enter"));
     }
     if let Some(entry) = selected {
         let is_current = current == Some(entry.name.as_str())
@@ -327,6 +329,11 @@ fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         }
     }
     row = row.child(hint_pill(theme, "new", "ctrl+n"));
+    if !picker_list_is_empty(picker)
+        && crate::ops::session::held_ephemeral_session(&ctx.state).is_none()
+    {
+        row = row.child(hint_pill(theme, "shell", "ctrl+t"));
+    }
     if ctx.state.current().session_attached && ctx.state.is_ephemeral_session() {
         row = row.child(hint_pill(theme, "name current", "ctrl+s"));
     }
@@ -364,56 +371,35 @@ use crate::view::session_status::{
     SessionConnectionStatus, session_connection_status, session_status_gutter,
 };
 
-/// The pinned row's label. Also what the query is matched against to decide whether the row is
-/// still on screen.
-const START_SHELL_LABEL: &str = "start a shell";
-
-/// Whether the picker offers the pinned *start a shell* row at all: only in the launcher, where
-/// there is no session in the foreground and starting one is the client's own single offer.
-fn offers_start_shell(ctx: &Context<HyprmuxApp>) -> bool {
-    ctx.state.is_launcher()
+/// Whether a session row survives the picker's filter. The list, the footer hints, and the keys
+/// that only apply to a listed row all have to agree on what is on screen, so they share one
+/// predicate rather than each spelling the match out.
+fn matches_session_query(
+    entry: &crate::session::discovery::DiscoveredSession,
+    query_lower: &str,
+) -> bool {
+    query_lower.is_empty()
+        || entry.name.to_ascii_lowercase().contains(query_lower)
+        || entry
+            .host
+            .as_deref()
+            .is_some_and(|host| host.to_ascii_lowercase().contains(query_lower))
 }
 
-/// Whether the highlight is on the pinned row rather than a session.
-///
-/// `picker.start_shell` follows the widget's `on_select`, which does not fire for a highlight the
-/// widget places itself — so a query that leaves the pinned row as the only match counts too. Both
-/// arms require the row to still match the query, so the hint never advertises a row the filter has
-/// scrolled away.
-fn start_shell_highlighted(ctx: &Context<HyprmuxApp>, picker: &SessionPickerState) -> bool {
-    if !offers_start_shell(ctx) {
-        return false;
-    }
+/// Whether the picker is showing no session at all — nothing discovered, or nothing left by the
+/// query. There is then no row for Enter to activate, which is what frees it to start a shell.
+fn picker_list_is_empty(picker: &SessionPickerState) -> bool {
     let query = picker.input.text().trim().to_ascii_lowercase();
-    if !START_SHELL_LABEL.contains(&query) {
-        return false;
-    }
-    picker.start_shell
-        || !picker.entries.iter().any(|entry| {
-            query.is_empty()
-                || entry.name.to_ascii_lowercase().contains(&query)
-                || entry
-                    .host
-                    .as_deref()
-                    .is_some_and(|host| host.to_ascii_lowercase().contains(&query))
-        })
-}
-
-/// A row of the session picker. Everything the picker lists is a discovered session except the one
-/// pinned action that starts this client's ephemeral session, which only appears in the launcher.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SessionRow {
-    /// Start a shell now — the launcher's single offer, so it need not be reached by dismissing
-    /// the picker first.
-    StartShell,
-    /// Index into [`SessionPickerState::entries`].
-    Session(usize),
+    !picker
+        .entries
+        .iter()
+        .any(|entry| matches_session_query(entry, &query))
 }
 
 fn session_picker_palette(
     ctx: &Context<HyprmuxApp>,
     picker: &SessionPickerState,
-) -> SearchPalette<SessionRow> {
+) -> SearchPalette<usize> {
     let theme = &ctx.state.theme;
     let query = picker.input.text().trim().to_ascii_lowercase();
     let current_name = ctx.state.current().session_name.as_deref();
@@ -442,40 +428,16 @@ fn session_picker_palette(
     let mut entries = Vec::new();
     let mut last_group: Option<Option<&str>> = None;
     let mut reserve_discovered_gutter = false;
-    // The widget resolves the initial highlight by *item* index, so count items as they are pushed
-    // rather than reusing the entry index: the pinned row and the query filter both shift positions.
-    let mut item_count = 0usize;
-    let mut selected_item = None;
-    // In the launcher there is no session to go back to, and starting one is the only thing the
-    // client can do on its own. Offering it here means the picker no longer has to be dismissed to
-    // reach the launcher panel that says the same thing.
-    let start_shell = start_shell_highlighted(ctx, picker);
-    if offers_start_shell(ctx) {
-        if start_shell {
-            selected_item = Some(item_count);
-        }
-        item_count += 1;
-        entries.push(
-            SearchEntry::item(START_SHELL_LABEL, SessionRow::StartShell)
-                .description(ItemDescription::new().right("ephemeral")),
-        );
-    }
-    // Held back rather than pushed with the row above: with no session rows behind it (an empty
-    // discovery, or a query that matched none) a trailing spacer is a blank line under the last
-    // thing on the list.
-    let mut pinned_spacer = offers_start_shell(ctx);
-    for (index, entry) in picker.entries.iter().enumerate().filter(|(_, entry)| {
-        query.is_empty()
-            || entry.name.to_ascii_lowercase().contains(&query)
-            || entry
-                .host
-                .as_deref()
-                .is_some_and(|host| host.to_ascii_lowercase().contains(&query))
-    }) {
+    for (index, entry) in picker
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| matches_session_query(entry, &query))
+    {
         reserve_discovered_gutter |= statuses[index] != SessionConnectionStatus::Discovered;
         let group = entry.host.as_deref();
         if last_group != Some(group) {
-            if last_group.is_some() || std::mem::take(&mut pinned_spacer) {
+            if last_group.is_some() {
                 entries.push(SearchEntry::spacer());
             }
             entries.push(SearchEntry::header(match group {
@@ -496,14 +458,8 @@ fn session_picker_palette(
             label.push_str(host);
         }
         let we_hold = !matches!(statuses[index], SessionConnectionStatus::Discovered);
-        if !start_shell && index == picker.selected {
-            selected_item = Some(item_count);
-        }
-        item_count += 1;
-        entries.push(
-            SearchEntry::item(label, SessionRow::Session(index))
-                .description(session_description(entry, we_hold)),
-        );
+        entries
+            .push(SearchEntry::item(label, index).description(session_description(entry, we_hold)));
     }
     // Say what is (not) there, nothing more: the footer already advertises `new ctrl+n`, and
     // repeating it in the body says the same thing twice in a longer sentence.
@@ -531,12 +487,12 @@ fn session_picker_palette(
     let selection_style = picker_selection_style(theme, pending_accent);
     let status_styles = crate::view::session_status::SessionStatusStyles::from_theme(theme);
 
-    let mut palette = shared_search_palette::<SessionRow>(ctx, Length::Auto, false)
+    let mut palette = shared_search_palette::<usize>(ctx, Length::Auto, false)
         .width(Length::Flex(1))
         .entries(entries)
         .placeholder("Search sessions...")
         .initial_query(picker.input.text().to_string())
-        .initial_selected_item_index(selected_item)
+        .initial_selected_item_index(Some(picker.selected))
         .sync_selection(true)
         .empty_text(empty_text)
         .description_placement(DescriptionPlacement::Right)
@@ -549,52 +505,34 @@ fn session_picker_palette(
         )
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<SessionRow>| match event.item.value {
-                    SessionRow::StartShell => Msg::SessionPickerSelectStartShell,
-                    SessionRow::Session(index) => Msg::SessionPickerSelect(index),
-                }),
+                .callback(|event: SearchEvent<usize>| Msg::SessionPickerSelect(event.item.value)),
         )
         .on_activate(
             ctx.link()
-                .callback(|event: SearchEvent<SessionRow>| match event.item.value {
-                    SessionRow::StartShell => Msg::SessionPickerStartShell,
-                    SessionRow::Session(index) => Msg::SessionPickerActivate(index),
-                }),
+                .callback(|event: SearchEvent<usize>| Msg::SessionPickerActivate(event.item.value)),
         )
         // Leading space indents the marker; list item left padding is the gap before the label.
-        .item_gutter(Arc::new(move |item: &SearchItem<SessionRow>, _hl| {
-            let SessionRow::Session(index) = item.value else {
-                // The pinned row has no session behind it, so it has no connection status to show;
-                // it still takes the reserved column so labels stay in one line.
-                return session_status_gutter(
-                    SessionConnectionStatus::Discovered,
-                    status_styles,
-                    reserve_discovered_gutter,
-                );
-            };
-            let status = *statuses.get(index)?;
+        .item_gutter(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            let status = *statuses.get(item.value)?;
             session_status_gutter(status, status_styles, reserve_discovered_gutter)
         }));
     if pending_kill.is_some() || pending_restart.is_some() || !ephemeral_entries.is_empty() {
-        palette = palette.render_item(Arc::new(move |item: &SearchItem<SessionRow>, _hl| {
-            let SessionRow::Session(index) = item.value else {
-                return None;
-            };
-            if pending_kill == Some(index) {
+        palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
+            if pending_kill == Some(item.value) {
                 Some(render_pending_confirm_item(
                     item.label.as_ref(),
                     error_bg,
                     "again to kill",
                     true,
                 ))
-            } else if pending_restart == Some(index) {
+            } else if pending_restart == Some(item.value) {
                 Some(render_pending_confirm_item(
                     item.label.as_ref(),
                     warn_bg,
                     "again to restart",
                     false,
                 ))
-            } else if ephemeral_entries.contains(&index) {
+            } else if ephemeral_entries.contains(&item.value) {
                 Some(render_ephemeral_session_item(
                     item,
                     &ephemeral_style,
@@ -647,17 +585,20 @@ fn session_description(
 fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
     let is_ephemeral = ctx.state.is_ephemeral_session();
     let is_attached = ctx.state.current().session_attached;
-    // The pinned *start a shell* row is not a session: the per-session chords must not fall through
-    // to whatever entry index the highlight was last parked on, or `ctrl+k` would arm a kill on a
-    // row nobody is looking at.
-    let on_session = !ctx
+    // With no row on the list, Enter has nothing to activate, so it carries the scratch session
+    // instead of doing nothing. With rows present it must stay the list's own key.
+    let list_is_empty = ctx
         .state
         .session_picker
         .as_ref()
-        .is_some_and(|picker| start_shell_highlighted(ctx, picker));
+        .is_some_and(picker_list_is_empty);
     ctx.link().key_handler(move |key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSessionPicker)
+        } else if (key.mods.ctrl && matches!(key.code, KeyCode::Char('t') | KeyCode::Char('T')))
+            || (list_is_empty && key.is(KeyCode::Enter))
+        {
+            Some(Msg::SessionPickerEphemeral)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('N')) {
             Some(Msg::SessionPickerCreateFromQuery)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('S')) {
@@ -666,21 +607,6 @@ fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
             } else {
                 None
             }
-        } else if !on_session
-            && key.mods.ctrl
-            && matches!(
-                key.code,
-                KeyCode::Char('k')
-                    | KeyCode::Char('K')
-                    | KeyCode::Char('e')
-                    | KeyCode::Char('E')
-                    | KeyCode::Char('w')
-                    | KeyCode::Char('W')
-                    | KeyCode::Char('x')
-                    | KeyCode::Char('X')
-            )
-        {
-            None
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K')) {
             Some(Msg::SessionPickerKillSelected)
         } else if key.mods.ctrl && matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {

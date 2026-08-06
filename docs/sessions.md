@@ -121,11 +121,12 @@ Open the session picker (*Sessions…* in the command palette). The picker alway
   removed completely.
 - **Restart** (`Ctrl+E` twice) — shut the highlighted session down and recreate it as the active
   session, with fresh panes.
-- **Start a shell** (`Enter` on the pinned top row) — only in the launcher, where there is no
-  session in the foreground. It starts this client's ephemeral session with whatever layout the
-  launch prepared, the same as `Enter` on the launcher panel, so the startup picker does not have
-  to be dismissed first. With nothing discovered, that row is the whole list. Per-session chords
-  (`Ctrl+K` / `Ctrl+E` / `Ctrl+W` / `Ctrl+X`) do nothing while it is highlighted.
+- **Shell** (`Ctrl+T`, or `Enter` when the list is empty) — go to this client's scratch (ephemeral)
+  session: start it when there is none, switch to it when there already is. Started from the
+  launcher it takes whatever layout the launch prepared, the same as `Enter` on the launcher panel,
+  so the startup picker need not be dismissed first. The key always works; the footer only spends a
+  pill on it when the list cannot point the way itself — with nothing to pick, `Enter` is free and
+  carries it, and once the scratch session exists it is a row on the list like any other.
 
 Switching retains the current attachment in the background. Its client, screens, scrollback,
 layout, and focus remain live, and background output continues to be parsed. Selecting it again is

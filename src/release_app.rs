@@ -14,9 +14,11 @@ pub const HYPRMUX: App = App {
         launcher_name: "hyprmux-launcher.exe",
         protocol: 1,
     },
+    // `relswap` requires the probe output to contain the version being activated, which during an
+    // update is the staged release rather than this binary's own version.  `hyprmux --version`
+    // prints `hyprmux <version>` as its first line.
     self_test: Some(relswap::SelfTest {
         args: &["--version"],
-        expect_contains: env!("CARGO_PKG_VERSION"),
         timeout: std::time::Duration::from_secs(10),
     }),
 };

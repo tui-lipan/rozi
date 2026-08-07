@@ -379,14 +379,17 @@ jobs:
 
       # The environment is protected, but the private value is deliberately scoped to this one
       # step. No Cargo command, compiler, or checkout runs after it becomes available.
+      # RELSWAP_RELEASE_PRIVATE_KEY is the name the (product-neutral) release tool reads; the
+      # repository secret keeps its hyprmux-scoped name. The key id is hyprmux's own and is passed
+      # as an argument, so it stays named for this product.
       - name: Sign exact manifest bytes
         env:
-          HYPRMUX_RELEASE_PRIVATE_KEY: ${{ secrets.HYPRMUX_RELEASE_PRIVATE_KEY }}
+          RELSWAP_RELEASE_PRIVATE_KEY: ${{ secrets.HYPRMUX_RELEASE_PRIVATE_KEY }}
           HYPRMUX_RELEASE_KEY_ID: ${{ vars.HYPRMUX_RELEASE_KEY_ID || 'release-2026-a' }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$HYPRMUX_RELEASE_PRIVATE_KEY"
+          test -n "$RELSWAP_RELEASE_PRIVATE_KEY"
           test -n "$HYPRMUX_RELEASE_KEY_ID"
           release-tool/relswap sign \
             --name hyprmux \

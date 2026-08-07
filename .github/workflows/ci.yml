@@ -25,11 +25,6 @@ jobs:
         with:
           repository: Razuer/tui-lipan
           path: tui-lipan
-      - name: Check out the sibling relswap dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/relswap
-          path: relswap
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
         with:
@@ -63,11 +58,6 @@ jobs:
         with:
           repository: Razuer/tui-lipan
           path: tui-lipan
-      - name: Check out the sibling relswap dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/relswap
-          path: relswap
       - uses: dtolnay/rust-toolchain@1.88
       # RustSec advisories are a property of the dependency graph, not of the host, so auditing on
       # all three platforms would report the same findings three times and pay for `cargo install`

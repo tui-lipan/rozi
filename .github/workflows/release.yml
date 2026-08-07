@@ -7,9 +7,9 @@ on:
   pull_request:
   workflow_dispatch:
 
-# The repository currently uses path deps on ../tui-lipan and ../relswap.  Keep this checkout
-# explicit until the dependency is intentionally published and Cargo.toml is changed; this is not
-# a crates.io fallback or a claim that standalone CI can build the current manifest.
+# tui-lipan is still a path dep, so its checkout stays explicit; this is not a crates.io fallback or
+# a claim that standalone CI can build the current manifest.  relswap comes from the registry
+# instead, so Cargo.lock pins the exact engine each signed release was built and signed with.
 permissions:
   contents: read
 
@@ -27,11 +27,6 @@ jobs:
         with:
           repository: Razuer/tui-lipan
           path: tui-lipan
-      - name: Check out the sibling relswap dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/relswap
-          path: relswap
       - uses: dtolnay/rust-toolchain@1.88
       - name: Test
         working-directory: hyprmux
@@ -71,11 +66,6 @@ jobs:
         with:
           repository: Razuer/tui-lipan
           path: tui-lipan
-      - name: Check out the sibling relswap dependency
-        uses: actions/checkout@v4
-        with:
-          repository: tui-lipan/relswap
-          path: relswap
       - uses: dtolnay/rust-toolchain@1.88
         with:
           targets: ${{ matrix.target }}
@@ -259,17 +249,30 @@ jobs:
 
       # Build this only on the native Linux runner. Publication downloads this executable and never
       # invokes Cargo after the protected private-key step.
+      #
+      # The version is read from Cargo.lock rather than written here: the tool that produces a
+      # manifest and the engine that verifies it share a wire format (schema_version), so they must
+      # be the same release of relswap. Pinning it in two places would let them drift apart, and the
+      # failure would only appear on a client mid-update.
       - name: Build Linux release tool
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        working-directory: relswap
-        run: cargo build --locked --release --features release-tool --bin relswap
+        working-directory: hyprmux
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cargo metadata --format-version 1 --locked \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="relswap"))')
+          test -n "$version"
+          echo "Building release tool from relswap $version"
+          cargo install relswap --version "=$version" --locked --features release-tool \
+            --root "$RUNNER_TEMP/release-tool"
 
       - name: Upload prebuilt Linux release tool
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         uses: actions/upload-artifact@v4
         with:
           name: release-tool-linux
-          path: relswap/target/release/relswap
+          path: ${{ runner.temp }}/release-tool/bin/relswap
           if-no-files-found: error
           overwrite: false
           retention-days: 14

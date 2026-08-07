@@ -2728,7 +2728,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "relswap"
-version = "0.1.0"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d48dd2a9f50d9f880e41a83be9768241d247d98e96fc440594af3ad1b3d39be"
 dependencies = [
  "base64",
  "chrono",

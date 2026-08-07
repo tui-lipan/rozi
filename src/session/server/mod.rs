@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,8 +24,10 @@ use crate::state::PaneId;
 mod browse;
 mod connection;
 mod lease;
+mod pane_log;
 mod panes;
 mod resurrect;
+pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
 mod runtime;
 
@@ -108,6 +110,9 @@ pub struct SessionServer {
 #[derive(Clone, Debug)]
 pub struct ServerSettings {
     pub log_dir: Option<PathBuf>,
+    /// Ceiling on one pane log file, mirroring
+    /// [`crate::config::HyprmuxLoggingConfig::max_bytes`] including its `0` (unlimited) escape.
+    pub log_max_bytes: u64,
     pub resurrect: bool,
     pub snapshot_dir: Option<PathBuf>,
     pub snapshot_interval: Duration,
@@ -136,6 +141,7 @@ impl Default for ServerSettings {
     fn default() -> Self {
         Self {
             log_dir: None,
+            log_max_bytes: crate::config::DEFAULT_LOG_MAX_BYTES,
             resurrect: false,
             snapshot_dir: None,
             snapshot_interval: Duration::from_secs(30),
@@ -146,11 +152,6 @@ impl Default for ServerSettings {
             command_shell: Vec::new(),
         }
     }
-}
-
-pub struct PaneLog {
-    file: File,
-    path: PathBuf,
 }
 
 pub struct ServerPane {
@@ -499,6 +500,7 @@ impl SessionServer {
                 let _ = pty.kill();
             }
         }
+        self.discard_ephemeral_logs();
         Ok(())
     }
 
@@ -733,6 +735,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
         name,
         ServerSettings {
             log_dir: loaded.config.logging.dir,
+            log_max_bytes: loaded.config.logging.max_bytes,
             resurrect: loaded.config.session.resurrect,
             allow_takeover: loaded.config.session.allow_takeover,
             scrollback: loaded.config.scrollback,

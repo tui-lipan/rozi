@@ -607,9 +607,24 @@ pub struct HyprmuxHookConfig {
     pub run: String,
 }
 
-#[derive(Clone, Debug, Default)]
+/// Default ceiling on one pane log file. Generous enough that an ordinary logged session never
+/// reaches it, small enough that a runaway pane cannot quietly fill the state directory.
+pub const DEFAULT_LOG_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
 pub struct HyprmuxLoggingConfig {
     pub dir: Option<PathBuf>,
+    /// Size ceiling for one pane log file. `0` disables the cap and restores unbounded growth.
+    pub max_bytes: u64,
+}
+
+impl Default for HyprmuxLoggingConfig {
+    fn default() -> Self {
+        Self {
+            dir: None,
+            max_bytes: DEFAULT_LOG_MAX_BYTES,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

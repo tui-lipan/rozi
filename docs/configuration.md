@@ -948,11 +948,24 @@ moment you type, not three seconds after you enabled it.
 
 ## `[logging]`
 
-`[logging]` accepts an optional `dir` path. By default logs are stored below
-`$XDG_STATE_HOME/hyprmux/logs` (or `~/.local/state/hyprmux/logs`). Session directories use mode
-`0700` and log files use mode `0600`.
+`[logging]` configures the files written by [`toggle-pane-logging`](terminal.md#pane-logging).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `dir` | `$XDG_STATE_HOME/hyprmux/logs` (else `~/.local/state/hyprmux/logs`) | Where session log directories are created. |
+| `max_bytes` | `67108864` (64 MiB) | Size ceiling for one pane log file. `0` disables the cap. |
+
+Session directories use mode `0700` and log files use mode `0600`.
 
 ```toml
 [logging]
 dir = "~/.local/state/hyprmux/logs"
+max_bytes = 67108864
 ```
+
+A pane log that reaches `max_bytes` stops, records why in its last line, and reports the stop the
+same way a write error does. The limit is enforced per file, and a chunk that would cross it is
+refused whole rather than half-written, so a log never ends mid-escape-sequence.
+
+An ephemeral session's log directory is deleted when its server exits: `eph-*` sessions are
+disposable and nothing can reattach to read them later. Named sessions keep their logs.

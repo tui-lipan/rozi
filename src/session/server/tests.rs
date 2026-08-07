@@ -11,17 +11,8 @@ fn test_palette() -> WirePalette {
     }
 }
 
-/// Placeholder resolved interactive shell for spawn requests in tests.
-fn test_shell() -> Vec<String> {
-    vec!["/bin/sh".to_string()]
-}
-
-/// Placeholder resolved command-runner shell for spawn requests in tests.
-fn test_command_shell() -> Vec<String> {
-    vec!["/bin/sh".to_string(), "-c".to_string()]
-}
-
-fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
+/// A 20x5 pane with no PTY behind it, for tests that only exercise server-side pane bookkeeping.
+fn test_pane(generation: u64) -> ServerPane {
     ServerPane {
         generation,
         title: None,
@@ -38,13 +29,30 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
         content_generation: 0,
         cols: 20,
         rows: 5,
-        exited,
+        exited: None,
         log: None,
         runtime: protocol::PaneRuntimeState::default(),
         last_agent_probe: None,
         last_agent_detect: None,
         last_git_read: None,
         initial_cursor_report_primed: false,
+    }
+}
+
+/// Placeholder resolved interactive shell for spawn requests in tests.
+fn test_shell() -> Vec<String> {
+    vec!["/bin/sh".to_string()]
+}
+
+/// Placeholder resolved command-runner shell for spawn requests in tests.
+fn test_command_shell() -> Vec<String> {
+    vec!["/bin/sh".to_string(), "-c".to_string()]
+}
+
+fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
+    ServerPane {
+        exited,
+        ..test_pane(generation)
     }
 }
 
@@ -1367,7 +1375,7 @@ fn attach_reports_layout_and_panes() {
 }
 
 #[test]
-fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
+fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
     let root = std::env::temp_dir().join(format!("hyprmux-log-test-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let mut server = SessionServer::new_named_with_settings(
@@ -1378,33 +1386,7 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
             ..ServerSettings::default()
         },
     );
-    server.panes.insert(
-        1,
-        ServerPane {
-            generation: 2,
-            title: None,
-            cwd: None,
-            command: None,
-            keep_open: false,
-            command_completed: false,
-            cell: tui_lipan::TerminalCellSize::default(),
-            shell: Vec::new(),
-            env: Vec::new(),
-            palette: test_palette(),
-            pty: None,
-            terminal: TerminalScreen::new(5, 20, 100),
-            content_generation: 0,
-            cols: 20,
-            rows: 5,
-            exited: None,
-            log: None,
-            runtime: protocol::PaneRuntimeState::default(),
-            last_agent_probe: None,
-            last_agent_detect: None,
-            last_git_read: None,
-            initial_cursor_report_primed: false,
-        },
-    );
+    server.panes.insert(1, test_pane(2));
 
     let changed = server.set_pane_logging(1, 2, true);
     let path = match changed {
@@ -1421,7 +1403,12 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
         2,
         TerminalPtyEvent::Output(b"raw\x1b[31m\n".to_vec().into()),
     ));
-    assert_eq!(fs::read(&path).unwrap(), b"raw\x1b[31m\n");
+    let logged = fs::read(&path).unwrap();
+    let header_end = logged.windows(5).position(|w| w == b"===\r\n").unwrap() + 5;
+    let (header, body) = logged.split_at(header_end);
+    assert!(String::from_utf8_lossy(header).contains("session dev · pane 1-2 · 20x5"));
+    // Everything after the header is the pane's own bytes, escapes intact.
+    assert_eq!(body, b"raw\x1b[31m\n");
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o600
@@ -1432,8 +1419,72 @@ fn pane_logging_writes_exact_bytes_and_is_reported_on_attach() {
         2,
         TerminalPtyEvent::Output(b"later".to_vec().into()),
     ));
-    assert_eq!(fs::read(&path).unwrap(), b"raw\x1b[31m\n");
+    assert_eq!(&fs::read(&path).unwrap()[header_end..], b"raw\x1b[31m\n");
     let _ = fs::remove_dir_all(root);
+}
+
+/// hyprmux injects its own OSC 133 `hyprmux_exe=` marker through shell integration; a user's log is
+/// their program's output, not hyprmux's protocol. The standard bare marker is what other
+/// terminals' integrations emit, so it stays.
+#[test]
+fn pane_logging_strips_hyprmux_own_shell_integration_marker() {
+    let root = std::env::temp_dir().join(format!("hyprmux-log-marker-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let mut server = SessionServer::new_named_with_settings(
+        "dev",
+        ServerSettings {
+            log_dir: Some(root.clone()),
+            resurrect: false,
+            ..ServerSettings::default()
+        },
+    );
+    server.panes.insert(1, test_pane(2));
+
+    let path = match server.set_pane_logging(1, 2, true) {
+        ServerMessage::PaneLoggingChanged {
+            path: Some(path), ..
+        } => PathBuf::from(path),
+        other => panic!("unexpected response: {other:?}"),
+    };
+    server.handle_event(ServerEvent::Pty(
+        1,
+        2,
+        TerminalPtyEvent::Output(
+            b"\x1b]133;A\x1b\\\x1b]133;C;hyprmux_exe=eza\x1b\\out"
+                .to_vec()
+                .into(),
+        ),
+    ));
+    let logged = fs::read(&path).unwrap();
+    let body = &logged[logged.windows(5).position(|w| w == b"===\r\n").unwrap() + 5..];
+    assert_eq!(body, b"\x1b]133;A\x1b\\\x1b]133;C\x1b\\out");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// An `eph-*` session is disposable, so the logs it wrote are too. A named session's are not.
+#[test]
+fn ephemeral_session_logs_are_discarded_at_shutdown_and_named_ones_are_kept() {
+    for (session, survives) in [("eph-4242", false), ("dev", true)] {
+        let root =
+            std::env::temp_dir().join(format!("hyprmux-log-reap-{}-{session}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let mut server = SessionServer::new_named_with_settings(
+            session,
+            ServerSettings {
+                log_dir: Some(root.clone()),
+                resurrect: false,
+                ..ServerSettings::default()
+            },
+        );
+        server.panes.insert(1, test_pane(2));
+        server.set_pane_logging(1, 2, true);
+        let dir = root.join(session);
+        assert!(dir.is_dir(), "{session}: log directory should exist");
+
+        server.discard_ephemeral_logs();
+        assert_eq!(dir.is_dir(), survives, "{session}: unexpected retention");
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 #[test]

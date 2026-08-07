@@ -267,4 +267,19 @@ Use the `toggle-pane-logging` action to append a pane's raw PTY output to a log 
 logging is shown by a `[log]` title badge and is shared with every client, including clients that
 attach after logging starts. Raw logs may contain terminal escape sequences and credentials; view
 them with `less -R` and protect them as sensitive data. Logging stops automatically after a write
-error.
+error, or on reaching [`[logging] max_bytes`](configuration.md#logging).
+
+The stream is otherwise unmodified - escape sequences, CR line endings, and colour intact - because
+that is the only lossless form and the only one that replays. Two things are added or removed:
+
+- **Each run opens with a header line** naming the session, pane id and generation, pane size, and
+  start time, so a file appended to across several logging runs stays self-describing.
+- **hyprmux's own `OSC 133 ; C ; hyprmux_exe=` parameter is stripped**, leaving the bare
+  `OSC 133 ; C` marker that any shell integration writes. That parameter is how
+  [shell integration](configuration.md#shell_integration) reports the foreground program to
+  hyprmux; it is not the pane's output and does not belong in a log of it. Every other escape
+  sequence the shell or program emitted, OSC 133 `A`/`B`/`D` included, is left alone.
+
+To strip the remaining escape sequences for a plain-text record, pipe the file through a filter such
+as `ansifilter` or `sed -e 's/\x1b\[[0-9;]*m//g'` - hyprmux writes the faithful stream and leaves
+that choice to you.

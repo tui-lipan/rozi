@@ -1,3 +1,4 @@
+use super::pane_log::LogHeader;
 use super::*;
 use std::fs::OpenOptions;
 #[cfg(unix)]
@@ -242,14 +243,11 @@ impl SessionServer {
                 }
                 match event {
                     TerminalPtyEvent::Output(bytes) => {
-                        let log_error = pane
-                            .log
-                            .as_mut()
-                            .and_then(|log| log.file.write_all(&bytes).err());
-                        let logging_error = log_error.map(|error| {
+                        let logging_error =
+                            pane.log.as_mut().and_then(|log| log.write(&bytes).err());
+                        if logging_error.is_some() {
                             pane.log = None;
-                            format!("pane log write failed: {error}")
-                        });
+                        }
                         pane.screen_mut().process_bytes(&bytes);
                         // Bumped directly rather than through `mark_dirty`: `pane` holds a mutable
                         // borrow of `self.panes`, and a disjoint field assignment is what the
@@ -346,7 +344,7 @@ impl SessionServer {
         let pane = self.panes.get_mut(&id)?;
         pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
-            let _ = log.file.write_all(&bytes);
+            let _ = log.write(&bytes);
         }
         pane.exited = Some(code);
 
@@ -394,7 +392,7 @@ impl SessionServer {
         let pane = self.panes.get_mut(&id)?;
         pane.screen_mut().process_bytes(&bytes);
         if let Some(log) = pane.log.as_mut() {
-            let _ = log.file.write_all(&bytes);
+            let _ = log.write(&bytes);
         }
 
         // `spawnable_cwd` prefers the pane's live tracked cwd (where the command actually left it)
@@ -507,22 +505,31 @@ impl SessionServer {
                 error: None,
             };
         }
-        let root = self.settings.log_dir.clone().or_else(default_log_dir);
-        let result = root
+        let (cols, rows) = (pane.cols, pane.rows);
+        let header = LogHeader {
+            session: &self.session_name,
+            pane_id: id,
+            generation,
+            cols,
+            rows,
+        };
+        let limit = self.settings.log_max_bytes;
+        let result = session_log_dir(&self.settings, &self.session_name)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "state directory unavailable"))
-            .and_then(|root| {
+            .and_then(|(root, dir)| {
                 crate::platform::fs_security::ensure_private_dir(&root)?;
-                let dir = root.join(&self.session_name);
                 crate::platform::fs_security::ensure_private_dir(&dir)?;
                 let path = dir.join(format!("{id}-{generation}.log"));
-                let file = OpenOptions::new().create(true).append(true).open(&path)?;
+                // Created and locked down before anything is written, so the header never lands in
+                // a file that is briefly readable by anyone else.
+                OpenOptions::new().create(true).append(true).open(&path)?;
                 #[cfg(unix)]
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-                Ok(PaneLog { file, path })
+                PaneLog::open(&path, limit, &header)
             });
         match result {
             Ok(log) => {
-                let path = log.path.to_string_lossy().into_owned();
+                let path = log.path().to_string_lossy().into_owned();
                 pane.log = Some(log);
                 ServerMessage::PaneLoggingChanged {
                     pane_id: id,
@@ -539,6 +546,30 @@ impl SessionServer {
                 path: None,
                 error: Some(error.to_string()),
             },
+        }
+    }
+
+    /// Delete an ephemeral session's log directory as the server exits.
+    ///
+    /// An `eph-*` session is disposable by definition, so the logs it wrote are too - and unlike a
+    /// named session there is no later attach that could want them. Without this they accumulate
+    /// one orphaned directory per hyprmux run, forever, holding whatever those panes printed.
+    /// Named sessions are left alone: their logs are the point.
+    pub(super) fn discard_ephemeral_logs(&mut self) {
+        if !crate::state::is_ephemeral_session_name(&self.session_name) {
+            return;
+        }
+        // Close every handle first: Windows refuses to delete a file that is still open.
+        for pane in self.panes.values_mut() {
+            pane.log = None;
+        }
+        let Some((_, dir)) = session_log_dir(&self.settings, &self.session_name) else {
+            return;
+        };
+        if let Err(error) = fs::remove_dir_all(&dir)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            eprintln!("hyprmux: could not remove session log directory: {error}");
         }
     }
 }
@@ -558,6 +589,15 @@ pub(super) fn is_cursor_position_report(bytes: &[u8]) -> bool {
         && col.len() > 1
         && row.iter().all(u8::is_ascii_digit)
         && col[1..].iter().all(u8::is_ascii_digit)
+}
+
+/// The log root and one session's directory beneath it, or `None` when no state directory can be
+/// resolved at all. Takes the two fields it needs rather than `&self` so it stays callable while a
+/// pane is mutably borrowed out of `self.panes`.
+fn session_log_dir(settings: &ServerSettings, session_name: &str) -> Option<(PathBuf, PathBuf)> {
+    let root = settings.log_dir.clone().or_else(default_log_dir)?;
+    let dir = root.join(session_name);
+    Some((root, dir))
 }
 
 fn default_log_dir() -> Option<PathBuf> {

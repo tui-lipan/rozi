@@ -80,6 +80,7 @@ struct HookFileConfig {
 #[serde(default, deny_unknown_fields)]
 struct LoggingFileConfig {
     dir: Option<String>,
+    max_bytes: Option<u64>,
 }
 
 /// A `[keys]` value: replacement bindings, an additive binding table, or a user command table.
@@ -461,6 +462,9 @@ pub fn load_config() -> LoadedConfig {
     }
     if let Some(dir) = non_empty(parsed.logging.dir) {
         config.logging.dir = Some(expand_path(dir));
+    }
+    if let Some(max_bytes) = parsed.logging.max_bytes {
+        config.logging.max_bytes = max_bytes;
     }
 
     let mut input = config.input.clone();

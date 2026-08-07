@@ -161,7 +161,10 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
   `ops/exit.rs`.
 - Lifecycle/event/data modules use plain names, such as `pane_lifecycle`, `pty_events`, and
   `profiles`.
-- Keep `input.rs` as the source of truth for command/action metadata used by help and palettes.
+- Keep `input.rs` as the source of truth for the `Action` enum, `Action::id()` command ids, and
+  `BINDABLE_ACTIONS`; keep `commands.rs` as the source of truth for the `BUILTIN_COMMANDS` registry
+  entries that carry each command's label, description, group, and `default_keys`. Help and the
+  palettes render from that registry, so adding an action means touching both files.
 - Do not toast successful state changes that are already visible on screen. Lossless config
   normalization is also silent; reserve toasts for failures, rejections, destructive confirmations,
   and useful off-screen results. See `docs/configuration.md#in-app-toasts`.
@@ -238,7 +241,9 @@ Major module map:
 - `state/` - Central runtime `State` plus focused layout, appearance, drag, mode, search, identity,
   picker, pane, workspace, and shared-session state modules.
 - `actions.rs` - Action dispatcher, including palette-specific confirmation bypass.
-- `key_routing.rs` / `keymap.rs` / `input.rs` - Input modes, bindings, actions, and command ids.
+- `key_routing.rs` / `input.rs` / `commands.rs` / `config/input.rs` - Input mode routing, the
+  `Action` enum and command ids, the `BUILTIN_COMMANDS` registry and its default chords, and
+  `[keys]` override/user-command parsing.
 - `pane.rs` / `pane_lifecycle.rs` / `pty_events.rs` - Terminal screen, PTY, spawn, resize, exit.
 - `tiling.rs` / `layout.rs` / `geometry.rs` / `ops/resize_move/` / `anim.rs` - Window-manager
   layout, placement, floating and tiled movement, split dragging, keyboard resizing, and animations.
@@ -373,8 +378,9 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes;
   `PaneIdentity::env` adds never-persisted per-spawn variables (the file tree passes the activated
   path as `HYPRMUX_FILE` so a `run`/`popup` command never has a filename spliced into it).
-- `[[hooks]]` runs client-side commands for 15 UI events and injects `HYPRMUX_EVENT`, event fields,
-  and `HYPRMUX_SOCKET` (plus `HYPRMUX_REMOTE_HOST` when attached via `--remote`); see `docs/hooks.md`.
+- `[[hooks]]` runs client-side commands for the 16 `events::EventKind` variants and injects
+  `HYPRMUX_EVENT`, event fields, and `HYPRMUX_SOCKET` (plus `HYPRMUX_REMOTE_HOST` when attached via
+  `--remote`); see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
 - `[[rules]]` applies first-match command substring placement to interactive command-carrying pane
   spawns, including control `new-pane` and `[keys] run`.
@@ -397,6 +403,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 - [README.md](README.md) - Project overview and documentation index.
 - [docs/index.md](docs/index.md) - Full documentation table of contents.
+- [docs/features.md](docs/features.md) - Single-page inventory of every feature.
 - [docs/getting-started.md](docs/getting-started.md) - Build, run, quit, and dependency notes.
 - [docs/configuration.md](docs/configuration.md) - Complete `hyprmux.toml` reference.
 - [docs/keybindings.md](docs/keybindings.md) - Prefix mode, held modifier, mouse, and key table.

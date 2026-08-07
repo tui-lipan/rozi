@@ -25,7 +25,11 @@ jobs:
         with:
           repository: Razuer/tui-lipan
           path: tui-lipan
+      # rustfmt and clippy are not in the toolchain this action installs by default, and the two
+      # steps below are the only reason this job needs them.
       - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: hyprmux

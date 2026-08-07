@@ -15,39 +15,24 @@ tui-lipan = { path = "../tui-lipan/", features = [
   "theme-reload",
   "devtools",
 ] }
+relswap = { path = "../relswap" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = { version = "1.1.3", default-features = false, features = ["parse", "serde", "std", "display"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 notify = "6"
 regex-lite = "0.1"
-base64 = "0.22"
-ed25519-dalek = "3"
-flate2 = "1"
-fs4 = "1.1"
-getrandom = "0.4"
-hex = "0.4"
 semver = { version = "1", features = ["serde"] }
-sha2 = "0.10"
-tar = { version = "0.4", default-features = false }
-ureq = { version = "3.3", default-features = false, features = ["rustls"] }
-url = "2"
-zip = { version = "5.1", default-features = false, features = ["deflate-flate2"] }
 unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
 
 [features]
-release-tool = []
 # Headless PNG/JSON capture for visual review. Opt-in so release builds do not
 # carry the font and image-encoding dependencies. Use `cargo snap`.
 # JSON export is omitted: it pulls a serde_json newer than this crate's pinned
 # lock. Add "tui-lipan/ui-snapshot-json" plus `cargo update -p serde_json` for it.
 ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 
-[[bin]]
-name = "hyprmux-release"
-path = "tools/hyprmux-release.rs"
-required-features = ["release-tool"]
 
 [[bin]]
 name = "hyprmux-launcher"

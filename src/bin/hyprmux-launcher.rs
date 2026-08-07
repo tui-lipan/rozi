@@ -1,5 +1,5 @@
 fn main() {
-    match hyprmux::platform::executable::run_windows_launcher() {
+    match relswap::launcher::run("hyprmux.exe") {
         Ok(code) => std::process::exit(code),
         Err(error) => {
             eprintln!("hyprmux launcher: {error}");

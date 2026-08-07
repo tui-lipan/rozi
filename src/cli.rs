@@ -609,14 +609,14 @@ pub(crate) fn run_remote_serve_cli(name: &str) -> Result<()> {
 }
 
 pub(crate) fn recover_managed_installation() -> std::result::Result<(), String> {
-    crate::platform::install::Installation::from_process()
+    crate::platform::install::from_process()
         .recover_if_managed()
         .map(|_| ())
         .map_err(|error| format!("managed installation recovery failed: {error}"))
 }
 
 pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
-    let installation = crate::platform::install::Installation::from_process();
+    let installation = crate::platform::install::from_process();
     let result = installation
         .install()
         .map_err(|error| format!("installation failed: {error}"))?;
@@ -633,7 +633,7 @@ pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
 }
 
 pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), String> {
-    let installation = crate::platform::install::Installation::from_process();
+    let installation = crate::platform::install::from_process();
     match command {
         UpdateCommand::Check => {
             let result = installation

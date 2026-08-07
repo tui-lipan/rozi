@@ -11,9 +11,10 @@
 //!   `config::file`, `profiles`, `session::server::resurrect`, `session::server::panes`,
 //!   `platform::shell_integration`, and `control::runtime_dir`.
 //! - [`fs_security`] - private-directory policy: Unix ownership/mode/symlink enforcement, Windows
-//!   protected current-user-SID DACL plus reparse-point rejection (Phase 3/5). The Windows security
-//!   descriptor is shared with the named-pipe backend, so an endpoint and the registry entry that
-//!   advertises it carry the same ACL.
+//!   protected current-user-SID DACL plus reparse-point rejection (Phase 3/5). Re-exported from
+//!   `relswap::fs::security` so session/control/IPC and the updater share one implementation. The
+//!   Windows security descriptor is shared with the named-pipe backend, so an endpoint and the
+//!   registry entry that advertises it carry the same ACL.
 //! - [`user`] - current-user identity (Phase 10): `current_user_tag` (machine identity: uid on Unix,
 //!   SID on Windows), `current_user_label` (`USER` vs `USERNAME`), and `hostname`.
 //! - [`command`] - interactive-shell/command-runner resolution (Phase 4), wired into every
@@ -32,14 +33,12 @@
 //!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
 //! - [`notifications`] - desktop notifications (Phase 10).
-//! - [`install`] / [`executable`] - signed managed releases, durable activation/recovery, and the
-//!   stable launcher/pointer filesystem operations.
+//! - [`install`] - thin hyprmux path/policy adapter over the `relswap` signed-release engine.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring
 //! workspace**; treat CI as the first real verification of any of it.
 
-pub mod executable;
 pub mod fs_security;
 pub mod install;
 pub mod paths;

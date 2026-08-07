@@ -168,22 +168,23 @@ rejects target, path, size, or hash mismatches before publication. The adjacent 
 published for bootstrap corruption detection; see the trust-boundary caveat above.
 
 The generated manifest is the canonical JSON shape
-`{schema_version, version, published_at, targets}`. `published_at` is an RFC3339 UTC timestamp and
-`targets` is keyed by the target triple. Each value contains `archive`, `archive_sha256`,
-`archive_size`, `payload`, and the Windows-only `launcher`.
+`{schema_version, version, published_at, expires_at, targets}` (schema version 2).
+`published_at` and `expires_at` are RFC3339 UTC timestamps; verification rejects expired
+manifests after signature checks. `targets` is keyed by the target triple. Each value contains
+`archive`, `archive_sha256`, `archive_size`, `payload`, and the Windows-only `launcher`.
 
-The Cargo manifest uses the sibling path dependency `../tui-lipan`. The release workflow checks out
-that sibling explicitly so it preserves local build semantics; it does not claim that this
-repository has been switched to a crates.io framework dependency.
+The Cargo manifest uses sibling path dependencies `../tui-lipan` and `../relswap`. The release
+workflow checks those siblings out explicitly so it preserves local build semantics; it does not
+claim that this repository has been switched to crates.io versions of either.
 
 ## Maintainer key generation and signing
 
-The release tool is an optional CLI. Its cryptographic and archive dependencies are library
-dependencies:
+Signing and metadata live in the sibling [`relswap`](https://github.com/tui-lipan/relswap) crate.
+Build its optional `release-tool` binary:
 
 ```bash
 mkdir -p "$HOME/.config/hyprmux/release-keys"
-cargo run --features release-tool --bin hyprmux-release -- \
+cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
   keygen \
   --id release-2026-a \
   --private-key "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64" \
@@ -196,22 +197,23 @@ mv /tmp/hyprmux-release-keys.json release-keys.json
 Both paths are mandatory. Key generation uses OS randomness, refuses to overwrite either path, and
 writes the Unix private file as mode `0600`. The private path above is outside the repository by
 design; only the strict public document belongs in committed `release-keys.json`. There is no
-production default key or test key.
+production default key or test key. `rotate` is an alias of `keygen` for issuing a successor key;
+`sign --append` adds another signature to an existing envelope.
 
 After build/package jobs have produced final archives, generate and sign metadata:
 
 ```bash
-cargo run --features release-tool --bin hyprmux-release -- \
-  manifest --version 0.2.0 --artifacts-dir dist --output dist/hyprmux-release.json
+cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
+  manifest --name hyprmux --version 0.2.0 --artifacts-dir dist --output dist/hyprmux-release.json
 
 HYPRMUX_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64")" \
-cargo run --features release-tool --bin hyprmux-release -- \
-  sign --manifest dist/hyprmux-release.json \
+cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
+  sign --name hyprmux --manifest dist/hyprmux-release.json \
        --output dist/hyprmux-release.signatures.json \
        --key-id release-2026-a
 
-cargo run --features release-tool --bin hyprmux-release -- \
-  verify --manifest dist/hyprmux-release.json \
+cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
+  verify --name hyprmux --manifest dist/hyprmux-release.json \
          --signatures dist/hyprmux-release.signatures.json \
          --keys release-keys.json --artifacts-dir dist
 ```

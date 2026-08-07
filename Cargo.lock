@@ -1261,30 +1261,20 @@ dependencies = [
 name = "hyprmux"
 version = "0.2.0"
 dependencies = [
- "base64",
  "chrono",
  "criterion",
- "ed25519-dalek",
- "flate2",
- "fs4",
- "getrandom 0.4.3",
- "hex",
  "libc",
  "notify 6.1.1",
  "regex-lite",
+ "relswap",
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "tar",
  "toml",
  "tui-lipan",
  "unicode-segmentation",
  "unicode-width",
- "ureq",
- "url",
  "windows-sys 0.59.0",
- "zip",
 ]
 
 [[package]]
@@ -2735,6 +2725,29 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "relswap"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "ed25519-dalek",
+ "flate2",
+ "fs4",
+ "getrandom 0.4.3",
+ "hex",
+ "libc",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "ureq",
+ "url",
+ "windows-sys 0.59.0",
+ "zip",
+]
 
 [[package]]
 name = "ring"

@@ -23,7 +23,7 @@ jobs:
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
-          repository: Razuer/tui-lipan
+          repository: tui-lipan/tui-lipan
           path: tui-lipan
       # rustfmt and clippy are not in the toolchain this action installs by default, and the two
       # steps below are the only reason this job needs them.
@@ -60,7 +60,7 @@ jobs:
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
-          repository: Razuer/tui-lipan
+          repository: tui-lipan/tui-lipan
           path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.88
       # RustSec advisories are a property of the dependency graph, not of the host, so auditing on

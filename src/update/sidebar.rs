@@ -1518,6 +1518,33 @@ mod tests {
         }
     }
 
+    /// Mount a sidebar backend and settle its mount, so `state.command_link` is wired before the
+    /// test starts asserting.
+    ///
+    /// The mount hands the link back from a background task, and a plain `dispatch` only drains
+    /// whatever has already been queued - it does not wait for that task. So a test that mounted
+    /// and asserted straight away was reading whichever side of the race the executor happened to
+    /// land on. With the link still missing, everything that sends through it silently no-ops:
+    /// `ensure_sessions_refresh_armed` (and with it the host-registry seed) and
+    /// `request_command_poll` both bail early. Under parallel load that lost race was frequent
+    /// enough to fail roughly one run in five.
+    ///
+    /// Pumping until the link arrives makes both sides deterministic: tests that need it can rely
+    /// on it, and tests that need it *gone* have something real to drop.
+    fn settled_backend() -> TestBackend<HyprmuxApp> {
+        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mount never delivered the command link"
+            );
+            backend.pump().expect("settle the mount");
+            std::thread::yield_now();
+        }
+        backend
+    }
+
     /// Open the Sessions tab with its auto-refresh loop disarmed, for a test that drives discovery
     /// by hand.
     ///
@@ -1527,17 +1554,17 @@ mod tests {
     /// `ensure_sessions_refresh_armed` and `request_sessions_refresh` both need one to send
     /// through.
     ///
-    /// The order matters. The mount delivers the link as a message, so it arrives during the first
-    /// dispatch and reinstalls itself - and `command_link_ready` kicks an immediate sweep when it
-    /// finds the tab already open. Settling the mount with the tab still closed is what makes the
-    /// link there to drop.
+    /// The order matters. [`settled_backend`] is what makes the link there to drop, and the tab
+    /// must still be closed while it settles - `command_link_ready` kicks an immediate sweep when
+    /// it finds the tab already open.
     ///
     /// Only for tests that assert on discovered rows. Anything exercising a flow that sends
     /// through the link needs it left alone.
     fn open_sessions_tab_unswept(backend: &mut TestBackend<HyprmuxApp>, epoch: u64) {
-        backend
-            .dispatch(crate::Msg::SidebarPointerMoved(0))
-            .expect("settle the mount");
+        assert!(
+            backend.state().command_link.is_some(),
+            "settle the mount with `settled_backend` before disarming the loop"
+        );
         let state = backend.state_mut();
         state.sidebar_visible = true;
         state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
@@ -1644,7 +1671,7 @@ mod tests {
         let outside = dir.path().to_string_lossy().into_owned();
 
         on_test_thread(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let pane = backend.state().current().workspaces[0].panes[0].id;
             {
                 let state = backend.state_mut();
@@ -1684,7 +1711,7 @@ mod tests {
     #[test]
     fn finishing_a_command_refreshes_git_status_once() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let pane = backend.state().current().workspaces[0].panes[0].id;
             {
                 let state = backend.state_mut();
@@ -1724,7 +1751,7 @@ mod tests {
     #[test]
     fn tree_activation_runs_for_files_and_skips_directories_and_stale_clicks() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Tree {
                 view: crate::config::SidebarTreeView::Files,
                 config: crate::config::SidebarTreeConfig::for_view(
@@ -1758,7 +1785,7 @@ mod tests {
     #[test]
     fn tree_run_actions_pass_the_path_as_env_never_in_the_command() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let mut config =
                 crate::config::SidebarTreeConfig::for_view(crate::config::SidebarTreeView::Changes);
             config.on_click = Some(UserCommandAction::run("git diff -- \"$HYPRMUX_FILE\""));
@@ -1835,7 +1862,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = settled_backend();
                 let mut pane = Pane::new(
                     2,
                     100,
@@ -1869,7 +1896,7 @@ mod tests {
     #[test]
     fn stale_session_results_are_ignored_after_close_switch_and_reload_epochs() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -1919,7 +1946,7 @@ mod tests {
     #[test]
     fn current_session_results_apply() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             open_sessions_tab_unswept(&mut backend, 7);
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
@@ -1937,7 +1964,7 @@ mod tests {
     #[test]
     fn host_connect_and_two_click_disconnect() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
             {
                 let state = backend.state_mut();
@@ -1951,7 +1978,7 @@ mod tests {
             // Seed the host registry (offline) the way opening the tab does.
             backend
                 .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("settle");
+                .expect("run the post-update chokepoint over the open tab");
             assert!(
                 backend.state().hosts.get(&target).is_some(),
                 "the configured host is seeded into the registry"
@@ -2005,7 +2032,7 @@ mod tests {
     #[test]
     fn the_close_affordance_takes_two_clicks_and_is_disarmed_by_acting_elsewhere() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -2079,7 +2106,7 @@ mod tests {
     #[test]
     fn a_lapsed_confirmation_clears_itself_and_never_disarms_a_later_one() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -2135,7 +2162,7 @@ mod tests {
     #[test]
     fn hover_survives_the_pointer_crossing_into_the_close_affordance() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             backend
                 .dispatch(crate::Msg::SidebarRowHover {
                     panel: 0,
@@ -2193,15 +2220,8 @@ mod tests {
     #[test]
     fn bumping_the_sessions_epoch_rearms_the_refresh_loop() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            // Let init settle so the command link is wired (the re-arm sends through it).
-            backend
-                .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("settle init");
-            assert!(
-                backend.state().command_link.is_some(),
-                "command link should be wired after init"
-            );
+            // `settled_backend` wires the command link, which the re-arm sends through.
+            let mut backend = settled_backend();
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -2235,7 +2255,7 @@ mod tests {
     #[test]
     fn disconnecting_the_current_host_opens_the_picker_instead_of_auto_attaching() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
             {
                 let state = backend.state_mut();
@@ -2248,7 +2268,7 @@ mod tests {
             }
             backend
                 .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("settle");
+                .expect("run the post-update chokepoint over the open tab");
 
             {
                 let state = backend.state_mut();
@@ -2308,7 +2328,7 @@ mod tests {
     #[test]
     fn killing_the_current_session_opens_the_picker_instead_of_auto_attaching() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -2316,7 +2336,7 @@ mod tests {
             }
             backend
                 .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("settle");
+                .expect("run the post-update chokepoint over the open tab");
             {
                 let state = backend.state_mut();
                 // `dev` is the session used before `build`: parked, settled, still live.
@@ -2376,7 +2396,7 @@ mod tests {
     #[test]
     fn a_connected_host_is_still_swept_after_a_probe_fails() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let target = crate::session::remote::RemoteTarget::Alias("winvm".to_string());
             {
                 let state = backend.state_mut();
@@ -2390,7 +2410,7 @@ mod tests {
             }
             backend
                 .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("settle");
+                .expect("run the post-update chokepoint over the open tab");
             backend
                 .dispatch(crate::Msg::SidebarSessionsDiscovered {
                     epoch: 7,
@@ -2441,7 +2461,7 @@ mod tests {
     #[test]
     fn host_probe_errors_are_recorded_then_cleared() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let target = crate::session::remote::RemoteTarget::Alias("prod".to_string());
             {
                 let state = backend.state_mut();
@@ -2547,7 +2567,7 @@ mod tests {
         action: UserCommandAction,
         cwd: Option<&str>,
     ) -> crate::state::PendingPaneSpawn {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = settled_backend();
         let id = SidebarTabId::new("launch");
         backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
             name: id.clone(),
@@ -2627,7 +2647,7 @@ mod tests {
     #[test]
     fn launcher_click_revalidates_config_epoch_tab_and_index() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let id = SidebarTabId::new("launch");
             backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Launcher {
                 name: id.clone(),
@@ -2671,7 +2691,7 @@ mod tests {
     #[test]
     fn command_click_rejects_stale_output_epoch_and_changed_raw_line() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let id = SidebarTabId::new("rows");
             backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Command {
                 name: id.clone(),
@@ -2718,7 +2738,7 @@ mod tests {
     #[test]
     fn stale_command_result_clears_only_its_run_and_cannot_replace_output() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let id = SidebarTabId::new("rows");
             {
                 let state = backend.state_mut();
@@ -2752,7 +2772,7 @@ mod tests {
     #[test]
     fn polling_rejects_hidden_inactive_stale_and_overlapping_runs() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = settled_backend();
             let id = SidebarTabId::new("rows");
             {
                 let state = backend.state_mut();
@@ -2798,10 +2818,8 @@ mod tests {
     #[test]
     fn sessions_and_command_panels_refresh_together() {
         on_test_thread(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend
-                .dispatch(crate::Msg::SidebarPointerMoved(0))
-                .expect("initialize command link");
+            // The command panel starts through the command link, so it has to be wired first.
+            let mut backend = settled_backend();
             let command_id = SidebarTabId::new("rows");
             {
                 let state = backend.state_mut();

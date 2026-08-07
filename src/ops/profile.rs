@@ -911,8 +911,11 @@ mod tests {
                 .expect("open session-name prompt");
             let rename = backend.state_mut().rename_session.as_mut().unwrap();
             rename.input.set_text("work-copy");
+            // `update_level`, not `dispatch`: the assertion is about the attach this queues, and
+            // `dispatch` drains until idle - long enough for the attach thread to fail against a
+            // session that does not exist and clear `pending_session_attach` again.
             backend
-                .dispatch(Msg::SubmitRenameSession)
+                .update_level(Msg::SubmitRenameSession)
                 .expect("queue seeded attach");
 
             let pending = backend
@@ -949,8 +952,10 @@ mod tests {
             backend
                 .dispatch(Msg::ProfilePickerOpenAs)
                 .expect("open session-name prompt");
+            // Synchronous outcome only - see
+            // `open_as_queues_entered_session_with_selected_profile_seed` above.
             backend
-                .dispatch(Msg::SubmitRenameSession)
+                .update_level(Msg::SubmitRenameSession)
                 .expect("queue ephemeral profile attach");
 
             let pending = backend

@@ -1681,8 +1681,17 @@ fn keep_open_replaces_the_pty_after_the_command_exits_preserving_status_and_scro
                 server.broadcast_outbound(&outbound);
             }
         }
-        let pane = server.panes.get(&1).expect("pane still exists");
-        if pane.command_completed {
+        // Wait for the whole outcome the assertions below read, not just the lifecycle flag.
+        // `command_completed` flips on the exit event, while the command's own output is separate
+        // PTY traffic that can still be in flight behind it - so breaking here on the flag alone
+        // asserted against a screen the output had not reached yet.
+        let pane = server.panes.get_mut(&1).expect("pane still exists");
+        if pane.command_completed
+            && pane
+                .screen_without_change()
+                .snapshot()
+                .contains("hello from the command")
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -1756,7 +1765,17 @@ fn keep_open_popup_retains_output_without_starting_a_shell() {
                 server.broadcast_outbound(&outbound);
             }
         }
-        if server.panes.get(&pane_id).and_then(|pane| pane.exited) == Some(3) {
+        // Wait for the whole outcome the assertions below read, not just the exit status. The
+        // command's output and its exit arrive as separate PTY events, so breaking on the status
+        // alone can leave "popup result" still queued - which is exactly how this failed on a
+        // loaded machine.
+        if let Some(pane) = server.panes.get_mut(&pane_id)
+            && pane.exited == Some(3)
+            && pane
+                .screen_without_change()
+                .snapshot()
+                .contains("popup result")
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));

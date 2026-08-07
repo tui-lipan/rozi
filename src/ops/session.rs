@@ -3311,8 +3311,12 @@ mod tests {
                         Some(SessionRenameState::new(&name, NamingMode::CreateSession));
                 }
                 backend.render();
+                // `update_level`, not `dispatch`: every assertion below is about what the create
+                // installs synchronously, and no server is ever going to answer for this name.
+                // `dispatch` drains until idle, so the create thread's fast failure could land in
+                // the same pump and tear the pending attach back down before the test reads it.
                 backend
-                    .dispatch(Msg::SubmitRenameSession)
+                    .update_level(Msg::SubmitRenameSession)
                     .expect("dispatch create session");
 
                 let state = backend.state();
@@ -3485,8 +3489,11 @@ mod tests {
                         Some(SessionRenameState::new(&name, NamingMode::CreateSession));
                 }
                 backend.render();
+                // Synchronous outcome only - see `create_session_starts_fresh…`: draining until
+                // idle lets the create thread's failure restore the session this asserts was
+                // parked.
                 backend
-                    .dispatch(Msg::SubmitRenameSession)
+                    .update_level(Msg::SubmitRenameSession)
                     .expect("dispatch create session");
                 tx.send(!backend.state().background.is_empty())
                     .expect("report result");
@@ -3601,8 +3608,13 @@ mod tests {
                     state.show_session_picker = true;
                 }
 
+                // `update_level`, not `dispatch`: the assertions below are about the state the
+                // switch leaves behind *before* it connects, and "dev" is not a session that
+                // exists here. `dispatch` drains until idle, so the attach thread's fast failure
+                // could land in the same pump and clear `pending_session_attach` out from under
+                // the test - which it did, on roughly one run in five.
                 backend
-                    .dispatch(Msg::SessionPickerActivate(0))
+                    .update_level(Msg::SessionPickerActivate(0))
                     .expect("start cold attach");
 
                 assert!(!backend.state().show_profile_picker);

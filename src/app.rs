@@ -40,6 +40,16 @@ pub struct HyprmuxApp {
     /// not have its `SIGHUP`/`SIGTERM` disposition rewritten out from under the harness (nor can
     /// several parallel tests each claim the one install slot).
     watch_hangup: bool,
+    /// Whether the startup task may do anything beyond handing back the command link: watch the
+    /// config file, install the hangup handler, serve the control socket, attach to (or create, or
+    /// discover) a session server, arm the theme and workbar ticks. Only the real [`run`] wants it.
+    ///
+    /// A `TestBackend`-driven test builds its app through [`Default`], where none of that is
+    /// survivable. Every test in one binary derives the same `eph-<pid>` name, so they would all
+    /// race to bootstrap and then share one real server; and any message such a task lands
+    /// mid-test arrives inside whatever `pump` happens to be running, which is what made
+    /// assertions about panes, hosts, and in-flight polls flake under load.
+    startup_tasks: bool,
     event_hub: events::EventHub,
 }
 
@@ -70,6 +80,7 @@ impl Default for HyprmuxApp {
             want_startup_picker: false,
             startup_picker_highlight: None,
             watch_hangup: false,
+            startup_tasks: false,
             event_hub: events::EventHub::default(),
         }
     }
@@ -109,6 +120,7 @@ impl HyprmuxApp {
             want_startup_picker,
             startup_picker_highlight,
             watch_hangup: true,
+            startup_tasks: true,
             event_hub: events::EventHub::default(),
         }
     }
@@ -244,10 +256,14 @@ impl Component for HyprmuxApp {
 
         let startup_read_only = self.read_only;
         let watch_hangup = self.watch_hangup;
+        let startup_tasks = self.startup_tasks;
         let remote = self.remote.clone();
         let remote_config = self.config.remote.clone();
         Some(Command::spawn(move |link: CommandLink<Msg>| {
             link.send(Msg::CommandLinkReady(link.clone()));
+            if !startup_tasks {
+                return;
+            }
             ops::config::spawn_config_watcher(&link);
             if watch_hangup {
                 let hangup_link = link.clone();

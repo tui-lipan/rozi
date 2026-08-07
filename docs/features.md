@@ -318,9 +318,14 @@ Built-in tabs:
 | Tab | Contents |
 | --- | --- |
 | `agents` | Detected coding-agent processes running in panes |
-| `panes` | Live pane list for the session |
+| `panes` | Live pane list for the session, grouped by workspace |
 | `sessions` | Local, attached, and remote sessions |
-| `tree` | File tree with configurable roots and view options |
+| `files` | File tree rooted at the focused pane's working directory |
+| `git` | Repository-rooted tree of changed paths, with status markers and diff stats |
+
+`files` and `git` are two projections of one lazy-loading tree and accept `root`, `show_hidden`,
+`icons`, `explorer`, `diff_stats`, and `max_entries` in table form. Both re-root as focus moves,
+mount only while visible, and read directories and `git status` off the UI thread.
 
 User-defined tabs:
 
@@ -328,9 +333,10 @@ User-defined tabs:
 - **Command tabs** — run a shell command on an interval and render its output, with an optional
   `on_click` action.
 
-The file tree activates a path by passing it as `HYPRMUX_FILE` to the configured `run`/`popup`
-command, so a filename is never spliced into a command string. Tabs support keyboard navigation,
-drag-and-drop reordering, scrolling, and tree guides.
+Activating a file runs the tab's `on_click`, which defaults to typing the path at the focused
+pane's prompt without a newline. A configured `run`/`popup` action receives the path as the
+`HYPRMUX_FILE` environment variable instead, so a filename is never spliced into a command string.
+Tabs support keyboard navigation, drag-and-drop reordering, scrolling, and tree guides.
 
 See [Sidebar](sidebar.md).
 

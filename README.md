@@ -46,7 +46,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 - **Copy mode** - vi-style scrollback review with `hjkl`, word/WORD (`w`/`b`/`e`) and line
   (`0`/`^`/`$`) motions, and clipboard yank - the motions reuse `tui-lipan`'s vim-mode `TextArea`
   algorithms rather than a separate implementation.
-- **Themes** - 10 built-in presets, a host-derived `system` theme, drop-in custom theme files,
+- **Themes** - 29 built-in presets, a host-derived `system` theme, drop-in custom theme files,
   and live hot-reload. Terminal ANSI colors are derived from the active theme.
 - **Real terminal** - mouse reporting, text selection, scroll-wheel scrollback, clipboard paste
   (`v`), and OSC52 clipboard, provided by `tui-lipan`'s terminal primitives.
@@ -62,6 +62,7 @@ cargo run     # leave with prefix d (detach), or bind quit in hyprmux.toml
 
 Full docs live in [`docs/`](docs/):
 
+- [Feature overview](docs/features.md) - **everything hyprmux does, on one page.**
 - [Getting started](docs/getting-started.md) - requirements, platform support, build, run, and quit.
 - [Installation & releases](docs/installation.md) - bootstrap, signed update/rollback, and signing workflow.
 - [Keybindings](docs/keybindings.md) - prefix, held modifier, mouse, and the full key reference.

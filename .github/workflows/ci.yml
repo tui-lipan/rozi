@@ -27,7 +27,7 @@ jobs:
           path: tui-lipan
       # rustfmt and clippy are not in the toolchain this action installs by default, and the two
       # steps below are the only reason this job needs them.
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -62,7 +62,7 @@ jobs:
         with:
           repository: tui-lipan/tui-lipan
           path: tui-lipan
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
       # RustSec advisories are a property of the dependency graph, not of the host, so auditing on
       # all three platforms would report the same findings three times and pay for `cargo install`
       # three times over.

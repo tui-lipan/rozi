@@ -2,7 +2,9 @@
 name = "hyprmux"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+# Set by the dependency tree, not by this crate's own source: terminal-images reaches
+# ratatui-image -> icy_sixel -> quantette, which requires 1.90.
+rust-version = "1.90"
 license = "MIT OR Apache-2.0"
 description = "Hyprland-style tiling terminal multiplexer built on tui-lipan"
 

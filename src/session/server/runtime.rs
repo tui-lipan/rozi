@@ -593,34 +593,53 @@ mod tests {
         assert_eq!(state.sequence, 1);
     }
 
+    /// The `OSC 7` URI path for a directory, and the cwd it must normalize to on this platform.
+    ///
+    /// A POSIX absolute path is not a usable Windows directory - it is relative to the current
+    /// drive - so the two platforms need different spellings rather than a shared one. The URI
+    /// keeps its leading separator in both cases, which is what a shell actually emits.
+    #[cfg(windows)]
+    fn osc7_dir(name: &str) -> (String, String) {
+        (
+            format!("/C:/{name}"),
+            format!(r"C:\{}", name.replace('/', r"\")),
+        )
+    }
+    #[cfg(not(windows))]
+    fn osc7_dir(name: &str) -> (String, String) {
+        (format!("/{name}"), format!("/{name}"))
+    }
+
     #[test]
     fn a_local_osc7_report_wins_over_launch_cwd() {
+        let (uri_path, expected) = osc7_dir("reported/dir");
         let mut pane = make_pane();
         pane.screen_mut()
-            .process_bytes(b"\x1b]7;file://localhost/reported/dir\x1b\\");
+            .process_bytes(format!("\x1b]7;file://localhost{uri_path}\x1b\\").as_bytes());
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
             false,
             &mut LazyProcessScan::default(),
         );
-        assert_eq!(state.cwd, Some("/reported/dir".to_string()));
+        assert_eq!(state.cwd, Some(expected));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
         assert_eq!(state.cwd_host, None);
     }
 
     #[test]
     fn a_remote_osc7_report_is_displayable_but_flagged_with_a_host() {
+        let (uri_path, expected) = osc7_dir("remote/dir");
         let mut pane = make_pane();
         pane.screen_mut()
-            .process_bytes(b"\x1b]7;file://otherhost.example/remote/dir\x1b\\");
+            .process_bytes(format!("\x1b]7;file://otherhost.example{uri_path}\x1b\\").as_bytes());
         let state = compute_runtime_state(
             &mut pane,
             &StubInspector,
             false,
             &mut LazyProcessScan::default(),
         );
-        assert_eq!(state.cwd, Some("/remote/dir".to_string()));
+        assert_eq!(state.cwd, Some(expected));
         assert_eq!(state.cwd_host, Some("otherhost.example".to_string()));
         assert_eq!(state.cwd_source, PaneCwdSource::ShellReport);
     }

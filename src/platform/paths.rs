@@ -241,7 +241,16 @@ pub fn normalize_reported_cwd(path: &str) -> Option<String> {
         return path.starts_with('/').then(|| path.to_string());
     }
 
-    let normalized = path.replace('/', "\\");
+    let mut normalized = path.replace('/', "\\");
+    // `OSC 7` carries a `file:` URI, and the URI keeps the separator ahead of the drive letter:
+    // `file:///C:/Users/x` and `file://host/C:/Users/x` both yield a path of `/C:/Users/x`. That
+    // single leading separator is URI syntax, not a rooted-but-driveless path, so strip it when a
+    // drive letter follows. Without this every Windows shell report is rejected below.
+    if let Some(rest) = normalized.strip_prefix('\\')
+        && starts_with_drive_letter(rest)
+    {
+        normalized = rest.to_string();
+    }
     if let Some(rest) = normalized.strip_prefix("\\\\") {
         // UNC: `\\server\share\...`. Requires at least a server and a share to name anything.
         let mut parts = rest.splitn(3, '\\').filter(|part| !part.is_empty());
@@ -261,6 +270,15 @@ pub fn normalize_reported_cwd(path: &str) -> Option<String> {
         drive.to_ascii_uppercase(),
         &normalized[1..]
     ))
+}
+
+/// Whether `value` begins with a `<letter>:` drive prefix.
+///
+/// Deliberately does not require a separator after the colon: `C:foo` is drive-relative and must
+/// still reach the rejection below rather than being quietly stripped into something absolute.
+fn starts_with_drive_letter(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next() == Some(':')
 }
 
 /// Whether two paths name the same directory. Case-sensitive on Unix, case-insensitive on Windows
@@ -732,6 +750,19 @@ mod tests {
             normalize_reported_cwd(r"C:\Users\x"),
             Some(r"C:\Users\x".to_string())
         );
+        // The shape `OSC 7` actually delivers. `parse_file_uri` splits at the first `/` and keeps
+        // it, so `file:///C:/Users/x` and `file://host/C:/Users/x` both arrive with the separator
+        // still in front of the drive letter. The two spellings above never occur on the wire.
+        assert_eq!(
+            normalize_reported_cwd("/C:/Users/x"),
+            Some(r"C:\Users\x".to_string())
+        );
+        assert_eq!(
+            normalize_reported_cwd(r"\C:\Users\x"),
+            Some(r"C:\Users\x".to_string())
+        );
+        // Stripping the URI separator must not turn a drive-relative path into an absolute one.
+        assert_eq!(normalize_reported_cwd("/C:Users"), None);
         assert_eq!(
             normalize_reported_cwd(r"\\server\share\dir"),
             Some(r"\\server\share\dir".to_string())

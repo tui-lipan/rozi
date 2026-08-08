@@ -137,6 +137,27 @@ impl TestConnection {
             .expect("write raw client bytes");
         self.stream.flush().expect("flush raw client bytes");
     }
+
+    /// Read and discard whatever the server has sent, briefly.
+    ///
+    /// An attached client that stops reading is not a passive observer: the server queues its
+    /// outbound frames per client and drops one whose backlog exceeds `max_backlog`, discarding
+    /// everything that client had already sent in the other direction. A connection that has to
+    /// stay alive while waiting therefore has to keep consuming, the way a real attached client
+    /// does.
+    pub(crate) fn drain_available(&mut self) {
+        let _ = self.stream.set_read_timeout(Some(Duration::from_millis(5)));
+        let mut scratch = [0u8; 16 * 1024];
+        // Bounded so a server streaming continuously cannot hold this loop forever.
+        for _ in 0..64 {
+            match self.stream.read(&mut scratch) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        let _ = self.stream.set_read_timeout(Some(IO_TIMEOUT));
+    }
 }
 
 pub(crate) struct ListenerGuard {
@@ -159,8 +180,14 @@ impl ListenerGuard {
             return;
         };
         let deadline = Instant::now() + IO_TIMEOUT;
-        let mut shutdown_sent = false;
-        while Instant::now() < deadline && !shutdown_sent {
+        // Held, not dropped, once the shutdown is sent. Attaching seeds this client with the whole
+        // session state; if it stops reading, that backlog passes `max_backlog` and the server
+        // drops it as a slow consumer - throwing away the `Shutdown` sitting unread in the other
+        // direction. The server then runs until the join deadline and the test reports a hang whose
+        // cause is several layers away. Keeping the connection and draining it is what a real
+        // attached client does.
+        let mut shutdown_client: Option<TestConnection> = None;
+        while Instant::now() < deadline && shutdown_client.is_none() {
             if let Ok(stream) = IpcConnection::connect(&self.endpoint) {
                 let mut client = TestConnection::new(stream);
                 client.write_control(&attach_message(&self.session, "test-harness-shutdown"));
@@ -180,17 +207,15 @@ impl ListenerGuard {
                 });
                 if owns_control {
                     client.write_control(&ClientMessage::Shutdown);
-                    shutdown_sent = true;
+                    shutdown_client = Some(client);
                 }
             }
-            if !shutdown_sent {
+            if shutdown_client.is_none() {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        assert!(
-            shutdown_sent,
-            "could not acquire control to stop test server"
-        );
+        let mut shutdown_client =
+            shutdown_client.expect("could not acquire control to stop test server");
         // Bound the join too. Every other wait here has a deadline, and a listener that misses the
         // shutdown would otherwise park the whole test binary indefinitely instead of failing.
         let join_deadline = Instant::now() + IO_TIMEOUT;
@@ -199,8 +224,9 @@ impl ListenerGuard {
                 Instant::now() < join_deadline,
                 "session listener thread did not exit after shutdown"
             );
-            std::thread::sleep(Duration::from_millis(10));
+            shutdown_client.drain_available();
         }
+        drop(shutdown_client);
         let result = thread.join().expect("session listener thread panicked");
         result.expect("session listener failed");
         self.endpoint.remove_stale();

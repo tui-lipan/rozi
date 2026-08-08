@@ -165,6 +165,8 @@ jobs:
           $stem = "hyprmux-$version-${{ matrix.target }}"
           $smokeRoot = Join-Path $env:RUNNER_TEMP ('hyprmux-launcher-smoke-' + [Guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
+          Write-Host "smoke: version=$version stem=$stem cwd=$(Get-Location)"
+          Write-Host "smoke: archive present=$(Test-Path -LiteralPath "dist/$stem.zip")"
           try {
               $archiveRoot = Join-Path $smokeRoot 'archive'
               New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
@@ -238,9 +240,18 @@ jobs:
               if ($forwardOutput -notmatch [regex]::Escape($forwardCwd)) {
                   throw "launcher-v1 did not forward the working directory: $forwardOutput"
               }
+          } catch {
+              # Without this the step can end as a bare "exit code 1" with nothing printed, which
+              # says only that the launcher contract broke somewhere in eighty lines of setup.
+              Write-Host "smoke: FAILED - $($_.Exception.Message)"
+              Write-Host "smoke: at $($_.InvocationInfo.PositionMessage)"
+              Write-Host "smoke: stack $($_.ScriptStackTrace)"
+              throw
           } finally {
+              # Best-effort: the payload was executed moments ago, and a still-closing handle would
+              # otherwise replace the real failure with a cleanup error.
               if (Test-Path -LiteralPath $smokeRoot) {
-                  Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+                  Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
               }
           }
 

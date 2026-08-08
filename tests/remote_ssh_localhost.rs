@@ -186,7 +186,17 @@ fn remote_serve_proxies_a_session_over_pipes() {
     first
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("set read timeout");
-    let preamble = hyprmux::session::remote::read_preamble(&mut first).expect("read preamble");
+    // A closed stream here means the proxy child died before writing anything, and its stderr is
+    // owned by the connection wrapper, so report what can actually be checked from here: the
+    // runtime path the child had to fit a socket into.
+    let preamble = hyprmux::session::remote::read_preamble(&mut first).unwrap_or_else(|error| {
+        panic!(
+            "read preamble: {error}\n  runtime base: {} ({} bytes before /hyprmux/<session>.sock; \
+             sun_path caps at 104 on macOS, 108 on Linux)",
+            runtime_base.display(),
+            runtime_base.as_os_str().len()
+        )
+    });
     first.set_read_timeout(None).expect("clear read timeout");
 
     preamble

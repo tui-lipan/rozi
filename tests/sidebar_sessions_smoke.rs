@@ -25,12 +25,32 @@ fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> Discov
     }
 }
 
-fn settle(backend: &mut TestBackend<HyprmuxApp>) {
-    for _ in 0..4 {
+/// Render and pump until `condition` holds, instead of a fixed number of rounds.
+///
+/// `pump` drains the queued messages but does not wait for background work, so a fixed count is a
+/// race rather than a settle: on a loaded runner the repaint that applies hover can land after the
+/// last round, and the assertion then reads the pre-hover cell. Waiting on the observable condition
+/// removes the timing assumption without weakening what is asserted - a hover that never arrives
+/// still fails, just with a message saying so.
+fn settle_until(
+    backend: &mut TestBackend<HyprmuxApp>,
+    what: &str,
+    mut condition: impl FnMut(&mut TestBackend<HyprmuxApp>) -> bool,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
         backend.render();
         let _ = backend.pump();
+        backend.render();
+        if condition(backend) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    backend.render();
 }
 
 #[test]
@@ -148,7 +168,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert_eq!(frame.cell(2, (winvm + 3) as u16).fg, muted);
 
             let hover = backend.state().theme.surface.element.elevate(0.08);
-            let move_to = |backend: &mut TestBackend<HyprmuxApp>, y| {
+            let move_to = |backend: &mut TestBackend<HyprmuxApp>, y: u16| {
                 backend
                     .send_mouse(MouseEvent {
                         x: 4,
@@ -157,7 +177,9 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
                         mods: KeyMods::NONE,
                     })
                     .expect("move over host row");
-                settle(backend);
+                settle_until(backend, "the hovered host row to repaint", |backend| {
+                    backend.capture_frame().cell(4, y).bg == hover
+                });
             };
 
             move_to(&mut backend, linvm as u16);

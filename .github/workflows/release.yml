@@ -155,6 +155,12 @@ jobs:
             "dist/verify/${stem}/hyprmux" --version | grep -F "$version"
           fi
 
+      # This step verifies that the launcher forwards a payload's exit code, and does so by running
+      # a payload that exits 37. `shell: pwsh` then propagates the trailing $LASTEXITCODE as the
+      # step's own result, so the behaviour being proven was what failed the step - every assertion
+      # passed and the job still reported failure, with no output to say why. Hence the explicit
+      # `exit 0` after the checks, and the phase markers: this step had never once passed, so
+      # nothing here was known to work until it was traced.
       - name: Smoke-test Windows launcher-v1
         if: matrix.archive == 'zip'
         working-directory: hyprmux

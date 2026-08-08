@@ -37,7 +37,9 @@ fn settle_until(
     what: &str,
     mut condition: impl FnMut(&mut TestBackend<HyprmuxApp>) -> bool,
 ) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    // Generous for the same reason as the integration harness's IO_TIMEOUT: the wait ends as soon
+    // as the condition holds, so this only bounds how long a real failure takes to surface.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         backend.render();
         let _ = backend.pump();

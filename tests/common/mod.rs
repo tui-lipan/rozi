@@ -17,7 +17,15 @@ use hyprmux::session::server::{
     ServerSettings, SessionServer, bind_session_socket, session_endpoint,
 };
 
-pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(5);
+/// Deadline for every wait in this harness.
+///
+/// This is a safety net against a hang, not an assertion about speed: a wait returns the moment its
+/// condition holds, so a generous value costs nothing on a passing run and only changes how long a
+/// genuine failure takes to report. Five seconds was tight enough that these tests failed
+/// intermittently on CI - a shared runner with a few vCPUs, executing test binaries in parallel,
+/// while each of these spawns a real session server or subprocess - and the test that lost the race
+/// moved from run to run.
+pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
 

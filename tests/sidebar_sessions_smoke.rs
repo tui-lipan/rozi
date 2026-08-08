@@ -45,10 +45,26 @@ fn settle_until(
         if condition(backend) {
             return;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
+        if std::time::Instant::now() >= deadline {
+            // Row hover is gated on `suppress_row_hover`, which keyboard cursor movement sets and a
+            // real pointer move clears, so report that gate rather than only the failed comparison.
+            let panels: Vec<_> = backend
+                .state()
+                .sidebar
+                .panels
+                .iter()
+                .map(|panel| {
+                    format!(
+                        "{{hovered_row: {:?}, suppress_row_hover: {}, cursor: {}}}",
+                        panel.hovered_row, panel.suppress_row_hover, panel.cursor
+                    )
+                })
+                .collect();
+            panic!(
+                "timed out waiting for {what}; sidebar panels: {}",
+                panels.join(", ")
+            );
+        }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }

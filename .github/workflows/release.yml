@@ -172,6 +172,7 @@ jobs:
               New-Item -ItemType Directory -Path $archiveRoot -Force | Out-Null
               & 7z x "dist/$stem.zip" "-o$archiveRoot" -y | Out-Null
               if ($LASTEXITCODE -ne 0) { throw 'could not unpack the final Windows archive for smoke testing' }
+              Write-Host "smoke: phase=unpacked"
               $packagedRoot = Join-Path $archiveRoot $stem
               $packagedPayload = Join-Path $packagedRoot 'hyprmux.exe'
               $packagedLauncher = Join-Path $packagedRoot 'hyprmux-launcher.exe'
@@ -190,12 +191,14 @@ jobs:
                   $version,
                   [Text.UTF8Encoding]::new($false)
               )
+              Write-Host "smoke: phase=layout-built"
               $versionOutput = (& $launcher --version 2>&1 | Out-String)
               $versionLine = ($versionOutput -split "`r?`n", 2)[0]
               if ($LASTEXITCODE -ne 0 -or $versionLine -cne "hyprmux $version") {
                   throw "launcher-v1 did not execute the packaged payload: $versionOutput"
               }
 
+              Write-Host "smoke: phase=version-ok"
               $forwardRoot = Join-Path $smokeRoot 'forwarding'
               $forwardBin = Join-Path $forwardRoot 'bin'
               $forwardVersion = Join-Path (Join-Path $forwardRoot 'versions') '0.0.0'
@@ -228,6 +231,7 @@ jobs:
                       $env:HYPRMUX_LAUNCHER_SMOKE = $oldSmokeEnv
                   }
               }
+              Write-Host "smoke: phase=forward-ran exit=$forwardExitCode"
               if ($forwardExitCode -ne 37) {
                   throw "launcher-v1 did not propagate cmd.exe exit code 37: $forwardExitCode"
               }
@@ -240,6 +244,7 @@ jobs:
               if ($forwardOutput -notmatch [regex]::Escape($forwardCwd)) {
                   throw "launcher-v1 did not forward the working directory: $forwardOutput"
               }
+              Write-Host "smoke: phase=all-checks-passed"
           } catch {
               # Without this the step can end as a bare "exit code 1" with nothing printed, which
               # says only that the launcher contract broke somewhere in eighty lines of setup.
@@ -254,6 +259,8 @@ jobs:
                   Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
               }
           }
+          Write-Host "smoke: done LASTEXITCODE=$LASTEXITCODE"
+          exit 0
 
       - name: Upload immutable final archive
         uses: actions/upload-artifact@v4

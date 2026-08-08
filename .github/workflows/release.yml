@@ -28,9 +28,17 @@ jobs:
           repository: tui-lipan/tui-lipan
           path: tui-lipan
       - uses: dtolnay/rust-toolchain@1.90
+      # Deliberately not `--all-targets`: that also *runs* the bench binaries, so a release was
+      # gated on timing-sensitive benchmarks racing a shared runner - server_fairness synchronises
+      # with a helper thread on a deadline and lost that race here. Benchmarks measure, they do not
+      # decide whether a build ships.
       - name: Test
         working-directory: hyprmux
-        run: cargo test --locked --all-targets
+        run: cargo test --locked
+      # Keep the compile coverage `--all-targets` was there for, without executing anything.
+      - name: Check every target compiles
+        working-directory: hyprmux
+        run: cargo check --locked --all-targets
 
   package:
     name: package ${{ matrix.target }}

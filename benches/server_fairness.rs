@@ -376,10 +376,12 @@ impl SnapshotFixture {
             }
         };
         assert!(matches!(attached, ServerMessage::Attached { .. }));
-        assert_eq!(
-            client.effective_protocol(),
-            18,
-            "snapshot benchmark requires protocol 18 metrics"
+        // The metrics this benchmark reads arrived in protocol 18. Pinning equality meant every
+        // later protocol bump broke the benchmark instead of exercising it; 20 is current.
+        assert!(
+            client.effective_protocol() >= 18,
+            "snapshot benchmark requires protocol 18 metrics, negotiated {}",
+            client.effective_protocol()
         );
         let (events, drain_done, drain) = spawn_snapshot_drain(inbound);
         let executable = std::env::current_exe()

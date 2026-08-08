@@ -1,3 +1,13 @@
+//! Server and client scrollback limits applied independently to one pane's history.
+//!
+//! Unix-only, at file scope, for the same reason as `session_resurrect_e2e`: the pane is driven by
+//! a POSIX shell program - a `while` loop feeding `printf` - and on Windows the launch shell is cmd
+//! or PowerShell, which runs none of it, so the marker never arrives and the read waits out its
+//! deadline. Filling scrollback portably would mean giving up the one-line generator this needs.
+//!
+//! Windows scrollback behaviour wants its own test with a shell it can actually run.
+#![cfg(unix)]
+
 mod common;
 
 use hyprmux::pane::TerminalPane;

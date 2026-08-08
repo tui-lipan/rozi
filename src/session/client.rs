@@ -989,10 +989,17 @@ mod tests {
             ));
             protocol::write_frame(&mut stream, &attached_message()).unwrap();
             protocol::write_frame(&mut stream, &ServerMessage::Ping { seq: 77 }).unwrap();
-            assert_eq!(
-                protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap(),
-                ClientMessage::Pong { seq: 77 }
-            );
+            // The client drives its own traffic too - a runtime-metrics request goes out on attach
+            // - so the pong is not necessarily the next frame on the wire. What this test is about
+            // is that the pong arrives at all while the reader is polling, not that it arrives
+            // first. The read timeout above bounds the loop.
+            let pong = loop {
+                let message = protocol::read_frame::<_, ClientMessage>(&mut stream).unwrap();
+                if matches!(message, ClientMessage::Pong { .. }) {
+                    break message;
+                }
+            };
+            assert_eq!(pong, ClientMessage::Pong { seq: 77 });
         });
 
         let (inbound_tx, _inbound_rx) = mpsc::channel();

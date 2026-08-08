@@ -566,8 +566,15 @@ mod tests {
             std::env::temp_dir().join(format!("hyprmux-profiles-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).expect("tempdir");
+        // `config_dir` reads `%APPDATA%` on Windows and `XDG_CONFIG_HOME` elsewhere, so pointing
+        // only the XDG variable at the fixture left Windows reading the real config directory and
+        // listing nothing.
         unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &temp);
+            if cfg!(windows) {
+                std::env::set_var("APPDATA", &temp);
+            } else {
+                std::env::set_var("XDG_CONFIG_HOME", &temp);
+            }
         }
 
         let profiles = temp.join("hyprmux/profiles");
@@ -586,7 +593,11 @@ mod tests {
         );
 
         unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
+            if cfg!(windows) {
+                std::env::remove_var("APPDATA");
+            } else {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
         }
         let _ = std::fs::remove_dir_all(&temp);
     }

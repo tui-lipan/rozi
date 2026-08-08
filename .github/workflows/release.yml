@@ -54,8 +54,12 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             archive: tar.gz
+          # Cross-compiled from Apple Silicon rather than built on macos-13. The Intel runner class
+          # is being retired and this job sat unscheduled for hours, which would stall every
+          # release: `package` is fail-fast: false, but `sign_release` needs all of it, so one
+          # target that never starts blocks publication indefinitely.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest

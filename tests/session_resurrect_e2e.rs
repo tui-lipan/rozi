@@ -24,6 +24,16 @@ const PANE_ID: u32 = 81;
 const PANE_GENERATION: u64 = 1;
 const REPLAY_MARKER: &[u8] = b"hyprmux-resurrect-replay-marker";
 
+/// Unix-only because the pane input below is a POSIX shell program: a `while` loop feeding
+/// `printf`, with the marker deliberately assembled from a format string and an argument so the
+/// literal never appears in the line the terminal echoes back. On Windows the launch shell is cmd
+/// or PowerShell, which runs none of that, so the marker never arrives and the read waits out its
+/// deadline. There is no portable spelling - `echo` exists everywhere but would put the marker in
+/// the echoed command line, and the assertion could then pass without the pane ever producing it.
+///
+/// Session resurrection on Windows deserves its own test with a shell-appropriate program rather
+/// than a lowest-common-denominator rewrite of this one.
+#[cfg(unix)]
 #[test]
 fn subprocess_restart_restores_layout_and_pane_replay() {
     let session = unique_session_name();

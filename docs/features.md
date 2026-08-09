@@ -233,7 +233,7 @@ Profiles are named, reusable launch recipes stored in `~/.config/hyprmux/profile
 - **Launch** the canonical same-name session, or open a profile under another name.
 - **Apply** a profile to replace the current session's contents.
 - **Profile picker** with fuzzy search.
-- `[profile] default` selects a startup profile.
+- `[profile] default` seeds every session opened without a recipe, not just the startup one.
 - Profiles store the layout tree, pane commands and identities, workspace names, layout kinds, and
   pane-synchronization state, via the serde-stable tree shared with session layout documents.
 

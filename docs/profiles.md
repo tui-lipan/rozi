@@ -95,17 +95,40 @@ default = "dev"
 Or use the in-app **Profiles** command (command palette): highlight a profile and press
 `Ctrl+f` to toggle it as the startup default.
 
+The default seeds **every session opened without a recipe**, not just the launch that started
+hyprmux: the initial session, each new temporary session, and each named session created without a
+profile. Paths that already name a recipe are unaffected — attaching to an existing session, a
+canonical `hyprmux <name>` target, `new <name> --profile <recipe>`, and the picker's **Open as** all
+keep using theirs. Sessions seeded this way record the default as their creating profile, so the
+capture prompt offers its name back.
+
 If a configured default profile is missing or fails to parse, hyprmux shows a startup warning and
-falls through to the next bare-launch source (or a fresh layout). An explicit canonical target with
-a missing or invalid profile reports an error instead.
+falls through to the next bare-launch source (or a fresh layout); sessions created later fall back
+to a single shell rather than failing to open. An explicit canonical target with a missing or
+invalid profile reports an error instead.
 
 ## In-app commands
 
 | Command | Action |
 | --- | --- |
-| **Capture session as profile...** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. The creating profile is preferred as the initial name, then the session name; overwriting requires a second **Enter**. |
+| **Capture session as profile...** | Prompts for a session-compatible name and writes `profiles/<name>.toml`. The creating profile is preferred as the initial name, then the session name; overwriting requires a second **Enter**. From a temporary session, **Enter** also names that session after the profile — see below. |
 | **Profiles** | Lists saved profiles with in-picker actions (see below). |
 | **Replace session with profile...** | Destructively replaces every pane in the current session from a profile without changing the session name or disconnecting its clients. |
+
+### Capturing a temporary session
+
+Capturing from a temporary session names that session after the profile on the same **Enter**, so
+the running session and its recipe end up sharing one identity:
+
+- while the session lives, `hyprmux <name>` reattaches to it,
+- once it is gone, `hyprmux <name>` rebuilds a new one from the profile.
+
+A session that is *already* named keeps its name — capturing `dev-full` out of session `dev` leaves
+`dev` called `dev`. To capture a temporary session without keeping it, capture it and kill the
+resulting named session afterwards.
+
+Naming is skipped, and the capture reported as `session name already in use`, when another session
+is already running under that name. The profile is still written.
 
 ### Profile picker actions
 

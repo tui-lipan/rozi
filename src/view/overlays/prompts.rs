@@ -28,9 +28,14 @@ fn hint_row() -> Flow {
 ///
 /// A prompt raised from a picker returns to it on Esc, but that goes unsaid: "back esc" is the one
 /// thing every dialog does, so spelling it out only crowds the hints that carry information.
-fn prompt_hints(ctx: &Context<HyprmuxApp>) -> Element {
+/// `submit` names the commit keys, one pill each, so a prompt with two distinct commits (capture
+/// with or without naming the session) spells out what each one does instead of a bare `submit`.
+fn prompt_hints(ctx: &Context<HyprmuxApp>, submit: &[(&str, &str)]) -> Element {
     let theme = &ctx.state.theme;
-    let mut row = hint_row().child(hint_pill(theme, "submit", "enter"));
+    let mut row = hint_row();
+    for (label, key) in submit {
+        row = row.child(hint_pill(theme, label, key));
+    }
     if ctx.state.overlay_return.is_none() {
         row = row.child(hint_pill(theme, "cancel", "esc"));
     }
@@ -54,6 +59,7 @@ fn prompt_overlay(
     on_change: impl Fn(InputEvent) -> Msg + 'static,
     close: Msg,
     submit: Msg,
+    submit_hints: &[(&str, &str)],
     confirm: Option<&str>,
 ) -> Element {
     let theme = &ctx.state.theme;
@@ -101,7 +107,7 @@ fn prompt_overlay(
                 ),
         );
     }
-    body = body.child(prompt_hints(ctx));
+    body = body.child(prompt_hints(ctx, submit_hints));
 
     let mut modal = action_palette_modal(ctx, title)
         .on_close(ctx.link().callback(move |_| close.clone()))
@@ -134,6 +140,7 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::RenamePaneChanged,
         Msg::CloseRenamePane,
         Msg::SubmitRenamePane,
+        &[("submit", "enter")],
         None,
     )
 }
@@ -199,6 +206,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::RenameSessionChanged,
         Msg::CloseRenameSession,
         Msg::SubmitRenameSession,
+        &[("submit", "enter")],
         confirm.as_deref(),
     )
 }
@@ -213,6 +221,13 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
             prompt.input.text().trim()
         )
     });
+    // Capturing a temporary session names it after the profile too, so the runtime and its recipe
+    // share one identity. There is one commit either way; the hint just says which one it is.
+    let hints: &[(&str, &str)] = if crate::ops::profile::should_promote_session(&ctx.state) {
+        &[("capture + name session", "enter")]
+    } else {
+        &[("capture", "enter")]
+    };
     prompt_overlay(
         ctx,
         "Capture session as profile",
@@ -222,6 +237,7 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         Msg::SaveProfileNameChanged,
         Msg::CloseSaveProfile,
         Msg::SubmitSaveProfile,
+        hints,
         confirm.as_deref(),
     )
 }

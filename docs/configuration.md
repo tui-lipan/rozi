@@ -379,7 +379,7 @@ active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Profile used to seed a bare ephemeral launch. Explicit named targets and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
+| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 

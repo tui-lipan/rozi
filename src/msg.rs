@@ -158,6 +158,8 @@ pub enum Msg {
     SubmitRenameSession,
     CloseSaveProfile,
     SaveProfileNameChanged(InputEvent),
+    /// Capture the profile, naming the current session after it when that session is still
+    /// temporary.
     SubmitSaveProfile,
     CloseProfilePicker,
     ProfilePickerQueryChanged(String),

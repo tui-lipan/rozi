@@ -43,6 +43,32 @@ pub(crate) fn close_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update
     crate::ops::overlay_return::finish(ctx)
 }
 
+/// Whether committing this capture should also name the current session after the profile.
+///
+/// Only a *temporary* session is promoted. A named session already carries a durable identity the
+/// user chose, so capturing `dev-full` out of session `dev` must leave `dev` named `dev`.
+///
+/// The controller/read-only checks mirror the server's, which drops `Rename` from anyone else
+/// without a reply: a follower would otherwise be offered a commit that silently does half of what
+/// it says. Failing the check falls back to a plain capture, hints included.
+pub(crate) fn should_promote_session(state: &crate::state::State) -> bool {
+    let current = state.current();
+    current.session_attached
+        && state.is_ephemeral_session()
+        && current.is_controller()
+        && current
+            .shared
+            .as_ref()
+            .is_none_or(|shared| !shared.read_only)
+}
+
+/// Capture the current session's layout as a profile.
+///
+/// Capturing a temporary session also names it after the profile, so the runtime and its recipe end
+/// up sharing one durable identity: `hyprmux <name>` then resumes the live session while it exists
+/// and rebuilds from the profile once it is gone. That is simply what capture *means* here, so
+/// there is no second commit to opt out of it - a session captured under a name it should not keep
+/// can be killed afterwards.
 pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
     let Some(name) = ctx
         .state
@@ -87,11 +113,32 @@ pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
                     ],
                 ),
             );
+            // The overwrite arm above already gated this commit, so promotion never runs ahead of
+            // its confirmation.
+            let mut clash = false;
+            if should_promote_session(&ctx.state) {
+                clash = crate::ops::session::session_name_already_running(
+                    ctx,
+                    &name,
+                    ctx.state.current().remote_target.as_ref(),
+                );
+                if !clash && let Some(client) = ctx.state.current().session_client.clone() {
+                    client.rename(name.clone());
+                }
+            }
+            // The server echoes the rename back and the workbar badge repaints with it, so the
+            // toast only reports the file write - except when promotion lost a name race, which is
+            // an outcome the prompt promised and the screen cannot show.
             crate::pty_events::notify_info(
                 ctx,
                 format!(
-                    "{} profile `{name}`",
-                    if existed { "Overwrote" } else { "Captured" }
+                    "{} profile `{name}`{}",
+                    if existed { "Overwrote" } else { "Captured" },
+                    if clash {
+                        " · session name already in use"
+                    } else {
+                        ""
+                    }
                 ),
             );
         }
@@ -305,7 +352,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
         if let Some(picker) = ctx.state.profile_picker.as_mut() {
             picker.pending_apply = Some(index);
         }
-        return Update::full();
+        return crate::ops::confirm::arm(ctx);
     }
     let profile = match load_profile(&entry.path) {
         Ok(profile) => profile,
@@ -583,10 +630,8 @@ pub(crate) fn open_named_target(
             },
         )
     } else {
-        (
-            crate::state::fresh_default_attachment(&ctx.state.config),
-            crate::state::AttachIntent::Plain,
-        )
+        // No recipe named for this session, so it starts from `[profile] default` when one is set.
+        crate::profiles::default_session_seed(&ctx.state.config)
     };
     let epoch = ctx.state.mint_attachment_id();
     let (parked_epoch, left) =
@@ -767,6 +812,122 @@ mod tests {
         assert_eq!(normalize_profile_name("team\\dev"), None);
         assert_eq!(normalize_profile_name("team dev"), None);
         assert_eq!(normalize_profile_name("eph-123"), None);
+    }
+
+    /// Capturing a temporary session names it after the profile, so the running session and its
+    /// recipe end up sharing one identity. A session that is already named keeps the name the user
+    /// chose - capturing `dev-full` out of session `dev` must not rename `dev`.
+    #[test]
+    fn only_an_attached_temporary_session_is_promoted_by_a_capture() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().current_mut().session_attached = true;
+            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
+            assert!(should_promote_session(backend.state()));
+
+            backend.state_mut().current_mut().session_name = Some("dev".to_string());
+            assert!(!should_promote_session(backend.state()));
+
+            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
+            backend.state_mut().current_mut().session_attached = false;
+            assert!(!should_promote_session(backend.state()));
+
+            // The server drops `Rename` from a follower or a read-only client without replying, so
+            // neither may be offered a commit that names the session.
+            backend.state_mut().current_mut().session_attached = true;
+            let mut shared = crate::state::SharedSessionState::new(7);
+            shared.controller = Some(9);
+            backend.state_mut().current_mut().shared = Some(shared);
+            assert!(!should_promote_session(backend.state()));
+
+            if let Some(shared) = backend.state_mut().current_mut().shared.as_mut() {
+                shared.controller = Some(7);
+            }
+            assert!(should_promote_session(backend.state()));
+
+            if let Some(shared) = backend.state_mut().current_mut().shared.as_mut() {
+                shared.read_only = true;
+            }
+            assert!(!should_promote_session(backend.state()));
+        });
+    }
+
+    /// There is one commit either way, so the hint is the only thing telling the user whether this
+    /// capture also names the session.
+    #[test]
+    fn capture_prompt_says_whether_the_commit_also_names_the_session() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().current_mut().session_attached = true;
+            backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
+            backend
+                .dispatch(Msg::RunAction(crate::input::Action::SaveProfile))
+                .expect("open save prompt");
+            backend.render();
+            let hints = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(
+                hints.contains("capture + name session"),
+                "capturing a temporary session names it too\n{hints}"
+            );
+
+            backend.state_mut().current_mut().session_name = Some("dev".to_string());
+            backend.render();
+            let hints = backend.capture_frame().to_fixed_grid_lines().join("\n");
+            assert!(
+                hints.contains("capture ") && !hints.contains("name session"),
+                "a named session keeps its name, so the commit is a plain capture\n{hints}"
+            );
+        });
+    }
+
+    /// Replace arms like every other destructive gesture, so it has to disarm on the same clock.
+    /// It previously returned a bare update, leaving a confirmation armed indefinitely.
+    #[test]
+    fn replace_arms_on_the_shared_confirm_clock_and_expires_with_it() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().current_mut().session_attached = true;
+            let path = temp_profile_path();
+            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            let mut picker = ProfilePickerState::new(vec![entry("dev", path.clone())]);
+            picker.apply_mode = true;
+            backend.state_mut().profile_picker = Some(picker);
+            backend.state_mut().show_profile_picker = true;
+
+            let before = backend.state().confirm_epoch;
+            backend
+                .dispatch(Msg::ProfilePickerApply)
+                .expect("arm replace");
+            assert_eq!(
+                backend
+                    .state()
+                    .profile_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_apply,
+                Some(0)
+            );
+            let armed = backend.state().confirm_epoch;
+            assert_ne!(
+                armed, before,
+                "arming must advance the shared confirm token"
+            );
+
+            backend
+                .dispatch(Msg::ConfirmationExpired(armed))
+                .expect("expire replace");
+            assert!(
+                backend
+                    .state()
+                    .profile_picker
+                    .as_ref()
+                    .unwrap()
+                    .pending_apply
+                    .is_none(),
+                "the window lapsing must disarm replace"
+            );
+            let _ = std::fs::remove_file(&path);
+        });
     }
 
     #[test]

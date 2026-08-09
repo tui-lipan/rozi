@@ -486,8 +486,26 @@ pub fn clear_default_profile(name: &str) -> std::result::Result<Option<PathBuf>,
     Ok(Some(path))
 }
 
+/// The key of a `key = value` line, if it is one.
+fn toml_key(line: &str) -> Option<&str> {
+    line.split_once('=').map(|(key, _)| key.trim())
+}
+
+/// The unquoted string value of a `key = value` line, accepting either TOML quote style and
+/// tolerating a trailing comment on a bare value.
+fn toml_string_value(line: &str) -> Option<String> {
+    let value = line.split_once('=')?.1.trim();
+    match value.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
+            let rest = &value[quote.len_utf8()..];
+            let end = rest.find(quote)?;
+            Some(rest[..end].to_string())
+        }
+        _ => Some(value.split('#').next()?.trim().to_string()),
+    }
+}
+
 fn remove_default_profile(text: &str, name: &str) -> String {
-    let target = format!("default = \"{name}\"");
     let mut output = String::new();
     let mut in_profile = false;
 
@@ -498,7 +516,13 @@ fn remove_default_profile(text: &str, name: &str) -> String {
             in_profile = trimmed == "[profile]";
         }
 
-        if in_profile && trimmed == target {
+        // Match the parsed key and value, not one rendered spelling: a hand-written `default='dev'`
+        // has to clear too, or the picker reports the default gone while the file puts it back on
+        // the next launch. The value still has to match, so clearing `dev` leaves another default.
+        if in_profile
+            && toml_key(trimmed) == Some("default")
+            && toml_string_value(trimmed).as_deref() == Some(name)
+        {
             continue;
         }
 
@@ -527,12 +551,10 @@ fn upsert_default_profile(text: &str, name: &str) -> String {
             saw_profile |= in_profile;
         }
 
-        if in_profile
-            && trimmed
-                .split_once('=')
-                .is_some_and(|(key, _)| matches!(key.trim(), "default" | "path"))
-        {
-            if trimmed.starts_with("default") && !wrote_default {
+        // Rewrite any existing `default` in place, whatever its spelling, and drop later duplicates.
+        // Only that key is touched: every other line in `[profile]` is the user's and is preserved.
+        if in_profile && toml_key(trimmed) == Some("default") {
+            if !wrote_default {
                 output.push_str(&format!("default = \"{name}\"\n"));
                 wrote_default = true;
             }
@@ -611,14 +633,22 @@ mod tests {
     }
 
     #[test]
-    fn profile_upsert_replaces_default_and_removes_path() {
+    fn profile_upsert_replaces_default_in_place() {
         let updated = upsert_default_profile(
-            "[profile]\npath = \"~/old.toml\"\ndefault = \"old\"\n\n[session]\nautosave = true\n",
+            "[profile]\ndefault = \"old\"\n\n[session]\nautosave = true\n",
             "dev",
         );
         assert_eq!(
             updated,
             "[profile]\ndefault = \"dev\"\n\n[session]\nautosave = true\n"
+        );
+    }
+
+    #[test]
+    fn profile_upsert_rewrites_any_spelling_of_default() {
+        assert_eq!(
+            upsert_default_profile("[profile]\ndefault='old'  # pinned\n", "dev"),
+            "[profile]\ndefault = \"dev\"\n"
         );
     }
 
@@ -634,6 +664,36 @@ mod tests {
     #[test]
     fn remove_default_profile_leaves_other_defaults() {
         let text = "[profile]\ndefault = \"work\"\n";
+        assert_eq!(remove_default_profile(text, "dev"), text);
+    }
+
+    /// A hand-written default has to clear, or unsetting it in the picker leaves the file saying
+    /// otherwise and the default returns on the next launch.
+    #[test]
+    fn remove_default_profile_strips_hand_written_spellings() {
+        for text in [
+            "[profile]\ndefault='dev'\n",
+            "[profile]\ndefault=\"dev\"\n",
+            "[profile]\n  default   =   \"dev\"   \n",
+            "[profile]\ndefault = \"dev\" # pinned\n",
+        ] {
+            assert_eq!(remove_default_profile(text, "dev"), "[profile]\n", "{text}");
+        }
+    }
+
+    /// `[profile]` denies unknown fields, so anything else under it is a key this build does not
+    /// own yet - rewriting the default must not quietly delete it.
+    #[test]
+    fn profile_upsert_preserves_unrelated_profile_lines() {
+        assert_eq!(
+            upsert_default_profile("[profile]\n# keep me\npath = \"~/old.toml\"\n", "dev"),
+            "[profile]\n# keep me\npath = \"~/old.toml\"\ndefault = \"dev\"\n"
+        );
+    }
+
+    #[test]
+    fn remove_default_profile_keeps_commented_out_default() {
+        let text = "[profile]\n# default = \"dev\"\n";
         assert_eq!(remove_default_profile(text, "dev"), text);
     }
 

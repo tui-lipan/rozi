@@ -171,10 +171,13 @@ fn profile_picker_palette(
     if pending_apply.is_some() {
         palette = palette.render_item(Arc::new(move |item: &SearchItem<usize>, _hl| {
             (pending_apply == Some(item.value)).then(|| {
+                // Replace keeps the session - its name, its clients - and swaps out its panes. That
+                // is true of a named session as much as a temporary one, so the label says what is
+                // actually destroyed rather than naming a session kind that may not be in play.
                 render_pending_confirm_item(
                     item.label.as_ref(),
                     warn_bg,
-                    "again to confirm (replaces ephemeral)",
+                    "again to confirm (replaces panes)",
                     false,
                 )
             })

@@ -56,7 +56,8 @@ default = "dev"
 ```
 
 Explicit targets take precedence. On a bare ephemeral launch, `[profile] default` precedes local
-session autosave; `[session] startup = "last"` instead opens a named session. See
+session autosave; `[session] startup = "last"` instead opens a named session. The default also
+seeds sessions created later in the run, whenever no recipe is named for them. See
 [Named profiles](profiles.md) for picker controls.
 
 Replacing a session from the picker is destructive: it closes all panes and running processes,

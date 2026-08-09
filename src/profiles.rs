@@ -111,6 +111,46 @@ pub fn restore_state_from_profile(
     }
 }
 
+/// The seed a session starts from when the user named no recipe for it, paired with the attach
+/// intent that records where it came from: the configured `[profile] default` when one is set and
+/// loads, otherwise a single shell.
+///
+/// Startup resolves the same default separately (see `HyprmuxApp::create_state`). Every *other*
+/// path that opens a blank session goes through here, which is what makes `[profile] default` mean
+/// "every session I did not otherwise specify" rather than "only the first one this process
+/// opened".
+///
+/// A default that is missing or unreadable falls back to a blank session instead of refusing to
+/// open one: startup already reported the failure, and the session the user asked for should still
+/// appear.
+pub(crate) fn default_session_seed(
+    config: &crate::config::HyprmuxConfig,
+) -> (crate::state::Attachment, crate::state::AttachIntent) {
+    let blank = || {
+        (
+            crate::state::fresh_default_attachment(config),
+            crate::state::AttachIntent::Plain,
+        )
+    };
+    let Some(name) = config.profile.default.as_deref() else {
+        return blank();
+    };
+    let path = crate::config::profile_path_for_name(name);
+    let Ok(profile) = load_profile(&path) else {
+        return blank();
+    };
+    match attachment_from_profile(config, profile) {
+        Some(attachment) => (
+            attachment,
+            crate::state::AttachIntent::ProfileSeed {
+                profile: name.to_string(),
+                path,
+            },
+        ),
+        None => blank(),
+    }
+}
+
 /// Build the window-manager attachment a profile describes: its workspaces, panes (as identities,
 /// not yet PTY-backed), tile trees, focus, and active workspace. Returns `None` when the profile has
 /// no panes, so the caller falls back to a fresh default attachment. The panes are spawned on the
@@ -743,6 +783,91 @@ mod tests {
                 .profile_name,
             None
         );
+    }
+
+    /// A default that is not configured, or cannot be read, must still yield a working session
+    /// rather than blocking one from opening.
+    #[test]
+    fn default_seed_falls_back_to_a_blank_session() {
+        let config = HyprmuxConfig::default();
+        assert!(config.profile.default.is_none());
+        let (attachment, intent) = default_session_seed(&config);
+        assert_eq!(attachment.workspaces[0].panes.len(), 1);
+        assert!(matches!(intent, crate::state::AttachIntent::Plain));
+
+        let mut config = HyprmuxConfig::default();
+        config.profile.default = Some("hyprmux-no-such-profile-xyzzy".to_string());
+        let (attachment, intent) = default_session_seed(&config);
+        assert_eq!(attachment.workspaces[0].panes.len(), 1);
+        assert!(
+            matches!(intent, crate::state::AttachIntent::Plain),
+            "an unreadable default must not claim the session came from it"
+        );
+    }
+
+    /// `[profile] default` has to seed *every* session opened without a recipe, not only the launch
+    /// that started hyprmux - creating a session later used to silently start blank.
+    #[test]
+    fn default_seed_restores_the_configured_profile_and_records_its_origin() {
+        let _guard = cwd_lock().lock().expect("env lock");
+        let original = std::env::var_os("XDG_CONFIG_HOME");
+        let original_appdata = std::env::var_os("APPDATA");
+        let temp = std::env::temp_dir().join(format!(
+            "hyprmux-default-seed-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(temp.join("hyprmux/profiles")).expect("profiles dir");
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &temp);
+            std::env::set_var("APPDATA", &temp);
+        }
+
+        let profile = HyprmuxProfile {
+            workspaces: vec![WorkspaceProfile {
+                index: 0,
+                panes: vec![
+                    PaneProfile {
+                        id: 0,
+                        ..PaneProfile::default()
+                    },
+                    PaneProfile {
+                        id: 1,
+                        ..PaneProfile::default()
+                    },
+                ],
+                ..WorkspaceProfile::default()
+            }],
+            ..HyprmuxProfile::default()
+        };
+        save_profile(&temp.join("hyprmux/profiles/work.toml"), &profile.clone())
+            .expect("write default profile");
+
+        let mut config = HyprmuxConfig::default();
+        config.profile.default = Some("work".to_string());
+        let (attachment, intent) = default_session_seed(&config);
+
+        unsafe {
+            match original {
+                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+            match original_appdata {
+                Some(value) => std::env::set_var("APPDATA", value),
+                None => std::env::remove_var("APPDATA"),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&temp);
+
+        assert_eq!(
+            attachment.workspaces[0].panes.len(),
+            2,
+            "the default profile's layout should seed the session"
+        );
+        match intent {
+            crate::state::AttachIntent::ProfileSeed { profile, .. } => assert_eq!(profile, "work"),
+            other => panic!("expected the seed to record its origin profile, got {other:?}"),
+        }
     }
 
     #[test]

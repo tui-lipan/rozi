@@ -1312,7 +1312,9 @@ fn refresh_picker_after_kill(ctx: &mut Context<HyprmuxApp>) -> Update {
 pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
     let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
-    let attachment = crate::state::fresh_default_attachment(&ctx.state.config);
+    // A fresh ephemeral is a session with no recipe named for it, so it seeds from
+    // `[profile] default` exactly as the launch that started hyprmux did.
+    let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
     install_fresh_attachment(ctx, attachment);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
@@ -1322,7 +1324,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
         read_only: false,
         reconnect: false,
         remote_host: None,
-        intent: crate::state::AttachIntent::Plain,
+        intent,
         left: None,
         parked_epoch: None,
     });
@@ -1579,19 +1581,29 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
+    // Set when this session had to be seeded here rather than from the parked launcher seed, which
+    // already carries the launch's own `deferred_profile_seed`.
+    let mut seeded_intent = None;
     if ctx.state.needs_session_for_pty() {
+        let mut seed_from_default = |ctx: &mut Context<HyprmuxApp>| {
+            let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
+            seeded_intent = Some(intent);
+            attachment
+        };
         let seed = if ctx.state.pending_session_action.is_some() {
             let mut empty = crate::state::Attachment::new();
             empty.auto_created = true;
             empty
         } else if ctx.state.is_launcher() {
-            ctx.state
-                .launcher_seed
-                .take()
-                .unwrap_or_else(|| crate::state::fresh_default_attachment(&ctx.state.config))
+            // A launcher reached by killing a session has no parked seed, so it opens the same way
+            // a fresh ephemeral does: from `[profile] default` when one is configured.
+            match ctx.state.launcher_seed.take() {
+                Some(seed) => seed,
+                None => seed_from_default(ctx),
+            }
         } else {
             // Stuck no-client panes (e.g. a pre-fix blank spawn): replace with a working shell.
-            crate::state::fresh_default_attachment(&ctx.state.config)
+            seed_from_default(ctx)
         };
         let epoch = ctx.state.runtime_epoch;
         ctx.state.attachment = seed;
@@ -1605,14 +1617,10 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     ctx.state.current_mut().remote_target = None;
     let epoch = ctx.state.runtime_epoch;
     let name = crate::state::ephemeral_session_name();
-    let intent = ctx
-        .state
-        .current_mut()
-        .deferred_profile_seed
-        .take()
-        .map_or(crate::state::AttachIntent::Plain, |(profile, path)| {
-            crate::state::AttachIntent::ProfileSeed { profile, path }
-        });
+    let intent = match ctx.state.current_mut().deferred_profile_seed.take() {
+        Some((profile, path)) => crate::state::AttachIntent::ProfileSeed { profile, path },
+        None => seeded_intent.unwrap_or(crate::state::AttachIntent::Plain),
+    };
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {
         epoch,
         name: name.clone(),
@@ -1766,7 +1774,7 @@ fn reject_session_name(ctx: &mut Context<HyprmuxApp>, reason: impl Into<String>)
 /// Whether `name` is already taken for a create-session submit: live discovery, a held attachment,
 /// or a cached remote row. Checked before the create prompt is torn down so a collision stays in
 /// the modal instead of toasting over a blank, unfocused client.
-fn session_name_already_running(
+pub(crate) fn session_name_already_running(
     ctx: &Context<HyprmuxApp>,
     name: &str,
     remote_target: Option<&crate::session::remote::RemoteTarget>,

@@ -770,25 +770,36 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// Shown in the pane area when the client has no session at all: the startup picker was dismissed,
 /// or the last session was killed. Distinct from the empty-workspace hint, which talks about
 /// spawning a pane — here there is nothing to spawn a pane *into* yet, so it points at the ways
-/// out: pick a session, start a shell, or detach.
+/// out: pick a session, start a shell, or leave the client.
 ///
 /// A bare `Enter` starts the shell here (`key_routing::launcher_start_key`) because no pane is
 /// competing for it; the ordinary `spawn` binding is listed beside it, since that is what works
-/// everywhere else. Both rows spell that binding the prefix way: `scheme_shortcuts` generates one
-/// table entry per key as *both* `<prefix> <key>` and `<modifier>-<key>`, so the held-modifier
-/// spelling would be the same binding said twice — and it is the spelling that disappears when
-/// `[input] modifier_shortcuts` is off, while the prefix route always exists.
+/// everywhere else. Spawn and session-picker rows spell their default binding the prefix way:
+/// `scheme_shortcuts` generates one table entry per key as both `<prefix> <key>` and
+/// `<modifier>-<key>`. The leave row reads the first live shortcut for both stable action ids, so
+/// overrides and unbinding remain truthful without repeating every modifier mirror.
 ///
 /// The keys are rows rather than a sentence: `empty_workspace_rect` fixes this panel at 46x9, which
 /// leaves room for the headline plus three shortcut rows, and a prose spelling of the shortcuts
 /// does not survive the wrap. The key column is measured rather than fixed so a long custom prefix
 /// still aligns.
-pub(crate) fn launcher_panel(input: &InputConfig, theme: &Theme) -> Element {
-    let prefix = input.prefix.to_string();
+pub(crate) fn launcher_panel(ctx: &Context<HyprmuxApp>, theme: &Theme) -> Element {
+    let input = &ctx.state.config.input;
+    let prefix = input.prefix.compact_display();
+    let mut leave_keys: Vec<_> = ["quit", "detach"]
+        .into_iter()
+        .filter_map(|id| crate::commands::command_prefix_chord(ctx, id))
+        .collect();
+    leave_keys.dedup();
+    let leave_keys = if leave_keys.is_empty() {
+        "not set".to_string()
+    } else {
+        leave_keys.join(" / ")
+    };
     let rows = [
-        (format!("Enter / {prefix} Enter"), "ephemeral shell"),
+        (format!("enter / {prefix} enter"), "ephemeral shell"),
         (format!("{prefix} s"), "pick a session"),
-        (format!("{prefix} d"), "detach"),
+        (leave_keys, "leave"),
     ];
     let key_width = rows
         .iter()

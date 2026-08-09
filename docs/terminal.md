@@ -249,8 +249,9 @@ Limits worth knowing:
 ## Runtime persistence boundaries
 
 - **The server owns live state.** PTYs live in the session server, not the UI process. A bare
-  launch attaches to a disposable ephemeral session (`eph-<pid>`); a clean quit shuts it down, while
-  a UI crash leaves it running so you can reattach and recover scrollback. See [Sessions](sessions.md).
+  launch attaches to a disposable ephemeral session (`eph-<pid>`). Leaving closes it when untouched
+  or asks whether to keep it when it contains work; a UI crash leaves it running so you can recover
+  scrollback. See [Sessions](sessions.md).
 - **Attach seeding replays real VT bytes.** When a client attaches, the server serializes each live
   pane's full screen state (scrollback + primary + alt + modes + cursor + title) to a synthesized VT
   byte stream (`TerminalScreen::export_replay_bytes`) and streams it to the client, which replays it

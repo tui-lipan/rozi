@@ -31,7 +31,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Performance records](performance/README.md) | Current assessment, dated audit reports, and conventions for recording future results. |
 | [Performance audit playbook](performance/audit-playbook.md) | Reproduce a full CPU, memory, latency, scaling, lifecycle, and profiling audit. |
 | [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) | Seamless navigation between editor splits and hyprmux panes. |
-| [Sessions](sessions.md) | Local vs attached runtime, named sessions, detach/quit semantics, and limitations. |
+| [Sessions](sessions.md) | Ephemeral and named sessions, leave behavior, detach/reattach, and limitations. |
 | [Remote SSH sessions](remote.md) | `--remote` attach over SSH, bootstrap/install, protocol negotiation, and feature split. |
 
 ## At a glance
@@ -40,7 +40,8 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
   for active command keys. See [Keybindings](keybindings.md).
 - **Layouts** - dwindle by default; master, grid, columns, rows, scrollable, and monocle per
   workspace; plus floating and fullscreen panes. See [Layouts & panes](layouts-and-panes.md).
-- **Detach** - `prefix d` by default; leaves attached sessions running or saves locally before exit.
+- **Leave client** - `prefix q` or `prefix d` by default; named sessions keep running, while
+  temporary sessions are closed or kept according to whether they contain work.
 - **Named sessions** - `hyprmux <name>` creates/connects to a persistent PTY server.
 - **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
   [Configuration](configuration.md).

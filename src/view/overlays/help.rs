@@ -20,6 +20,12 @@ pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         if entry.id.as_str() == crate::commands::FORWARD_PREFIX_COMMAND_ID {
             continue;
         }
+        // `detach` and `quit` leave the client in exactly the same way. Keep the detach command
+        // registered for its stable id and bindings, but show both aliases on the canonical Quit
+        // client row instead of making the help reader compare duplicate actions.
+        if entry.id.as_str() == "detach" {
+            continue;
+        }
         // tui-lipan registers its own `app.*` commands even when their bindings are disabled.
         // Hyprmux owns these behaviors, so only show its corresponding commands here.
         if entry.id.as_str().starts_with("app.") {

@@ -61,8 +61,9 @@ widgets); hyprmux owns all window-manager policy.
 
 Consequences worth knowing:
 
-- **Detach leaves the server running.** Reattach later and PTY state is intact.
-- **A clean quit shuts an ephemeral server down**; named sessions survive.
+- **Leaving preserves named sessions.** Reattach later and PTY state is intact.
+- **Temporary sessions are dispositioned on leave:** untouched ones close; worked-in ones ask
+  whether to be named and kept or closed.
 - **Several clients can attach to one session** and share a revisioned layout document.
 - **Profiles restore layout and launch intent only.** A live session preserves actual PTY state;
   a profile starts fresh shells.

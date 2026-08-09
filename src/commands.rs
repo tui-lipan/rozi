@@ -42,6 +42,7 @@ pub(crate) struct BuiltinCommand {
 }
 
 pub(crate) const FORWARD_PREFIX_COMMAND_ID: &str = "hyprmux.forward-prefix";
+const PASTE_DIRECT_SHORTCUT: &str = "ctrl-v";
 
 pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
@@ -69,35 +70,35 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::Close,
         label: "Close pane",
         category: "Panes",
-        default_keys: &["w", "shift-w", "x", "shift-x"],
+        default_keys: &["w", "x"],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleFloat,
         label: "Floating",
         category: "Panes",
-        default_keys: &["t", "shift-t"],
+        default_keys: &["t"],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleFullscreen,
         label: "Fullscreen",
         category: "Panes",
-        default_keys: &["f", "shift-f"],
+        default_keys: &["f"],
         palette: false,
     },
     BuiltinCommand {
         action: Action::RenamePane,
         label: "Rename pane",
         category: "Panes",
-        default_keys: &["n", "shift-n"],
+        default_keys: &["n"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::Paste,
         label: "Paste from clipboard",
         category: "Panes",
-        default_keys: &["v", "shift-v"],
+        default_keys: &["v"],
         palette: true,
     },
     BuiltinCommand {
@@ -195,7 +196,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::EnterResizeMode,
         label: "Resize mode",
         category: "Layout",
-        default_keys: &["r", "shift-r"],
+        default_keys: &["r"],
         palette: true,
     },
     BuiltinCommand {
@@ -332,7 +333,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::ToggleScratchpad,
         label: "Scratchpad",
         category: "App",
-        default_keys: &["`", "shift-`"],
+        default_keys: &["`"],
         palette: true,
     },
     BuiltinCommand {
@@ -422,13 +423,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     // `detach` runs the same thing `quit` does — one way out of the client. It keeps its own entry
     // so `prefix d` (the key every tmux user reaches for), `[keys] detach`, and `run-action detach`
     // all keep working, but stays out of the palette: two rows that do the same thing only invite
-    // the question of how they differ. The help overlay still lists the key, which is where a
-    // reader is looking for keys rather than for things to do.
+    // the question of how they differ. The help overlay folds its live binding into the canonical
+    // Quit client row.
     BuiltinCommand {
         action: Action::Detach,
         label: "Detach",
         category: "Session",
-        default_keys: &["d", "shift-d"],
+        default_keys: &["d"],
         palette: false,
     },
     BuiltinCommand {
@@ -645,7 +646,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::TogglePalette,
         label: "Command palette",
         category: "App",
-        default_keys: &["p", "shift-p"],
+        default_keys: &["p"],
         palette: false,
     },
     BuiltinCommand {
@@ -855,7 +856,7 @@ fn register_workspace_command(
 fn register_user_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig, active: bool) {
     for (index, command) in config.user_commands.iter().enumerate() {
         let id = format!("user.{index}");
-        let hint = command.binding.canonical_lowercase();
+        let hint = command.binding.compact_display();
         let link = ctx.link().clone();
         ctx.register_command(
             CommandEntry::builder(id)
@@ -961,22 +962,17 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
     }
 }
 
-/// The display chord for a built-in command's current binding — the configured leader prefix plus
-/// the command's first key step (e.g. `ctrl+a e`) — read live from the registry so `[keys]`
-/// overrides are honored. `None` when the command is unbound. Prefer this over hardcoding keys in
-/// toasts/hints, since every binding is user-configurable.
+/// The display chord for a built-in command's first current binding (e.g. `ctrl+a e`), read live
+/// from the registry so `[keys]` overrides are honored. `None` when the command is unbound. Prefer
+/// this over hardcoding keys in toasts/hints, since every binding is user-configurable.
 pub(crate) fn command_prefix_chord(ctx: &Context<HyprmuxApp>, id: &str) -> Option<String> {
-    let hint = ctx
-        .command_registry()
+    ctx.command_registry()
         .entries()
         .into_iter()
         .find(|entry| entry.id.as_str() == id)?
-        .keybinding_hint
-        .as_deref()
-        .map(str::to_string)
-        .filter(|hint| !hint.is_empty())?;
-    let prefix = ctx.state.config.input.prefix.to_string();
-    Some(format!("{prefix} {hint}"))
+        .shortcuts
+        .primary()
+        .map(KeyBinding::compact_display)
 }
 
 /// Resolve a builtin command's shortcuts: an explicit `[keys]` override (verbatim, including an
@@ -989,7 +985,8 @@ fn resolve_shortcuts(config: &HyprmuxConfig, id: &str, defaults: &[&str]) -> Key
     } else {
         let mut bindings = default_shortcuts_for(config, defaults);
         if id == "paste" {
-            bindings.push(KeyBinding::from_str("ctrl-v").expect("paste shortcut parses"));
+            bindings
+                .push(KeyBinding::from_str(PASTE_DIRECT_SHORTCUT).expect("paste shortcut parses"));
         }
         KeyBindings::from_bindings(bindings)
     }
@@ -1000,17 +997,55 @@ fn builtin_keybinding_hint(
     id: &str,
     defaults: &[&str],
 ) -> Option<Arc<str>> {
-    let hint = if config.key_overrides.contains_key(id) {
-        resolve_shortcuts(config, id, defaults).canonical_lowercase()
+    let mut hints = builtin_keybinding_hint_parts(config, id, defaults);
+    if id == "quit"
+        && let Some(detach) = BUILTIN_COMMANDS
+            .iter()
+            .find(|command| command.action == Action::Detach)
+    {
+        hints.extend(builtin_keybinding_hint_parts(
+            config,
+            "detach",
+            detach.default_keys,
+        ));
+    }
+
+    let mut unique = Vec::with_capacity(hints.len());
+    for hint in hints {
+        if !unique.contains(&hint) {
+            unique.push(hint);
+        }
+    }
+    (!unique.is_empty()).then(|| Arc::<str>::from(unique.join(" / ")))
+}
+
+/// Return the live display alternatives for one built-in action. Defaults intentionally stay as
+/// command key steps (`w`, `x`, …), while explicit overrides retain their exact bindings.
+fn builtin_keybinding_hint_parts(
+    config: &HyprmuxConfig,
+    id: &str,
+    defaults: &[&str],
+) -> Vec<String> {
+    if config.key_overrides.contains_key(id) {
+        resolve_shortcuts(config, id, defaults)
+            .iter()
+            .map(KeyBinding::compact_display)
+            .collect()
     } else {
-        defaults
+        let mut hints: Vec<_> = defaults
             .iter()
             .filter_map(|key| KeyBinding::from_str(key).ok())
-            .map(|binding| binding.canonical_lowercase())
-            .next()
-            .unwrap_or_default()
-    };
-    (!hint.is_empty()).then(|| Arc::<str>::from(hint))
+            .map(|binding| binding.compact_display())
+            .collect();
+        if id == "paste" {
+            hints.push(
+                KeyBinding::from_str(PASTE_DIRECT_SHORTCUT)
+                    .expect("paste shortcut parses")
+                    .compact_display(),
+            );
+        }
+        hints
+    }
 }
 
 /// For each key step, build the leader-prefix chord (`<prefix> <key>`) and, when
@@ -1390,6 +1425,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn builtin_defaults_do_not_pair_single_keys_with_shifted_variants() {
+        fn single_char_key(key: &str) -> Option<char> {
+            let mut chars = key.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) => Some(ch),
+                _ => None,
+            }
+        }
+
+        for command in BUILTIN_COMMANDS {
+            let id = command
+                .action
+                .id()
+                .expect("every builtin command has a stable id");
+            for &key in command.default_keys {
+                let Some(base_key) = key.strip_prefix("shift-").and_then(single_char_key) else {
+                    continue;
+                };
+                assert!(
+                    !command
+                        .default_keys
+                        .iter()
+                        .copied()
+                        .filter_map(single_char_key)
+                        .any(|candidate| candidate == base_key),
+                    "builtin `{id}` defaults both `{base_key}` and `shift-{base_key}`"
+                );
+            }
+        }
+    }
+
     /// `m` cycles layouts and its shifted sibling opens the picker, so the two layout commands
     /// share one key rather than the cycle owning both spellings.
     #[test]
@@ -1443,7 +1510,7 @@ mod tests {
     #[test]
     fn paste_accepts_ctrl_v_unless_explicitly_overridden() {
         let mut config = HyprmuxConfig::default();
-        let shortcuts = resolve_shortcuts(&config, "paste", &["v", "shift-v"]);
+        let shortcuts = resolve_shortcuts(&config, "paste", &["v"]);
         assert!(
             shortcuts
                 .iter()
@@ -1454,7 +1521,7 @@ mod tests {
             "paste".to_string(),
             vec![KeyBinding::from_str("ctrl-shift-v").unwrap()],
         );
-        let shortcuts = resolve_shortcuts(&config, "paste", &["v", "shift-v"]);
+        let shortcuts = resolve_shortcuts(&config, "paste", &["v"]);
         assert!(
             !shortcuts
                 .iter()
@@ -1469,7 +1536,7 @@ mod tests {
             .key_overrides
             .insert("scratchpad".to_string(), Vec::new());
 
-        let shortcuts = resolve_shortcuts(&config, "scratchpad", &["`", "shift-`"]);
+        let shortcuts = resolve_shortcuts(&config, "scratchpad", &["`"]);
         assert!(shortcuts.is_empty());
     }
 
@@ -1542,6 +1609,7 @@ mod tests {
             .expect("detach stays registered so its key and id keep working");
         assert!(detach.default_keys.contains(&"d"));
         assert_eq!(Action::from_id("detach"), Some(Action::Detach));
+        assert_eq!(Action::from_id("quit"), Some(Action::Quit));
     }
 
     #[test]
@@ -1578,8 +1646,8 @@ mod tests {
         let config = HyprmuxConfig::default();
 
         assert_eq!(
-            builtin_keybinding_hint(&config, "close", &["w", "shift-w", "x", "shift-x"]),
-            Some(Arc::<str>::from("w"))
+            builtin_keybinding_hint(&config, "close", &["w", "x"]),
+            Some(Arc::<str>::from("w / x"))
         );
         assert_eq!(
             builtin_keybinding_hint(&config, "cycle-focus-next", &["tab"]),
@@ -1588,16 +1656,86 @@ mod tests {
     }
 
     #[test]
+    fn command_hints_compact_shifted_aliases_without_changing_shortcuts() {
+        let config = HyprmuxConfig::default();
+
+        assert_eq!(
+            builtin_keybinding_hint(&config, "help", &["?", "shift-/"]),
+            Some(Arc::<str>::from("?"))
+        );
+        assert_eq!(
+            builtin_keybinding_hint(&config, "choose-layout", &["shift-m"]),
+            Some(Arc::<str>::from("M"))
+        );
+
+        let binding = KeyBinding::from_str("ctrl-shift-x").expect("binding parses");
+        assert_eq!(binding.compact_display(), "ctrl+shift+x");
+        assert!(binding.matches_sequence(&[KeyEvent {
+            code: KeyCode::Char('x'),
+            mods: KeyMods {
+                ctrl: true,
+                shift: true,
+                ..KeyMods::NONE
+            },
+        }]));
+    }
+
+    #[test]
+    fn paste_hint_includes_its_direct_default_but_not_an_override() {
+        let config = HyprmuxConfig::default();
+        assert_eq!(
+            builtin_keybinding_hint(&config, "paste", &["v"]),
+            Some(Arc::<str>::from("v / ctrl+v"))
+        );
+
+        let mut overridden = HyprmuxConfig::default();
+        overridden.key_overrides.insert(
+            "paste".to_string(),
+            vec![KeyBinding::from_str("alt-p").unwrap()],
+        );
+        assert_eq!(
+            builtin_keybinding_hint(&overridden, "paste", &["v"]),
+            Some(Arc::<str>::from("alt+p"))
+        );
+    }
+
+    #[test]
     fn override_command_hints_stay_verbatim() {
         let mut config = HyprmuxConfig::default();
         config.key_overrides.insert(
             "close".to_string(),
-            vec![KeyBinding::from_str("ctrl-b k").unwrap()],
+            vec![
+                KeyBinding::from_str("ctrl-b k").unwrap(),
+                KeyBinding::from_str("alt-x").unwrap(),
+            ],
         );
 
         assert_eq!(
-            builtin_keybinding_hint(&config, "close", &["w", "shift-w"]),
-            Some(Arc::<str>::from("ctrl+b k"))
+            builtin_keybinding_hint(&config, "close", &["w", "x"]),
+            Some(Arc::<str>::from("ctrl+b k / alt+x"))
+        );
+    }
+
+    #[test]
+    fn quit_hint_combines_live_quit_and_detach_bindings() {
+        let config = HyprmuxConfig::default();
+        assert_eq!(
+            builtin_keybinding_hint(&config, "quit", &["q"]),
+            Some(Arc::<str>::from("q / d"))
+        );
+
+        let mut overridden = HyprmuxConfig::default();
+        overridden.key_overrides.insert(
+            "quit".to_string(),
+            vec![KeyBinding::from_str("ctrl-q").unwrap()],
+        );
+        overridden.key_overrides.insert(
+            "detach".to_string(),
+            vec![KeyBinding::from_str("alt-d").unwrap()],
+        );
+        assert_eq!(
+            builtin_keybinding_hint(&overridden, "quit", &["q"]),
+            Some(Arc::<str>::from("ctrl+q / alt+d"))
         );
     }
 

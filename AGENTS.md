@@ -211,7 +211,8 @@ floating geometry, focus, input routing, profiles, sessions, and terminal palett
 parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
 ephemeral session (`eph-<pid>`); a positional target / `--session` attaches to a named session or
 launches its canonical same-name profile, while `new` creates a session explicitly.
-Detach leaves the server running for later reattach; a clean quit shuts an ephemeral server down.
+Leaving through either `detach` or `quit` preserves named servers, closes untouched ephemeral
+sessions, and asks whether to keep ephemeral sessions that contain work.
 Profiles restore layout and launch intent only, while a live session preserves PTY state.
 
 The server is multi-client and layout-authoritative: several clients can attach to one session and

@@ -55,14 +55,11 @@ switch workspaces, and lay them out as described in [Keybindings](keybindings.md
 
 ## Quitting
 
-- **`prefix d`** (default) **detaches**: it leaves the TUI back to your shell (tmux-style) while the
-  session server keeps running for later reattach. Detaching an *anonymous* ephemeral session first
-  prompts you to name it (confirm to detach durably under that name; cancel returns to the
-  ephemeral session). An already-named session detaches immediately.
-- **`prefix q`** / **`Alt+q`** (default) **quit**: exits the client. Quitting shuts down the current
-  server only when it is an ephemeral session; named servers keep running.
+- **`prefix d`**, **`prefix q`**, and **`Alt+q`** (defaults) all leave the client. Named sessions
+  detach and keep running. An untouched temporary session closes silently; a temporary session you
+  worked in asks whether to name and keep it or close it.
 - Closing the **last pane in a workspace** leaves an empty workspace panel; the app stays running.
-  Use detach or quit to leave explicitly.
+  Use either leave binding to exit explicitly.
 
 ## Developer commands
 

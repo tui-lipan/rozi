@@ -130,7 +130,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 theme,
             )
         } else if ctx.state.is_launcher() {
-            launcher_panel(&ctx.state.config.input, theme)
+            launcher_panel(ctx, theme)
         } else {
             empty_workspace_panel(&ctx.state.config.input, theme)
         };

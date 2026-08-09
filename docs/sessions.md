@@ -6,8 +6,9 @@ its own terminal screens. There is no in-process ("local") PTY mode.
 
 - **Bare launch** (`hyprmux`) attaches to a per-process
   **ephemeral** session named `eph-<pid>`, autostarting its server. Ephemeral sessions are
-  disposable: a clean quit shuts the server down. The `eph-<pid>` name is an implementation detail -
-  the workbar shows no session badge for it, and the picker lists it as `ephemeral`.
+  disposable: leaving closes an untouched one and asks whether to keep one that contains work. The
+  `eph-<pid>` name is an implementation detail - the workbar shows no session badge for it, and the
+  picker lists it as `ephemeral`.
 - **Named target** (`hyprmux dev` or `hyprmux --session dev`) attaches to a running persistent
   session, or launches its canonical same-name profile. It errors when neither exists; empty
   sessions are created explicitly with `hyprmux new <name>`.

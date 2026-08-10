@@ -958,33 +958,6 @@ mod tests {
     use super::*;
     use tui_lipan::{TestBackend, UiSnapshotOptions, UiWidgetKind};
 
-    /// Points `HYPRMUX_CONFIG` at a scratch file for the life of the value, and clears it (and the
-    /// file) on the way out — including when an assertion panics, which is exactly when a leaked
-    /// process-global env var would go on to break unrelated tests in the same process.
-    struct ScopedConfigEnv {
-        path: PathBuf,
-    }
-
-    impl ScopedConfigEnv {
-        fn new(file_name: String) -> Self {
-            let path = std::env::temp_dir().join(file_name);
-            let _ = std::fs::remove_file(&path);
-            unsafe {
-                std::env::set_var("HYPRMUX_CONFIG", &path);
-            }
-            Self { path }
-        }
-    }
-
-    impl Drop for ScopedConfigEnv {
-        fn drop(&mut self) {
-            unsafe {
-                std::env::remove_var("HYPRMUX_CONFIG");
-            }
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-
     #[test]
     fn profile_picker_hints_reflow_without_splitting_pills() {
         std::thread::Builder::new()
@@ -1077,13 +1050,8 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                // The guard, rather than a scope: `HYPRMUX_CONFIG` is process-global, so a failing
-                // assertion below must not leak it into whichever test runs next in this process.
-                let _config = ScopedConfigEnv::new(format!(
-                    "hyprmux-theme-focus-{}.toml",
-                    std::process::id()
-                ));
-
+                // Selecting a theme persists it; `test_support` has already pointed the writer at
+                // this process's scratch root rather than the developer's own config.
                 let mut backend = TestBackend::new(HyprmuxApp::default());
                 backend.set_viewport(Rect {
                     x: 0,

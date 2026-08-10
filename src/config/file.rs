@@ -751,7 +751,11 @@ fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<Hy
 }
 
 pub fn config_path() -> PathBuf {
-    if let Ok(path) = std::env::var("HYPRMUX_CONFIG") {
+    // An isolated test process ignores the explicit override: it exists to keep every write inside
+    // a scratch root, and a `HYPRMUX_CONFIG` inherited from the developer's shell points out of it.
+    if !crate::platform::paths::user_dirs_are_isolated()
+        && let Ok(path) = std::env::var("HYPRMUX_CONFIG")
+    {
         return expand_path(path);
     }
     config_home().join("hyprmux.toml")
@@ -768,9 +772,7 @@ pub(super) fn config_home() -> PathBuf {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+    crate::platform::paths::PlatformEnv::from_process().home
 }
 
 pub(crate) fn expand_path(path: impl AsRef<Path>) -> PathBuf {

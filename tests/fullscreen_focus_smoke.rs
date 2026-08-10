@@ -41,6 +41,9 @@ fn settle(backend: &mut TestBackend<HyprmuxApp>) {
 
 /// Two tiled panes with the focused one covering the workspace.
 fn backend_with_fullscreen() -> TestBackend<HyprmuxApp> {
+    // `Action::Spawn` writes the shell-integration scripts, which belong in a scratch cache rather
+    // than the one a developer's running hyprmux injects from (`hyprmux::test_support`).
+    hyprmux::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(HyprmuxApp::default());
     backend.set_viewport(Rect {
         x: 0,

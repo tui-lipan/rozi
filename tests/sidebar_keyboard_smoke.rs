@@ -58,8 +58,11 @@ fn modified_key(code: KeyCode, mods: KeyMods) -> KeyEvent {
     KeyEvent { code, mods }
 }
 
-/// Two workspaces, so the list carries section headers between the selectable rows.
-fn backend_with_panes() -> TestBackend<HyprmuxApp> {
+/// Every backend in this binary is built here: reordering tabs and toggling the split persist
+/// `[sidebar]`, so the config has to resolve out of a scratch root rather than the developer's own
+/// (`hyprmux::test_support`).
+fn sidebar_backend() -> TestBackend<HyprmuxApp> {
+    hyprmux::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(HyprmuxApp::default());
     backend.set_viewport(Rect {
         x: 0,
@@ -67,6 +70,12 @@ fn backend_with_panes() -> TestBackend<HyprmuxApp> {
         w: 100,
         h: 30,
     });
+    backend
+}
+
+/// Two workspaces, so the list carries section headers between the selectable rows.
+fn backend_with_panes() -> TestBackend<HyprmuxApp> {
+    let mut backend = sidebar_backend();
     {
         let state = backend.state_mut();
         state.sidebar_visible = true;
@@ -110,13 +119,7 @@ fn focus_sidebar_then_escape_is_a_round_trip() {
 }
 
 fn backend_with_explorer() -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
-    backend.set_viewport(Rect {
-        x: 0,
-        y: 0,
-        w: 100,
-        h: 30,
-    });
+    let mut backend = sidebar_backend();
     {
         let state = backend.state_mut();
         let mut config = SidebarTreeConfig::for_view(SidebarTreeView::Files);
@@ -1017,4 +1020,18 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
         .expect("spawn theme hover thread")
         .join()
         .expect("theme hover completes");
+}
+
+/// The invariant `sidebar_backend` exists to hold: a sidebar action persists `[sidebar]`, and a
+/// test process must never be able to write that into the developer's live config, which a running
+/// hyprmux would live-reload.
+#[test]
+fn sidebar_preferences_persist_inside_the_test_scratch_root() {
+    let root = hyprmux::test_support::isolate_user_dirs();
+    let path = hyprmux::config::config_path();
+    assert!(
+        path.starts_with(root),
+        "config writes escaped the scratch root: {}",
+        path.display()
+    );
 }

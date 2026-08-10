@@ -14,14 +14,18 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
     }
 }
 
-fn rendered_sidebar(position: SidebarPosition) -> Vec<String> {
+/// Every backend in this binary is built here: committing a splitter drag or toggling the split
+/// persists `[sidebar]`, so the config has to resolve out of a scratch root rather than the
+/// developer's own (`hyprmux::test_support`).
+fn sidebar_backend(w: u16, h: u16) -> TestBackend<HyprmuxApp> {
+    hyprmux::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(HyprmuxApp::default());
-    backend.set_viewport(Rect {
-        x: 0,
-        y: 0,
-        w: 100,
-        h: 30,
-    });
+    backend.set_viewport(Rect { x: 0, y: 0, w, h });
+    backend
+}
+
+fn rendered_sidebar(position: SidebarPosition) -> Vec<String> {
+    let mut backend = sidebar_backend(100, 30);
     {
         let state = backend.state_mut();
         state.sidebar_visible = true;
@@ -67,13 +71,7 @@ fn live_dock_flip_keeps_configured_sidebar_width() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
+            let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -131,13 +129,7 @@ fn narrow_sidebar_yields_to_a_one_column_canvas() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 10,
-                h: 5,
-            });
+            let mut backend = sidebar_backend(10, 5);
             backend.state_mut().sidebar_visible = true;
             assert_eq!(
                 backend.state().effective_sidebar_width(backend.viewport()),
@@ -155,13 +147,7 @@ fn split_sidebar_renders_two_draggable_tab_bars() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
+            let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -199,13 +185,7 @@ fn an_empty_panel_puts_its_drop_hint_on_the_tab_bar() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
+            let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -264,13 +244,7 @@ fn split_flag_changes_presentation_without_changing_panel_recipe() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
+            let mut backend = sidebar_backend(100, 30);
             let configured_panels = vec![
                 vec![SidebarTabId::new("agents")],
                 vec![SidebarTabId::new("panes")],
@@ -308,13 +282,7 @@ fn split_sidebar_junction_resizes_both_splitters_without_entering_pane_content()
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 30,
-            });
+            let mut backend = sidebar_backend(100, 30);
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
@@ -394,13 +362,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
-            backend.set_viewport(Rect {
-                x: 0,
-                y: 0,
-                w: 100,
-                h: 20,
-            });
+            let mut backend = sidebar_backend(100, 20);
             backend.state_mut().sidebar_visible = true;
             backend.render();
             let initial = backend.capture_frame();
@@ -453,4 +415,18 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
         .expect("spawn splitter drag thread")
         .join()
         .expect("splitter drag completes");
+}
+
+/// The invariant `sidebar_backend` exists to hold: a sidebar action persists `[sidebar]`, and a
+/// test process must never be able to write that into the developer's live config, which a running
+/// hyprmux would live-reload.
+#[test]
+fn sidebar_preferences_persist_inside_the_test_scratch_root() {
+    let root = hyprmux::test_support::isolate_user_dirs();
+    let path = hyprmux::config::config_path();
+    assert!(
+        path.starts_with(root),
+        "config writes escaped the scratch root: {}",
+        path.display()
+    );
 }

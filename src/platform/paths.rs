@@ -21,10 +21,27 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use super::fs_security;
 
 const APP_DIR: &str = "hyprmux";
+
+/// Scratch directories installed by [`crate::test_support::isolate_user_dirs`], replacing the real
+/// environment for the rest of the process. Empty in production.
+static PROCESS_ENV_OVERRIDE: OnceLock<PlatformEnv> = OnceLock::new();
+
+/// Install the process-wide override consulted by [`PlatformEnv::from_process`]. First call wins.
+pub(crate) fn install_process_env_override(env: PlatformEnv) {
+    let _ = PROCESS_ENV_OVERRIDE.set(env);
+}
+
+/// Whether this process resolves user directories into a test scratch root instead of the real
+/// environment. Callers that accept an *explicit* path override (`HYPRMUX_CONFIG`) must ignore it
+/// while this holds, so an isolated process has no way out of its scratch root.
+pub(crate) fn user_dirs_are_isolated() -> bool {
+    cfg!(test) || PROCESS_ENV_OVERRIDE.get().is_some()
+}
 
 /// Explicit environment snapshot every path accessor in this module resolves against.
 ///
@@ -53,8 +70,23 @@ pub struct PlatformEnv {
 }
 
 impl PlatformEnv {
-    /// Snapshot the real process environment.
+    /// Snapshot the process environment, or the test scratch root standing in for it.
+    ///
+    /// Unit tests are isolated unconditionally; integration tests opt in through
+    /// [`crate::test_support::isolate_user_dirs`]. Either way no test can write to the directories
+    /// a developer's own hyprmux reads.
     pub fn from_process() -> Self {
+        if cfg!(test) {
+            return crate::test_support::isolated_env();
+        }
+        if let Some(env) = PROCESS_ENV_OVERRIDE.get() {
+            return env.clone();
+        }
+        Self::snapshot()
+    }
+
+    /// The real process environment, whatever isolation is in force.
+    pub(crate) fn snapshot() -> Self {
         Self {
             home: env_path("HOME"),
             xdg_config_home: env_absolute_path("XDG_CONFIG_HOME"),

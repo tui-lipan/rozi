@@ -159,17 +159,8 @@ mod tests {
     #[test]
     fn selecting_a_theme_from_appearance_closes_the_dialogs() {
         with_backend(|backend| {
-            // Selecting persists the pick, so point the writer at a throwaway file rather than the
-            // developer's own config.
-            let config_path = std::env::temp_dir().join(format!(
-                "hyprmux-overlay-return-theme-{}.toml",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_file(&config_path);
-            unsafe {
-                std::env::set_var("HYPRMUX_CONFIG", &config_path);
-            }
-
+            // Selecting persists the pick; `test_support` has already pointed the writer at this
+            // process's scratch root rather than the developer's own config.
             backend.state_mut().show_appearance = true;
             backend
                 .dispatch(Msg::AppearanceActivate(AppearanceAction::Theme))
@@ -180,11 +171,6 @@ mod tests {
             let appearance_closed = !backend.state().show_appearance;
             let picker_closed = !backend.state().show_theme_picker;
             let origin_cleared = backend.state().overlay_return.is_none();
-
-            unsafe {
-                std::env::remove_var("HYPRMUX_CONFIG");
-            }
-            let _ = std::fs::remove_file(&config_path);
 
             assert!(picker_closed);
             assert!(appearance_closed);

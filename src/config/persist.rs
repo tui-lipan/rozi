@@ -419,7 +419,11 @@ pub fn profile_path_for_name(name: &str) -> PathBuf {
 }
 
 pub fn list_profiles() -> Vec<ProfileEntry> {
-    let dir = profiles_dir();
+    list_profiles_in(&profiles_dir())
+}
+
+/// The listing itself: `*.toml` stems, sorted, from one directory.
+fn list_profiles_in(dir: &Path) -> Vec<ProfileEntry> {
     let Ok(read_dir) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -584,28 +588,15 @@ mod tests {
 
     #[test]
     fn list_profiles_reads_sorted_toml_stems() {
-        let temp =
+        let profiles =
             std::env::temp_dir().join(format!("hyprmux-profiles-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp);
-        std::fs::create_dir_all(&temp).expect("tempdir");
-        // `config_dir` reads `%APPDATA%` on Windows and `XDG_CONFIG_HOME` elsewhere, so pointing
-        // only the XDG variable at the fixture left Windows reading the real config directory and
-        // listing nothing.
-        unsafe {
-            if cfg!(windows) {
-                std::env::set_var("APPDATA", &temp);
-            } else {
-                std::env::set_var("XDG_CONFIG_HOME", &temp);
-            }
-        }
-
-        let profiles = temp.join("hyprmux/profiles");
+        let _ = std::fs::remove_dir_all(&profiles);
         std::fs::create_dir_all(&profiles).expect("profiles dir");
         std::fs::write(profiles.join("beta.toml"), "version = 1\n").expect("beta");
         std::fs::write(profiles.join("alpha.toml"), "version = 1\n").expect("alpha");
         std::fs::write(profiles.join("notes.txt"), "skip").expect("txt");
 
-        let listed = list_profiles();
+        let listed = list_profiles_in(&profiles);
         assert_eq!(
             listed
                 .iter()
@@ -614,14 +605,7 @@ mod tests {
             vec!["alpha", "beta"]
         );
 
-        unsafe {
-            if cfg!(windows) {
-                std::env::remove_var("APPDATA");
-            } else {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_dir_all(&profiles);
     }
 
     #[test]

@@ -809,19 +809,10 @@ mod tests {
     /// that started hyprmux - creating a session later used to silently start blank.
     #[test]
     fn default_seed_restores_the_configured_profile_and_records_its_origin() {
-        let _guard = cwd_lock().lock().expect("env lock");
-        let original = std::env::var_os("XDG_CONFIG_HOME");
-        let original_appdata = std::env::var_os("APPDATA");
-        let temp = std::env::temp_dir().join(format!(
-            "hyprmux-default-seed-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        std::fs::create_dir_all(temp.join("hyprmux/profiles")).expect("profiles dir");
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &temp);
-            std::env::set_var("APPDATA", &temp);
-        }
+        // Resolved rather than chosen: `default_session_seed` looks the profile up by name under
+        // the config directory, which `test_support` has already pointed at a scratch root.
+        let profiles = crate::config::profiles_dir();
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
 
         let profile = HyprmuxProfile {
             workspaces: vec![WorkspaceProfile {
@@ -840,24 +831,13 @@ mod tests {
             }],
             ..HyprmuxProfile::default()
         };
-        save_profile(&temp.join("hyprmux/profiles/work.toml"), &profile.clone())
-            .expect("write default profile");
+        save_profile(&profiles.join("work.toml"), &profile.clone()).expect("write default profile");
 
         let mut config = HyprmuxConfig::default();
         config.profile.default = Some("work".to_string());
         let (attachment, intent) = default_session_seed(&config);
 
-        unsafe {
-            match original {
-                Some(value) => std::env::set_var("XDG_CONFIG_HOME", value),
-                None => std::env::remove_var("XDG_CONFIG_HOME"),
-            }
-            match original_appdata {
-                Some(value) => std::env::set_var("APPDATA", value),
-                None => std::env::remove_var("APPDATA"),
-            }
-        }
-        let _ = std::fs::remove_dir_all(&temp);
+        let _ = std::fs::remove_file(profiles.join("work.toml"));
 
         assert_eq!(
             attachment.workspaces[0].panes.len(),
@@ -872,13 +852,9 @@ mod tests {
 
     #[test]
     fn restore_expands_tilde_cwd_before_launch_identity_is_stored() {
-        let _guard = cwd_lock().lock().expect("env lock");
-        let original_home = std::env::var_os("HOME");
-        let home = std::env::temp_dir().join(format!("hyprmux-home-{}", std::process::id()));
-        std::fs::create_dir_all(&home).expect("home dir created");
-        unsafe {
-            std::env::set_var("HOME", &home);
-        }
+        // `test_support` already points `$HOME` at this process's scratch root, so the expansion
+        // has a home to resolve against without any test touching the real one.
+        let home = crate::test_support::isolate_user_dirs();
         let profile = HyprmuxProfile {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
@@ -893,13 +869,6 @@ mod tests {
         };
 
         let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
-
-        if let Some(original_home) = original_home {
-            unsafe { std::env::set_var("HOME", original_home) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
-        std::fs::remove_dir_all(&home).expect("home dir removed");
 
         let expected = home.join("code/my-app").to_string_lossy().to_string();
         assert_eq!(

@@ -277,6 +277,14 @@ Major module map:
 - Integration/smoke tests live under `tests/`, for example `tests/border_merge_smoke.rs`.
 - Session integration tests use `tests/common` and the real typed protocol/platform IPC helpers;
   never reimplement session framing or use raw Unix sockets in cross-platform tests.
+- Tests never write to the developer's own config, state, or cache directories. Ordinary actions
+  persist as a side effect (`[sidebar]` preferences, `session.toml` autosave, shell-integration
+  scripts), and a running hyprmux live-reloads its config file, so an unisolated test lands in the
+  UI the developer is working in. Unit tests are isolated automatically - `PlatformEnv::from_process`
+  resolves into a per-process scratch root under `cfg(test)`. An integration test that builds a
+  `HyprmuxApp` must call `hyprmux::test_support::isolate_user_dirs()` first, from whatever helper
+  constructs its `TestBackend`. Never mutate `HOME`/`XDG_*`/`APPDATA`/`HYPRMUX_CONFIG` to redirect a
+  test: `std::env::set_var` is unsound beside parallel tests, and isolation now outranks it anyway.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and
   terminal behavior when changing those areas.
 - Benchmarks are local performance evidence, not timing tests: `cargo check --all-targets` compiles

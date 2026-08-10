@@ -148,8 +148,9 @@ You never have to leave the app to edit it: *Open config file* in the command pa
 your editor, in a pane, and the moment you save, hyprmux picks the changes up. A file that won't
 parse falls back to the defaults and tells you so — fix it, save again, and you are back.
 
-The [configuration reference](docs/configuration.md) covers every option, and
-[`examples/`](examples/) has ready-made snippets.
+The [configuration reference](docs/configuration.md) covers every option,
+[`examples/hyprmux.toml`](examples/hyprmux.toml) is the same thing as a copyable file with every
+setting commented out at its default, and [`examples/`](examples/) has ready-made snippets.
 
 ## Documentation
 

@@ -1,0 +1,321 @@
+# hyprmux reference configuration
+#
+# Every setting hyprmux understands, commented out at its default value. Nothing here
+# needs to be copied: an absent config file and this file with everything still commented
+# behave identically. Uncomment only the lines you want to change.
+#
+# Two comment styles are used, and a test relies on the distinction:
+#   "# text"        prose, like this line
+#   "#key = value"  a setting, hash immediately followed by the key
+#
+# Copy to ~/.config/hyprmux/hyprmux.toml (%APPDATA%\hyprmux\hyprmux.toml on Windows), or
+# point $HYPRMUX_CONFIG at it. Saving applies live - no restart.
+#
+# Full reference with the reasoning behind each default: docs/configuration.md
+
+# Interactive shell launched in each new pane. Defaults to $SHELL, else /bin/sh; on Windows
+# pwsh.exe, else powershell.exe, else %COMSPEC%. An array preserves arguments:
+#   shell = ["pwsh.exe", "-NoLogo"]
+#shell = "/bin/sh"
+
+# Non-interactive shell for one-off command lines: pane/popup commands, hooks, workbar
+# command: segments, [keys] run, and control-socket runs. Never detection-based, so a
+# snippet using it behaves the same on every machine. Windows default:
+#   command_shell = ["cmd.exe", "/D", "/S", "/C"]
+#command_shell = ["/bin/sh", "-c"]
+
+# Working directory for new panes. Defaults to the directory hyprmux was launched from.
+#cwd = "~/code"
+
+# Scrollback lines retained per pane. Applies to terminal screens created after the change,
+# so restart a named server to widen existing panes.
+#scrollback = 5000
+
+[shell_integration]
+# "auto" injects bash, zsh, fish, and PowerShell support without editing any dotfile;
+# "off" leaves shell startup completely untouched.
+#mode = "auto"
+
+[input]
+# Held window-manager modifier: "alt" or "super".
+#modifier = "alt"
+# Leader chord. One key, tui-lipan syntax: ctrl-a, ctrl-b, alt-space, f12.
+#prefix = "ctrl-a"
+# Mirror every built-in default onto <modifier>+<key> alongside its <prefix> <key> chord.
+# Set false to drop the held-modifier layer so Alt/Super chords reach the focused pane.
+#modifier_shortcuts = true
+
+[layout]
+# Terminal cell height divided by cell width. Dwindle compares a pane's visual width and
+# height through this when choosing the next split axis. Raise it if panes that look
+# taller than wide keep splitting side-by-side.
+#split_width_multiplier = 2.3
+# Layout every fresh workspace starts in: dwindle, master, grid, columns, rows,
+# scrollable, or monocle.
+#default = "dwindle"
+
+[pane]
+#focus_on_hover = true
+# Keep naturally exited panes in the layout, showing the exit code, so respawn-pane can
+# restart them in place. Panes launched with a command follow that command's keep_open.
+#hold_on_exit = false
+#highlight_focused_background = false
+#highlight_focused_border = true
+#highlight_focused_titlebar = true
+#show_workbar = true
+#workbar_gap = true
+#workbar_at_bottom = false
+#show_titles = true
+# Title layout: "bar" is a separate full-width row, "border" embeds the title in the top
+# frame, "integrated" fills the top frame row as a compact strip. The latter two give back
+# the terminal row that "bar" costs.
+#titlebar = "bar"
+# separate = one frame per pane, merged = shared junctions between neighbors,
+# none = no frames, dividers = lines along internal splits only.
+#border_mode = "separate"
+# Frame glyphs for separate/merged: rounded, plain, double, thick.
+#border_style = "rounded"
+# Keep frames around floating panes, popups, and the scratchpad even in none/dividers.
+#keep_special_borders = false
+# Blank cells between a pane's border and its terminal grid. A single number covers all
+# sides; arrays are [vertical, horizontal] or [top, right, bottom, left]. Each side is
+# clamped to 8, and every cell costs usable terminal space.
+#padding = 0
+# End caps for bar/integrated titlebars: padded, half (block caps), round or arrow
+# (powerline caps, which need a Nerd Font).
+#title_style = "padded"
+# End caps for workbar badges - the title chip and the PREFIX/RESIZE/COPY chips.
+# Same values as title_style except "half".
+#workbar_badge_style = "padded"
+# End caps for workspace and sidebar tabs.
+#workbar_tab_style = "padded"
+# End caps for the workbar itself, so the bar reads as a pill rather than a flush edge.
+#workbar_style = "padded"
+# Chain the trailing badges into a powerline: gaps collapse and each cap blends into its
+# left neighbor's color. Independent of the cap shape above.
+#workbar_powerline = true
+# How opaque a toast is over the pane content it covers. Below 1.0 reads as tinted glass
+# but contrast then depends on what is underneath; raise it if your theme's toasts read
+# poorly.
+#toast_opacity = 0.8
+# Pin the canvas backdrop to the host terminal's own background, overriding whatever the
+# active theme authored.
+#background_follows_terminal = false
+
+[animations]
+# Position and opacity animate; pane *size* always snaps, because animating it would spam
+# pty.resize and reflow the shell every frame.
+#enabled = true
+#spawn = true
+#close = true
+#fullscreen = true
+#tile_float = true
+#axis_change = true
+#focus_chrome = true
+#geometry_ms = 220
+#close_ms = 120
+#focus_chrome_ms = 160
+#open_delay_ms = 36
+
+[theme]
+# A built-in preset id, "system" for host-derived colors, or the stem of a file in
+# ~/.config/hyprmux/themes/. A custom file shadows a built-in of the same name.
+#name = "lipan"
+
+[profile]
+# Profile seeding every session opened without a recipe. Named targets, --profile, and
+# session.startup = "last" all take precedence. No default; Ctrl+f in Profiles writes it.
+#default = "dev"
+
+[clipboard]
+# Let programs in a pane set the system clipboard via the OSC52 escape sequence.
+#enable_osc52 = true
+
+[notifications]
+# Desktop notifications via notify-send, off until you opt in. Status notifications run
+# only on the session controller and stay silent while the pane is locally focused.
+#enabled = false
+#pane_exit = true
+#pane_blocked = true
+#pane_done = false
+# Mark an unfocused pane urgent on BEL. Independent of the desktop notifications above.
+#bell = true
+
+[navigation]
+# Foreground programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to
+# them instead of moving pane focus. Matched case-insensitively against the executable
+# basename. Setting this replaces the list rather than extending it.
+#editors = ["vim", "nvim", "vi", "view", "vimdiff", "nvim-wrapped", "hx", "helix", "kak", "emacs", "emacsclient", "fzf"]
+
+[confirm]
+# Whether each destructive *shortcut* arms first and fires on a second press within 3
+# seconds. Running the same command from the palette always skips this - picking it out of
+# a searchable list is already deliberate.
+#close_pane = false
+#kill_workspace = true
+#kill_session = true
+#quit_ephemeral = true
+#new_temporary_session = true
+#load_profile = true
+
+[session]
+# Local layout autosave: write the layout on quit, restore it next launch. Restores layout
+# and launch intent only, unlike a named session, which keeps live PTY state.
+#autosave = false
+# Snapshot named sessions so layout, commands, and scrollback survive a server restart.
+#resurrect = true
+# "picker" opens the session picker when there is something to pick, "ephemeral" starts a
+# scratch session immediately, "last" reopens the last named session.
+#startup = "picker"
+# Let a writable follower take the layout-control lease immediately with request-control.
+# Set false when sharing with another person, so a request waits to be granted.
+#allow_takeover = true
+# Autosave file location. Defaults under $XDG_STATE_HOME/hyprmux.
+#path = "~/.local/state/hyprmux/session.toml"
+
+[remote]
+# SSH attach to a session server on another host. The client and this config stay local;
+# PTYs run on the remote. See docs/remote.md.
+# Host used when --remote is passed with no argument. No default.
+#default_host = "workbox"
+#connection_timeout_secs = 15
+#server_alive_interval_secs = 15
+#server_alive_count_max = 3
+# "prompt", "always", or "never": whether an interactive run may copy a compatible binary
+# to ~/.local/bin/hyprmux on the remote when none is found. Non-interactive runs never
+# mutate the remote.
+#install = "prompt"
+# Pass ssh BatchMode=yes, refusing every interactive prompt. Set false to allow password
+# and key-passphrase prompts.
+#batch_mode = true
+
+[scratchpad]
+# The dropdown scratchpad. Its shell stays alive while hidden.
+# Program to run instead of the normal shell. No default.
+#command = "btop"
+# Working directory. Defaults to the configured cwd.
+#cwd = "~"
+# Fraction of viewport height it opens at, clamped to 0.1-0.9. Dragging its top edge
+# overrides this until restart.
+#height = 0.4
+
+[sidebar]
+#visible = false
+# Requested width in columns, clamped to 16-80. On a narrow terminal the sidebar yields
+# columns so the pane canvas keeps usable space.
+#width = 32
+# Dock side: "left" or "right".
+#position = "left"
+# Catalog of available tabs. Built-ins: agents, panes, sessions, files, git. Custom
+# launcher and command tabs take a table form - see examples/sidebar.toml.
+#tabs = ["agents", "panes", "sessions"]
+# Durable placement: one or two ordered arrays of ids from `tabs`. Tabs missing from it
+# are appended to the first panel so they cannot become unreachable.
+#panels = [["agents", "panes", "sessions"]]
+# Render the two panel groups stacked vertically. Inferred from `panels` when omitted.
+#split = false
+# Fraction of split-sidebar height given to the top panel, clamped to 0.15-0.85.
+#split_ratio = 0.5
+
+[workbar]
+# Segment kinds: title, workspaces, location, session, clock, layout, activity,
+# text:<literal> (with {host} {workspace} {layout} {session}), and
+# command:<cmd> / command:<interval_secs>:<cmd>.
+# A segment may also be a table overriding its badge color by theme role - accent, info,
+# success, warning, error, neutral, panel:
+#   right = [{ segment = "clock", color = "info" }, "session"]
+#left = ["title", "workspaces"]
+#right = ["location", "session"]
+# strftime format, read only by a clock segment. A clock enables a once-a-second repaint;
+# without one the workbar never wakes an idle app.
+#clock_format = "%H:%M"
+
+[logging]
+# Files written by toggle-pane-logging. Session directories are mode 0700, logs 0600.
+# Defaults under $XDG_STATE_HOME/hyprmux/logs.
+#dir = "~/.local/state/hyprmux/logs"
+# Ceiling for one pane log file; 0 disables the cap. A chunk that would cross it is
+# refused whole, so a log never ends mid-escape-sequence.
+#max_bytes = 67108864
+
+# Per-alias SSH overrides, matched by a bare `--remote <alias>`. Repeat the table per host.
+[remote.hosts.workbox]
+# SSH hostname when it differs from the alias.
+#host = "workbox.internal"
+#user = "raz"
+#port = 22
+#identity_file = "~/.ssh/id_ed25519"
+# Extra arguments spliced into the ssh command line.
+#ssh_args = ["-o", "ProxyJump=bastion"]
+# Absolute path to hyprmux on the remote; set it to skip the probe and install steps.
+#binary_path = "/usr/local/bin/hyprmux"
+
+# Placement rules for command-carrying pane spawns, including control new-pane and
+# [keys] run. First match wins. Plain shell panes, profile restore, scratchpads, and
+# popups do not use rules. Matching is command-based only - OSC titles arrive too late.
+[[rules]]
+# Exactly one of `match` (case-sensitive substring) or `match_regex` is required.
+#match = "btop"
+#float = true
+# Fractions of the pane canvas, clamped to 0.1-1.0. Default 0.6 when floating.
+#width = 0.7
+#height = 0.7
+# 1-based target workspace; defaults to the current one.
+#workspace = 9
+# Switch to and focus the new pane. When false the target workspace remembers it as its
+# own focus without stealing the current view.
+#focus = true
+#fullscreen = false
+
+[[rules]]
+# Prefer a regex when a short substring would hit neighbors (`top` matching htop/btop).
+#match_regex = "^cargo\\s"
+#workspace = 9
+#focus = false
+
+# Extra hint-mode patterns, appended to the built-in URL, path, and Git-SHA detectors.
+# Built-ins win on overlap. Invalid patterns warn and are skipped.
+[[hints]]
+# IPv4 addresses.
+#pattern = '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+# Open the match on an uppercase final label character, like a URL.
+#open = false
+
+[[hints]]
+# UUIDs.
+#pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+
+# Client-side commands run on hyprmux events, launched asynchronously through
+# command_shell. Hooks receive HYPRMUX_EVENT, event fields, and HYPRMUX_SOCKET. Events:
+# pane-spawned, pane-exited, pane-status-changed, focus-changed, workspace-switched,
+# session-attached, session-detached, session-renamed, session-created,
+# controller-changed, client-joined, client-left, profile-loaded, profile-applied,
+# profile-saved, config-reloaded. See docs/hooks.md.
+[[hooks]]
+#event = "pane-exited"
+#run = "notify-send 'pane exited'"
+
+[[hooks]]
+#event = "workspace-switched"
+#run = "logger workspace=$HYPRMUX_WORKSPACE"
+
+# Rebind built-in actions, or define new commands. Three binding forms:
+#   "b"              bare key - replaces the default and follows the [input] scheme
+#   "scheme:ctrl-t"  a modified key that still expands through the [input] scheme
+#   "ctrl-a c"       literal binding, never mirrored or rewritten
+# Configuring an action replaces all of its defaults; `{ add = ... }` keeps them. An empty
+# value clears an action's keys. Action ids are listed in docs/keybindings.md.
+[keys]
+#copy-mode = "b"
+#search = "scheme:ctrl-f"
+#save-profile = ["ctrl-a z", "alt-z"]
+#spawn = { add = "super-enter" }
+#scratchpad = []
+# A trigger mapped to a table defines a new command instead of rebinding one. The trigger
+# is a literal binding, so a leader chord spells out the real prefix key ("ctrl-a g", not
+# "prefix g"). Exactly one of run (new pane), send (text to the focused PTY), or popup
+# (centered transient pane). keep_open defaults to true and holds the output after the
+# command exits; set it false for a program that should take its pane down with it.
+#"ctrl-a g" = { run = "lazygit", keep_open = false }
+#alt-t = { run = "btop" }
+#"ctrl-a e" = { send = "ls -la\n" }

@@ -2,7 +2,13 @@
 
 `hyprmux` reads a single TOML config file at startup. All keys are optional; anything you
 omit keeps its default. A read or parse failure does **not** crash the app - it loads
-defaults and reports the problem as a startup toast.
+defaults and reports the problem as a startup toast. Unknown keys are parse failures, so a
+misspelled setting is reported rather than silently ignored; the message lists the keys the
+table accepts.
+
+[`examples/hyprmux.toml`](../examples/hyprmux.toml) is the copyable version of this page: every
+setting, commented out at its default value, so the file as shipped behaves exactly like having
+no config at all.
 
 ## Config file location
 
@@ -130,7 +136,7 @@ bell = true                  # mark unfocused panes/workspaces urgent on BEL
 [navigation]
 # Programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to them
 # instead of moving pane focus. Matched case-insensitively on the pane's foreground process.
-editors = ["vim", "nvim", "vi", "view", "vimdiff", "hx", "helix", "kak", "emacs", "fzf"]
+editors = ["vim", "nvim", "vi", "view", "vimdiff", "nvim-wrapped", "hx", "helix", "kak", "emacs", "emacsclient", "fzf"]
 
 [confirm]
 close_pane = false             # confirm closing a pane with a live process (default: false)
@@ -881,9 +887,9 @@ defining a new command that doesn't otherwise exist as an `Action`:
 
 ```toml
 [keys]
-"prefix g" = { run = "lazygit" }
+"ctrl-a g" = { run = "lazygit" }
 alt-t = { run = "btop" }
-"prefix e" = { send = "ls -la\n" }
+"ctrl-a e" = { send = "ls -la\n" }
 ```
 
 - `run = "<command>"` opens a new pane running that shell command (the same mechanism as the
@@ -901,11 +907,13 @@ alt-t = { run = "btop" }
 
 ```toml
 [keys]
-"prefix g" = { run = "lazygit", keep_open = false }
-"prefix b" = { run = "cargo build" }               # holds, so build errors stay on screen
+"ctrl-a g" = { run = "lazygit", keep_open = false }
+"ctrl-a b" = { run = "cargo build" }               # holds, so build errors stay on screen
 ```
-- The map key here is the trigger itself (`prefix g`, `alt-t`, ...), parsed the same way as a
+- The map key here is the trigger itself (`ctrl-a g`, `alt-t`, ...), parsed the same way as a
   binding value elsewhere in `[keys]` - it is *not* an action id, so it can't collide with one.
+  It is always a **literal** binding: there is no `prefix` token, so a leader chord spells out the
+  configured prefix key, and changing `[input] prefix` later does not move it.
 - Each command shows up in the help overlay (under "Custom") and the command palette with a
   generated label (`Run: lazygit`, `Send: ls -la\n`), so its trigger stays discoverable even
   though it has no stable action id. It still can't be rebound elsewhere or invoked via

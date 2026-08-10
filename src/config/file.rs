@@ -185,7 +185,7 @@ impl SidebarLauncherEntrySpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct ConfirmFileConfig {
     close_pane: Option<bool>,
     kill_workspace: Option<bool>,
@@ -196,7 +196,7 @@ struct ConfirmFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct ScratchpadFileConfig {
     command: Option<String>,
     cwd: Option<String>,
@@ -204,7 +204,7 @@ struct ScratchpadFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct WorkbarFileConfig {
     pub(super) left: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) right: Option<Vec<WorkbarSegmentSpec>>,
@@ -225,7 +225,7 @@ pub(super) enum WorkbarSegmentSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct ProfileFileConfig {
     default: Option<String>,
 }
@@ -237,7 +237,7 @@ struct ShellIntegrationFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct SessionFileConfig {
     autosave: Option<bool>,
     path: Option<String>,
@@ -288,7 +288,7 @@ pub(super) enum PaddingSpec {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct PaneFileConfig {
     hold_on_exit: Option<bool>,
     highlight_focused_background: Option<bool>,
@@ -351,7 +351,7 @@ pub(super) struct HintFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct InputFileConfig {
     modifier: Option<String>,
     prefix: Option<String>,
@@ -359,19 +359,19 @@ struct InputFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct ThemeFileConfig {
     name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct ClipboardFileConfig {
     enable_osc52: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
@@ -381,13 +381,13 @@ struct NotificationsFileConfig {
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct NavigationFileConfig {
     editors: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct AnimationFileConfig {
     pub(super) enabled: Option<bool>,
     pub(super) spawn: Option<bool>,
@@ -419,24 +419,36 @@ pub fn config_text_changed_on_disk() -> bool {
 
 pub fn load_config() -> LoadedConfig {
     let path = config_path();
-    let mut warnings = Vec::new();
-    let mut config = HyprmuxConfig::default();
 
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             note_config_text(None);
-            return LoadedConfig { config, warnings };
+            return LoadedConfig {
+                config: HyprmuxConfig::default(),
+                warnings: Vec::new(),
+            };
         }
         Err(err) => {
             note_config_text(None);
-            warnings.push(format!("Config read failed for {}: {err}", path.display()));
-            return LoadedConfig { config, warnings };
+            return LoadedConfig {
+                config: HyprmuxConfig::default(),
+                warnings: vec![format!("Config read failed for {}: {err}", path.display())],
+            };
         }
     };
     note_config_text(Some(text.clone()));
 
-    let Some(parsed) = parse_file_config(&text, &path, &mut warnings) else {
+    load_config_from_text(&text, &path)
+}
+
+/// Applies one config document over the defaults. `path` only names the source in warnings, so
+/// this is the whole load pipeline minus the filesystem.
+fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
+    let mut warnings = Vec::new();
+    let mut config = HyprmuxConfig::default();
+
+    let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
         return LoadedConfig { config, warnings };
     };
 
@@ -1045,6 +1057,56 @@ mod file_tests {
             parsed.navigation.editors,
             Some(vec!["nvim".into(), "hx".into()])
         );
+    }
+
+    const REFERENCE_EXAMPLE: &str = include_str!("../../examples/hyprmux.toml");
+
+    /// Strips the comment marker from `examples/hyprmux.toml` setting lines, which are written as
+    /// a hash immediately followed by the key. Prose lines use a hash and a space, so alternative
+    /// spellings mentioned in the surrounding text never become a second live copy of a key.
+    fn activate_reference_example(text: &str) -> String {
+        text.lines()
+            .map(|line| match line.strip_prefix('#') {
+                Some(setting) if !setting.starts_with([' ', '#']) => setting,
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// True once any leaf value survives: a table header alone sets nothing, but a key does.
+    fn carries_a_value(value: &toml::Value) -> bool {
+        match value {
+            toml::Value::Table(table) => table.values().any(carries_a_value),
+            toml::Value::Array(array) => array.iter().any(carries_a_value),
+            _ => true,
+        }
+    }
+
+    #[test]
+    fn reference_example_ships_fully_commented_out() {
+        let shipped: toml::Table =
+            toml::from_str(REFERENCE_EXAMPLE).expect("reference example parses");
+        let live: Vec<&str> = shipped
+            .iter()
+            .filter(|(_, value)| carries_a_value(value))
+            .map(|(key, _)| key.as_str())
+            .collect();
+        assert!(
+            live.is_empty(),
+            "reference example must ship inert; these carry live values: {live:?}"
+        );
+    }
+
+    /// Guards `examples/hyprmux.toml` against silent drift. Every struct in the file model denies
+    /// unknown fields, so a renamed or dropped key fails to parse here, and a renamed value token
+    /// (a cap style, a layout name, a hook event) shows up as a warning.
+    #[test]
+    fn reference_example_is_a_valid_warning_free_config_once_uncommented() {
+        let text = activate_reference_example(REFERENCE_EXAMPLE);
+        let loaded = load_config_from_text(&text, Path::new("examples/hyprmux.toml"));
+
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }
 
     #[test]

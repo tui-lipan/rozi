@@ -26,6 +26,7 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 | [Project profiles & pane identity](project-profiles.md) | Saving and restoring named workspace layouts. |
 | [Named profiles](profiles.md) | Profile files, CLI launch/default profile priority, and in-app profile management. |
 | [Control socket](control.md) | Per-run automation socket, pane environment, CLI commands, and JSON protocol. |
+| [Agent skill](agent-skill.md) | The operational contract printed by `hyprmux --skill` for coding agents controlling panes and sessions. |
 | [Hooks](hooks.md) | Event-triggered commands, event fields, environment variables, and control-socket callbacks. |
 | [Benchmarks & profiling](benchmarks.md) | Criterion targets, baseline comparisons, live stress recipes, and Samply profiling. |
 | [Performance records](performance/README.md) | Current assessment, dated audit reports, and conventions for recording future results. |

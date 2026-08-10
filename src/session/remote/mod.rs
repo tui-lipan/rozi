@@ -11,7 +11,7 @@ mod proxy;
 mod target;
 
 pub use bootstrap::ensure_remote_binary;
-pub(crate) use bootstrap::ssh_base_command;
+pub(crate) use bootstrap::{append_ssh_destination, ssh_base_command};
 #[allow(unused_imports)] // re-exported for callers/tests
 pub use connect::RemoteConnectError;
 pub use connect::{connect_remote, kill_remote_session};
@@ -19,6 +19,7 @@ pub use connect::{connect_remote, kill_remote_session};
 pub use preamble::{RemotePreamble, read_preamble};
 pub use proxy::run_remote_serve;
 pub use target::{RemoteTarget, parse_remote_target};
+pub(crate) use target::{validate_remote_executable_token, validate_remote_target};
 
 use crate::config::{HyprmuxRemoteConfig, RemoteHostConfig};
 

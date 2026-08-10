@@ -1049,18 +1049,68 @@ fn grant_control_validates_sender_and_target() {
 }
 
 #[test]
-fn shutdown_requires_writable_controller() {
+fn shutdown_accepts_writable_followers_and_rejects_read_only_or_unattached_clients() {
     let mut server = SessionServer::new_named("dev");
-    let (controller, _s1) = attach_client(&mut server);
+    let (_controller, _s1) = attach_client(&mut server);
     let (follower, _s2) = attach_client(&mut server);
-    let (viewer, _s3) = attach_read_only_client(&mut server);
+    let (_viewer, _s3) = attach_read_only_client(&mut server);
 
+    server.input_locked = true;
     server.handle_message(follower, ClientMessage::Shutdown);
-    assert!(!server.shutdown);
-    server.handle_message(viewer, ClientMessage::Shutdown);
-    assert!(!server.shutdown);
-    server.handle_message(controller, ClientMessage::Shutdown);
     assert!(server.shutdown);
+
+    let mut read_only_server = SessionServer::new_named("dev");
+    let (viewer, _viewer_stream) = attach_read_only_client(&mut read_only_server);
+    read_only_server.handle_message(viewer, ClientMessage::Shutdown);
+    assert!(!read_only_server.shutdown);
+
+    let mut unattached_server = SessionServer::new_named("dev");
+    let (unattached, _unattached_stream) = add_client(&mut unattached_server);
+    unattached_server.handle_message(unattached, ClientMessage::Shutdown);
+    assert!(!unattached_server.shutdown);
+}
+
+#[test]
+fn local_named_shutdown_waits_for_the_real_server_to_retire() {
+    let name = format!(
+        "shutdown-happy-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (listener, endpoint) = bind_session_socket(&name).expect("bind session endpoint");
+    let thread_endpoint = endpoint.clone();
+    let thread_name = name.clone();
+    let server_thread = std::thread::spawn(move || {
+        let mut server =
+            SessionServer::new_named_with_settings(thread_name, ServerSettings::default());
+        let result = server.run_listener(listener);
+        // `run_named_session_mode` owns this same post-loop retirement in production. Keep the
+        // test's direct server thread faithful to that lifecycle so the helper can observe it.
+        thread_endpoint.remove_stale();
+        result
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !endpoint.is_live() {
+        assert!(
+            Instant::now() < deadline,
+            "server endpoint never became live"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    shutdown_named_session(&name).expect("graceful named shutdown");
+    assert!(
+        !endpoint.is_live(),
+        "shutdown must wait for endpoint retirement"
+    );
+    server_thread
+        .join()
+        .expect("server thread joined")
+        .expect("server stopped cleanly");
 }
 
 #[test]

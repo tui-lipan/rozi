@@ -6,6 +6,8 @@ use tui_lipan::Result;
 use crate::platform::ipc::{EndpointRegistry, IpcEndpoint};
 use crate::{control, session};
 
+const AGENT_SKILL: &str = include_str!("../docs/agent-skill.md");
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CliArgs {
     pub(crate) session_command: SessionCommand,
@@ -39,6 +41,7 @@ pub(crate) struct ControlCli {
 pub(crate) enum ParsedCli {
     Help,
     Version,
+    Skill,
     Install,
     Update(UpdateCommand),
     Run(CliArgs),
@@ -76,6 +79,13 @@ pub(crate) enum ListFormat {
 }
 
 pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli, String> {
+    if args.first().is_some_and(|arg| arg == "--skill") {
+        return if args.len() == 1 {
+            Ok(ParsedCli::Skill)
+        } else {
+            Err("--skill must be used without other arguments".to_string())
+        };
+    }
     let mut cli = CliArgs::default();
     let mut socket: Option<PathBuf> = None;
     let mut socket_flag_seen = false;
@@ -146,6 +156,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 let name = iter
                     .next()
                     .ok_or_else(|| "kill-session requires a session name".to_string())?;
+                if !session::discovery::valid_attach_target(&name) {
+                    return Err("invalid session name".to_string());
+                }
                 let mut remote = None;
                 while let Some(flag) = iter.next() {
                     match flag.as_str() {
@@ -681,6 +694,10 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
     Ok(())
 }
 
+pub(crate) fn print_skill() {
+    print!("{AGENT_SKILL}");
+}
+
 pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) -> Result<()> {
     let rows = if let Some(remote) = remote {
         let target = session::remote::parse_remote_target(remote).map_err(std::io::Error::other)?;
@@ -736,74 +753,24 @@ pub(crate) fn run_list_sessions_cli(format: ListFormat, remote: Option<&str>) ->
 }
 
 pub(crate) fn run_kill_session_cli(name: &str, remote: Option<&str>) -> Result<()> {
+    if !session::discovery::valid_attach_target(name) {
+        return Err(
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid session name").into(),
+        );
+    }
     if let Some(remote) = remote {
         return run_kill_session_remote(name, remote);
     }
-    use crate::session::protocol::{
-        ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
-    };
-
-    let path = session::server::session_socket_path(name)?;
-    if !path.exists() {
-        session::server::delete_snapshot(name)?;
-        return Ok(());
-    }
-    match IpcEndpoint::at_path(&path).connect() {
-        Ok(mut stream) => {
-            stream.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
-            session::protocol::write_frame(
-                &mut stream,
-                &ClientMessage::Attach {
-                    session: name.to_string(),
-                    protocol_version: PROTOCOL_VERSION,
-                    min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-                    label: crate::platform::user::current_user_label(),
-                    read_only: false,
-                },
-            )?;
-            match session::protocol::read_frame::<_, ServerMessage>(&mut stream)? {
-                ServerMessage::Attached { .. } => {
-                    session::protocol::write_frame(&mut stream, &ClientMessage::Shutdown)?;
-                    use std::io::Write;
-                    stream.flush()?;
-                    session::server::delete_snapshot(name)?;
-                }
-                other => {
-                    eprintln!("could not attach to session {name:?}: {other:?}");
-                    std::process::exit(1);
-                }
-            }
-            Ok(())
-        }
-        Err(err) => {
-            eprintln!("could not attach to session {name:?}: {err}");
-            std::process::exit(1);
-        }
-    }
+    session::server::shutdown_named_session(name)
+        .map_err(|err| std::io::Error::other(format!("could not kill session {name:?}: {err}")))?;
+    Ok(())
 }
 
 fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
-    use std::process::Stdio;
-
     let target = session::remote::parse_remote_target(remote)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
     let config = crate::config::load_config().config.remote;
-    let resolved = session::remote::ResolvedRemote::resolve(&target, &config);
-    let remote_bin = resolved
-        .binary_path
-        .clone()
-        .unwrap_or_else(|| "hyprmux".to_string());
-    let mut command = session::remote::ssh_base_command(&resolved, &config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
-    command.arg(&remote_bin);
-    command.arg("kill-session");
-    command.arg(name);
-    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    let status = command.status()?;
-    if !status.success() {
-        std::process::exit(status.code().unwrap_or(1));
-    }
+    session::remote::kill_remote_session(&target, name, &config).map_err(std::io::Error::other)?;
     Ok(())
 }
 
@@ -814,6 +781,7 @@ pub(crate) fn print_help() {
 hyprmux - Hyprland-style tiling terminal multiplexer
 
 USAGE:
+    hyprmux --skill
     hyprmux [TARGET] [--read-only]
     hyprmux install
     hyprmux update [--check|--rollback]
@@ -843,6 +811,7 @@ USAGE:
 OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
+        --skill           Print agent control instructions
         --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
         --remote [HOST]   Attach via SSH (HOST alias or ssh:// URL; omit HOST to use [remote] default_host)
@@ -909,6 +878,42 @@ mod tests {
             parse_cli_args(vec!["-V".into()]).expect("parses"),
             ParsedCli::Version
         ));
+    }
+
+    #[test]
+    fn cli_skill_is_a_strict_early_variant_backed_by_the_contract_document() {
+        assert!(matches!(
+            parse_cli_args(vec!["--skill".into()]).expect("parses"),
+            ParsedCli::Skill
+        ));
+        assert!(parse_cli_args(vec!["--skill".into(), "extra".into()]).is_err());
+        assert!(parse_cli_args(vec!["target".into(), "--skill".into()]).is_err());
+
+        for section in [
+            "---\nname: hyprmux",
+            "HYPRMUX=1",
+            "HYPRMUX_SOCKET",
+            "HYPRMUX_PANE",
+            "--socket PATH",
+            "hyprmux --help",
+            "hyprmux list-panes",
+            "hyprmux split [COMMAND]",
+            "send-text",
+            "send-keys",
+            "capture-pane",
+            "status --clear",
+            "pty_ready:false",
+            "no CLI wait or readiness primitive",
+            "hyprmux list-sessions",
+            "hyprmux kill-session <NAME>",
+            "read-only",
+            "Input lock",
+        ] {
+            assert!(
+                AGENT_SKILL.contains(section),
+                "missing skill section: {section}"
+            );
+        }
     }
 
     #[test]
@@ -1230,6 +1235,8 @@ mod tests {
             expect_run(parse_cli_args(vec!["--session".into(), "dev".into()]).expect("parses"));
         assert_eq!(session.attach_session.as_deref(), Some("dev"));
         assert!(parse_cli_args(vec!["kill-session".into()]).is_err());
+        assert!(parse_cli_args(vec!["kill-session".into(), "dev/../other".into()]).is_err());
+        assert!(parse_cli_args(vec!["kill-session".into(), "dev\nnext".into()]).is_err());
         assert!(parse_cli_args(vec!["attach".into()]).is_err());
         assert!(parse_cli_args(vec!["new".into()]).is_err());
         assert!(parse_cli_args(vec!["new".into(), "dev".into(), "--read-only".into()]).is_err());

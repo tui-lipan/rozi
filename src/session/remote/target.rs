@@ -28,6 +28,9 @@ impl RemoteTarget {
 
 /// Parse a `--remote` value. Rejects empty strings and malformed `ssh://` URLs.
 pub fn parse_remote_target(raw: &str) -> Result<RemoteTarget, String> {
+    if raw.chars().any(char::is_control) {
+        return Err("invalid remote target: control characters are not allowed".to_string());
+    }
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("--remote requires a host alias or ssh:// URL".to_string());
@@ -44,6 +47,60 @@ pub fn parse_remote_target(raw: &str) -> Result<RemoteTarget, String> {
         return Err(format!("invalid remote target `{raw}`"));
     }
     Ok(RemoteTarget::Alias(raw.to_string()))
+}
+
+/// Validate a target assembled by a caller rather than parsed from the CLI. Target components are
+/// passed to local `ssh` as arguments and may legitimately contain punctuation used by normal host
+/// aliases, but control characters must never cross a remote-command boundary or reach a terminal.
+pub(crate) fn validate_remote_target(target: &RemoteTarget) -> Result<(), String> {
+    let invalid = |component: &str| component.is_empty() || component.chars().any(char::is_control);
+    match target {
+        RemoteTarget::Alias(alias) => {
+            if invalid(alias) {
+                return Err("invalid remote target: empty or control characters".to_string());
+            }
+        }
+        RemoteTarget::Url { user, host, port } => {
+            if user.as_deref().is_some_and(invalid) || invalid(host) || port == &Some(0) {
+                return Err("invalid remote target: empty or control characters".to_string());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate a remote executable that OpenSSH will reconstruct into a remote shell command. Keep the
+/// contract deliberately narrower than a host alias: only ordinary single-token path characters are
+/// accepted, so whitespace, control bytes, quoting, expansion, globbing, and command separators can
+/// never be reinterpreted by the remote shell.
+pub(crate) fn validate_remote_executable_token(token: &str) -> Result<(), String> {
+    if token.is_empty() {
+        return Err("remote executable token is empty".to_string());
+    }
+    if token
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err(
+            "remote executable must be one shell-safe token without whitespace or control characters"
+                .to_string(),
+        );
+    }
+    if token.ends_with('\\')
+        || !token.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '/' | '\\' | '.' | '_' | '-' | '+' | '=' | ':' | '@' | ','
+                )
+        })
+    {
+        return Err(
+            "remote executable contains shell metacharacters; use a simple executable path"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn parse_ssh_url(rest: &str) -> Result<RemoteTarget, String> {
@@ -156,6 +213,36 @@ mod tests {
         assert!(parse_remote_target("http://host").is_err());
         assert!(parse_remote_target("ssh://").is_err());
         assert!(parse_remote_target("ssh://host:0").is_err());
+        assert!(parse_remote_target("work\u{1b}[31mbox").is_err());
+        assert!(parse_remote_target("ssh://host\nnext").is_err());
+    }
+
+    #[test]
+    fn validates_remote_executable_tokens_without_rejecting_normal_paths() {
+        for token in [
+            "hyprmux",
+            "/usr/local/bin/hyprmux",
+            "C:/Users/me/hyprmux.exe",
+            r"C:\Users\me\hyprmux.exe",
+        ] {
+            validate_remote_executable_token(token).expect(token);
+        }
+        for token in [
+            "hypr mux",
+            "hyprmux\t--help",
+            "hyprmux\n--help",
+            "hyprmux;touch /tmp/pwned",
+            "hyprmux$(id)",
+            "hyprmux`id`",
+            "hyprmux|cat",
+            r"C:\Users\me\",
+            "",
+        ] {
+            assert!(
+                validate_remote_executable_token(token).is_err(),
+                "accepted hostile executable token {token:?}"
+            );
+        }
     }
 
     #[test]

@@ -435,7 +435,7 @@ impl SessionServer {
             }
             ClientMessage::Detach => Vec::new(),
             ClientMessage::Shutdown => {
-                if !self.is_controller(client_id) || self.client_read_only(client_id) {
+                if !self.client_attached(client_id) || self.client_read_only(client_id) {
                     return Vec::new();
                 }
                 self.shutdown = true;

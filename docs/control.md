@@ -124,10 +124,19 @@ hyprmux attach dev --read-only
 hyprmux new dev             # explicitly create a fresh named session
 hyprmux new review --profile dev # create from a reusable launch recipe
 hyprmux list-sessions       # list connectable named sessions
-hyprmux kill-session dev    # request clean shutdown of a named session
+hyprmux kill-session dev    # stop the named session server and its PTYs
 hyprmux list-sessions --remote workbox
 hyprmux kill-session dev --remote workbox
 ```
+
+`kill-session <NAME>` is the sole canonical command for stopping a named session server. There is
+one server per session; the command asks it to shut down through the authenticated protocol first,
+then uses local stale-server recovery only when that local protocol transport cannot complete. It
+destroys the server's PTYs for every attached client and is not a generic process killer. The
+`--remote` form runs the same command over SSH and never force-terminates the local SSH transport.
+
+Agents that need to control panes or session lifecycle should first read the operational contract
+printed by `hyprmux --skill`.
 
 An unknown positional target errors instead of silently creating a session. `attach` and `new` are
 reserved command words; use `hyprmux --session attach` or `hyprmux --session new` to target those

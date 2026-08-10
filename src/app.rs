@@ -590,6 +590,10 @@ pub fn run() -> Result<()> {
             cli::print_version();
             return Ok(());
         }
+        cli::ParsedCli::Skill => {
+            cli::print_skill();
+            return Ok(());
+        }
         cli::ParsedCli::Install => {
             if let Err(message) = cli::run_install_cli() {
                 eprintln!("hyprmux: {message}");
@@ -608,7 +612,7 @@ pub fn run() -> Result<()> {
     };
 
     // Every runtime/session command still receives the platform support check; only the updater,
-    // help, and version paths above intentionally run before it.
+    // help, version, and agent-skill paths above intentionally run before it.
     if let Err(reason) = platform::server_lifecycle::check_host_supported() {
         eprintln!("hyprmux: {reason}");
         std::process::exit(1);
@@ -627,6 +631,7 @@ pub fn run() -> Result<()> {
         cli::ParsedCli::Run(args) => args,
         cli::ParsedCli::Help
         | cli::ParsedCli::Version
+        | cli::ParsedCli::Skill
         | cli::ParsedCli::Install
         | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
     };
@@ -893,6 +898,7 @@ pub fn run() -> Result<()> {
         want_startup_picker,
         startup_picker_highlight,
     ))
+    .exit_view(crate::exit_view::exit_view)
     .run()
 }
 

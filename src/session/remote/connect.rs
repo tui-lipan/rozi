@@ -9,9 +9,11 @@ use crate::config::HyprmuxRemoteConfig;
 use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
-use super::bootstrap::ssh_base_command;
+use super::bootstrap::{append_ssh_destination, ssh_base_command};
 use super::preamble::{self, RemotePreamble};
-use super::{RemoteTarget, ResolvedRemote};
+use super::{
+    RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
+};
 
 #[derive(Debug)]
 pub enum RemoteConnectError {
@@ -58,6 +60,12 @@ pub fn connect_remote(
     session: &str,
     config: &HyprmuxRemoteConfig,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
+    if !crate::session::discovery::valid_attach_target(session) {
+        return Err(RemoteConnectError::Message(
+            "invalid session name".to_string(),
+        ));
+    }
+    validate_remote_target(target).map_err(RemoteConnectError::Message)?;
     let resolved = ResolvedRemote::resolve(target, config);
     if !program_exists("ssh") {
         return Err(RemoteConnectError::Message(
@@ -69,6 +77,7 @@ pub fn connect_remote(
     // prompted pre-TUI); interactive=false avoids a silent install on the attach thread.
     let remote_bin =
         super::ensure_remote_binary(target, config, false).map_err(RemoteConnectError::Message)?;
+    validate_remote_executable_token(&remote_bin).map_err(RemoteConnectError::Message)?;
 
     let mut command = ssh_base_command(&resolved, config);
     command
@@ -82,8 +91,7 @@ pub fn connect_remote(
             "ServerAliveCountMax={}",
             config.server_alive_count_max
         ));
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
     command.arg("--remote-serve");
     command.arg(session);
@@ -138,6 +146,10 @@ pub fn kill_remote_session(
     session: &str,
     config: &HyprmuxRemoteConfig,
 ) -> Result<(), String> {
+    if !crate::session::discovery::valid_attach_target(session) {
+        return Err("invalid session name".to_string());
+    }
+    validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     let remote_bin = resolved
         .binary_path
@@ -147,9 +159,9 @@ pub fn kill_remote_session(
             Some("hyprmux".to_string())
         })
         .unwrap_or_else(|| "hyprmux".to_string());
+    validate_remote_executable_token(&remote_bin)?;
     let mut command = ssh_base_command(&resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, &resolved);
     command.arg(&remote_bin);
     command.arg("kill-session");
     command.arg(session);
@@ -184,4 +196,37 @@ fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String>
         }
         buf
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HyprmuxRemoteConfig;
+
+    #[test]
+    fn kill_remote_session_rejects_hostile_session_before_spawning_ssh() {
+        let target = RemoteTarget::Alias("workbox".to_string());
+        let config = HyprmuxRemoteConfig::default();
+        for session in ["dev;touch /tmp/pwned", "dev\nnext", "dev\u{1b}[31m"] {
+            let error = kill_remote_session(&target, session, &config)
+                .expect_err("hostile session must be rejected before ssh");
+            assert_eq!(error, "invalid session name");
+        }
+    }
+
+    #[test]
+    fn kill_remote_session_rejects_hostile_configured_executable_before_spawning_ssh() {
+        let target = RemoteTarget::Alias("workbox".to_string());
+        let mut config = HyprmuxRemoteConfig::default();
+        config.hosts.insert(
+            "workbox".to_string(),
+            crate::config::RemoteHostConfig {
+                binary_path: Some("hyprmux;touch".to_string()),
+                ..crate::config::RemoteHostConfig::default()
+            },
+        );
+        let error = kill_remote_session(&target, "dev", &config)
+            .expect_err("hostile executable must be rejected before ssh");
+        assert!(error.contains("shell metacharacters"), "{error}");
+    }
 }

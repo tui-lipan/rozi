@@ -12,6 +12,7 @@ pub mod config;
 mod control;
 mod copy_mode;
 pub mod events;
+mod exit_view;
 mod geometry;
 mod hints;
 pub mod input;

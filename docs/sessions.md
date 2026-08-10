@@ -69,7 +69,9 @@ Explicit `new` means fresh creation: if an old resurrection snapshot exists for 
 removes it before starting the new server rather than restoring it.
 
 `kill-session` only talks to hyprmux's session endpoint and sends the protocol `Shutdown` message;
-it does not kill arbitrary processes or remove unrelated files.
+it does not kill arbitrary processes or remove unrelated files. Any authenticated writable client
+may make that explicit destructive request, so it also works while another client holds layout
+control; read-only clients cannot stop the server.
 
 ## How a server starts and stops
 
@@ -92,6 +94,12 @@ a crash or a forced kill cannot leave orphaned shells behind.
 Closing the terminal your *client* is running in (`SIGHUP`, or a Windows console close/logoff) is
 treated as a **detach**, not a crash: the layout is mirrored to disk and a named session's server is
 left running for you to reattach to.
+
+After a clean client exit, hyprmux leaves a compact reattach command in terminal scrollback for the
+named session that was on screen. Remote sessions include their remote target. Ephemeral and
+sessionless exits print nothing because there is no durable named session to reattach to. A remote
+hint is also omitted when its target would require shell-specific quoting, rather than leaving an
+unsafe command to copy.
 
 ## Naming and renaming the current session
 

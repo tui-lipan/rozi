@@ -8,7 +8,9 @@ use crate::config::{HyprmuxRemoteConfig, RemoteInstallPolicy};
 use crate::platform::command::program_exists;
 use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
 
-use super::{RemoteTarget, ResolvedRemote};
+use super::{
+    RemoteTarget, ResolvedRemote, validate_remote_executable_token, validate_remote_target,
+};
 
 const INSTALL_DIR: &str = ".local/bin";
 const INSTALL_NAME: &str = "hyprmux";
@@ -285,14 +287,16 @@ pub fn prompt_install_confirmation(host: &str) -> io::Result<bool> {
     Ok(answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes"))
 }
 
-/// Run the probe over a short-lived ssh command. `binary_path` short-circuits with our protocol
-/// range (caller-configured path is trusted).
+/// Run the probe over a short-lived ssh command. A shell-safe `binary_path` short-circuits with our
+/// protocol range; unsafe configured tokens are rejected before any remote command is spawned.
 pub fn probe_remote_report(
     target: &RemoteTarget,
     config: &HyprmuxRemoteConfig,
 ) -> Result<ProbeReport, String> {
+    validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
     if let Some(path) = &resolved.binary_path {
+        validate_remote_executable_token(path)?;
         return Ok(ProbeReport {
             platform: local_uname_platform(),
             machine: local_uname_machine(),
@@ -346,8 +350,7 @@ fn detect_remote_family(
     config: &HyprmuxRemoteConfig,
 ) -> Result<RemoteFamily, String> {
     let mut command = ssh_base_command(resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, resolved);
     command.arg("echo").arg("hyprmux_family=%OS%");
     command
         .stdin(Stdio::null())
@@ -384,8 +387,7 @@ fn run_probe_script(
     script: &str,
 ) -> Result<String, String> {
     let mut command = ssh_base_command(resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, resolved);
     for arg in interpreter {
         command.arg(arg);
     }
@@ -422,8 +424,7 @@ fn run_probe_command(
     argv: &[&str],
 ) -> Result<String, String> {
     let mut command = ssh_base_command(resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, resolved);
     for arg in argv {
         command.arg(arg);
     }
@@ -606,8 +607,7 @@ printf 'installed=%s\n' "$final"
 "#
     );
     let mut command = ssh_base_command(resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, resolved);
     command.arg("sh").arg("-c").arg(script);
     command
         .stdin(Stdio::piped())
@@ -701,8 +701,7 @@ Move-Item -Force -LiteralPath $src -Destination $final
 Write-Output "installed=$final""#
     );
     let mut command = ssh_base_command(resolved, config);
-    command.arg(resolved.ssh_destination());
-    command.arg("--");
+    append_ssh_destination(&mut command, resolved);
     command
         .arg("powershell")
         .arg("-NoProfile")
@@ -961,6 +960,12 @@ pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemote
         command.arg(arg);
     }
     command
+}
+
+/// Append the OpenSSH end-of-options marker and destination. OpenSSH expects the destination before
+/// the remote command; putting `--` after the destination makes it part of that command instead.
+pub(crate) fn append_ssh_destination(command: &mut Command, resolved: &ResolvedRemote) {
+    command.arg("--").arg(resolved.ssh_destination());
 }
 
 /// Fail if the `HYPRMUX_REMOTE_BINARY` override is a binary built for a different OS/arch than the
@@ -1440,6 +1445,31 @@ protocol_max=1
                 .iter()
                 .any(|arg| arg.starts_with("ConnectTimeout="))
         );
+    }
+
+    #[test]
+    fn ssh_remote_command_argv_places_destination_before_remote_command() {
+        let resolved = ResolvedRemote {
+            alias: Some("workbox".into()),
+            host: "workbox".into(),
+            user: Some("me".into()),
+            port: None,
+            identity_file: None,
+            ssh_args: Vec::new(),
+            binary_path: None,
+        };
+        let mut command = ssh_base_command(&resolved, &HyprmuxRemoteConfig::default());
+        append_ssh_destination(&mut command, &resolved);
+        command.args(["/usr/local/bin/hyprmux", "--remote-serve", "dev"]);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let marker = args.iter().position(|arg| arg == "--").expect("-- marker");
+        assert_eq!(args[marker + 1], "me@workbox");
+        assert_eq!(args[marker + 2], "/usr/local/bin/hyprmux");
+        assert_eq!(args[marker + 3], "--remote-serve");
+        assert_eq!(args[marker + 4], "dev");
     }
 
     /// The scp used by the Windows install must carry the same connection options as ssh, but with

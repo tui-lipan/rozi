@@ -30,6 +30,8 @@ mod resurrect;
 pub use pane_log::PaneLog;
 pub(crate) use resurrect::list_snapshot_names_by_recency;
 mod runtime;
+mod shutdown;
+pub(crate) use shutdown::shutdown_named_session;
 
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 32;
@@ -501,6 +503,12 @@ impl SessionServer {
             }
         }
         self.discard_ephemeral_logs();
+        // Retire the discovery entry while this server still owns the listener/pipe instances. A
+        // replacement can then claim the name without a later post-loop unlink being able to remove
+        // that replacement's endpoint.
+        if let Some(endpoint) = &self.endpoint {
+            endpoint.remove_stale();
+        }
         Ok(())
     }
 
@@ -753,8 +761,11 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
         eprintln!("hyprmux: could not restore session {name:?}: {err}");
     }
     let result = server.run_listener(listener);
-    // A rename replaces the endpoint, so retire the current one rather than the original.
-    if let Some(endpoint) = &server.endpoint {
+    // A rename replaces the endpoint, so retire the current one rather than the original. Claim the
+    // stale name first: a same-name replacement that won the race must not have its endpoint removed.
+    if let Some(endpoint) = &server.endpoint
+        && let Ok(_claim) = endpoint.bind()
+    {
         endpoint.remove_stale();
     }
     result

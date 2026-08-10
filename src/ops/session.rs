@@ -2395,65 +2395,7 @@ fn shutdown_discovered_session(
 }
 
 fn shutdown_session(name: &str) -> std::io::Result<()> {
-    let endpoint = crate::session::server::session_endpoint(name)?;
-    if let Ok(mut stream) = endpoint.connect() {
-        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
-        let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(1)));
-        // Grab the server's pid up front (protocol-independent) so an older, incompatible server -
-        // one that rejects our attach handshake and can't be told to `Shutdown` - can still be
-        // reaped instead of leaking as an unkillable orphan (cross-platform plan Phase 5b
-        // stale-server recovery). `terminate_server` is the forced last resort *after* the graceful
-        // protocol path has already failed: SIGTERM escalating to SIGKILL on Unix, `TerminateProcess`
-        // on Windows (which takes the server's kill-on-close Job Object, and so its ConPTY children,
-        // with it).
-        //
-        // Piped/remote connections always report `peer_pid() == None`, so this fallback is unreachable
-        // for `--remote` attaches — we must never `terminate_server` a local ssh pid.
-        let server_pid = stream.peer_pid();
-        if graceful_shutdown(&mut stream, name).is_err()
-            && let Some(pid) = server_pid
-        {
-            crate::platform::server_lifecycle::terminate_server(pid);
-        }
-    }
-    // The server retires its endpoint only once it finishes tearing down, which races the refresh
-    // that follows a kill (and a killed or already-dead server may never retire it at all). Drop it
-    // now so the killed session leaves the list immediately.
-    endpoint.remove_stale();
-    crate::session::server::delete_snapshot(name)?;
-    Ok(())
-}
-
-/// Attempt the in-protocol graceful shutdown: attach, then send `Shutdown`. Returns an error if the
-/// server refuses the handshake (e.g. a version mismatch replies with `Error`) or the connection
-/// breaks, signalling [`shutdown_session`] to fall back to a signal-based kill rather than pushing a
-/// `Shutdown` into a half-closed pipe (which surfaced as a bogus "Broken pipe" delete failure).
-fn graceful_shutdown(
-    stream: &mut crate::platform::ipc::IpcConnection,
-    name: &str,
-) -> std::io::Result<()> {
-    use crate::session::protocol::{
-        ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
-    };
-    crate::session::protocol::write_frame(
-        stream,
-        &ClientMessage::Attach {
-            session: name.to_string(),
-            protocol_version: PROTOCOL_VERSION,
-            min_protocol_version: MIN_SUPPORTED_PROTOCOL,
-            label: crate::platform::user::current_user_label(),
-            read_only: false,
-        },
-    )?;
-    match crate::session::protocol::read_frame::<_, ServerMessage>(stream)? {
-        ServerMessage::Attached { .. } => {
-            crate::session::protocol::write_frame(stream, &ClientMessage::Shutdown)
-        }
-        other => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("server refused shutdown handshake: {other:?}"),
-        )),
-    }
+    crate::session::server::shutdown_named_session(name)
 }
 
 #[cfg(test)]

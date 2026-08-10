@@ -165,6 +165,13 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
   `BINDABLE_ACTIONS`; keep `commands.rs` as the source of truth for the `BUILTIN_COMMANDS` registry
   entries that carry each command's label, description, group, and `default_keys`. Help and the
   palettes render from that registry, so adding an action means touching both files.
+- Adding a config key means three edits: the serde model in `config/file.rs`, a row in
+  `docs/configuration.md`, and a line commented at its default in `examples/hyprmux.toml`. That
+  example is the copyable form of the reference - it ships inert, and a test uncomments the whole
+  file and loads it, so a key renamed out from under it fails `cargo test` rather than rotting.
+  Prose there is commented `# like this`, settings `#key = value`, which is what lets the test tell
+  them apart. Everything in `examples/` is linked from docs and read by a test; add to the
+  reference rather than leaving a new orphan snippet beside it.
 - Do not toast successful state changes that are already visible on screen. Lossless config
   normalization is also silent; reserve toasts for failures, rejections, destructive confirmations,
   and useful off-screen results. See `docs/configuration.md#in-app-toasts`.

@@ -781,7 +781,7 @@ right = [
 ]
 ```
 
-Workspaces can be given a custom name with the *Rename workspace* command palette entry (action id
+Workspaces can be given a custom name with `prefix n` (*Rename workspace*; action id
 `rename-workspace`). Once set, the `workspaces` tabs show `<number>:<name>` (e.g. `1:code`) and the
 `{workspace}` placeholder resolves to the name instead of the number. Names are saved with profiles
 and the session autosave (`[[workspaces]] name` in the profile TOML - see

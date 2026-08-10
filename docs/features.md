@@ -122,7 +122,7 @@ runs a split-aware program listed in `[navigation] editors`, in which case it fo
 vim-tmux-navigator style. A companion [Vim/Neovim plugin](../integrations/vim-hyprmux-navigator/)
 handles the editor side.
 
-**Identity** — rename a pane (`n`); titles otherwise follow the program's OSC title. Pane identity
+**Identity** — rename a pane (`Shift+N`); titles otherwise follow the program's OSC title. Pane identity
 carries a per-spawn `env` map that is never persisted.
 
 **Pane synchronization** — broadcast typed input to every pane in the workspace. The state persists
@@ -154,7 +154,7 @@ See [Layouts & panes](layouts-and-panes.md) and [Terminal features](terminal.md)
 - `switch-workspace-<n>` and `move-to-workspace-<n>`.
 - `relocate-workspace-<n>` (`Ctrl+Shift+1`–`9`) moves *every* pane and the workspace name into the
   target slot, then switches there.
-- **Named workspaces** — rename a workspace to display `<number>:<name>` in the tabs. The name is
+- **Named workspaces** — rename a workspace (`n`) to display `<number>:<name>` in the tabs. The name is
   usable in the `{workspace}` workbar placeholder and is saved with profiles and session autosave.
 - **Kill workspace** closes every pane in it.
 - Layout, gaps, and pane-synchronization state are per workspace.
@@ -173,7 +173,7 @@ Sessions are server-backed and survive client detach.
 launches its canonical same-name profile. Unknown targets do **not** silently create a session;
 use `hyprmux new <name>` for that. `hyprmux attach <name>` is attach-only.
 
-**Actions** — attach, detach (`prefix d`), rename, kill, and **restart** (shut the server down and
+**Actions** — attach, detach (`prefix d`), rename (`prefix Shift+S`), kill, and **restart** (shut the server down and
 immediately recreate it while staying attached).
 
 **Session picker** — a fuzzy modal listing local sessions, attached sessions, configured remote

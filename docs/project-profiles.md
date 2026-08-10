@@ -10,7 +10,7 @@ Profiles do **not** save or restore live PTY state. Restoring a profile starts f
 Each pane carries an *identity* - the information `hyprmux` knows about it beyond its live
 shell:
 
-- **Custom title** - a name you set with the `n` keybinding (or *Rename pane* in the command
+- **Custom title** - a name you set with the `Shift+N` keybinding (or *Rename pane* in the command
   palette). It overrides the program's terminal title. Submitting an empty name clears it.
 - **Profile name** - the name a pane was restored with from a profile.
 - **cwd / command** - the local working directory and launch command. Saves use live server runtime

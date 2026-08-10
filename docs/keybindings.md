@@ -74,7 +74,7 @@ Key handling is the same on Windows, with two things worth knowing:
 | Close focused pane | `w` or `x` (press twice if `[confirm] close_pane` is enabled) |
 | Toggle floating / tiling | `t` |
 | Toggle fullscreen | `f` |
-| Rename pane | `n` |
+| Rename pane | `Shift+N` |
 | Paste from clipboard | `v` or `Ctrl+V` |
 | Swap pane left / down / up / right | `Shift+h/j/k/l` or `Shift+←/↓/↑/→` |
 | Move pane left / down / up / right | `Ctrl+h/j/k/l` or `Ctrl+←/↓/↑/→` (a bare `Ctrl`+arrow with no `modifier` is forwarded to the focused pane for word-wise motion) |
@@ -197,7 +197,7 @@ with a live pane count.
 | Switch to workspace _N_ | `1`–`9` |
 | Move focused pane to workspace _N_ | `Shift+1`–`Shift+9` (or the shifted symbols `!@#$%^&*(`); switches to the target workspace |
 | Move whole workspace to workspace _N_ | `Ctrl+Shift+1`–`Ctrl+Shift+9`; moves every pane, the layout, and the workspace name, then switches there. An empty target slot receives the content; an occupied target swaps with the source so both layouts stay intact |
-| Rename workspace | *Rename workspace* in the command palette (no default key) |
+| Rename workspace | `n` |
 
 A named workspace shows as `<number>:<name>` in the tabs (e.g. `1:code`) instead of just the
 number, and the `{workspace}` [workbar placeholder](configuration.md#workbar) resolves to the
@@ -234,7 +234,7 @@ second confirmation.
 | Command | Default keys | What it does |
 | --- | --- | --- |
 | Sessions… | `s` | Open the session picker. `Enter` is **switch** for a background-connected session and **connect** otherwise — both make the session active immediately while retaining the current attachment. Typing a name + `Ctrl+N` creates and switches to a fresh empty session (fails if that name is already running). `Ctrl+K` (twice) **kills** the selected session; `Ctrl+E` (twice) **restarts** it as the active session with fresh panes. `Ctrl+W` **disconnects** this client's background attachment (server keeps running); it does not apply to the current session. `Ctrl+X` disconnects a whole remote host. `Ctrl+R` opens **Connect remote host…**. Detach is not offered in the picker — leave the client with *Quit* / *Detach* outside it. Killing the current session opens the picker when another choice remains, otherwise the sessionless launcher. The list auto-refreshes while open and shows `from <profile>` when creation-origin metadata is available. This picker opens at startup by default (`[session] startup = "picker"`, or `--pick`) whenever there is something to pick, and attaches nothing until you choose; `Esc` there leaves the client in the launcher with no session, where a bare `Enter` — or any `spawn` binding — starts a shell. `Ctrl+T` (or `Enter` when the list is empty) goes to this client's scratch session — starting it when there is none, switching to it when there already is — so a startup picker does not have to be dismissed to reach a shell. It is hinted only when the list cannot point the way itself. |
-| Rename session | *(palette only)* | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from leaving, which offers to name a temporary session on the way out. See [Sessions](sessions.md). |
+| Rename session | `Shift+S` | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from leaving, which offers to name a temporary session on the way out. See [Sessions](sessions.md). |
 | New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded and its panes are killed. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls confirmation before discarding an ephemeral session. |
 | Take / request layout control | `g` | Acquire the layout-control lease when several clients share a session, so you drive splits, moves, resizes, and workspace edits. By default (`[session].allow_takeover = true`) this takes the lease immediately, and the other client takes it back the same way; with `allow_takeover = false` it instead asks the current controller, which sees a toast and a `wants control` badge. If nobody holds the lease, it is always auto-granted. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
 | Grant layout control | `e` | As the controller, hand the lease to the client that requested it (the earliest requester when several are waiting). Only active while a request is pending; when it arrives the request toast shows this key (following any rebind). You can also grant a specific client from *Manage collaborators* (`Enter`). |

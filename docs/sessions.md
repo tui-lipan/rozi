@@ -103,7 +103,7 @@ unsafe command to copy.
 
 ## Naming and renaming the current session
 
-*Rename session* (in the command palette; no default key) renames the **current** session in place.
+*Rename session* (`prefix Shift+S`) renames the **current** session in place.
 The server keeps its live panes and simply becomes discoverable under the new name - this is the
 headline continuity win (colors, scrollback, alt-screen, and titles all stay intact, with zero pane
 movement). It works both to give an ephemeral session its first real name and to change an

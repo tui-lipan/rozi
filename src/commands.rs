@@ -91,7 +91,9 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::RenamePane,
         label: "Rename pane",
         category: "Panes",
-        default_keys: &["n"],
+        // Shifted sibling of the workspace rename: a pane already derives a title from its process
+        // and OSC updates, so overriding it is the rarer half of the naming pair.
+        default_keys: &["shift-n"],
         palette: true,
     },
     BuiltinCommand {
@@ -219,7 +221,9 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::RenameWorkspace,
         label: "Rename workspace",
         category: "Layout",
-        default_keys: &[],
+        // A workspace tab has no derived label at all - only its index - so naming it is the only
+        // way to make the always-visible tab strip carry meaning.
+        default_keys: &["n"],
         palette: true,
     },
     BuiltinCommand {
@@ -382,7 +386,8 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         action: Action::RenameSession,
         label: "Rename session",
         category: "Session",
-        default_keys: &[],
+        // Shifted sibling of the session picker: same key, "act on the one I am in".
+        default_keys: &["shift-s"],
         palette: true,
     },
     BuiltinCommand {

@@ -1450,6 +1450,180 @@ mod tests {
     }
 
     #[test]
+    fn scrollback_search_keeps_metadata_visible_beside_long_line_labels() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 100,
+                    h: 24,
+                });
+
+                let mut search = crate::state::ScrollbackSearchState::new(1);
+                search.input.set_text("needle");
+                search.input.set_cursor(6);
+                search.matches.push(crate::state::ScrollbackMatch {
+                    offset: 0,
+                    line: 8,
+                    start_col: 12,
+                    end_col: 18,
+                    text: std::sync::Arc::from(format!(
+                        "needle {}",
+                        "a very long terminal line that must yield to metadata".repeat(3)
+                    )),
+                    pane: 1,
+                });
+                search.rebuild_items();
+                search.refresh_match_status();
+                backend.state_mut().search = Some(search);
+                let match_fg = backend.state().theme.status.info;
+                backend.render();
+
+                let frame = backend.capture_frame();
+                let lines = frame.to_fixed_grid_lines();
+                let row_index = lines
+                    .iter()
+                    .position(|line| line.contains("pane 1 · row 9 · col 13"))
+                    .unwrap_or_else(|| {
+                        panic!("long result row with complete metadata: {lines:#?}")
+                    });
+                let row = &lines[row_index];
+                assert!(
+                    row.contains("needle"),
+                    "query prefix should remain visible: {row}"
+                );
+                assert!(row.contains('…'), "long label should be truncated: {row}");
+                let query_column = row.find("needle").expect("query prefix") as u16;
+                assert_eq!(frame.cell(query_column, row_index as u16).fg, match_fg);
+            })
+            .expect("spawn metadata priority test")
+            .join()
+            .expect("metadata priority test completes");
+    }
+
+    #[test]
+    fn scrollback_search_preserves_scanned_order_when_fuzzy_scores_differ() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 120,
+                    h: 24,
+                });
+                let target = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("focused pane");
+                let output = (0..150)
+                    .map(|index| match index {
+                        0 => "needle alpha\r\n".to_string(),
+                        1 => "needle bravo\r\n".to_string(),
+                        149 => "needle\r\n".to_string(),
+                        index => format!("needle filler-{index:03}\r\n"),
+                    })
+                    .collect::<String>();
+                crate::pane_lifecycle::find_pane_mut(backend.state_mut(), target)
+                    .expect("target pane")
+                    .terminal
+                    .process_server_output(output.as_bytes());
+
+                backend
+                    .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
+                    .expect("open search");
+                for ch in "needle".chars() {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(ch),
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("type search query");
+                }
+                while backend
+                    .state()
+                    .search
+                    .as_ref()
+                    .is_some_and(|search| search.scan.is_some())
+                {
+                    let epoch = backend.state().search_scan_epoch;
+                    let _ = crate::ops::search::advance_search_scan(
+                        backend.state_mut(),
+                        epoch,
+                        crate::ops::search::SEARCH_LINES_PER_CHUNK,
+                    );
+                }
+                backend.render();
+
+                let lines = backend.capture_frame().to_fixed_grid_lines();
+                let result_rows: Vec<_> = lines
+                    .iter()
+                    .filter(|line| line.contains("pane 1 · row"))
+                    .collect();
+                assert!(
+                    result_rows.len() >= 3,
+                    "expected visible result rows: {lines:#?}"
+                );
+                assert!(result_rows[0].contains("needle alpha"), "{result_rows:#?}");
+                assert!(result_rows[1].contains("needle bravo"), "{result_rows:#?}");
+                assert!(
+                    result_rows[2].contains("needle filler-002"),
+                    "{result_rows:#?}"
+                );
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('n'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("next scanned row");
+                assert_eq!(backend.state().search.as_ref().expect("search").current, 1);
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Char('p'),
+                        mods: KeyMods::CTRL,
+                    })
+                    .expect("previous scanned row");
+                assert_eq!(backend.state().search.as_ref().expect("search").current, 0);
+
+                let expected_offset =
+                    backend.state().search.as_ref().expect("search").matches[149].offset;
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::End,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("select last scanned row");
+                assert_eq!(
+                    backend.state().search.as_ref().expect("search").current,
+                    149
+                );
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("activate selected row");
+                assert!(backend.state().search.is_none());
+                assert_eq!(
+                    crate::pane_lifecycle::find_pane(backend.state(), target)
+                        .expect("target pane")
+                        .terminal
+                        .scrollback_offset(),
+                    expected_offset
+                );
+            })
+            .expect("spawn scanned-order test")
+            .join()
+            .expect("scanned-order test completes");
+    }
+
+    #[test]
     fn scrollback_palette_keeps_selection_and_activation_aligned_past_100_rows() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)

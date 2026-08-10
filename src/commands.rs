@@ -1032,18 +1032,11 @@ fn builtin_keybinding_hint_parts(
             .map(KeyBinding::compact_display)
             .collect()
     } else {
-        let mut hints: Vec<_> = defaults
+        let hints: Vec<_> = defaults
             .iter()
             .filter_map(|key| KeyBinding::from_str(key).ok())
             .map(|binding| binding.compact_display())
             .collect();
-        if id == "paste" {
-            hints.push(
-                KeyBinding::from_str(PASTE_DIRECT_SHORTCUT)
-                    .expect("paste shortcut parses")
-                    .compact_display(),
-            );
-        }
         hints
     }
 }
@@ -1681,11 +1674,11 @@ mod tests {
     }
 
     #[test]
-    fn paste_hint_includes_its_direct_default_but_not_an_override() {
+    fn paste_hint_shows_only_the_prefix_command_key_by_default() {
         let config = HyprmuxConfig::default();
         assert_eq!(
             builtin_keybinding_hint(&config, "paste", &["v"]),
-            Some(Arc::<str>::from("v / ctrl+v"))
+            Some(Arc::<str>::from("v"))
         );
 
         let mut overridden = HyprmuxConfig::default();

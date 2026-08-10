@@ -57,7 +57,9 @@ fn scrollback_search_palette(
         .initial_query(query.to_string())
         .initial_selected_item_index(Some(current))
         .sync_selection(true)
+        .preserve_item_order(true)
         .description_placement(DescriptionPlacement::Right)
+        .primary_truncate_description_first(false)
         .empty_text(empty_text)
         .input_key_interceptor(scrollback_search_key_interceptor(ctx))
         .on_query_change(

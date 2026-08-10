@@ -1,6 +1,6 @@
 pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let pane = &ctx.state.config.pane;
-    // Dependent rows (Titlebar Cap style, Workbar Gap/Position) always stay in the list; when their
+    // Dependent rows (Titlebar Style, Workbar Gap/Position) always stay in the list; when their
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
     // `render_item` below) rather than disappearing. Category headers mirror the Commands picker;
     // short labels rely on group context (and aliases for search).
@@ -45,7 +45,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
                     AppearanceAction::CycleTitlebar,
                 ),
                 row(
-                    "Cap style",
+                    "Style",
                     cap_style_label(pane.title_style).to_string(),
                     AppearanceAction::CycleTitleStyle,
                 ),

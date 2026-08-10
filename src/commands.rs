@@ -621,7 +621,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     },
     BuiltinCommand {
         action: Action::CycleTitleStyle,
-        label: "Titlebar cap style",
+        label: "Titlebar style",
         category: "Appearance",
         default_keys: &[],
         palette: false,
@@ -1207,7 +1207,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         }
         Action::CycleTitleStyle => {
             format!(
-                "Titlebar cap style: {}",
+                "Titlebar style: {}",
                 cap_style_label(state.config.pane.title_style)
             )
         }

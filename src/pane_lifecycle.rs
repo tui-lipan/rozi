@@ -6,8 +6,8 @@ use crate::anim::{self, GeometryAnimation};
 use crate::geometry::{clamp_float_rect, default_floating_rect};
 use crate::layout::place_spawned_pane;
 use crate::ops::focus::{
-    choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, reference_pane_rect,
-    request_current_pane_focus,
+    choose_fallback_focus, first_visible_pane, focus_near_pane_in_workspace, focus_pane,
+    reference_pane_rect, request_current_pane_focus, scrollable_close_neighbor,
 };
 use crate::ops::theme::pane_frame_background;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
@@ -603,6 +603,59 @@ pub(crate) fn close_pane_inner(
     id: PaneId,
     kill_server_pane: bool,
 ) -> Option<u64> {
+    close_pane_inner_with_focus(ctx, id, kill_server_pane, true)
+}
+
+/// Mark and kill one pane for a batch teardown without resolving focus. The caller must resolve
+/// focus after all panes in the batch have been marked closing; otherwise each pane can select a
+/// neighbour that the next iteration immediately closes.
+pub(crate) fn close_pane_inner_without_focus(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    kill_server_pane: bool,
+) -> Option<u64> {
+    close_pane_inner_with_focus(ctx, id, kill_server_pane, false)
+}
+
+fn close_pane_inner_with_focus(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    kill_server_pane: bool,
+    resolve_focus: bool,
+) -> Option<u64> {
+    // Capture this before `closing` removes the pane from `tiled_ids()`: a Scrollable strip's
+    // lifecycle/storage order is not its visual neighbor order after a move or swap. Batch callers
+    // deliberately skip both focus and anchor resolution until the whole teardown is marked.
+    let attachment = ctx.state.current();
+    let active_workspace_index = attachment.active_workspace;
+    let owner_workspace_index = attachment
+        .workspaces
+        .iter()
+        .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id));
+    let active_global_focus = resolve_focus
+        && owner_workspace_index == Some(active_workspace_index)
+        && attachment.focused_pane == Some(id);
+    let close_neighbor = resolve_focus
+        .then(|| {
+            owner_workspace_index.and_then(|workspace_index| {
+                scrollable_close_neighbor(&attachment.workspaces[workspace_index], id)
+            })
+        })
+        .flatten();
+    let scrollable_anchor_remap = if resolve_focus {
+        owner_workspace_index.and_then(|workspace_index| {
+            let workspace = &attachment.workspaces[workspace_index];
+            (workspace.layout_kind == crate::state::LayoutKind::Scrollable
+                && workspace.scrollable_anchor == Some(id))
+            .then_some((
+                workspace_index,
+                close_neighbor,
+                workspace.scrollable_reveal_edge,
+            ))
+        })
+    } else {
+        None
+    };
     // Freeze the pane where it currently sits. Once it is excluded from tiling its placement is
     // gone, so the close animation needs the rectangle it occupied captured up front.
     let bounds = ctx
@@ -633,8 +686,26 @@ pub(crate) fn close_pane_inner(
 
     if generation.is_some() {
         ctx.state.animation = GeometryAnimation::Close;
-        choose_fallback_focus(&mut ctx.state);
-        request_current_pane_focus(ctx);
+        if resolve_focus {
+            if active_global_focus {
+                if let Some(target) = close_neighbor {
+                    focus_pane(&mut ctx.state, target);
+                } else {
+                    choose_fallback_focus(&mut ctx.state);
+                }
+            }
+            if let Some((workspace_index, anchor, edge)) = scrollable_anchor_remap
+                && (!active_global_focus || anchor.is_none())
+            {
+                ctx.state.current_mut().workspaces[workspace_index]
+                    .set_scrollable_viewport(anchor, edge);
+            }
+            // `focus_pane` may arm Scrollable's AxisChange animation while it synchronizes the new
+            // viewport. The close transition owns this frame, however; keep its animation policy
+            // (and therefore the retained pane's close scale) intact.
+            ctx.state.animation = GeometryAnimation::Close;
+            request_current_pane_focus(ctx);
+        }
     }
     generation
 }
@@ -957,6 +1028,52 @@ mod tests {
             .expect("join test thread")
     }
 
+    fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::HyprmuxApp> {
+        let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+        backend.set_viewport(tui_lipan::prelude::Rect {
+            x: 0,
+            y: 0,
+            w: 80,
+            h: 24,
+        });
+        {
+            let state = backend.state_mut();
+            state.config.confirm.close_pane = false;
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+            workspace.panes.clear();
+            workspace.tile_tree = crate::tiling::build_dwindle_tree(
+                &[10, 30, 20],
+                crate::state::SplitAxis::Horizontal,
+                &[0.5, 0.5],
+            );
+            // Storage order intentionally differs from the tree order.
+            for id in [20, 10, 30] {
+                let mut pane = Pane::new(
+                    id,
+                    100,
+                    FloatRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 80.0,
+                        h: 24.0,
+                    },
+                );
+                pane.opening = false;
+                pane.terminal_active = true;
+                // Keep the post-close strip overflowing so focus synchronization must reveal the
+                // selected neighbor rather than merely preserving the first remaining column.
+                pane.scrollable_width = 0.80;
+                workspace.panes.push(pane);
+            }
+            workspace.focused_pane = Some(focus);
+            workspace.scrollable_anchor = Some(focus);
+            state.current_mut().focused_pane = Some(focus);
+        }
+        backend.render();
+        backend
+    }
+
     #[test]
     fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
@@ -1109,6 +1226,263 @@ mod tests {
                 ))
                 .expect("prune closed pane");
             assert!(backend.state().current().workspaces[0].panes.is_empty());
+        });
+    }
+
+    #[test]
+    fn closing_middle_scrollable_pane_focuses_next_tree_neighbor_and_prunes_cleanly() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(30);
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close middle pane");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(
+                workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 30 && pane.closing)
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(20));
+            assert_eq!(workspace.focused_pane, Some(20));
+            assert_eq!(workspace.scrollable_anchor, Some(20));
+            assert_eq!(backend.state().animation, GeometryAnimation::Close);
+            assert_eq!(
+                workspace.scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            assert_eq!(workspace.tiled_ids(), [10, 20]);
+
+            let generation = workspace
+                .panes
+                .iter()
+                .find(|pane| pane.id == 30)
+                .expect("closing pane")
+                .pty_generation;
+            backend
+                .dispatch(crate::Msg::PruneClosed(
+                    backend.state().runtime_epoch,
+                    30,
+                    generation,
+                ))
+                .expect("prune closed middle pane");
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(workspace.panes.iter().all(|pane| pane.id != 30));
+            assert_eq!(backend.state().current().focused_pane, Some(20));
+            assert_eq!(workspace.scrollable_anchor, Some(20));
+        });
+    }
+
+    #[test]
+    fn closing_final_scrollable_pane_focuses_previous_tree_neighbor() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(20);
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close final pane");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(
+                workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 20 && pane.closing)
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(30));
+            assert_eq!(workspace.focused_pane, Some(30));
+            assert_eq!(workspace.scrollable_anchor, Some(30));
+            assert_eq!(workspace.tiled_ids(), [10, 30]);
+        });
+    }
+
+    #[test]
+    fn closing_the_last_scrollable_tile_clears_its_anchor() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(30);
+            {
+                let state = backend.state_mut();
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.panes.retain(|pane| pane.id == 30);
+                workspace.tile_tree = Some(crate::tiling::DwindleTree::Leaf(30));
+                workspace.focused_pane = Some(30);
+                workspace.scrollable_anchor = Some(30);
+                workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
+                state.current_mut().focused_pane = Some(30);
+            }
+            backend.render();
+            backend
+                .dispatch(crate::Msg::RunAction(crate::input::Action::Close))
+                .expect("close last Scrollable tile");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert_eq!(backend.state().current().focused_pane, None);
+            assert_eq!(workspace.focused_pane, None);
+            assert_eq!(workspace.scrollable_anchor, None);
+            assert_eq!(workspace.scrollable_reveal_edge, ScrollableRevealEdge::Left);
+            assert!(
+                workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 30 && pane.closing)
+            );
+        });
+    }
+
+    #[test]
+    fn closing_nonfocused_scrollable_pane_preserves_focus_and_anchor() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(30);
+            backend.state_mut().sidebar.panels[0].active_tab =
+                Some(crate::config::SidebarTabId::new("panes"));
+            // Tree order is [10, 30, 20], so row 1 is pane 10; pane 30 remains focused.
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 1 })
+                .expect("arm nonfocused close");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 1 })
+                .expect("close nonfocused pane");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(
+                workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 10 && pane.closing)
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(30));
+            assert_eq!(workspace.focused_pane, Some(30));
+            assert_eq!(workspace.scrollable_anchor, Some(30));
+        });
+    }
+
+    #[test]
+    fn closing_a_nonfocused_scrollable_anchor_remaps_without_changing_focus() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(30);
+            {
+                let state = backend.state_mut();
+                let mut floating = Pane::new(
+                    99,
+                    100,
+                    FloatRect {
+                        x: 5.0,
+                        y: 5.0,
+                        w: 20.0,
+                        h: 10.0,
+                    },
+                );
+                floating.floating = true;
+                floating.opening = false;
+                floating.terminal_active = true;
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.panes.push(floating);
+                workspace.focused_pane = Some(99);
+                workspace.scrollable_anchor = Some(30);
+                workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
+                state.current_mut().focused_pane = Some(99);
+                state.sidebar.panels[0].active_tab =
+                    Some(crate::config::SidebarTabId::new("panes"));
+            }
+            backend.render();
+            let focus_events =
+                backend
+                    .state()
+                    .event_hub
+                    .subscribe(Some(std::collections::HashSet::from([
+                        crate::events::EventKind::FocusChanged,
+                    ])));
+
+            // Tree order is [10, 30, 20], so row 2 closes the anchored middle tile.
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 2 })
+                .expect("arm anchored close");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 2 })
+                .expect("close anchored tile");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert!(
+                workspace
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 30 && pane.closing)
+            );
+            assert_eq!(backend.state().current().focused_pane, Some(99));
+            assert_eq!(workspace.focused_pane, Some(99));
+            assert_eq!(workspace.scrollable_anchor, Some(20));
+            assert_eq!(
+                workspace.scrollable_reveal_edge,
+                ScrollableRevealEdge::Right
+            );
+            assert!(focus_events.try_recv().is_err());
+        });
+    }
+
+    #[test]
+    fn closing_an_inactive_scrollable_anchor_remaps_its_workspace_only() {
+        in_stack(|| {
+            let mut backend = scrollable_close_backend(30);
+            {
+                let state = backend.state_mut();
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                let workspace = &mut state.current_mut().workspaces[1];
+                workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+                workspace.panes.clear();
+                for id in [120, 110, 130] {
+                    let mut pane = Pane::new(id, 100, rect);
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    workspace.panes.push(pane);
+                }
+                workspace.tile_tree = crate::tiling::build_dwindle_tree(
+                    &[110, 130, 120],
+                    crate::state::SplitAxis::Horizontal,
+                    &[0.5, 0.5],
+                );
+                workspace.focused_pane = Some(130);
+                workspace.scrollable_anchor = Some(130);
+                workspace.scrollable_reveal_edge = ScrollableRevealEdge::Right;
+                state.sidebar.panels[0].active_tab =
+                    Some(crate::config::SidebarTabId::new("panes"));
+            }
+            backend.render();
+            let focus_events =
+                backend
+                    .state()
+                    .event_hub
+                    .subscribe(Some(std::collections::HashSet::from([
+                        crate::events::EventKind::FocusChanged,
+                    ])));
+
+            // Active rows 0–3, spacer 4, inactive header 5; row 7 is pane 130 in [110, 130, 120].
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 7 })
+                .expect("arm inactive anchored close");
+            backend
+                .dispatch(crate::Msg::SidebarRowClose { panel: 0, index: 7 })
+                .expect("close inactive anchored tile");
+
+            let current = backend.state().current();
+            let active = &current.workspaces[0];
+            let inactive = &current.workspaces[1];
+            assert_eq!(current.focused_pane, Some(30));
+            assert_eq!(active.focused_pane, Some(30));
+            assert_eq!(active.scrollable_anchor, Some(30));
+            assert!(
+                inactive
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 130 && pane.closing)
+            );
+            assert_eq!(inactive.scrollable_anchor, Some(120));
+            assert_eq!(inactive.scrollable_reveal_edge, ScrollableRevealEdge::Right);
+            assert!(focus_events.try_recv().is_err());
         });
     }
 

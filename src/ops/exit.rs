@@ -262,7 +262,7 @@ pub(crate) fn kill_workspace_with_confirmation(
     let targets: Vec<(crate::state::PaneId, u64)> = pane_ids
         .into_iter()
         .filter_map(|id| {
-            crate::pane_lifecycle::close_pane_inner(ctx, id, true)
+            crate::pane_lifecycle::close_pane_inner_without_focus(ctx, id, true)
                 .map(|generation| (id, generation))
         })
         .collect();
@@ -270,6 +270,18 @@ pub(crate) fn kill_workspace_with_confirmation(
     if targets.is_empty() {
         return Update::full();
     }
+
+    // The whole active workspace is now closing. Resolve its focus once, after every target has
+    // left the tiled set, so a Scrollable teardown cannot focus a neighbour that this same batch
+    // will close on its next iteration. No inactive workspace is consulted or mutated here.
+    crate::ops::focus::choose_fallback_focus(&mut ctx.state);
+    let workspace = &mut ctx.state.current_mut().workspaces[workspace_index];
+    if workspace.layout_kind == crate::state::LayoutKind::Scrollable
+        && workspace.tiled_ids().is_empty()
+    {
+        workspace.set_scrollable_viewport(None, crate::state::ScrollableRevealEdge::Left);
+    }
+    crate::ops::focus::request_current_pane_focus(ctx);
 
     Update::with_command(crate::pane_lifecycle::prune_closed_batch_command(
         ctx.state.runtime_epoch,
@@ -370,10 +382,12 @@ pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bo
 mod tests {
     use super::*;
     use crate::Msg;
+    use crate::events::EventKind;
     use crate::input::Action;
     use crate::session::client::{ClientOutbound, SessionClient};
     use crate::session::protocol::{ClientInfo, ClientMessage};
     use crate::state::SharedSessionState;
+    use std::collections::HashSet;
     use std::time::Duration;
     use tui_lipan::TestBackend;
 
@@ -728,6 +742,85 @@ mod tests {
                 backend.state().current().session_name.as_deref(),
                 Some("eph-confirm")
             );
+        });
+    }
+
+    #[test]
+    fn killing_a_scrollable_workspace_resolves_focus_once_after_batch_teardown() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            {
+                let state = backend.state_mut();
+                state.config.confirm.kill_workspace = false;
+                let rect = FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 80.0,
+                    h: 24.0,
+                };
+                let workspace = &mut state.current_mut().workspaces[0];
+                workspace.layout_kind = crate::state::LayoutKind::Scrollable;
+                workspace.panes.clear();
+                // Storage order differs from the strip order to make an accidental per-pane
+                // neighbor walk observable.
+                for id in [20, 10, 30] {
+                    let mut pane = crate::state::Pane::new(id, 100, rect);
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                    workspace.panes.push(pane);
+                }
+                workspace.tile_tree = crate::tiling::build_dwindle_tree(
+                    &[10, 30, 20],
+                    crate::state::SplitAxis::Horizontal,
+                    &[0.5, 0.5],
+                );
+                workspace.focused_pane = Some(30);
+                workspace.scrollable_anchor = Some(30);
+                state.current_mut().focused_pane = Some(30);
+
+                // Killing the active workspace must not touch an inactive workspace.
+                let mut inactive = crate::state::Pane::new(90, 100, rect);
+                inactive.opening = false;
+                inactive.terminal_active = true;
+                state.current_mut().workspaces[1].panes.push(inactive);
+                crate::tiling::append_tiled_window(&mut state.current_mut().workspaces[1], 90);
+            }
+            backend.render();
+            let focus_events = backend
+                .state()
+                .event_hub
+                .subscribe(Some(HashSet::from([EventKind::FocusChanged])));
+
+            backend
+                .dispatch(Msg::RunAction(Action::KillWorkspace))
+                .expect("kill Scrollable workspace");
+
+            let workspace = &backend.state().current().workspaces[0];
+            assert_eq!(backend.state().current().focused_pane, None);
+            assert_eq!(workspace.focused_pane, None);
+            assert!(workspace.panes.iter().all(|pane| pane.closing));
+            assert!(workspace.tiled_ids().is_empty());
+            assert_eq!(workspace.scrollable_anchor, None);
+            assert_eq!(
+                focus_events.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty),
+                "batch teardown must not emit transient per-neighbor focus events"
+            );
+
+            let inactive = &backend.state().current().workspaces[1];
+            assert!(
+                inactive
+                    .panes
+                    .iter()
+                    .any(|pane| pane.id == 90 && !pane.closing)
+            );
+            assert_eq!(inactive.tiled_ids(), [90]);
         });
     }
 

@@ -481,6 +481,22 @@ fn interval_overlap(a_start: f32, a_end: f32, b_start: f32, b_end: f32) -> f32 {
     (a_end.min(b_end) - a_start.max(b_start)).max(0.0)
 }
 
+/// Choose the next/right or previous/left neighbour of a closing Scrollable tile. Call this before
+/// the pane is marked closing: [`Workspace::tiled_ids`] then still describes the pre-close strip.
+pub(crate) fn scrollable_close_neighbor(workspace: &Workspace, id: PaneId) -> Option<PaneId> {
+    if workspace.layout_kind != LayoutKind::Scrollable {
+        return None;
+    }
+
+    let tiled = workspace.tiled_ids();
+    let index = tiled.iter().position(|pane_id| *pane_id == id)?;
+    tiled.get(index.checked_add(1)?).copied().or_else(|| {
+        index
+            .checked_sub(1)
+            .and_then(|index| tiled.get(index).copied())
+    })
+}
+
 /// Move focus to the next/previous tiled pane in `tiled_ids()` order, wrapping around. If
 /// the current focus is floating (not part of the tiled order) it falls back to the first
 /// tiled pane. Returns the newly focused id, or `None` when there are no tiled panes.
@@ -2196,6 +2212,50 @@ mod tests {
         focus_pane(&mut state, focus);
         state.animation = GeometryAnimation::None;
         state
+    }
+
+    #[test]
+    fn scrollable_close_neighbor_uses_preclose_tree_order() {
+        let mut state = state_with_tiled(&[20, 10, 30]);
+        {
+            let workspace = &mut state.current_mut().workspaces[0];
+            workspace.layout_kind = LayoutKind::Scrollable;
+            workspace.tile_tree = crate::tiling::build_dwindle_tree(
+                &[10, 30, 20],
+                crate::state::SplitAxis::Horizontal,
+                &[0.5, 0.5],
+            );
+            workspace.focused_pane = Some(30);
+            workspace.scrollable_anchor = Some(30);
+        }
+        state.current_mut().focused_pane = Some(30);
+
+        assert_eq!(state.current().workspaces[0].tiled_ids(), [10, 30, 20]);
+        assert_eq!(
+            scrollable_close_neighbor(&state.current().workspaces[0], 30),
+            Some(20)
+        );
+
+        state.current_mut().focused_pane = Some(20);
+        state.current_mut().workspaces[0].focused_pane = Some(20);
+        assert_eq!(
+            scrollable_close_neighbor(&state.current().workspaces[0], 20),
+            Some(30)
+        );
+
+        state.current_mut().focused_pane = Some(10);
+        state.current_mut().workspaces[0].focused_pane = Some(10);
+        assert_eq!(
+            scrollable_close_neighbor(&state.current().workspaces[0], 10),
+            Some(30)
+        );
+
+        state.current_mut().focused_pane = Some(30);
+        state.current_mut().workspaces[0].focused_pane = Some(30);
+        assert_eq!(
+            scrollable_close_neighbor(&state.current().workspaces[0], 10),
+            Some(30)
+        );
     }
 
     fn placement_x(state: &State, id: PaneId) -> f32 {

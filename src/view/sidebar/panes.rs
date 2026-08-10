@@ -6,11 +6,7 @@ use crate::HyprmuxApp;
 pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
     for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
-        let panes: Vec<_> = workspace
-            .panes
-            .iter()
-            .filter(|pane| !pane.closing)
-            .collect();
+        let panes = ordered_sidebar_panes(workspace);
         if panes.is_empty() {
             continue;
         }
@@ -50,6 +46,35 @@ pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
         }
     }
     rows
+}
+
+/// Sidebar order follows the authoritative tiling tree, while floating panes retain their
+/// workspace storage order because they have no tiling position. Keep the two groups separate so a
+/// tree reorder is visible here without mutating `Workspace::panes`.
+fn ordered_sidebar_panes(workspace: &crate::state::Workspace) -> Vec<&crate::state::Pane> {
+    let mut ordered = Vec::new();
+    let mut seen = Vec::new();
+
+    for id in workspace.tiled_ids() {
+        if let Some(pane) = workspace
+            .panes
+            .iter()
+            .find(|pane| pane.id == id && !pane.floating && !pane.closing)
+            && !seen.contains(&id)
+        {
+            seen.push(id);
+            ordered.push(pane);
+        }
+    }
+
+    for pane in &workspace.panes {
+        if pane.floating && !pane.closing && !seen.contains(&pane.id) {
+            seen.push(pane.id);
+            ordered.push(pane);
+        }
+    }
+
+    ordered
 }
 
 /// What a pane row calls itself.
@@ -129,6 +154,7 @@ fn prompt_echo_path(title: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::state::Pane;
+    use crate::tiling::{build_dwindle_tree, swap_tree_leaves};
     use tui_lipan::prelude::FloatRect;
 
     fn pane(title: Option<&str>, cwd: Option<&str>) -> Pane {
@@ -145,6 +171,48 @@ mod tests {
         pane.terminal.title = title.map(str::to_string);
         pane.terminal.cwd = cwd.map(str::to_string);
         pane
+    }
+
+    #[test]
+    fn sidebar_panes_follow_tree_order_then_stable_floats_without_closing_or_duplicates() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 20.0,
+            h: 10.0,
+        };
+        let mut workspace = crate::state::Workspace::new(0);
+        // Storage order deliberately differs from the tree order.
+        for id in [20, 10, 30] {
+            workspace.panes.push(Pane::new(id, 100, rect));
+        }
+        workspace.tile_tree =
+            build_dwindle_tree(&[10, 20, 30], crate::state::SplitAxis::Horizontal, &[]);
+        assert!(swap_tree_leaves(
+            workspace.tile_tree.as_mut().expect("tree"),
+            10,
+            30
+        ));
+
+        let mut floating = Pane::new(40, 100, rect);
+        floating.floating = true;
+        workspace.panes.push(floating);
+
+        let mut duplicate = Pane::new(20, 100, rect);
+        duplicate.floating = true;
+        workspace.panes.push(duplicate);
+
+        let mut closing = Pane::new(50, 100, rect);
+        closing.closing = true;
+        workspace.panes.push(closing);
+
+        assert_eq!(
+            ordered_sidebar_panes(&workspace)
+                .into_iter()
+                .map(|pane| pane.id)
+                .collect::<Vec<_>>(),
+            [30, 20, 10, 40]
+        );
     }
 
     #[test]

@@ -206,9 +206,14 @@
 #width = 32
 # Dock side: "left" or "right".
 #position = "left"
-# Catalog of available tabs. Built-ins: agents, panes, sessions, files, git. Custom
-# launcher and command tabs take a table form - see examples/sidebar.toml.
+# Catalog of available tabs. Built-ins: agents, panes, sessions, files, git.
 #tabs = ["agents", "panes", "sessions"]
+# A tab may also be a table, which is how built-ins take options and how custom tabs are
+# defined. Fields: name, label, exactly one of entries (a launcher list of
+# { label, run|send|popup, keep_open }) or command (+ interval seconds), and on_click.
+# For the files/git trees: root, show_hidden, icons, explorer, diff_stats, max_entries.
+# A table cannot live in this file's `tabs` line without displacing the default above -
+# examples/sidebar.toml is a working two-panel setup using every form.
 # Durable placement: one or two ordered arrays of ids from `tabs`. Tabs missing from it
 # are appended to the first panel so they cannot become unreachable.
 #panels = [["agents", "panes", "sessions"]]
@@ -268,8 +273,9 @@
 #fullscreen = false
 
 [[rules]]
-# Prefer a regex when a short substring would hit neighbors (`top` matching htop/btop).
-#match_regex = "^cargo\\s"
+# Prefer a regex when a short substring would hit neighbors - a bare `top` rule otherwise
+# fires on htop and btop too. Single-quoted TOML keeps the backslashes literal.
+#match_regex = '(^|[^\w/-])top($|[^\w-])'
 #workspace = 9
 #focus = false
 

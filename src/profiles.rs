@@ -569,6 +569,24 @@ mod tests {
     use crate::state::{LayoutKind, Pane, SplitAxis, State};
     use tui_lipan::prelude::Theme;
 
+    /// `docs/profiles.md` points readers at this file as the profile format, so a schema change
+    /// that leaves it behind hands them a broken starting point.
+    #[test]
+    fn documented_profile_example_still_loads() {
+        let profile = HyprmuxProfile::from_toml_str(include_str!("../examples/profiles/dev.toml"))
+            .expect("profile example parses");
+
+        assert_eq!(profile.workspaces.len(), 1);
+        let panes = &profile.workspaces[0].panes;
+        assert_eq!(
+            panes
+                .iter()
+                .map(|pane| pane.command.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("lazygit"), Some("nvim")]
+        );
+    }
+
     #[test]
     fn profile_tree_toml_shape_is_stable() {
         let profile = HyprmuxProfile {

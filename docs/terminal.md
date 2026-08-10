@@ -188,6 +188,8 @@ Press `/` (or *Search scrollback* in the palette) to search the focused pane's s
 - `Tab` cycles the **scope**: the focused pane, the whole workspace, or all panes. Jumping to a
   match in another pane (or workspace) switches focus there before scrolling to it.
 - Selecting a result row scrolls the pane to that position; `Esc` closes the search.
+- Results run newest-to-oldest within each pane; multi-pane searches keep the focused target pane
+  first, followed by the stable scope order.
 - Search scans cooperatively in slices of at most 512 retained lines so large histories do not
   block input or rendering. `Ctrl-n` / `Ctrl-p` can navigate matches already discovered.
 - Search retains at most 2000 matches across the whole active scope. `2000+` appears only after an

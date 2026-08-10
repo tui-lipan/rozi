@@ -13,6 +13,8 @@ pub struct ScrollbackSearchScan {
     pub panes: Arc<[PaneId]>,
     pub pane_ends: Arc<[usize]>,
     pub pane_index: usize,
+    /// Number of retained lines consumed from the newest end of the current pane. Zero starts at
+    /// the live bottom; the cursor resets to zero when advancing to the next pane.
     pub line_cursor: usize,
     pub first_jump_done: bool,
 }

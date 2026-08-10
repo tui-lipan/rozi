@@ -1505,7 +1505,7 @@ mod tests {
     }
 
     #[test]
-    fn scrollback_search_preserves_scanned_order_when_fuzzy_scores_differ() {
+    fn scrollback_search_renders_newest_matches_first_and_keeps_navigation_aligned() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
@@ -1569,10 +1569,16 @@ mod tests {
                     result_rows.len() >= 3,
                     "expected visible result rows: {lines:#?}"
                 );
-                assert!(result_rows[0].contains("needle alpha"), "{result_rows:#?}");
-                assert!(result_rows[1].contains("needle bravo"), "{result_rows:#?}");
                 assert!(
-                    result_rows[2].contains("needle filler-002"),
+                    result_rows[0].contains("needle") && !result_rows[0].contains("filler-"),
+                    "{result_rows:#?}"
+                );
+                assert!(
+                    result_rows[1].contains("needle filler-148"),
+                    "{result_rows:#?}"
+                );
+                assert!(
+                    result_rows[2].contains("needle filler-147"),
                     "{result_rows:#?}"
                 );
 
@@ -1602,6 +1608,11 @@ mod tests {
                 assert_eq!(
                     backend.state().search.as_ref().expect("search").current,
                     149
+                );
+                assert!(
+                    backend.state().search.as_ref().expect("search").matches[149]
+                        .text
+                        .contains("needle alpha")
                 );
                 backend
                     .send_key(KeyEvent {

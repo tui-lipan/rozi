@@ -232,7 +232,7 @@ pub enum SearchScanAdvance {
     Complete { first_match: bool },
 }
 
-/// Advance the active search by at most `line_budget` retained lines.
+/// Advance the active search by at most `line_budget` retained lines, newest pane lines first.
 ///
 /// This deterministic seam is used by tests; production always passes
 /// [`SEARCH_LINES_PER_CHUNK`].
@@ -264,36 +264,45 @@ pub fn advance_search_scan(
             scan.line_cursor = 0;
             continue;
         }
-        let range_end = scan.line_cursor.saturating_add(line_budget).min(pane_end);
+        // `line_cursor` counts lines already consumed from this pane's newest end, while the
+        // terminal range API is addressed from the oldest retained line. Search one line at a
+        // time in reverse here: a bounded range call scans ascending and could otherwise consume
+        // the cap on older hits before the newest hits in this chunk.
+        let range_end = pane_end - scan.line_cursor;
+        let range_start = range_end.saturating_sub(line_budget);
         let Some(pane) = find_pane(state, pane_id) else {
             scan.pane_index += 1;
             scan.line_cursor = 0;
             continue;
         };
-        let result = pane.terminal.search_scrollback_range(
-            &scan.query,
-            scan.line_cursor,
-            range_end,
-            MAX_MATCHES.saturating_sub(
+        let mut consumed = 0;
+        for line in (range_start..range_end).rev() {
+            let remaining = MAX_MATCHES.saturating_sub(
                 state
                     .search
                     .as_ref()
                     .map_or(0, |search| search.matches.len() + appended.len()),
-            ),
-        );
-        let consumed = range_end - scan.line_cursor;
-        scan.line_cursor = range_end;
+            );
+            let result =
+                pane.terminal
+                    .search_scrollback_range(&scan.query, line, line + 1, remaining);
+            consumed += 1;
+            appended.extend(result.matches.into_iter().map(|matched| ScrollbackMatch {
+                offset: matched.offset,
+                line: matched.line,
+                start_col: matched.start_col,
+                end_col: matched.end_col,
+                text: matched.text,
+                pane: pane_id,
+            }));
+            if result.truncated {
+                truncated = true;
+                break;
+            }
+        }
+        scan.line_cursor += consumed;
         line_budget -= consumed;
-        appended.extend(result.matches.into_iter().map(|matched| ScrollbackMatch {
-            offset: matched.offset,
-            line: matched.line,
-            start_col: matched.start_col,
-            end_col: matched.end_col,
-            text: matched.text,
-            pane: pane_id,
-        }));
-        if result.truncated {
-            truncated = true;
+        if truncated {
             break;
         }
         if scan.line_cursor >= pane_end {
@@ -905,6 +914,144 @@ mod tests {
     }
 
     #[test]
+    fn scan_discovers_newest_lines_first_across_small_chunks() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let pane = find_pane_mut(&mut state, 1).expect("initial pane");
+        pane.terminal.apply_server_resize(80, 2);
+        pane.terminal.process_server_output(
+            &(0..80)
+                .map(|index| format!("needle-{index}\r\n"))
+                .collect::<String>()
+                .into_bytes(),
+        );
+
+        let epoch = begin_scan(&mut state, 1, SearchScope::FocusedPane, "needle");
+        let expected = (0..80)
+            .rev()
+            .map(|index| format!("needle-{index}"))
+            .collect::<Vec<_>>();
+        let mut first_match_seen = false;
+        loop {
+            let advance = advance_search_scan(&mut state, epoch, 3);
+            let actual = state
+                .search
+                .as_ref()
+                .expect("search")
+                .matches
+                .iter()
+                .map(|matched| matched.text.to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected[..actual.len()]);
+            if matches!(
+                advance,
+                SearchScanAdvance::Running {
+                    first_match: true,
+                    ..
+                } | SearchScanAdvance::Complete { first_match: true }
+            ) {
+                first_match_seen = true;
+                assert_eq!(actual.first(), expected.first());
+            }
+            if matches!(advance, SearchScanAdvance::Complete { .. }) {
+                break;
+            }
+        }
+        assert!(first_match_seen);
+        assert_eq!(
+            state
+                .search
+                .as_ref()
+                .expect("completed search")
+                .matches
+                .len(),
+            expected.len()
+        );
+    }
+
+    #[test]
+    fn scan_keeps_same_line_hits_left_to_right_when_lines_are_reversed() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let pane = find_pane_mut(&mut state, 1).expect("initial pane");
+        pane.terminal.apply_server_resize(80, 2);
+        pane.terminal.process_server_output(
+            &(0..80)
+                .map(|index| match index {
+                    0 => "old needle needle\r\n".to_string(),
+                    79 => "new needle needle\r\n".to_string(),
+                    index => format!("filler-{index}\r\n"),
+                })
+                .collect::<String>()
+                .into_bytes(),
+        );
+
+        let epoch = begin_scan(&mut state, 1, SearchScope::FocusedPane, "needle");
+        loop {
+            let advance = advance_search_scan(&mut state, epoch, 3);
+            if matches!(advance, SearchScanAdvance::Complete { .. }) {
+                break;
+            }
+        }
+        let search = state.search.as_ref().expect("completed search");
+        assert_eq!(
+            search
+                .matches
+                .iter()
+                .map(|matched| (matched.text.to_string(), matched.start_col))
+                .collect::<Vec<_>>(),
+            [
+                ("new needle needle".to_string(), 4),
+                ("new needle needle".to_string(), 11),
+                ("old needle needle".to_string(), 4),
+                ("old needle needle".to_string(), 11),
+            ]
+        );
+    }
+
+    #[test]
+    fn capped_scan_keeps_the_newest_line_prefix_before_older_hits() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let pane = find_pane_mut(&mut state, 1).expect("initial pane");
+        pane.terminal.apply_server_resize(120, 1);
+        pane.terminal
+            .process_server_output(b"old needle\r\nnew needle needle needle");
+
+        let epoch = begin_scan(&mut state, 1, SearchScope::FocusedPane, "needle");
+        let retained_text: Arc<str> = Arc::from("already retained");
+        let retained = (0..MAX_MATCHES - 2)
+            .map(|index| ScrollbackMatch {
+                offset: 0,
+                line: index,
+                start_col: 0,
+                end_col: 1,
+                text: Arc::clone(&retained_text),
+                pane: 1,
+            })
+            .collect();
+        let search = state.search.as_mut().expect("search");
+        search.replace_results(retained, false);
+        search.scan.as_mut().expect("scan").first_jump_done = true;
+
+        assert_eq!(
+            advance_search_scan(&mut state, epoch, SEARCH_LINES_PER_CHUNK),
+            SearchScanAdvance::Complete { first_match: false }
+        );
+        let search = state.search.as_ref().expect("completed search");
+        assert!(search.truncated);
+        assert_eq!(search.matches.len(), MAX_MATCHES);
+        assert_eq!(search.items.len(), search.matches.len());
+        assert_eq!(
+            search.matches[MAX_MATCHES - 2..]
+                .iter()
+                .map(|matched| (matched.text.to_string(), matched.start_col))
+                .collect::<Vec<_>>(),
+            [
+                ("new needle needle needle".to_string(), 4),
+                ("new needle needle needle".to_string(), 11),
+            ]
+        );
+    }
+
+    #[test]
     fn scan_transition_classes_match_render_contract() {
         let stale = scan_advance_update(SearchScanAdvance::Stale, 1);
         assert_eq!(stale.level(), tui_lipan::UpdateLevel::None);
@@ -1076,10 +1223,11 @@ mod tests {
                 .current()
                 .focused_pane
                 .expect("focused pane");
-            find_pane_mut(backend.state_mut(), target)
-                .expect("target pane")
-                .terminal
-                .process_server_output(&output_lines(20));
+            let pane = find_pane_mut(backend.state_mut(), target).expect("target pane");
+            // Keep the newest retained line at the live bottom so a one-line chunk can discover it.
+            pane.terminal.apply_server_resize(120, 1);
+            pane.terminal.process_server_output(&output_lines(19));
+            pane.terminal.process_server_output(b"needle-19");
             backend.state_mut().copy_mode = Some(CopyModeState {
                 target,
                 navigation: TerminalCopyMode::new(0, 0, 0),

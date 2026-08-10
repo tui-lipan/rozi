@@ -82,6 +82,12 @@ pub enum ControlCommand {
         title: Option<String>,
         #[serde(default)]
         keep_open: bool,
+        /// Move focus (and the active workspace) to the new pane. Defaults to `false`: the control
+        /// endpoint is an automation surface, and a pane spawned by an agent must not pull the
+        /// cursor out from under whoever is typing. Overrides a matched `[[rules]]` `focus`; the
+        /// rule still decides workspace, float, and fullscreen.
+        #[serde(default)]
+        focus: bool,
     },
     /// Run any keybindable `Action` by its stable id (see `Action::id`/`Action::from_id`).
     RunAction {

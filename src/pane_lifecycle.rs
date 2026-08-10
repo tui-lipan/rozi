@@ -114,11 +114,30 @@ pub(crate) fn spawn_interactive_pane(
     source: Option<PaneId>,
     identity: PaneIdentity,
 ) -> (PaneId, Update) {
+    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, None)
+}
+
+/// Spawn like [`spawn_interactive_pane`], but let the caller decide whether the new pane takes
+/// focus instead of the matched `[[rules]]` entry. `None` keeps the rule's answer.
+///
+/// The control endpoint passes `Some(false)` for an ordinary `new-pane`: a pane spawned by an
+/// agent must not move focus (and the active workspace) out from under whoever is typing, which
+/// would send their next keystrokes somewhere they never looked. A rule's `focus` still describes
+/// what an interactive spawn of that command should do, so the override applies only to the
+/// automation path and leaves workspace/float/fullscreen placement alone.
+pub(crate) fn spawn_interactive_pane_with_focus(
+    ctx: &mut Context<HyprmuxApp>,
+    source_workspace: usize,
+    source: Option<PaneId>,
+    identity: PaneIdentity,
+    focus: Option<bool>,
+) -> (PaneId, Update) {
     let (workspace_index, previous_focused, placement) = interactive_spawn_target(
         &ctx.state,
         source_workspace,
         source,
         identity.command.as_deref(),
+        focus,
     );
     spawn_pane_in_workspace(ctx, workspace_index, previous_focused, identity, placement)
 }
@@ -128,10 +147,14 @@ fn interactive_spawn_target(
     source_workspace: usize,
     source: Option<PaneId>,
     command: Option<&str>,
+    focus: Option<bool>,
 ) -> (usize, Option<PaneId>, SpawnPlacement) {
-    let (rule_workspace, placement) = command
+    let (rule_workspace, mut placement) = command
         .map(|command| crate::rules::placement_for_command(&state.config.rules, command))
         .unwrap_or_default();
+    if let Some(focus) = focus {
+        placement.focus = focus;
+    }
     let workspace_index = rule_workspace.unwrap_or(source_workspace);
     let previous_focused = source.or(state.current().workspaces[workspace_index].focused_pane);
     (workspace_index, previous_focused, placement)
@@ -1418,7 +1441,7 @@ mod tests {
         state.current_mut().workspaces[2].focused_pane = Some(7);
 
         let (workspace, previous_focused, placement) =
-            interactive_spawn_target(&state, 0, None, Some("exec btop"));
+            interactive_spawn_target(&state, 0, None, Some("exec btop"), None);
 
         assert_eq!(workspace, 2);
         assert_eq!(previous_focused, Some(7));
@@ -1441,9 +1464,37 @@ mod tests {
         config.rules.push(rule("btop"));
         let state = State::new(config, Theme::default());
 
-        let target = interactive_spawn_target(&state, 0, Some(1), None);
+        let target = interactive_spawn_target(&state, 0, Some(1), None, None);
 
         assert_eq!(target, (0, Some(1), SpawnPlacement::default()));
+    }
+
+    #[test]
+    fn focus_override_beats_the_matched_rule_without_touching_placement() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        let mut configured = rule("btop");
+        configured.workspace = Some(3);
+        configured.fullscreen = true;
+        configured.focus = true;
+        config.rules.push(configured);
+        let state = State::new(config, Theme::default());
+
+        // The control endpoint's default: never move focus, but keep the rule's placement.
+        let (workspace, _, placement) =
+            interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(false));
+        assert_eq!(workspace, 3);
+        assert!(!placement.focus);
+        assert!(placement.fullscreen);
+
+        // `--focus` overrides a rule that asked for no focus.
+        let mut config = crate::config::HyprmuxConfig::default();
+        let mut configured = rule("btop");
+        configured.focus = false;
+        config.rules.push(configured);
+        let state = State::new(config, Theme::default());
+        let (_, _, placement) =
+            interactive_spawn_target(&state, 0, None, Some("exec btop"), Some(true));
+        assert!(placement.focus);
     }
 
     #[test]

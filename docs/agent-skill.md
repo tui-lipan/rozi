@@ -69,6 +69,7 @@ hyprmux send-keys 'echo hi' Enter
 hyprmux send-keys -l C-c
 hyprmux send-keys -- -n hello
 hyprmux split [COMMAND]
+hyprmux split [COMMAND] --focus  # also move focus to the new pane
 hyprmux new-pane [COMMAND]       # alias of split
 hyprmux capture-pane
 hyprmux capture-pane --target <PANE_ID>
@@ -87,10 +88,19 @@ hyprmux status --clear
 `--scrollback full` captures all retained history, and `--last-output` captures the last shell
 integration command output. `status` reports a short pane status; `status --clear` removes it.
 
-`split`/`new-pane` accepts the command and replies when the pane is accepted by the UI. Its response
-contains a numeric `id`, `accepted:true`, and `pty_ready:false`: PTY startup is asynchronous. There
-is no CLI wait or readiness primitive. Do not claim that a split is ready or invent a wait command;
-a later input request may return `PTY is not ready`.
+`split`/`new-pane` waits for the pane's PTY and replies with a numeric `id`, `accepted:true`, and
+`pty_ready`. `pty_ready:true` means input sent to that id will reach the shell. A slow spawn (a
+`--remote` session, say) can still answer `pty_ready:true` late or fall back to `pty_ready:false`
+after about five seconds; a `pty_ready:false` pane is starting, not broken. A spawn that fails
+answers with a JSON error instead.
+
+`split`/`new-pane` does **not** move focus. The user keeps typing wherever they were, and the new
+pane is reachable by id. Pass `--focus` only when the user asked to be taken to the new pane. A
+matched `[[rules]]` entry still decides workspace, float, and fullscreen placement.
+
+`send-text`/`send-keys` aimed at a pane whose PTY is still starting are queued as type-ahead and
+written once the shell is up, the same as typing into a freshly split pane. Input to a pane that has
+exited or failed to spawn still fails with `PTY is not running`.
 
 Other current control commands are `metrics`, `run-action <ACTION_ID>`, `switch-workspace <1-9>`,
 and `move-to-workspace <1-9>`. `run-action` uses stable keybinding/command-palette action ids; use
@@ -133,6 +143,7 @@ transport.
 
 - Mutate or kill only panes and sessions that the user explicitly requested or this agent created.
 - Prefer `HYPRMUX_PANE` or ids read from fresh JSON; never infer a live id from a row position.
-- Avoid stealing focus with `focus` or a layout command when the task does not require it.
-- Treat a successful split response as acceptance, not PTY readiness.
+- Avoid stealing focus with `focus`, `--focus`, or a layout command when the task does not require
+  it.
+- Read `pty_ready` from the split response instead of assuming either answer.
 - Never treat `kill-session` as a generic process killer.

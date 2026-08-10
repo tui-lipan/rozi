@@ -170,6 +170,19 @@ pub struct State {
     /// Control-socket reply held while [`Self::pending_session_action`] waits for attach, so
     /// `new-pane` / `popup` can answer with the real pane id after the session is up.
     pub pending_control_reply: Option<std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    /// Control-socket `new-pane` replies held until the pane's PTY actually reports ready, so the
+    /// answer states readiness instead of mere acceptance. Keyed by `(epoch, pane id, generation)`:
+    /// the single [`Self::pending_control_reply`] slot cannot hold two concurrent spawns, and the
+    /// epoch keeps a parked attachment's spawn from colliding with a fresh one that restarts pane
+    /// ids and generations from the same counters. Entries are resolved by the spawn result or by
+    /// [`crate::Msg::SpawnReplyDeadline`], whichever lands first.
+    pub pending_spawn_replies:
+        HashMap<(u64, PaneId, u64), std::sync::mpsc::Sender<crate::control::ControlResponse>>,
+    /// Control-socket input (`send-text` / `send-keys`) accepted for a pane whose PTY is still
+    /// starting, flushed as type-ahead once it is ready. Keyed by `(pane id, generation)`, matching
+    /// [`crate::state::Attachment::pending_replay_inputs`], which it always flushes behind so a
+    /// restored pane runs its own command first.
+    pub pending_control_input: HashMap<(PaneId, u64), Vec<u8>>,
     /// Known remote hosts for the unified Sessions view: configured aliases, recent ad-hoc targets,
     /// and hosts a live attachment targets. Seeded when the Sessions view opens; carries the
     /// per-host expand/collapse and error state that must survive the recurring session sweep.
@@ -297,6 +310,8 @@ impl State {
             launcher_seed: None,
             pending_session_action: None,
             pending_control_reply: None,
+            pending_spawn_replies: HashMap::new(),
+            pending_control_input: HashMap::new(),
             hosts: HostRegistry::default(),
             host_session_cache: crate::session::HostSessionCache::new(),
             pending_destructive: None,

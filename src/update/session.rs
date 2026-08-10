@@ -1053,6 +1053,56 @@ pub(super) fn replay_input_deadline(
     Update::none()
 }
 
+/// The held `new-pane` reply waited long enough (see
+/// [`crate::state::State::pending_spawn_replies`]). Answer with the readiness the pane actually
+/// reached, so a slow or wedged spawn degrades to today's `pty_ready:false` instead of leaving the
+/// caller on the control connection's own timeout.
+pub(super) fn spawn_reply_deadline(
+    ctx: &mut Context<HyprmuxApp>,
+    epoch: u64,
+    pane_id: PaneId,
+    generation: u64,
+) -> Update {
+    let ready = if epoch == ctx.state.runtime_epoch {
+        find_pane(&ctx.state, pane_id)
+            .is_some_and(|pane| pane.pty_generation == generation && pane.terminal.is_ready())
+    } else {
+        ctx.state
+            .background
+            .get_mut(&epoch)
+            .and_then(|attachment| attachment.find_pane_mut(pane_id))
+            .is_some_and(|pane| pane.pty_generation == generation && pane.terminal.is_ready())
+    };
+    crate::ops::control::resolve_spawn_reply(
+        &mut ctx.state,
+        epoch,
+        pane_id,
+        generation,
+        ready,
+        None,
+    );
+    Update::none()
+}
+
+/// Write the type-ahead a control `send-text` / `send-keys` accepted while this pane's PTY was
+/// still starting (see [`crate::state::State::pending_control_input`]). Always runs behind
+/// [`flush_replay_input`] so a restored pane's own command reaches the shell first.
+fn flush_pending_control_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation: u64) {
+    let Some(bytes) = ctx
+        .state
+        .pending_control_input
+        .remove(&(pane_id, generation))
+    else {
+        return;
+    };
+    if find_pane(&ctx.state, pane_id).is_none_or(|pane| pane.pty_generation != generation) {
+        return;
+    }
+    if let Some(client) = ctx.state.current().session_client.clone() {
+        client.send_input(pane_id, generation, bytes);
+    }
+}
+
 /// Deliver a queued replay command (see `State::pending_replay_inputs`) exactly once: sent as
 /// ordinary pane input followed by a carriage return, the pane's interactive shell reads and runs
 /// it as if the user had typed it - aliases, shell functions, and rc-file PATH resolve, and the
@@ -1067,14 +1117,14 @@ fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation
     else {
         return;
     };
-    if find_pane(&ctx.state, pane_id).is_none_or(|pane| pane.pty_generation != generation) {
-        return;
-    }
-    if let Some(client) = ctx.state.current().session_client.clone() {
+    if find_pane(&ctx.state, pane_id).is_some_and(|pane| pane.pty_generation == generation)
+        && let Some(client) = ctx.state.current().session_client.clone()
+    {
         let mut bytes = input.into_bytes();
         bytes.push(b'\r');
         client.send_input(pane_id, generation, bytes);
     }
+    flush_pending_control_input(ctx, pane_id, generation);
 }
 
 fn flush_attachment_replay_input(
@@ -1129,25 +1179,33 @@ pub(super) fn spawn_result(
             if ok {
                 pane.terminal.status = ManagedTerminalStatus::Ready;
             } else {
-                let message = error.unwrap_or_else(|| "session spawn failed".to_string());
+                let message = error
+                    .clone()
+                    .unwrap_or_else(|| "session spawn failed".to_string());
                 pane.terminal.status = ManagedTerminalStatus::Error(message.into());
                 if is_controller {
                     attachment.pending_background_layout = None;
                 }
             }
         }
-        if attachment
+        let replay_armed = attachment
             .pending_replay_inputs
-            .contains_key(&(pane_id, generation))
-        {
-            if spawned_live {
-                return Update::with_command(replay_input_deadline_command(
-                    epoch, pane_id, generation,
-                ));
-            }
+            .contains_key(&(pane_id, generation));
+        if replay_armed && !spawned_live {
             attachment
                 .pending_replay_inputs
                 .remove(&(pane_id, generation));
+        }
+        crate::ops::control::resolve_spawn_reply(
+            &mut ctx.state,
+            epoch,
+            pane_id,
+            generation,
+            ok,
+            error.as_deref(),
+        );
+        if replay_armed && spawned_live {
+            return Update::with_command(replay_input_deadline_command(epoch, pane_id, generation));
         }
         return Update::none();
     }
@@ -1200,6 +1258,28 @@ pub(super) fn spawn_result(
             ctx.state
                 .current_mut()
                 .pending_replay_inputs
+                .remove(&(pane_id, generation));
+        }
+    }
+    // The `new-pane` reply is held until here so it can state real readiness rather than mere
+    // acceptance (see `State::pending_spawn_replies`).
+    crate::ops::control::resolve_spawn_reply(
+        &mut ctx.state,
+        epoch,
+        pane_id,
+        generation,
+        spawned_live,
+        toast_error.as_deref(),
+    );
+    // Queued control input (see `State::pending_control_input`) rides behind the replay command
+    // when there is one; with no replay armed the PTY is ready now, so write it here. A failed
+    // spawn drops it: nothing will ever read those bytes.
+    if replay_deadline.is_none() {
+        if spawned_live {
+            flush_pending_control_input(ctx, pane_id, generation);
+        } else {
+            ctx.state
+                .pending_control_input
                 .remove(&(pane_id, generation));
         }
     }

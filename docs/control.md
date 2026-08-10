@@ -45,6 +45,7 @@ hyprmux send-keys 'echo hi' Enter
 hyprmux send-keys -l C-c
 hyprmux send-keys -- -n hello
 hyprmux split 'claude --agent helper'
+hyprmux split 'cargo watch' --focus
 hyprmux run-action toggle-float
 hyprmux capture-pane --target 3
 hyprmux capture-pane --scrollback full
@@ -58,8 +59,22 @@ hyprmux status --clear
 ```
 
 Replies are JSON on stdout. Errors are JSON when returned by the server, or plain stderr for client
-discovery/connect failures. `split`/`new-pane` replies as soon as the pane is accepted by the UI; the
-PTY may still be starting (`pty_ready: false`).
+discovery/connect failures.
+
+`split`/`new-pane` holds its reply until the new pane's PTY reports ready, so `pty_ready: true`
+means input sent to the returned `id` will reach the shell. A spawn that has not come up after five
+seconds answers `pty_ready: false` rather than leaving the caller on the connection timeout — the
+pane is still starting, not broken. A spawn that fails answers with a JSON error.
+
+`split`/`new-pane` leaves focus alone. The control endpoint is an automation surface, and a pane
+spawned from a script or an agent must not move focus, and the active workspace, away from whoever
+is typing. Pass `--focus` (or `"focus": true` in JSON) to move to the new pane. This overrides the
+`focus` field of a matched `[[rules]]` entry; the rule still decides workspace, float, and
+fullscreen.
+
+`send-text`/`send-keys` targeting a pane whose PTY is still starting are queued and written as
+type-ahead once it is ready, matching what typing into a freshly split pane already does. Input to a
+pane that has exited or failed to spawn is rejected with `PTY is not running`.
 
 `metrics` is a read-only, render-neutral snapshot of bounded runtime resources. It reports local
 client queues, the SSH pipe buffer when present, orphan output, and the latest cached server sample
@@ -175,6 +190,7 @@ Examples:
 {"cmd":"focus","target":2,"source_pane":1}
 {"cmd":"send-text","target":2,"text":"hello"}
 {"cmd":"new-pane","command":"cargo test","cwd":"/repo","title":"tests","keep_open":true}
+{"cmd":"new-pane","command":"cargo watch","focus":true}
 {"cmd":"run-action","action":"toggle-float"}
 {"cmd":"capture-pane","target":2}
 {"cmd":"switch-workspace","index":2}

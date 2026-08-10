@@ -10,8 +10,8 @@ use crate::input::Action;
 use crate::ops::focus::{
     focus_pane_anywhere, move_focused_to_workspace, request_current_pane_focus, switch_workspace,
 };
-use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane};
-use crate::pty_events::send_key_to_session_client;
+use crate::pane_lifecycle::{find_pane_mut, spawn_interactive_pane_with_focus};
+use crate::pty_events::terminal_key_event_bytes;
 use crate::send_keys::{SendKeysItem, parse_send_keys_arg};
 use crate::state::{PaneId, PaneIdentity, WORKSPACE_COUNT};
 
@@ -65,6 +65,7 @@ pub(crate) fn handle_control_request(
             cwd,
             title,
             keep_open,
+            focus,
         } => {
             return new_pane(
                 ctx,
@@ -73,6 +74,7 @@ pub(crate) fn handle_control_request(
                 cwd,
                 title,
                 keep_open,
+                focus,
                 envelope.reply,
             );
         }
@@ -259,29 +261,82 @@ fn focus_target(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> ControlRespons
     ControlResponse::empty()
 }
 
+/// A resolved `send-text` / `send-keys` destination.
+struct InputTarget {
+    id: PaneId,
+    generation: u64,
+    modes: TerminalKeyModes,
+    /// The PTY accepts input now. When false the spawn is still in flight and bytes are queued as
+    /// type-ahead instead.
+    starting: bool,
+    client: Option<crate::session::client::SessionClient>,
+}
+
+/// Resolve and validate the pane a control input request targets.
+///
+/// A pane whose PTY is still starting is a valid target: its bytes are queued rather than rejected,
+/// which is what a person typing into a freshly split pane already gets. A pane that has exited or
+/// failed is not — those keep failing loudly, because nothing will ever read the input.
+fn control_input_target(
+    ctx: &mut Context<HyprmuxApp>,
+    target: Option<PaneId>,
+) -> std::result::Result<InputTarget, ControlResponse> {
+    if let Some(reason) = ctx.state.pane_input_block_reason() {
+        return Err(ControlResponse::error(reason));
+    }
+    let Some(id) = target.or(ctx.state.current().focused_pane) else {
+        return Err(ControlResponse::error("no target pane and no focused pane"));
+    };
+    let client = ctx.state.current().session_client.clone();
+    let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
+        return Err(ControlResponse::error(format!("pane {id} not found")));
+    };
+    let ready = pane.terminal.accepts_input();
+    if !ready && !pane.terminal.is_running() {
+        return Err(ControlResponse::error(format!(
+            "pane {id} PTY is not running"
+        )));
+    }
+    if ready && client.is_none() {
+        return Err(ControlResponse::error(format!(
+            "pane {id} session is not connected"
+        )));
+    }
+    Ok(InputTarget {
+        id,
+        generation: pane.pty_generation,
+        modes: pane.terminal.snapshot().key_modes,
+        starting: !ready,
+        client,
+    })
+}
+
+/// Write control input to the PTY, or append it to the pane's type-ahead queue while the spawn is
+/// still in flight (see [`crate::state::State::pending_control_input`]).
+fn deliver_control_input(ctx: &mut Context<HyprmuxApp>, target: &InputTarget, bytes: Vec<u8>) {
+    if target.starting {
+        ctx.state
+            .pending_control_input
+            .entry((target.id, target.generation))
+            .or_default()
+            .extend(bytes);
+        return;
+    }
+    if let Some(client) = target.client.as_ref() {
+        client.send_input(target.id, target.generation, bytes);
+    }
+}
+
 fn send_text(
     ctx: &mut Context<HyprmuxApp>,
     target: Option<PaneId>,
     text: String,
 ) -> ControlResponse {
-    if let Some(reason) = ctx.state.pane_input_block_reason() {
-        return ControlResponse::error(reason);
-    }
-    let id = target.or(ctx.state.current().focused_pane);
-    let Some(id) = id else {
-        return ControlResponse::error("no target pane and no focused pane");
+    let target = match control_input_target(ctx, target) {
+        Ok(target) => target,
+        Err(response) => return response,
     };
-    let client = ctx.state.current().session_client.clone();
-    let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
-        return ControlResponse::error(format!("pane {id} not found"));
-    };
-    if !pane.terminal.accepts_input() {
-        return ControlResponse::error(format!("pane {id} PTY is not ready"));
-    }
-    let Some(client) = client else {
-        return ControlResponse::error(format!("pane {id} session is not connected"));
-    };
-    client.send_input(id, pane.pty_generation, text.into_bytes());
+    deliver_control_input(ctx, &target, text.into_bytes());
     ControlResponse::empty()
 }
 
@@ -291,51 +346,33 @@ fn send_keys(
     keys: Vec<String>,
     literal: bool,
 ) -> ControlResponse {
-    if let Some(reason) = ctx.state.pane_input_block_reason() {
-        return ControlResponse::error(reason);
-    }
-    let id = target.or(ctx.state.current().focused_pane);
-    let Some(id) = id else {
-        return ControlResponse::error("no target pane and no focused pane");
-    };
-    let client = ctx.state.current().session_client.clone();
-    let Some(pane) = find_pane_mut(&mut ctx.state, id).filter(|pane| !pane.closing) else {
-        return ControlResponse::error(format!("pane {id} not found"));
-    };
-    if !pane.terminal.accepts_input() {
-        return ControlResponse::error(format!("pane {id} PTY is not ready"));
-    }
-    let Some(client) = client else {
-        return ControlResponse::error(format!("pane {id} session is not connected"));
+    let target = match control_input_target(ctx, target) {
+        Ok(target) => target,
+        Err(response) => return response,
     };
 
-    // Parse every argument before sending any so invalid input never reaches the PTY.
-    // A mid-loop send failure can still leave earlier keys already delivered; callers that
-    // retry on error should treat the pane as partially updated.
-    let mut items = Vec::with_capacity(keys.len());
+    // Encode every argument before writing any so invalid input never reaches the PTY, and so a
+    // queued batch is all-or-nothing rather than half-written when a later key is unrepresentable.
+    let mut bytes = Vec::new();
     for key in &keys {
-        match parse_send_keys_arg(key, literal) {
-            Ok(item) => items.push(item),
+        let item = match parse_send_keys_arg(key, literal) {
+            Ok(item) => item,
             Err(message) => return ControlResponse::error(message),
+        };
+        match item {
+            SendKeysItem::Text(text) => bytes.extend(text.into_bytes()),
+            SendKeysItem::Key(event) => {
+                let Some(encoded) = terminal_key_event_bytes(event, target.modes) else {
+                    return ControlResponse::error(
+                        "key is not representable for session forwarding yet",
+                    );
+                };
+                bytes.extend(encoded);
+            }
         }
     }
 
-    let modes = pane.terminal.snapshot().key_modes;
-    let generation = pane.pty_generation;
-    for item in items {
-        match item {
-            SendKeysItem::Text(text) => {
-                client.send_input(id, generation, text.into_bytes());
-            }
-            SendKeysItem::Key(event) => {
-                if let Err(message) =
-                    send_key_to_session_client(&client, id, generation, event, modes)
-                {
-                    return ControlResponse::error(message);
-                }
-            }
-        }
-    }
+    deliver_control_input(ctx, &target, bytes);
     ControlResponse::empty()
 }
 
@@ -437,6 +474,7 @@ fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_pane(
     ctx: &mut Context<HyprmuxApp>,
     source: Option<PaneId>,
@@ -444,6 +482,7 @@ fn new_pane(
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
+    focus: bool,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
     if !ctx.state.is_controller() {
@@ -458,6 +497,7 @@ fn new_pane(
             cwd: cwd.clone(),
             title: title.clone(),
             keep_open,
+            focus,
         },
     ) {
         ctx.state.pending_control_reply = Some(reply);
@@ -478,13 +518,74 @@ fn new_pane(
         cwd,
         title,
         keep_open,
+        focus,
     );
-    let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
-        id,
-        accepted: true,
-        pty_ready: false,
-    }));
+    hold_spawn_reply(ctx, id, reply);
     update
+}
+
+/// How long a held `new-pane` reply waits for the PTY before answering `pty_ready:false` anyway.
+/// The control connection gives up at 10s (see [`crate::control::handle_connection`]), so this has
+/// to leave room for the reply to travel back; a remote spawn over a slow SSH link is the case that
+/// actually uses the budget.
+const SPAWN_READY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Park a `new-pane` reply until the pane's PTY reports ready, so the answer describes readiness
+/// rather than acceptance. Falls back to answering immediately when there is no command link to arm
+/// the deadline with — without one nothing would ever release the reply.
+pub(crate) fn hold_spawn_reply(
+    ctx: &mut Context<HyprmuxApp>,
+    id: PaneId,
+    reply: std::sync::mpsc::Sender<ControlResponse>,
+) {
+    let generation =
+        crate::pane_lifecycle::find_pane(&ctx.state, id).map(|pane| pane.pty_generation);
+    let (Some(generation), Some(link)) = (generation, ctx.state.command_link.clone()) else {
+        let _ = reply.send(ControlResponse::ok(NewPaneAccepted {
+            id,
+            accepted: true,
+            pty_ready: false,
+        }));
+        return;
+    };
+    let epoch = ctx.state.runtime_epoch;
+    ctx.state
+        .pending_spawn_replies
+        .insert((epoch, id, generation), reply);
+    link.send_after(
+        SPAWN_READY_DEADLINE,
+        crate::Msg::SpawnReplyDeadline {
+            epoch,
+            pane_id: id,
+            generation,
+        },
+    );
+}
+
+/// Answer a held `new-pane` reply. `ready` is the pane's real PTY state; `error` replaces the
+/// success payload when the spawn failed outright.
+pub(crate) fn resolve_spawn_reply(
+    state: &mut crate::state::State,
+    epoch: u64,
+    pane_id: PaneId,
+    generation: u64,
+    ready: bool,
+    error: Option<&str>,
+) {
+    let Some(reply) = state
+        .pending_spawn_replies
+        .remove(&(epoch, pane_id, generation))
+    else {
+        return;
+    };
+    let _ = reply.send(match error {
+        Some(message) => ControlResponse::error(message),
+        None => ControlResponse::ok(NewPaneAccepted {
+            id: pane_id,
+            accepted: true,
+            pty_ready: ready,
+        }),
+    });
 }
 
 /// Spawn a pane once a session client is available (shared by the live control path and the
@@ -496,6 +597,7 @@ pub(crate) fn new_pane_after_session(
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
+    focus: bool,
 ) -> (PaneId, Update) {
     if !ctx.state.is_controller() {
         return (0, Update::full());
@@ -511,9 +613,11 @@ pub(crate) fn new_pane_after_session(
         cwd,
         title,
         keep_open,
+        focus,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_new_pane(
     ctx: &mut Context<HyprmuxApp>,
     source_workspace: usize,
@@ -522,6 +626,7 @@ fn spawn_new_pane(
     cwd: Option<String>,
     title: Option<String>,
     keep_open: bool,
+    focus: bool,
 ) -> (PaneId, Update) {
     let mut identity = PaneIdentity {
         command,
@@ -532,7 +637,7 @@ fn spawn_new_pane(
     if let Some(title) = title {
         identity.set_custom_title(title);
     }
-    spawn_interactive_pane(ctx, source_workspace, source, identity)
+    spawn_interactive_pane_with_focus(ctx, source_workspace, source, identity, Some(focus))
 }
 
 fn workspace_for_source(
@@ -667,6 +772,271 @@ mod tests {
             .expect("spawn control status test thread")
             .join()
             .expect("control status test thread completes");
+    }
+
+    /// A backend whose mount has delivered the command link, which `hold_spawn_reply` needs to arm
+    /// its deadline; without one it answers immediately and the held-reply behavior never runs.
+    fn settled_backend() -> TestBackend<crate::HyprmuxApp> {
+        let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while backend.state().command_link.is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mount never delivered the command link"
+            );
+            backend.pump().expect("settle the mount");
+            std::thread::yield_now();
+        }
+        backend
+    }
+
+    fn attach_test_session(
+        backend: &mut TestBackend<crate::HyprmuxApp>,
+    ) -> mpsc::Receiver<ClientOutbound> {
+        let (client, outbound) = SessionClient::test_channel();
+        let state = backend.state_mut();
+        state.current_mut().session_attached = true;
+        state.current_mut().session_client = Some(client);
+        outbound
+    }
+
+    fn new_pane_request(
+        focus: bool,
+    ) -> (
+        ControlEnvelope,
+        mpsc::Receiver<crate::control::ControlResponse>,
+    ) {
+        let (reply, response) = mpsc::channel();
+        (
+            ControlEnvelope {
+                request: ControlRequest {
+                    command: ControlCommand::NewPane {
+                        command: None,
+                        cwd: None,
+                        title: None,
+                        keep_open: false,
+                        focus,
+                    },
+                    source_pane: None,
+                },
+                reply,
+            },
+            response,
+        )
+    }
+
+    #[test]
+    fn new_pane_leaves_focus_put_and_answers_only_once_the_pty_is_ready() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                attach_test_session(&mut backend);
+                let focused_before = backend.state().current().focused_pane;
+
+                let (envelope, response) = new_pane_request(false);
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .expect("dispatch new-pane");
+
+                // Acceptance alone must not answer: the caller is told about readiness, not about
+                // the request having been received.
+                assert!(
+                    response.try_recv().is_err(),
+                    "reply was sent before the PTY reported ready"
+                );
+                assert_eq!(
+                    backend.state().current().focused_pane,
+                    focused_before,
+                    "an automation spawn moved focus"
+                );
+
+                let spawned = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .map(|pane| (pane.id, pane.pty_generation))
+                    .max_by_key(|(id, _)| *id)
+                    .expect("the pane was created");
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::SessionSpawnResult {
+                        epoch,
+                        pane_id: spawned.0,
+                        generation: spawned.1,
+                        pid: Some(4242),
+                        ok: true,
+                        error: None,
+                    })
+                    .expect("dispatch spawn result");
+
+                let response = response.try_recv().expect("reply released by spawn result");
+                assert!(response.ok);
+                let data = response.data.unwrap();
+                assert_eq!(data["id"], spawned.0);
+                assert_eq!(data["pty_ready"], true);
+                assert_eq!(
+                    backend.state().current().focused_pane,
+                    focused_before,
+                    "focus moved when the spawn completed"
+                );
+            })
+            .expect("spawn new-pane readiness test thread")
+            .join()
+            .expect("new-pane readiness test thread completes");
+    }
+
+    #[test]
+    fn new_pane_with_focus_moves_focus_to_the_new_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                attach_test_session(&mut backend);
+                let focused_before = backend.state().current().focused_pane;
+
+                let (envelope, _response) = new_pane_request(true);
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .expect("dispatch new-pane --focus");
+
+                let focused_after = backend.state().current().focused_pane;
+                assert_ne!(focused_after, focused_before);
+                assert!(focused_after.is_some());
+            })
+            .expect("spawn new-pane focus test thread")
+            .join()
+            .expect("new-pane focus test thread completes");
+    }
+
+    #[test]
+    fn a_failed_spawn_answers_the_held_new_pane_reply_with_an_error() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                attach_test_session(&mut backend);
+
+                let (envelope, response) = new_pane_request(false);
+                backend
+                    .dispatch(crate::Msg::ControlRequest(envelope))
+                    .expect("dispatch new-pane");
+                let spawned = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .map(|pane| (pane.id, pane.pty_generation))
+                    .max_by_key(|(id, _)| *id)
+                    .expect("the pane was created");
+                let epoch = backend.state().runtime_epoch;
+
+                backend
+                    .dispatch(crate::Msg::SessionSpawnResult {
+                        epoch,
+                        pane_id: spawned.0,
+                        generation: spawned.1,
+                        pid: None,
+                        ok: false,
+                        error: Some("no such file".into()),
+                    })
+                    .expect("dispatch failed spawn result");
+
+                let response = response.try_recv().expect("reply released by spawn result");
+                assert!(!response.ok);
+                assert_eq!(response.error.as_deref(), Some("no such file"));
+            })
+            .expect("spawn failed-spawn test thread")
+            .join()
+            .expect("failed-spawn test thread completes");
+    }
+
+    #[test]
+    fn input_for_a_starting_pane_is_queued_and_flushed_once_the_pty_is_ready() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                let outbound = attach_test_session(&mut backend);
+                {
+                    let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
+                    pane.pty_generation = 4;
+                    pane.terminal.status = ManagedTerminalStatus::Starting;
+                }
+
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::SendText {
+                                target: Some(1),
+                                text: "cargo test\n".into(),
+                            },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch send-text at a starting pane");
+                assert!(response.recv().unwrap().ok);
+                assert!(
+                    outbound.try_recv().is_err(),
+                    "input reached the PTY before it was ready"
+                );
+
+                let epoch = backend.state().runtime_epoch;
+                backend
+                    .dispatch(crate::Msg::SessionSpawnResult {
+                        epoch,
+                        pane_id: 1,
+                        generation: 4,
+                        pid: Some(11),
+                        ok: true,
+                        error: None,
+                    })
+                    .expect("dispatch spawn result");
+
+                assert!(outbound.try_iter().any(|message| matches!(
+                    message,
+                    ClientOutbound::PaneInput {
+                        pane_id: 1,
+                        generation: 4,
+                        ref bytes,
+                    } if bytes == b"cargo test\n"
+                )));
+            })
+            .expect("spawn queued-input test thread")
+            .join()
+            .expect("queued-input test thread completes");
+    }
+
+    #[test]
+    fn input_for_a_pane_that_is_not_running_still_fails() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = settled_backend();
+                attach_test_session(&mut backend);
+                backend.state_mut().current_mut().workspaces[0].panes[0]
+                    .terminal
+                    .status = ManagedTerminalStatus::Exited(0);
+
+                let (reply, response) = mpsc::channel();
+                backend
+                    .dispatch(crate::Msg::ControlRequest(ControlEnvelope {
+                        request: ControlRequest {
+                            command: ControlCommand::SendText {
+                                target: Some(1),
+                                text: "hi".into(),
+                            },
+                            source_pane: None,
+                        },
+                        reply,
+                    }))
+                    .expect("dispatch send-text at an exited pane");
+                let response = response.recv().unwrap();
+                assert!(!response.ok);
+                assert_eq!(response.error.as_deref(), Some("pane 1 PTY is not running"));
+            })
+            .expect("spawn exited-pane input test thread")
+            .join()
+            .expect("exited-pane input test thread completes");
     }
 
     #[test]

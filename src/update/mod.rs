@@ -362,6 +362,11 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
             pane_id,
             generation,
         } => session::replay_input_deadline(ctx, epoch, pane_id, generation),
+        Msg::SpawnReplyDeadline {
+            epoch,
+            pane_id,
+            generation,
+        } => session::spawn_reply_deadline(ctx, epoch, pane_id, generation),
         Msg::SessionError { epoch, message } => session::error(ctx, epoch, message),
         Msg::SessionEvicted { epoch, message } => session::evicted(ctx, epoch, message),
         Msg::SessionRenamed {

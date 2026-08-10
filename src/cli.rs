@@ -402,8 +402,17 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "split" | "new-pane" => {
-                let command = iter.next();
-                reject_trailing_control_args(&mut iter, "split")?;
+                let mut command = None;
+                let mut focus = false;
+                for arg in iter.by_ref() {
+                    match arg.as_str() {
+                        "--focus" => focus = true,
+                        _ if command.is_none() => command = Some(arg),
+                        _ => {
+                            return Err(format!("unexpected argument `{arg}` after split"));
+                        }
+                    }
+                }
                 return Ok(ParsedCli::Control(ControlCli {
                     socket,
                     request: control_request(control::ControlCommand::NewPane {
@@ -411,6 +420,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         cwd: None,
                         title: None,
                         keep_open: false,
+                        focus,
                     }),
                 }));
             }
@@ -793,7 +803,7 @@ USAGE:
     hyprmux [--socket PATH] send-text <TEXT>
     hyprmux [--socket PATH] status <VALUE> [--reason <TEXT>]
     hyprmux [--socket PATH] status --clear
-    hyprmux [--socket PATH] split [COMMAND]
+    hyprmux [--socket PATH] split [COMMAND] [--focus]
     hyprmux [--socket PATH] run-action <ACTION_ID>
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
                             [--scrollback <N|full>] [--last-output]
@@ -818,6 +828,7 @@ OPTIONS:
         --pick            Open the session picker at startup when a named session exists
         --read-only       Attach as a viewer that cannot type or control the layout
         --profile <NAME>  Seed an explicit new session from this profile
+        --focus           split/new-pane: move focus to the new pane (default: leave focus put)
 
 {endpoint_help}
 
@@ -902,8 +913,9 @@ mod tests {
             "send-keys",
             "capture-pane",
             "status --clear",
-            "pty_ready:false",
-            "no CLI wait or readiness primitive",
+            "pty_ready:true",
+            "does **not** move focus",
+            "queued as type-ahead",
             "hyprmux list-sessions",
             "hyprmux kill-session <NAME>",
             "read-only",
@@ -1126,6 +1138,50 @@ mod tests {
             .is_err()
         );
         assert!(parse_cli_args(vec!["send-text".into(), "hi".into(), "extra".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_split_defaults_to_leaving_focus_put_and_takes_focus_in_either_order() {
+        let split = |args: Vec<String>| {
+            let ParsedCli::Control(control) = parse_cli_args(args).expect("parses") else {
+                panic!("expected control");
+            };
+            control.request.command
+        };
+        let expected = |command: Option<&str>, focus: bool| control::ControlCommand::NewPane {
+            command: command.map(str::to_string),
+            cwd: None,
+            title: None,
+            keep_open: false,
+            focus,
+        };
+
+        assert_eq!(
+            split(vec!["split".into(), "cargo test".into()]),
+            expected(Some("cargo test"), false)
+        );
+        assert_eq!(split(vec!["split".into()]), expected(None, false));
+        assert_eq!(
+            split(vec!["split".into(), "cargo test".into(), "--focus".into()]),
+            expected(Some("cargo test"), true)
+        );
+        assert_eq!(
+            split(vec![
+                "new-pane".into(),
+                "--focus".into(),
+                "cargo test".into()
+            ]),
+            expected(Some("cargo test"), true)
+        );
+        assert_eq!(
+            split(vec!["split".into(), "--focus".into()]),
+            expected(None, true)
+        );
+
+        assert!(
+            parse_cli_args(vec!["split".into(), "one".into(), "two".into()]).is_err(),
+            "a second positional is still rejected"
+        );
     }
 
     #[test]

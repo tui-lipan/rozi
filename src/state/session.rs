@@ -26,6 +26,7 @@ pub enum PendingSessionAction {
         cwd: Option<String>,
         title: Option<String>,
         keep_open: bool,
+        focus: bool,
     },
     Popup {
         command: String,

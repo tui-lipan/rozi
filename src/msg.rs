@@ -347,6 +347,14 @@ pub enum Msg {
         pane_id: PaneId,
         generation: u64,
     },
+    /// Fallback deadline for a held `new-pane` control reply (see
+    /// [`crate::state::State::pending_spawn_replies`]): the spawn result has not arrived, so answer
+    /// with the readiness the pane actually reached rather than leaving the caller to time out.
+    SpawnReplyDeadline {
+        epoch: u64,
+        pane_id: PaneId,
+        generation: u64,
+    },
     SessionOutput {
         epoch: u64,
         pane_id: PaneId,

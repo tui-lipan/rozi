@@ -40,6 +40,29 @@ fn agent_pane(
     pane
 }
 
+fn slot(
+    id: &str,
+    title: &str,
+    status: &str,
+    reason: Option<&str>,
+    active: bool,
+) -> hyprmux::session::protocol::AgentSlot {
+    hyprmux::session::protocol::AgentSlot {
+        id: id.to_string(),
+        title: title.to_string(),
+        status: status.to_string(),
+        reason: reason.map(str::to_string),
+        active,
+        // Dated now, so a rendered elapsed time is a small plausible value.
+        work_started_at: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        ),
+    }
+}
+
 /// The same pane, plus the Git project the session server resolved for its cwd.
 fn agent_pane_in_project(
     id: PaneId,
@@ -136,7 +159,11 @@ fn agents_tab_renders_project_groups() {
             // at it, not on repeating a status the glyph column already carries.
             assert!(sidebar.iter().any(|line| line.contains("needs approval")));
             assert!(sidebar.iter().any(|line| line.contains("0s")));
-            assert!(!sidebar.iter().any(|line| line.contains("blocked")));
+            assert!(
+                !sidebar
+                    .iter()
+                    .any(|line| line.to_ascii_lowercase().contains("blocked"))
+            );
             // An agent-defined status has no glyph of its own, so its word survives.
             assert!(sidebar.iter().any(|line| line.contains("compacting")));
             // A finished-unseen agent shows the filled attention pulse.
@@ -267,4 +294,81 @@ fn focusing_a_finished_agent_clears_its_pulse() {
         .expect("spawn focus-clears-pulse thread")
         .join()
         .expect("focus-clears-pulse completes");
+}
+
+/// A pane that publishes its own agents renders one row each, named after the agent and numbered
+/// so the rows are distinguishable, with each slot's own title as its activity.
+#[test]
+fn published_slots_render_one_numbered_row_each() {
+    std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.set_viewport(Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 30,
+            });
+            {
+                let state = backend.state_mut();
+                state.sidebar_visible = true;
+                state.config.sidebar.tabs = vec![SidebarTab::Agents];
+                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+                let mut publisher =
+                    agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/hyprmux"));
+                publisher.terminal.slots = vec![
+                    slot("ses_a", "audit the widget layer", "working", None, true),
+                    slot(
+                        "ses_b",
+                        "fix the flaky test",
+                        "blocked",
+                        Some("permission required"),
+                        false,
+                    ),
+                    slot("ses_c", "update the changelog", "idle", None, false),
+                    // Titled after the agent itself, so it has no activity to show and its
+                    // detail line falls back to the state word.
+                    slot("ses_d", "OpenCode", "idle", None, false),
+                ];
+                state.current_mut().workspaces[0].panes = vec![publisher];
+            }
+            backend.render();
+            let lines = backend.capture_frame().to_fixed_grid_lines();
+            let sidebar: Vec<String> = lines
+                .iter()
+                .map(|line| line.chars().take(32).collect())
+                .collect();
+            for line in &sidebar {
+                println!("{line}");
+            }
+
+            // The name column keeps the agent and adds the slot's position.
+            for name in ["OpenCode #1", "OpenCode #2", "OpenCode #3"] {
+                assert!(
+                    sidebar.iter().any(|line| line.contains(name)),
+                    "sidebar shows {name:?}"
+                );
+            }
+            // Each slot's own title is its activity, and a published reason outranks it.
+            assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
+            assert!(
+                sidebar
+                    .iter()
+                    .any(|line| line.contains("permission required"))
+            );
+            // A slot with nothing to say about its work falls back to the state word, which is
+            // capitalized like the rest of the chrome rather than echoing the wire value.
+            assert!(
+                sidebar.iter().any(|line| line.contains("Idle")),
+                "a slot with no activity shows its state word"
+            );
+            assert!(
+                !sidebar.iter().any(|line| line.contains("idle")),
+                "the lowercase wire value must not reach the screen"
+            );
+        })
+        .expect("spawn published slots render thread")
+        .join()
+        .expect("published slots render completes");
 }

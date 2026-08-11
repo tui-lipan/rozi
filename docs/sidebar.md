@@ -128,9 +128,10 @@ configured sidebar width.
 The detail line always names a subject, so the elapsed time is never a bare number with nothing to
 modify. Where there is an activity, that is the subject and the status word is dropped — `working`,
 `blocked`, `done`, and `idle` each have their own themed glyph, so repeating them in text would only
-spend width. Where there is no activity, the status word takes the slot instead (`idle`). A
-custom status such as `compacting` renders as a neutral `•` and keeps its word either way, having
-no glyph of its own to lean on.
+spend width. Where there is no activity, the status word takes the slot instead, capitalized like
+the rest of the chrome (`Idle`) rather than echoing the value on the wire. A custom status such as
+`compacting` renders as a neutral `•` and keeps its word either way, having no glyph of its own to
+lean on — and keeps the publisher's own spelling, which is not hyprmux's to normalize.
 
 Agents are grouped by project: the Git repository containing the working directory the session
 server reports for the pane, falling back to the working directory itself outside a repository. An
@@ -198,6 +199,23 @@ pane's project, directory, and branch — location belongs to the terminal, so g
 — but each keeps its own status, elapsed time, and finished pulse, and they sort among every other
 row by status. A blocked tab therefore reaches the top of the list even though the tab beside it in
 the same pane is still working.
+
+A slot row is named after its agent and numbered by publish order, and its own title becomes its
+activity — the same shape every other row uses, where the name column says what a row *is* and the
+detail line says what it is doing:
+
+```text
+ ! OpenCode #2                1
+   0s permission required
+▍⠋ OpenCode #1                1
+▍  0s audit the widget layer
+ ○ OpenCode #3                1
+   update the changelog
+```
+
+The number is what separates one pane's rows from each other; without it three tabs of one program
+would read as three identical rows. A published reason outranks the slot's title, and a title that
+only repeats the agent's own name is dropped rather than shown beside it.
 
 Clicking a row focuses the pane and asks the program to bring that agent on screen. The filled
 marker follows what the program is showing rather than which pane is focused: a focused pane

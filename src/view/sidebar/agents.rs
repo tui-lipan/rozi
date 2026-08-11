@@ -111,6 +111,24 @@ fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<S
     Some(title.to_string())
 }
 
+/// What a published slot is doing, for its detail line.
+///
+/// The publisher's reason wins where it set one, exactly as a reported status beats a scraped
+/// title elsewhere; otherwise the slot's own title is the closest thing it has to a task. A title
+/// saying nothing the row does not already — the agent's own name — is dropped rather than
+/// repeated beside it.
+fn slot_activity(slot: &crate::session::protocol::AgentSlot, kind_label: &str) -> Option<String> {
+    slot.reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .or_else(|| {
+            let title = strip_agent_title_prefix(strip_title_decoration(&slot.title), kind_label);
+            (!title.is_empty() && !title.eq_ignore_ascii_case(kind_label)).then_some(title)
+        })
+        .map(str::to_string)
+}
+
 /// Drop the status glyph agents prefix their title with (`✳`, `⏺`, `●`). The row already has a
 /// glyph column, so a second one beside the text is noise. Only non-ASCII symbols go — ASCII
 /// punctuation is load-bearing in a real title (`~/repo`, `[2/7] running tests`).
@@ -230,11 +248,18 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         .map(|(index, slot)| {
                             let ui = pane.terminal.slot_ui.get(&slot.id);
                             AgentRow {
-                                title: slot.title.clone(),
+                                // The name column answers "what is this", and for every other row
+                                // that is the agent. Slots keep it and add their position, so a
+                                // pane's rows are distinguishable at a glance and still read as
+                                // the same program; the slot's own title is what it is *doing*,
+                                // which belongs on the detail line with every other activity.
+                                title: format!(
+                                    "{} #{}",
+                                    detected.kind.label(),
+                                    index.saturating_add(1)
+                                ),
                                 status: Some(slot.status.clone()),
-                                // A publisher's reason is authoritative; the pane title only ever
-                                // describes whichever slot it currently draws.
-                                activity: slot.reason.clone(),
+                                activity: slot_activity(slot, detected.kind.label()),
                                 age: pane.terminal.slot_age(slot),
                                 run: ui.and_then(|ui| ui.last_run),
                                 finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
@@ -531,10 +556,22 @@ fn is_finished_quiet(status: &str, finished_unseen: bool) -> bool {
 /// status the agent last reported, which is usually "idle" — idle describes the pane, done
 /// describes the run that just ended.
 fn row_status_label(status: &str, finished_unseen: bool) -> String {
-    if is_finished_quiet(status, finished_unseen) {
-        return pane_status::DONE.to_string();
+    let value = if is_finished_quiet(status, finished_unseen) {
+        pane_status::DONE
+    } else {
+        normalized_status(status)
+    };
+    // A well-known state is chrome: it labels the row rather than continuing a sentence, so it is
+    // capitalized like the headings and badges around it. A custom status keeps the publisher's
+    // own spelling, which may be deliberate and is not ours to normalize.
+    if !status_is_canonical(value) {
+        return value.to_string();
     }
-    status.to_string()
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The glyph and color a row shows: the plain status glyph, except a finished-unseen agent shows a
@@ -765,7 +802,61 @@ mod tests {
             "one pane's rows keep the publisher's own order among themselves"
         );
         assert!(rows.iter().all(|row| row.pane_id == 1));
-        assert_eq!(rows[1].title, "tab b");
+        // The name column stays the agent, numbered so one pane's rows are distinguishable; the
+        // slot's own title is what it is doing, and moves to the detail line.
+        assert_eq!(rows[1].title, "Claude Code #2");
+        assert_eq!(rows[1].activity.as_deref(), Some("tab b"));
+    }
+
+    #[test]
+    fn a_slots_reason_outranks_its_title_on_the_detail_line() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+            reason: Some("permission required".into()),
+            ..slot("a", "blocked", true)
+        }];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows[0].title, "Claude Code #1");
+        assert_eq!(rows[0].activity.as_deref(), Some("permission required"));
+    }
+
+    /// A slot titled after the agent itself would repeat the name column beside it.
+    #[test]
+    fn a_slot_titled_after_its_agent_shows_no_activity() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+            title: "Claude Code".into(),
+            ..slot("a", "idle", true)
+        }];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        assert_eq!(agent_rows(&state)[0].activity, None);
+    }
+
+    #[test]
+    fn well_known_states_are_capitalized_and_custom_spelling_is_not() {
+        for (status, expected) in [
+            ("idle", "Idle"),
+            ("working", "Working"),
+            ("blocked", "Blocked"),
+            ("done", "Done"),
+        ] {
+            assert_eq!(row_status_label(status, false), expected);
+        }
+        assert_eq!(
+            row_status_label("compacting", false),
+            "compacting",
+            "a publisher's own word is not ours to normalize"
+        );
+        assert_eq!(
+            row_status_label("idle", true),
+            "Done",
+            "a finished-unseen agent reads Done, capitalized like the rest"
+        );
     }
 
     /// The point of the feature: a blocked tab has to reach the top of the list even though the

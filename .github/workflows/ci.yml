@@ -49,6 +49,17 @@ jobs:
         working-directory: hyprmux
         run: cargo build --locked --release
 
+  # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
+  # ships in this repository with its own tests. Linux only: it is platform-independent JavaScript,
+  # so running it on all three would only buy a slower matrix.
+  integrations:
+    name: integrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test the OpenCode status plugin
+        run: node --test integrations/opencode/*.test.mjs
+
   audit:
     name: audit
     runs-on: ubuntu-latest

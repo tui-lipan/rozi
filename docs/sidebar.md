@@ -198,6 +198,12 @@ Install the included plugin by linking or copying
 OpenCode inside hyprmux. The plugin has no package dependencies and does nothing outside hyprmux.
 It uses the injected `HYPRMUX_SOCKET` and `HYPRMUX_PANE` values to update only its own pane.
 
+This is the recommended setup for OpenCode. A pane is one terminal but OpenCode is many sessions —
+a parent, its subagents, anything else open — and only the plugin can see all of them; the screen
+only ever shows one. The pane's status is the aggregate: blocked if any session is waiting on you,
+working if any is running, idle only once all of them are. A subagent finishing therefore does not
+end the parent's run, and a prompt in a session you are not looking at still reaches the sidebar.
+
 The **Sessions** tab discovers running named sessions and includes the currently attached session,
 including the current ephemeral session. Foreign ephemeral sessions are hidden. Discovery runs off
 the UI thread immediately when the visible tab is activated and refreshes while that tab remains

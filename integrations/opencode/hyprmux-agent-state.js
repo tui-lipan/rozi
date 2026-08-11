@@ -28,24 +28,35 @@ function publish(status, reason) {
 }
 
 export const HyprmuxAgentState = async () => {
-  const attention = new AttentionTracker()
+  const state = new AgentState()
   await publish("idle")
 
   return {
     event: async ({ event }) => {
-      const update = reduceAgentEvent(attention, event)
+      const update = reduceAgentEvent(state, event)
       if (update) await publish(update.status, update.reason)
     },
     dispose: async () => {
-      attention.clear()
+      state.clear()
       await publish("idle")
     },
   }
 }
 
-// Tracks actionable requests independently for every OpenCode session.
-export class AttentionTracker {
+const BLOCKED_REASON = { permission: "permission required", question: "answer required" }
+
+// Every OpenCode session behind one pane, and the single status that pane publishes for them.
+//
+// A pane is one PTY but OpenCode is many sessions: a parent, its subagents, and anything else
+// open. Each reports its own lifecycle events, so deriving the pane's status from whichever event
+// arrived last made a subagent going idle publish `idle` for the whole pane while the parent was
+// still working - and because a reported status outranks hyprmux's own screen detection, that read
+// as a finished run rather than as no information. The pane's status is an aggregate instead.
+export class AgentState {
   #requests = new Map()
+  #busy = new Map()
+  #errored = new Set()
+  #published
 
   add(sessionID, kind, id) {
     if (!requestIdentity(sessionID, id)) return false
@@ -55,6 +66,11 @@ export class AttentionTracker {
     if (!ids) byKind.set(kind, (ids = new Set()))
     const existed = ids.has(id)
     ids.add(id)
+    // A session is only ever asked for permission or an answer part-way through a run, so an
+    // unresolved prompt is itself evidence the session is working. Recording that here is what
+    // lets the answer resume `working` rather than dropping to `idle` for the moment before the
+    // next status event arrives - a dip that would read as a finished run.
+    this.#busy.set(sessionID, true)
     return !existed
   }
 
@@ -72,48 +88,120 @@ export class AttentionTracker {
     return this.#requests.has(sessionID)
   }
 
+  // A session's own state, independent of every other session behind this pane.
+  #sessionStatus(sessionID) {
+    const byKind = this.#requests.get(sessionID)
+    if (byKind) {
+      // Permission and answer prompts both block; name whichever arrived, preferring permission
+      // since it is the one that stops tool execution.
+      const kind = byKind.has("permission") ? "permission" : "question"
+      return { status: "blocked", reason: BLOCKED_REASON[kind] }
+    }
+    if (this.#errored.has(sessionID)) return { status: "blocked", reason: "session error" }
+    if (this.#busy.get(sessionID)) return { status: "working", reason: undefined }
+    return { status: "idle", reason: undefined }
+  }
+
+  // Severity order, not recency: the pane's row answers "is anything here demanding attention",
+  // so one blocked session outranks any number of working ones and any working session outranks
+  // the sessions that have finished.
+  aggregate() {
+    const sessions = new Set([
+      ...this.#requests.keys(),
+      ...this.#busy.keys(),
+      ...this.#errored,
+    ])
+    let working = false
+    for (const sessionID of sessions) {
+      const state = this.#sessionStatus(sessionID)
+      if (state.status === "blocked") return state
+      if (state.status === "working") working = true
+    }
+    return working ? { status: "working", reason: undefined } : { status: "idle", reason: undefined }
+  }
+
+  // The aggregate, but only when it differs from what the pane already shows. Returning `null`
+  // for an unchanged aggregate is what keeps a busy session's event stream from reconnecting to
+  // the control socket on every token.
+  settle() {
+    const next = this.aggregate()
+    if (this.#published && this.#published.status === next.status && this.#published.reason === next.reason) {
+      return null
+    }
+    this.#published = next
+    return next
+  }
+
+  setBusy(sessionID, busy) {
+    if (typeof sessionID !== "string" || sessionID.length === 0) return
+    // A session waiting on the user keeps whatever it was doing before the prompt. OpenCode still
+    // reports status while a prompt is open, and letting an `idle` through here would resolve the
+    // answer into a finished run instead of a resumed one.
+    if (this.has(sessionID)) return
+    this.#errored.delete(sessionID)
+    if (busy) this.#busy.set(sessionID, true)
+    else this.#busy.delete(sessionID)
+  }
+
+  setErrored(sessionID) {
+    if (typeof sessionID !== "string" || sessionID.length === 0) return
+    this.#errored.add(sessionID)
+  }
+
   clearSession(sessionID) {
-    if (typeof sessionID === "string" && sessionID.length > 0) this.#requests.delete(sessionID)
+    if (typeof sessionID !== "string" || sessionID.length === 0) return
+    this.#requests.delete(sessionID)
+    this.#busy.delete(sessionID)
+    this.#errored.delete(sessionID)
   }
 
   clear() {
     this.#requests.clear()
+    this.#busy.clear()
+    this.#errored.clear()
+    this.#published = undefined
   }
 }
 
 // Pure event reducer for OpenCode's permission/question lifecycle.
-// `null` means the existing pane status remains authoritative. In particular, unresolved
-// attention suppresses that session's ordinary working/idle events without affecting others.
-export function reduceAgentEvent(attention, event) {
+//
+// `null` means the pane's published status does not change - either the event moved a session the
+// aggregate does not currently speak for, or it moved nothing at all.
+export function reduceAgentEvent(state, event) {
   const properties = event?.properties ?? {}
   const sessionID = properties.sessionID
   switch (event?.type) {
     case "session.status":
-      if (attention.has(sessionID)) return null
-      return statusUpdate(properties.status?.type === "idle" ? "idle" : "working")
+      state.setBusy(sessionID, properties.status?.type !== "idle")
+      break
     case "session.idle":
-      return attention.has(sessionID) ? null : statusUpdate("idle")
+      state.setBusy(sessionID, false)
+      break
     case "session.error":
-      return statusUpdate("blocked", "session error")
+      state.setErrored(sessionID)
+      break
     case "permission.asked":
     case "permission.v2.asked":
-      attention.add(sessionID, "permission", properties.id)
-      return statusUpdate("blocked", "permission required")
+      state.add(sessionID, "permission", properties.id)
+      break
     case "question.asked":
-      attention.add(sessionID, "question", properties.id)
-      return statusUpdate("blocked", "answer required")
+      state.add(sessionID, "question", properties.id)
+      break
     case "permission.replied":
     case "permission.v2.replied":
-      return resolvedUpdate(attention, sessionID, "permission", properties.requestID)
+      state.resolve(sessionID, "permission", properties.requestID)
+      break
     case "question.replied":
     case "question.rejected":
-      return resolvedUpdate(attention, sessionID, "question", properties.requestID)
+      state.resolve(sessionID, "question", properties.requestID)
+      break
     case "session.deleted":
-      attention.clearSession(sessionID)
-      return null
+      state.clearSession(sessionID)
+      break
     default:
       return null
   }
+  return state.settle()
 }
 
 function requestIdentity(sessionID, id) {
@@ -123,14 +211,4 @@ function requestIdentity(sessionID, id) {
     typeof id === "string" &&
     id.length > 0
   )
-}
-
-function resolvedUpdate(attention, sessionID, kind, requestID) {
-  return attention.resolve(sessionID, kind, requestID) && !attention.has(sessionID)
-    ? statusUpdate("working")
-    : null
-}
-
-function statusUpdate(status, reason) {
-  return { status, reason }
 }

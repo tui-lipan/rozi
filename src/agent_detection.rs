@@ -1,13 +1,24 @@
 use crate::platform::process::{ForegroundJob, ForegroundProcess};
-use crate::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState};
+use crate::session::protocol::{AgentKind, DetectedAgentState};
+
+/// What one detection sweep saw.
+///
+/// Deliberately not [`crate::session::protocol::DetectedAgent`]: that type is the wire shape and
+/// has no way to say "recognized the agent, learned nothing about its state". The server resolves
+/// a `None` state against the pane's held state before anything leaves the process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AgentObservation {
+    pub kind: AgentKind,
+    pub state: Option<DetectedAgentState>,
+}
 
 pub(crate) fn detect(
     job: Option<&ForegroundJob>,
     screen: &str,
     title: &str,
-) -> Option<DetectedAgent> {
+) -> Option<AgentObservation> {
     let kind = identify_job(job?)?;
-    Some(DetectedAgent {
+    Some(AgentObservation {
         kind,
         state: detect_state(kind, screen, title),
     })
@@ -147,73 +158,94 @@ fn path_basename(value: &str) -> &str {
         .unwrap_or(value)
 }
 
-/// Claude Code keeps its spinner title running while an approval dialog waits, so the dialog itself
-/// is the only evidence that the run stopped for an answer. Every one of them is a question over a
-/// numbered choice list, but only the command approval spells "do you want to proceed?": the plan
-/// dialog asks "would you like to proceed?" and file approvals name the file. Match the choice list
-/// as well, so a transcript quoting one of these questions is not mistaken for a live dialog.
+/// Claude Code keeps its spinner title running while an approval dialog waits, so the dialog drawn
+/// on screen is the only evidence that the run stopped for an answer.
+///
+/// Match its *structure* - the selection cursor sitting on a numbered choice - rather than the
+/// question above it. Those questions are ordinary English that varies per dialog ("do you want to
+/// proceed?" for a command, "would you like to proceed?" under a written plan, the file's own name
+/// for an edit), and worse, any pane can have them on screen without a dialog being open: a
+/// transcript that discusses approvals reads as blocked under prose matching. A cursored numbered
+/// option is drawn only while a dialog is actually waiting.
 fn claude_choice_dialog(screen: &str) -> bool {
-    screen.contains("1. yes")
-        && [
-            "would you like to proceed?",
-            "ready to code?",
-            "do you want to",
-        ]
-        .iter()
-        .any(|question| screen.contains(question))
+    screen.lines().any(|line| {
+        let Some(option) = line.trim_start().strip_prefix('❯') else {
+            return false;
+        };
+        let option = option.trim_start();
+        let index: String = option.chars().take_while(char::is_ascii_digit).collect();
+        !index.is_empty() && option[index.len()..].starts_with(". ")
+    })
 }
 
-fn detect_state(kind: AgentKind, screen: &str, title: &str) -> DetectedAgentState {
+/// Screen text that means a run is in flight.
+///
+/// `esc interrupt` is OpenCode's current spelling; the longer forms belong to Claude Code and
+/// Codex. OpenCode's is not a prefix of any other, so matching it costs nothing here.
+const INTERRUPT_HINTS: &[&str] = &[
+    "esc to interrupt",
+    "esc again to interrupt",
+    "press esc to interrupt",
+    "ctrl+c to interrupt",
+    "esc interrupt",
+];
+
+/// OpenCode's subagent view, which replaces the composer and the status line - the only places a
+/// run's progress bar and interrupt hint are ever drawn - with a child-session navigator.
+///
+/// The parent's run continues underneath it. This screen simply cannot report on it, which is a
+/// different fact from seeing an idle prompt, and conflating the two turned every visit to a
+/// subagent into a finished run: the run clock restarted and a completion alert fired for work
+/// that never stopped. Match the navigator's own hint row rather than the heading, so a transcript
+/// that merely mentions a subagent is not mistaken for the view itself.
+fn opencode_subagent_view(screen: &str) -> bool {
+    screen.contains("parent up") && (screen.contains("prev left") || screen.contains("next right"))
+}
+
+/// The agent state a pane's screen provides evidence for.
+///
+/// `None` means the agent was recognized but the screen said nothing either way - it is *not*
+/// "idle". Only a positively observed prompt is idle. The server holds the previous state across
+/// a `None` (see `resolve_detected_agent`), which is what lets a run survive the user opening a
+/// different view inside the agent.
+fn detect_state(kind: AgentKind, screen: &str, title: &str) -> Option<DetectedAgentState> {
     let screen = screen.to_lowercase();
     let title = title.to_lowercase();
-    let blocked = [
-        "permission required",
-        "action required",
-        "do you want to proceed?",
-        "waiting for permission",
-        "allow command?",
-        "[y/n]",
-        "yes (y)",
-    ]
-    .iter()
-    .any(|pattern| screen.contains(pattern))
-        || title.contains("action required")
-        || (kind == AgentKind::Claude && claude_choice_dialog(&screen))
-        // Current OpenCode question prompts use this footer in every state: single choice,
-        // multi-select, custom answer, and review. Scope it to OpenCode so another program's
-        // ordinary dismiss hint cannot masquerade as an agent waiting for input.
-        || (kind == AgentKind::OpenCode
-            && screen.contains("esc dismiss")
-            && ["enter submit", "enter toggle", "enter confirm"]
-                .iter()
-                .any(|hint| screen.contains(hint)));
+    // Claude Code has an exact structural signature, so it decides on that alone. The loose prose
+    // patterns are the fallback for agents whose prompts we cannot recognize by shape; on a Claude
+    // pane they only add false positives, since "do you want to proceed?" is Claude's own wording
+    // and reads as blocked from any transcript that merely quotes it.
+    let blocked = if kind == AgentKind::Claude {
+        claude_choice_dialog(&screen)
+    } else {
+        [
+            "permission required",
+            "action required",
+            "do you want to proceed?",
+            "waiting for permission",
+            "allow command?",
+            "[y/n]",
+            "yes (y)",
+        ]
+        .iter()
+        .any(|pattern| screen.contains(pattern))
+            || title.contains("action required")
+            // Current OpenCode question prompts use this footer in every state: single choice,
+            // multi-select, custom answer, and review. Scope it to OpenCode so another program's
+            // ordinary dismiss hint cannot masquerade as an agent waiting for input.
+            || (kind == AgentKind::OpenCode
+                && screen.contains("esc dismiss")
+                && ["enter submit", "enter toggle", "enter confirm"]
+                    .iter()
+                    .any(|hint| screen.contains(hint)))
+    };
     if blocked {
-        return DetectedAgentState::Blocked;
+        return Some(DetectedAgentState::Blocked);
     }
 
-    let interrupt_hint = [
-        "esc to interrupt",
-        "esc again to interrupt",
-        "press esc to interrupt",
-        "ctrl+c to interrupt",
-    ]
-    .iter()
-    .any(|pattern| screen.contains(pattern));
-    let title_spinner = title.chars().any(|ch| {
-        matches!(
-            ch,
-            '\u{280b}'
-                | '\u{2819}'
-                | '\u{2839}'
-                | '\u{2838}'
-                | '\u{283c}'
-                | '\u{2834}'
-                | '\u{2826}'
-                | '\u{2827}'
-                | '\u{2807}'
-                | '\u{280f}'
-        )
-    });
+    let interrupt_hint = INTERRUPT_HINTS
+        .iter()
+        .any(|pattern| screen.contains(pattern));
     let opencode_progress = screen
         .chars()
         .fold((0usize, false), |(run, found), ch| {
@@ -230,15 +262,16 @@ fn detect_state(kind: AgentKind, screen: &str, title: &str) -> DetectedAgentStat
             .chars()
             .next()
             .is_some_and(|ch| ('\u{2800}'..='\u{28ff}').contains(&ch)),
-        AgentKind::OpenCode => interrupt_hint || opencode_progress || title_spinner,
-        AgentKind::Codex => title_spinner,
+        AgentKind::OpenCode => opencode_progress,
         _ => false,
     };
     if interrupt_hint || agent_working {
-        DetectedAgentState::Working
-    } else {
-        DetectedAgentState::Idle
+        return Some(DetectedAgentState::Working);
     }
+    if kind == AgentKind::OpenCode && opencode_subagent_view(&screen) {
+        return None;
+    }
+    Some(DetectedAgentState::Idle)
 }
 
 #[cfg(test)]
@@ -331,28 +364,29 @@ mod tests {
     #[test]
     fn screen_states_use_blocked_precedence_and_working_evidence() {
         assert_eq!(
-            detect_state(AgentKind::Claude, "Do you want to proceed?", "⠋ Working"),
-            DetectedAgentState::Blocked
+            detect_state(
+                AgentKind::Codex,
+                "Do you want to proceed?",
+                "codex ⠹ working"
+            ),
+            Some(DetectedAgentState::Blocked)
         );
         assert_eq!(
             detect_state(AgentKind::Claude, "", "⠋ Working"),
-            DetectedAgentState::Working
+            Some(DetectedAgentState::Working)
         );
         assert_eq!(
             detect_state(AgentKind::OpenCode, "esc to interrupt", ""),
-            DetectedAgentState::Working
+            Some(DetectedAgentState::Working)
+        );
+        // OpenCode's actual footer spelling, captured from 1.18.16: no "to".
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, "  ■■■⬝⬝⬝⬝⬝  esc interrupt", ""),
+            Some(DetectedAgentState::Working)
         );
         assert_eq!(
             detect_state(AgentKind::OpenCode, "status  ■⬝■⬝■", ""),
-            DetectedAgentState::Working
-        );
-        assert_eq!(
-            detect_state(AgentKind::OpenCode, "", "⠹ OpenCode"),
-            DetectedAgentState::Working
-        );
-        assert_eq!(
-            detect_state(AgentKind::Codex, "", "codex ⠹ working"),
-            DetectedAgentState::Working
+            Some(DetectedAgentState::Working)
         );
         for screen in [
             "Choose a target\nType your own answer\n↑↓ select  enter submit  esc dismiss",
@@ -362,23 +396,23 @@ mod tests {
         ] {
             assert_eq!(
                 detect_state(AgentKind::OpenCode, screen, ""),
-                DetectedAgentState::Blocked,
+                Some(DetectedAgentState::Blocked),
                 "question chrome should be blocked: {screen:?}"
             );
         }
         assert_eq!(
             detect_state(AgentKind::OpenCode, "enter submit", ""),
-            DetectedAgentState::Idle,
+            Some(DetectedAgentState::Idle),
             "a generic submit hint is not enough to identify the question dialog"
         );
         assert_eq!(
             detect_state(AgentKind::OpenCode, "log output quoting `esc dismiss`", ""),
-            DetectedAgentState::Idle,
+            Some(DetectedAgentState::Idle),
             "a transcript quoting one footer token is not a live question dialog"
         );
         assert_eq!(
             detect_state(AgentKind::Goose, "plain screen", ""),
-            DetectedAgentState::Idle
+            Some(DetectedAgentState::Idle)
         );
     }
 
@@ -397,26 +431,89 @@ mod tests {
      3. Tell Claude what to change";
         assert_eq!(
             detect_state(AgentKind::Claude, plan, "⠋ Investigate agent state"),
-            DetectedAgentState::Blocked
+            Some(DetectedAgentState::Blocked)
         );
         let edit = "Do you want to make this edit to agent_detection.rs?\n❯ 1. Yes\n  2. No";
         assert_eq!(
             detect_state(AgentKind::Claude, edit, "⠋ Investigate agent state"),
-            DetectedAgentState::Blocked
+            Some(DetectedAgentState::Blocked)
         );
+        // Arrowing down the list moves the cursor; the dialog is still waiting.
         assert_eq!(
             detect_state(
                 AgentKind::Claude,
-                "Ready to code? Would you like to proceed?",
+                &plan.replace("❯ 1.", "  1.\n   ❯ 2."),
                 ""
             ),
-            DetectedAgentState::Idle,
-            "a transcript quoting the questions is not a live dialog without its choice list"
+            Some(DetectedAgentState::Blocked)
         );
         assert_eq!(
             detect_state(AgentKind::OpenCode, plan, ""),
-            DetectedAgentState::Idle,
-            "Claude's dialog wording must not classify another agent's screen"
+            Some(DetectedAgentState::Idle),
+            "Claude's dialog shape must not classify another agent's screen"
+        );
+    }
+
+    #[test]
+    fn a_claude_pane_that_only_discusses_approvals_keeps_working() {
+        // Reduced from a pane that read as blocked while it was working: this detector under
+        // review, quoting every question it used to match, with no dialog open.
+        let transcript = "\
+● Checking the captured pane against each pattern:
+
+  'do you want to proceed?' -> False
+  'would you like to proceed?' -> True
+  Ready to code? appears only in the plan dialog, whose first option reads 1. Yes
+
+❯ Do you want to proceed with the commit?
+
+  ⠋ Deciding… (esc to interrupt)";
+        assert_eq!(
+            detect_state(AgentKind::Claude, transcript, "⠋ Fix agent state detection"),
+            Some(DetectedAgentState::Working)
+        );
+    }
+
+    #[test]
+    fn opencodes_subagent_view_reports_no_evidence_rather_than_idle() {
+        // Captured from opencode 1.18.16 (`ctrl+x down` from a session). The composer and the
+        // status line - the only places the run's progress bar and interrupt hint are drawn - are
+        // both replaced, so nothing on this screen speaks for the parent run still in flight.
+        let subagent = "\
+     ✓ Researcher Task — Audit src/widgets for unused exports
+       ↳ 2 toolcalls · 12.0s
+
+  ┃
+  ┃  Subagent (1 of 1) 100 (0%)                     Parent up  Prev left  Next right
+  ┃";
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, subagent, "OC | audit the widget layer"),
+            None,
+            "a subagent view knows nothing about the parent run and must not read as idle"
+        );
+
+        // The parent view of the same session, idle: composer and status line are back, so the
+        // absence of working evidence is now a real observation.
+        let parent = "\
+  ┃
+  ┃  Coder · GPT-4o OpenAI
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /mock/project                                    tab agents  ctrl+p commands";
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, parent, "OC | audit the widget layer"),
+            Some(DetectedAgentState::Idle)
+        );
+    }
+
+    #[test]
+    fn a_transcript_mentioning_subagents_is_not_the_subagent_view() {
+        let transcript = "\
+● The subagent finished. Opening it is `ctrl+x down`, and the navigator
+  offers Parent up to return to this session.";
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, transcript, ""),
+            Some(DetectedAgentState::Idle),
+            "prose naming one navigator hint is not the navigator itself"
         );
     }
 }

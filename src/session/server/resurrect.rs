@@ -988,8 +988,7 @@ mod tests {
             exited: None,
             log: None,
             runtime: protocol::PaneRuntimeState::default(),
-            last_agent_probe: None,
-            last_agent_detect: None,
+            agent: AgentScratch::default(),
             last_git_read: None,
             initial_cursor_report_primed: false,
         }

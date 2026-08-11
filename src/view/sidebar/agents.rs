@@ -43,14 +43,6 @@ pub(crate) struct AgentGroup {
     pub rows: Vec<AgentRow>,
 }
 
-fn detected_status(state: crate::session::protocol::DetectedAgentState) -> &'static str {
-    match state {
-        crate::session::protocol::DetectedAgentState::Idle => pane_status::IDLE,
-        crate::session::protocol::DetectedAgentState::Working => pane_status::WORKING,
-        crate::session::protocol::DetectedAgentState::Blocked => pane_status::BLOCKED,
-    }
-}
-
 fn normalized_status(value: &str) -> &str {
     value.trim()
 }
@@ -192,11 +184,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         workspace_index,
                         pane_index,
                         title: detected.kind.label().to_string(),
-                        status: Some(
-                            pane.terminal
-                                .agent_status()
-                                .unwrap_or_else(|| detected_status(detected.state).to_string()),
-                        ),
+                        // Always `Some`: `agent_status` returns `None` only when there is no
+                        // detected agent, and the filter above already established one.
+                        status: pane.terminal.agent_status(),
                         activity: activity_text(&pane.terminal, detected.kind.label()),
                         age: pane.terminal.status_age(),
                         run: pane.terminal.last_run,

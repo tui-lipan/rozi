@@ -169,8 +169,7 @@ impl SessionServer {
                         shell: request.shell,
                         env: request.env,
                         runtime: protocol::PaneRuntimeState::default(),
-                        last_agent_probe: None,
-                        last_agent_detect: None,
+                        agent: AgentScratch::default(),
                         last_git_read: None,
                         initial_cursor_report_primed: cfg!(windows),
                     },
@@ -208,8 +207,7 @@ impl SessionServer {
                             shell: request.shell,
                             env: request.env,
                             runtime: protocol::PaneRuntimeState::default(),
-                            last_agent_probe: None,
-                            last_agent_detect: None,
+                            agent: AgentScratch::default(),
                             last_git_read: None,
                             initial_cursor_report_primed: false,
                         },
@@ -420,6 +418,13 @@ impl SessionServer {
                 pane.pty = Some(pty);
                 pane.command_completed = true;
                 pane.exited = None;
+                // The pane id and generation survive this swap, so nothing else clears what was
+                // learned about the command that just exited. A held agent state, a cached
+                // detection fingerprint, or a stale `detected_agent` would otherwise be attributed
+                // to the shell now sitting in its place - which is a different program.
+                pane.agent = AgentScratch::default();
+                pane.runtime.detected_agent = None;
+                pane.runtime.work_started_at = None;
             }
             Err(_) => pane.exited = Some(code),
         }

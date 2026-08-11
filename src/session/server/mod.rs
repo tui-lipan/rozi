@@ -206,17 +206,9 @@ pub struct ServerPane {
     /// per-pane so `pane_meta()` can hand it out without re-deriving it from scratch on every call,
     /// and so change detection has a "previous value" to diff against.
     pub runtime: protocol::PaneRuntimeState,
-    /// Foreground identity and time of the last agent detection, so an idle pane can skip it.
-    ///
-    /// Detection sweeps every process on the host to find this pane's process-group members, which
-    /// at the 250 ms poll rate cost ~2% of a core per pane while nothing was happening. The
-    /// foreground program and command phase are both already computed cheaply, so an unchanged
-    /// pair means the sweep would rediscover exactly what is cached. See
-    /// [`AGENT_DETECT_REFRESH`](super::runtime::AGENT_DETECT_REFRESH) for the safety net that
-    /// still catches a wrapped process appearing without either changing.
-    pub last_agent_probe: Option<AgentProbe>,
-    /// When detection last actually swept, for the periodic refresh.
-    pub last_agent_detect: Option<std::time::Instant>,
+    /// Agent-detection scratch: never persisted, never on the wire, and reset as a unit whenever
+    /// the program behind this pane is replaced.
+    pub agent: AgentScratch,
     /// When this pane's project root and branch were last read from disk. A checkout changes the
     /// branch without the working directory moving, so unlike the rest of the runtime state this
     /// cannot be driven by a cwd change alone; see
@@ -232,6 +224,42 @@ pub struct ServerPane {
 pub struct AgentProbe {
     pub foreground_program: Option<String>,
     pub command_phase: protocol::PaneCommandPhase,
+}
+
+/// Per-pane agent-detection state that outlives a single poll.
+///
+/// Grouped so the places that must forget everything about the program behind a pane - a respawn,
+/// a `keep_open` shell swap - can do it in one assignment instead of remembering a list of fields.
+#[derive(Debug, Default)]
+pub struct AgentScratch {
+    /// Foreground identity at the last sweep, so an unchanged pane can skip the next one.
+    ///
+    /// Detection sweeps every process on the host to find this pane's process-group members, which
+    /// at the 250 ms poll rate cost ~2% of a core per pane while nothing was happening. The
+    /// foreground program and command phase are both already computed cheaply, so an unchanged
+    /// pair means the sweep would rediscover exactly what is cached. See
+    /// [`AGENT_DETECT_REFRESH`](super::runtime::AGENT_DETECT_REFRESH) for the safety net that
+    /// still catches a wrapped process appearing without either changing.
+    pub probe: Option<AgentProbe>,
+    /// When detection last actually swept, for the periodic refresh.
+    pub detected_at: Option<std::time::Instant>,
+    /// The last state a sweep positively observed, retained while later sweeps see no evidence.
+    pub hold: Option<AgentHold>,
+}
+
+/// A positively observed agent state, held across sweeps that observe nothing.
+///
+/// An agent that draws its run progress only for the view it is currently showing goes silent the
+/// moment the user opens a different one inside it - OpenCode's subagent view replaces the whole
+/// region the progress bar and interrupt hint live in. Treating that silence as "idle" ended the
+/// run: the elapsed clock restarted and a completion alert fired for work still in flight. Holding
+/// the last real observation instead keeps one run continuous across the detour.
+#[derive(Clone, Copy, Debug)]
+pub struct AgentHold {
+    pub state: protocol::DetectedAgentState,
+    /// When `state` was last positively observed. A silent sweep does not refresh this, so
+    /// [`AGENT_HOLD_MAX`](super::runtime::AGENT_HOLD_MAX) measures from the last real evidence.
+    pub observed_at: std::time::Instant,
 }
 
 /// One attached (or connecting) client. The stream is non-blocking; outbound frames are

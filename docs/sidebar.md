@@ -181,6 +181,15 @@ exposes recognizable progress or prompt markers. Agent integrations can publish 
 control socket; explicit `working` wins, while a detected prompt elevates over stale reported
 `idle` or `done`.
 
+A screen that shows no marker either way is not read as idle. Agents draw their progress only for
+the view they are currently showing — OpenCode's subagent view replaces the composer and status
+line outright — so a run would otherwise appear to finish the moment you looked at something else
+inside the agent, restarting its elapsed time and announcing a completion that never happened. The
+last state actually observed is held instead, and only a prompt drawn back on screen ends the run.
+A held state that goes fifteen minutes without any confirming evidence falls back to `idle`, which
+is a backstop for an agent detection lost track of rather than a limit on how long a run may take.
+Publishing status through the control socket avoids the guesswork entirely.
+
 ### OpenCode Status Plugin
 
 OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, and blocked states.

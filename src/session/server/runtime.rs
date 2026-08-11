@@ -20,7 +20,7 @@ const RUNTIME_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// How often agent detection re-sweeps even when the foreground program and command phase are
 /// unchanged, so a wrapped process that appears inside an unchanged foreground (a package runner
 /// launching an agent, say) is still noticed. Detection is far too expensive to run on every
-/// [`RUNTIME_POLL_INTERVAL`]; see `ServerPane::last_agent_probe`.
+/// [`RUNTIME_POLL_INTERVAL`]; see `AgentScratch::probe`.
 pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 
 /// How often a pane re-reads its project root and branch from disk. Both change without the cwd
@@ -29,6 +29,13 @@ pub(super) const AGENT_DETECT_REFRESH: Duration = Duration::from_secs(2);
 /// does. A read is an ancestor walk of `.git` probes plus one small file, cheap enough at this rate
 /// that it is not worth a finer trigger.
 pub(super) const GIT_REFRESH: Duration = Duration::from_secs(2);
+
+/// How long a held agent state survives with no confirming evidence.
+///
+/// Generous on purpose: this is a backstop for a pane whose agent the scraper permanently lost
+/// track of, not a limit on how long a run may take. A run that actually ends is caught as soon as
+/// the agent draws a prompt again, because that is positive idle evidence rather than silence.
+pub(super) const AGENT_HOLD_MAX: Duration = Duration::from_secs(15 * 60);
 
 impl SessionServer {
     pub(super) fn set_pane_status(
@@ -244,18 +251,24 @@ fn compute_runtime_state(
             foreground_program: foreground_program.clone(),
             command_phase,
         };
-        let stale = pane
-            .last_agent_probe
-            .as_ref()
-            .is_none_or(|last| *last != probe)
+        // A different foreground program is a different program: whatever was held describes
+        // something that is no longer running behind this pane.
+        if pane.agent.probe.as_ref().is_some_and(|last| *last != probe) {
+            pane.agent.hold = None;
+        }
+        let stale = pane.agent.probe.as_ref().is_none_or(|last| *last != probe)
             || pane
-                .last_agent_detect
+                .agent
+                .detected_at
                 .is_none_or(|at| at.elapsed() >= AGENT_DETECT_REFRESH);
         if stale {
-            pane.last_agent_probe = Some(probe);
-            pane.last_agent_detect = Some(Instant::now());
-            detect_pane_agent(pane, inspector, foreground_program.as_deref(), scan)
+            pane.agent.probe = Some(probe);
+            pane.agent.detected_at = Some(Instant::now());
+            let observed = detect_pane_agent(pane, inspector, foreground_program.as_deref(), scan);
+            resolve_detected_agent(observed, &mut pane.agent.hold, Instant::now())
         } else {
+            // The cached value is already resolved, and a skipped sweep observed nothing, so it
+            // must not refresh the hold's age - the cap measures from real evidence only.
             pane.runtime.detected_agent.clone()
         }
     } else {
@@ -332,12 +345,56 @@ fn next_work_started_at(
     )
 }
 
+/// Resolve one detection sweep into the state that leaves this process, maintaining `hold`.
+///
+/// Pure in `now` so the cap is testable without sleeping. The three outcomes are deliberately
+/// distinct: no agent at all drops the hold, a positive observation replaces it, and an
+/// observation that saw nothing reuses it until [`AGENT_HOLD_MAX`] runs out.
+fn resolve_detected_agent(
+    observed: Option<crate::agent_detection::AgentObservation>,
+    hold: &mut Option<AgentHold>,
+    now: Instant,
+) -> Option<DetectedAgent> {
+    let Some(observed) = observed else {
+        *hold = None;
+        return None;
+    };
+    match observed.state {
+        Some(state) => {
+            *hold = Some(AgentHold {
+                state,
+                observed_at: now,
+            });
+            Some(DetectedAgent {
+                kind: observed.kind,
+                state,
+            })
+        }
+        None => match hold
+            .filter(|held| now.duration_since(held.observed_at) < AGENT_HOLD_MAX)
+            .map(|held| held.state)
+        {
+            Some(state) => Some(DetectedAgent {
+                kind: observed.kind,
+                state,
+            }),
+            None => {
+                *hold = None;
+                Some(DetectedAgent {
+                    kind: observed.kind,
+                    state: crate::session::protocol::DetectedAgentState::Idle,
+                })
+            }
+        },
+    }
+}
+
 fn detect_pane_agent(
     pane: &mut ServerPane,
     inspector: &impl ProcessInspector,
     foreground_program: Option<&str>,
     scan: &mut LazyProcessScan,
-) -> Option<crate::session::protocol::DetectedAgent> {
+) -> Option<crate::agent_detection::AgentObservation> {
     let mut foreground_job = pane
         .pty
         .as_ref()
@@ -479,8 +536,7 @@ mod tests {
             exited: None,
             log: None,
             runtime: PaneRuntimeState::default(),
-            last_agent_probe: None,
-            last_agent_detect: None,
+            agent: AgentScratch::default(),
             last_git_read: None,
             initial_cursor_report_primed: false,
         }
@@ -499,7 +555,7 @@ mod tests {
     /// Detection walks every process on the host, so a poll where nothing changed must skip it —
     /// that walk, repeated per pane at the poll rate, was ~2% of a core per idle pane.
     ///
-    /// `last_agent_detect` only advances when detection actually runs, so it is the observable
+    /// `AgentScratch::detected_at` only advances when detection actually runs, so it is the observable
     /// for the gate. (Asserting on `LazyProcessScan::captured` would pass vacuously here: the test
     /// pane has no PTY, so the walk is unreachable either way.)
     #[test]
@@ -509,26 +565,26 @@ mod tests {
 
         // First pass has no cached probe, so detection must run.
         pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
-        let first = pane.last_agent_detect.expect("first poll must detect");
+        let first = pane.agent.detected_at.expect("first poll must detect");
 
         // Foreground program and command phase unchanged: detection must be skipped.
         pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
         assert_eq!(
-            pane.last_agent_detect,
+            pane.agent.detected_at,
             Some(first),
             "an unchanged pane must not re-run detection"
         );
 
         // A new foreground program is a real change and must detect again.
         pane.runtime.foreground_program = Some("claude".to_string());
-        pane.last_agent_probe = Some(AgentProbe {
+        pane.agent.probe = Some(AgentProbe {
             foreground_program: Some("claude".to_string()),
             command_phase: pane.runtime.command_phase,
         });
-        pane.last_agent_probe = None;
+        pane.agent.probe = None;
         pane.runtime = compute_runtime_state(&mut pane, &StubInspector, true, &mut scan);
         assert_ne!(
-            pane.last_agent_detect,
+            pane.agent.detected_at,
             Some(first),
             "a changed foreground must re-run detection"
         );
@@ -788,6 +844,132 @@ mod tests {
             &mut LazyProcessScan::default(),
         );
         assert_eq!(resumed.work_started_at, Some(started));
+    }
+
+    /// The reported bug: OpenCode draws its progress bar and interrupt hint only for the session
+    /// in view, so opening a subagent erases every signal while the parent run continues. Silence
+    /// must reuse the held state rather than reading as a finished run.
+    #[test]
+    fn an_observation_with_no_evidence_holds_the_previous_state() {
+        use crate::agent_detection::AgentObservation;
+        use crate::session::protocol::{AgentKind, DetectedAgentState};
+
+        let start = Instant::now();
+        let mut hold = None;
+        let working = AgentObservation {
+            kind: AgentKind::OpenCode,
+            state: Some(DetectedAgentState::Working),
+        };
+        let silent = AgentObservation {
+            kind: AgentKind::OpenCode,
+            state: None,
+        };
+
+        let resolved = resolve_detected_agent(Some(working), &mut hold, start)
+            .expect("a recognized agent always resolves to some state");
+        assert_eq!(resolved.state, DetectedAgentState::Working);
+
+        // Inside the cap, and far enough in that a naive per-poll refresh would be visible.
+        let held = resolve_detected_agent(
+            Some(silent),
+            &mut hold,
+            start + AGENT_HOLD_MAX - Duration::from_secs(1),
+        )
+        .expect("the agent is still recognized");
+        assert_eq!(
+            held.state,
+            DetectedAgentState::Working,
+            "a view that cannot report on the run must not end it"
+        );
+
+        // Past the cap the hold is abandoned rather than pinning `working` forever.
+        let expired = resolve_detected_agent(Some(silent), &mut hold, start + AGENT_HOLD_MAX)
+            .expect("the agent is still recognized");
+        assert_eq!(expired.state, DetectedAgentState::Idle);
+        assert!(hold.is_none(), "an expired hold is dropped, not renewed");
+    }
+
+    #[test]
+    fn a_positive_idle_observation_ends_the_run_immediately() {
+        use crate::agent_detection::AgentObservation;
+        use crate::session::protocol::{AgentKind, DetectedAgentState};
+
+        let start = Instant::now();
+        let mut hold = None;
+        resolve_detected_agent(
+            Some(AgentObservation {
+                kind: AgentKind::OpenCode,
+                state: Some(DetectedAgentState::Working),
+            }),
+            &mut hold,
+            start,
+        );
+        // Returning to the composer is evidence, not silence, so the hold must not delay the
+        // finish by anything like `AGENT_HOLD_MAX`.
+        let idle = resolve_detected_agent(
+            Some(AgentObservation {
+                kind: AgentKind::OpenCode,
+                state: Some(DetectedAgentState::Idle),
+            }),
+            &mut hold,
+            start + Duration::from_secs(1),
+        )
+        .expect("the agent is still recognized");
+        assert_eq!(idle.state, DetectedAgentState::Idle);
+    }
+
+    #[test]
+    fn losing_the_agent_drops_the_hold() {
+        use crate::agent_detection::AgentObservation;
+        use crate::session::protocol::{AgentKind, DetectedAgentState};
+
+        let mut hold = None;
+        resolve_detected_agent(
+            Some(AgentObservation {
+                kind: AgentKind::OpenCode,
+                state: Some(DetectedAgentState::Working),
+            }),
+            &mut hold,
+            Instant::now(),
+        );
+        assert!(resolve_detected_agent(None, &mut hold, Instant::now()).is_none());
+        assert!(
+            hold.is_none(),
+            "a pane with no agent must not keep one held"
+        );
+    }
+
+    /// A `keep_open` pane swaps its PTY in place, keeping its id and generation, so nothing else
+    /// clears what was learned about the command that just exited.
+    #[test]
+    fn the_keep_open_shell_swap_forgets_the_previous_program() {
+        let mut pane = make_pane();
+        pane.runtime.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Working,
+        });
+        pane.agent.hold = Some(AgentHold {
+            state: crate::session::protocol::DetectedAgentState::Working,
+            observed_at: Instant::now(),
+        });
+        pane.agent.probe = Some(AgentProbe {
+            foreground_program: Some("opencode".into()),
+            command_phase: pane.runtime.command_phase,
+        });
+
+        // What `replace_with_keep_open_shell` does to the pane once the new PTY is live.
+        pane.agent = AgentScratch::default();
+        pane.runtime.detected_agent = None;
+        pane.runtime.work_started_at = None;
+
+        let next = compute_runtime_state(
+            &mut pane,
+            &StubInspector,
+            false,
+            &mut LazyProcessScan::default(),
+        );
+        assert_eq!(next.detected_agent, None);
+        assert_eq!(next.work_started_at, None);
     }
 
     #[test]

@@ -147,6 +147,22 @@ fn path_basename(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+/// Claude Code keeps its spinner title running while an approval dialog waits, so the dialog itself
+/// is the only evidence that the run stopped for an answer. Every one of them is a question over a
+/// numbered choice list, but only the command approval spells "do you want to proceed?": the plan
+/// dialog asks "would you like to proceed?" and file approvals name the file. Match the choice list
+/// as well, so a transcript quoting one of these questions is not mistaken for a live dialog.
+fn claude_choice_dialog(screen: &str) -> bool {
+    screen.contains("1. yes")
+        && [
+            "would you like to proceed?",
+            "ready to code?",
+            "do you want to",
+        ]
+        .iter()
+        .any(|question| screen.contains(question))
+}
+
 fn detect_state(kind: AgentKind, screen: &str, title: &str) -> DetectedAgentState {
     let screen = screen.to_lowercase();
     let title = title.to_lowercase();
@@ -162,6 +178,7 @@ fn detect_state(kind: AgentKind, screen: &str, title: &str) -> DetectedAgentStat
     .iter()
     .any(|pattern| screen.contains(pattern))
         || title.contains("action required")
+        || (kind == AgentKind::Claude && claude_choice_dialog(&screen))
         // Current OpenCode question prompts use this footer in every state: single choice,
         // multi-select, custom answer, and review. Scope it to OpenCode so another program's
         // ordinary dismiss hint cannot masquerade as an agent waiting for input.
@@ -362,6 +379,44 @@ mod tests {
         assert_eq!(
             detect_state(AgentKind::Goose, "plain screen", ""),
             DetectedAgentState::Idle
+        );
+    }
+
+    #[test]
+    fn claude_approval_dialogs_block_through_a_running_spinner_title() {
+        // The plan dialog, which keeps the working title of the run it just finished.
+        let plan = "\
+   Ready to code?
+
+   Here is Claude's plan:
+   ...
+   Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+   ❯ 1. Yes, and bypass permissions
+     2. Yes, manually approve edits
+     3. Tell Claude what to change";
+        assert_eq!(
+            detect_state(AgentKind::Claude, plan, "⠋ Investigate agent state"),
+            DetectedAgentState::Blocked
+        );
+        let edit = "Do you want to make this edit to agent_detection.rs?\n❯ 1. Yes\n  2. No";
+        assert_eq!(
+            detect_state(AgentKind::Claude, edit, "⠋ Investigate agent state"),
+            DetectedAgentState::Blocked
+        );
+        assert_eq!(
+            detect_state(
+                AgentKind::Claude,
+                "Ready to code? Would you like to proceed?",
+                ""
+            ),
+            DetectedAgentState::Idle,
+            "a transcript quoting the questions is not a live dialog without its choice list"
+        );
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, plan, ""),
+            DetectedAgentState::Idle,
+            "Claude's dialog wording must not classify another agent's screen"
         );
     }
 }

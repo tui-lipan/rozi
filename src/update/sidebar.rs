@@ -1495,7 +1495,7 @@ fn activate_pane_slot(
     {
         ui.finished_unseen = false;
     }
-    crate::ops::agent_slots::request_activation(ctx, pane_id, &slot_id);
+    crate::ops::agent_slots::request_activation(&mut ctx.state, pane_id, &slot_id);
     update
 }
 

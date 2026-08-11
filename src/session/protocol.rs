@@ -259,6 +259,54 @@ fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
     }
 }
 
+/// One logical agent inside a pane that publishes several.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSlot {
+    /// Publisher-chosen identity, opaque to hyprmux and stable across updates.
+    ///
+    /// Never a position: tabs are reordered and closed, and an index-keyed run clock would hand
+    /// one tab's elapsed time to whichever tab slid into its place.
+    pub id: String,
+    pub title: String,
+    /// Same vocabulary and same sanitization as [`PaneStatus::value`].
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The slot the publisher is currently displaying; at most one is true.
+    ///
+    /// This is what lets a finish on a *background* slot raise an alert even while the pane is
+    /// focused - looking at the pane only ever acknowledges the slot on screen.
+    #[serde(default)]
+    pub active: bool,
+    /// Server-owned run start, mirroring [`PaneRuntimeState::work_started_at`] per slot. Whatever
+    /// a publisher sends here is overwritten.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_started_at: Option<u64>,
+}
+
+/// The single state a pane shows for a set of published slots.
+///
+/// Severity order rather than recency: pane chrome answers "is anything in here demanding
+/// attention", so one blocked slot outranks any number of working ones, and any working slot
+/// outranks the ones that have finished. Returns `None` for an empty set, which is a pane that
+/// publishes nothing rather than a pane whose agents are all idle.
+pub fn aggregate_slot_state(slots: &[AgentSlot]) -> Option<DetectedAgentState> {
+    let mut state = None;
+    for slot in slots {
+        let value = slot.status.trim();
+        if value.eq_ignore_ascii_case(pane_status::BLOCKED) {
+            return Some(DetectedAgentState::Blocked);
+        }
+        // A custom status is an active run by the same rule `status_is_quiescent` uses elsewhere.
+        if !status_is_quiescent(Some(value)) {
+            state = Some(DetectedAgentState::Working);
+        } else if state.is_none() {
+            state = Some(DetectedAgentState::Idle);
+        }
+    }
+    state
+}
+
 /// The agent status shared by clients and the session server.
 ///
 /// Explicit active reports remain authoritative, but a detected blocked prompt elevates over a
@@ -339,6 +387,15 @@ pub struct PaneRuntimeState {
     /// block/resume transition and after detach/reattach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_started_at: Option<u64>,
+    /// Logical agents the pane's own program published for itself, empty for every pane that
+    /// publishes nothing - which is nearly all of them, and the path that stays unchanged.
+    ///
+    /// A pane is one PTY but need not be one agent. A client with its own tab bar runs several
+    /// sessions behind one terminal and can only ever *draw* the one in view, so screen detection
+    /// sees a single state for several runs and cannot tell which of them it belongs to. A program
+    /// that knows all of them reports them here instead, and the server stops scraping that pane.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slots: Vec<AgentSlot>,
     /// Monotonic per-pane counter, bumped only when some other field in this struct actually
     /// changed. [`ServerMessage::PaneRuntimeChanged`] carries this so a client that received
     /// updates out of order (should not happen on a single ordered connection, but is cheap
@@ -466,6 +523,13 @@ pub enum ClientMessage {
         generation: u64,
         status: Option<String>,
         reason: Option<String>,
+    },
+    /// Replace the pane's published agent slots. An empty list withdraws them, and the pane falls
+    /// back to screen detection.
+    ReportPaneSlots {
+        pane_id: PaneId,
+        generation: u64,
+        slots: Vec<AgentSlot>,
     },
     /// Commit a new shared layout. Accepted only from the controller and only when `base_rev`
     /// equals the server's current revision; otherwise the server replies [`ServerMessage::LayoutRejected`].
@@ -1306,6 +1370,74 @@ mod tests {
                 "status": "blocked",
                 "reason": "needs approval"
             })
+        );
+    }
+
+    #[test]
+    fn pane_slots_message_round_trips() {
+        let msg = ClientMessage::ReportPaneSlots {
+            pane_id: 3,
+            generation: 2,
+            slots: vec![
+                AgentSlot {
+                    id: "ses_abc".into(),
+                    title: "audit the widget layer".into(),
+                    status: "working".into(),
+                    reason: None,
+                    active: true,
+                    work_started_at: Some(120),
+                },
+                AgentSlot {
+                    id: "ses_def".into(),
+                    title: "fix the flaky test".into(),
+                    status: "blocked".into(),
+                    reason: Some("permission required".into()),
+                    active: false,
+                    work_started_at: None,
+                },
+            ],
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &msg).unwrap();
+        assert_eq!(read_frame::<_, ClientMessage>(&mut &buf[..]).unwrap(), msg);
+    }
+
+    /// The overwhelming majority of panes publish nothing, and must not pay for the field.
+    #[test]
+    fn a_pane_without_slots_does_not_serialize_the_key() {
+        let json = serde_json::to_string(&PaneRuntimeState::default()).unwrap();
+        assert!(!json.contains("slots"), "{json}");
+    }
+
+    #[test]
+    fn slot_aggregation_is_by_severity_not_recency() {
+        let slot = |status: &str| AgentSlot {
+            id: status.into(),
+            title: status.into(),
+            status: status.into(),
+            reason: None,
+            active: false,
+            work_started_at: None,
+        };
+        assert_eq!(aggregate_slot_state(&[]), None);
+        assert_eq!(
+            aggregate_slot_state(&[slot("idle"), slot("done")]),
+            Some(DetectedAgentState::Idle)
+        );
+        assert_eq!(
+            aggregate_slot_state(&[slot("idle"), slot("working")]),
+            Some(DetectedAgentState::Working),
+            "one running session keeps the pane working"
+        );
+        assert_eq!(
+            aggregate_slot_state(&[slot("working"), slot("blocked")]),
+            Some(DetectedAgentState::Blocked),
+            "a prompt outranks work happening beside it"
+        );
+        assert_eq!(
+            aggregate_slot_state(&[slot("idle"), slot("compacting")]),
+            Some(DetectedAgentState::Working),
+            "a custom status is an active run, matching status_is_quiescent"
         );
     }
 

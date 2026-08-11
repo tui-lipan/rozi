@@ -118,6 +118,53 @@ impl SessionServer {
         Ok(Some(pane.runtime.clone()))
     }
 
+    /// Replace a pane's published agent slots. An empty list withdraws them and lets screen
+    /// detection take the pane back.
+    ///
+    /// Guards match [`Self::set_pane_status`] exactly: this is the same authority - a program
+    /// speaking for its own pane - reporting more than one thing at a time.
+    pub(super) fn report_pane_slots(
+        &mut self,
+        client_id: ClientId,
+        pane_id: PaneId,
+        generation: u64,
+        slots: Vec<protocol::AgentSlot>,
+    ) -> std::result::Result<Option<PaneRuntimeState>, (&'static str, String)> {
+        if !self.client_attached(client_id) {
+            return Err(("attach-required", "client is not attached".to_string()));
+        }
+        if self.client_read_only(client_id) {
+            return Err(("read-only", "read-only client".to_string()));
+        }
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return Err(("pane-not-found", format!("pane {pane_id} not found")));
+        };
+        if pane.generation != generation {
+            return Err((
+                "stale-generation",
+                format!("pane {pane_id} generation does not match"),
+            ));
+        }
+        if pane.exited.is_some() {
+            return Err(("pane-exited", format!("pane {pane_id} has exited")));
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let slots = sanitize_slots(slots, &pane.runtime.slots, now);
+        if slots == pane.runtime.slots {
+            return Ok(None);
+        }
+        pane.runtime.slots = slots;
+        // A publisher that enumerates its own sessions is better informed than the scraper, which
+        // can only see the one it draws. Drop anything the scraper was holding for this pane.
+        pane.agent.hold = None;
+        pane.runtime.sequence = pane.runtime.sequence.wrapping_add(1);
+        Ok(Some(pane.runtime.clone()))
+    }
+
     pub(super) fn poll_pane_runtime(&mut self) {
         if self.last_runtime_poll.elapsed() < RUNTIME_POLL_INTERVAL {
             return;
@@ -246,7 +293,24 @@ fn compute_runtime_state(
     // starts running something new, so an unchanged pair means the sweep would rediscover the
     // cached answer. AGENT_DETECT_REFRESH still re-sweeps periodically, catching a wrapped process
     // that appears inside an unchanged foreground program.
-    let detected_agent = if detect_agent {
+    // A pane whose program enumerates its own sessions is authoritative. Screen detection can only
+    // ever see the session in view, so scraping such a pane would answer a question the publisher
+    // has already answered better - and would answer it about the wrong session.
+    let detected_agent = if !pane.runtime.slots.is_empty() {
+        pane.agent.hold = None;
+        let aggregate = crate::session::protocol::aggregate_slot_state(&pane.runtime.slots);
+        // Keep whichever kind detection last identified: the publisher says what its sessions are
+        // doing, not which program it is.
+        pane.runtime
+            .detected_agent
+            .as_ref()
+            .zip(aggregate)
+            .map(|(previous, state)| DetectedAgent {
+                kind: previous.kind,
+                state,
+            })
+            .or_else(|| pane.runtime.detected_agent.clone())
+    } else if detect_agent {
         let probe = AgentProbe {
             foreground_program: foreground_program.clone(),
             command_phase,
@@ -293,6 +357,8 @@ fn compute_runtime_state(
         status: pane.runtime.status.clone(),
         detected_agent,
         work_started_at,
+        // Owned by `report_pane_slots`, which is the only writer; a recompute carries them.
+        slots: pane.runtime.slots.clone(),
         sequence: pane.runtime.sequence,
     };
     let changed = !cwd_unchanged(&candidate.cwd, &pane.runtime.cwd)
@@ -329,20 +395,90 @@ fn next_work_started_at(
         previous.detected_agent.as_ref(),
     );
     let next_status = crate::session::protocol::effective_agent_status(next_status, next_detected);
-    if next_status.is_none() || crate::session::protocol::status_is_quiescent(next_status) {
-        return None;
-    }
-    if previous.work_started_at.is_some()
-        && !crate::session::protocol::status_is_quiescent(previous_status)
-    {
-        return previous.work_started_at;
-    }
-    Some(
+    next_run_start(
+        previous_status,
+        previous.work_started_at,
+        next_status,
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs(),
     )
+}
+
+/// The run start for one subject - a pane or one of its slots - given where it was and where it is.
+///
+/// Quiescent ends the run; anything else continues an existing one rather than restarting it, so a
+/// block and later resume read as one run. Pure in `now` so per-slot behavior is testable.
+fn next_run_start(
+    previous_status: Option<&str>,
+    previous_started_at: Option<u64>,
+    next_status: Option<&str>,
+    now: u64,
+) -> Option<u64> {
+    if next_status.is_none() || crate::session::protocol::status_is_quiescent(next_status) {
+        return None;
+    }
+    if previous_started_at.is_some()
+        && !crate::session::protocol::status_is_quiescent(previous_status)
+    {
+        return previous_started_at;
+    }
+    Some(now)
+}
+
+/// How many slots one pane may publish. A tab bar is a human-sized list; a publisher sending
+/// thousands is malfunctioning, and every slot costs a sidebar row.
+const MAX_PANE_SLOTS: usize = 64;
+
+/// Clean a publisher's slot list and give each slot the run clock the server owns.
+///
+/// Text is sanitized and truncated exactly as [`SessionServer::set_pane_status`] does its own -
+/// this arrives from the same place and is rendered in the same rows. Slots are matched to their
+/// previous selves by `id`, so a run keeps one start across reorders, title changes, and
+/// block-then-resume; an id appearing for the first time starts a run, and one that disappears
+/// takes its clock with it.
+fn sanitize_slots(
+    slots: Vec<protocol::AgentSlot>,
+    previous: &[protocol::AgentSlot],
+    now: u64,
+) -> Vec<protocol::AgentSlot> {
+    let mut active_seen = false;
+    slots
+        .into_iter()
+        .filter_map(|slot| {
+            let id = clean_text(&slot.id, PANE_STATUS_MAX_LEN)?;
+            let status = clean_text(&slot.status, PANE_STATUS_MAX_LEN)?;
+            let previous = previous.iter().find(|candidate| candidate.id == id);
+            let work_started_at = next_run_start(
+                previous.map(|previous| previous.status.as_str()),
+                previous.and_then(|previous| previous.work_started_at),
+                Some(status.as_str()),
+                now,
+            );
+            // At most one slot is the one on screen; a publisher that marks several keeps the
+            // first, since the rest cannot also be in view.
+            let active = slot.active && !std::mem::replace(&mut active_seen, slot.active);
+            Some(protocol::AgentSlot {
+                title: clean_text(&slot.title, PANE_STATUS_MAX_LEN).unwrap_or_else(|| id.clone()),
+                id,
+                status,
+                reason: clean_text(&slot.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),
+                active,
+                work_started_at,
+            })
+        })
+        .take(MAX_PANE_SLOTS)
+        .collect()
+}
+
+fn clean_text(value: &str, limit: usize) -> Option<String> {
+    let value = tui_lipan::utils::sanitize_display_text(value)
+        .trim()
+        .chars()
+        .take(limit)
+        .collect::<String>();
+    (!value.is_empty()).then_some(value)
 }
 
 /// Resolve one detection sweep into the state that leaves this process, maintaining `hold`.

@@ -197,6 +197,28 @@ impl SessionServer {
                     },
                 )],
             },
+            ClientMessage::ReportPaneSlots {
+                pane_id,
+                generation,
+                slots,
+            } => match self.report_pane_slots(client_id, pane_id, generation, slots) {
+                Ok(Some(state)) => vec![(
+                    Target::Broadcast,
+                    ServerMessage::PaneRuntimeChanged {
+                        pane_id,
+                        generation,
+                        state,
+                    },
+                )],
+                Ok(None) => Vec::new(),
+                Err((code, message)) => vec![(
+                    Target::Sender,
+                    ServerMessage::Error {
+                        code: code.to_string(),
+                        message,
+                    },
+                )],
+            },
             ClientMessage::SpawnPane {
                 pane_id,
                 generation,

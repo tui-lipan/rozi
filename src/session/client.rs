@@ -406,6 +406,20 @@ impl SessionClient {
             reason,
         });
     }
+
+    /// Replace a pane's published agent slots; an empty list withdraws them.
+    pub fn report_pane_slots(
+        &self,
+        pane_id: PaneId,
+        generation: u64,
+        slots: Vec<crate::session::protocol::AgentSlot>,
+    ) {
+        self.send_control(ClientMessage::ReportPaneSlots {
+            pane_id,
+            generation,
+            slots,
+        });
+    }
     /// Commit a new shared layout, optimistically based on `base_rev`. The server accepts it only
     /// while this client holds the lease and `base_rev` matches the current revision.
     pub fn commit_layout(&self, base_rev: u64, layout: SharedLayout) {

@@ -51,6 +51,11 @@ pub struct TerminalPane {
     /// reports what it cost, not how long ago it stopped — the attention pulse already says the
     /// finish is recent, and a number that climbs after the work is over says nothing.
     pub last_run: Option<std::time::Duration>,
+    /// Logical agents this pane's program published for itself; empty for every other pane.
+    pub slots: Vec<crate::session::protocol::AgentSlot>,
+    /// Per-slot presentation state the server does not own, keyed by slot id. Entries for ids the
+    /// publisher has dropped are pruned whenever slots are applied.
+    pub slot_ui: std::collections::HashMap<String, SlotUiState>,
     pub command_phase: crate::session::protocol::PaneCommandPhase,
     pub last_exit_status: Option<i32>,
     pub runtime_sequence: u64,
@@ -119,6 +124,46 @@ fn status_is_quiescent(value: &str) -> bool {
         || value.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
 }
 
+fn status_is_blocked(value: &str) -> bool {
+    value
+        .trim()
+        .eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
+}
+
+/// Elapsed wall-clock time since a server-stamped run start, saturating at zero so clock skew
+/// against another host can only shorten the answer, never invent one.
+fn slot_age(started_at: Option<u64>) -> Option<std::time::Duration> {
+    let started_at = started_at?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Some(std::time::Duration::from_secs(
+        now.saturating_sub(started_at),
+    ))
+}
+
+fn previous_started(slots: &[crate::session::protocol::AgentSlot], id: &str) -> Option<u64> {
+    slots
+        .iter()
+        .find(|slot| slot.id == id)
+        .and_then(|slot| slot.work_started_at)
+}
+
+/// Presentation state for one published slot: the parts of a row the server has no opinion about.
+///
+/// Kept beside the slots rather than inside them because the server owns what a slot *is* and the
+/// client owns what this viewer has seen of it. Two clients watching one session disagree about
+/// which finishes they have looked at, and that disagreement is correct.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlotUiState {
+    /// This slot finished a run that has not been looked at. Cleared by attending the slot, which
+    /// means the pane is focused *and* the publisher has this slot on screen.
+    pub finished_unseen: bool,
+    /// How long this slot's last run lasted, captured as it ended.
+    pub last_run: Option<std::time::Duration>,
+}
+
 impl TerminalPane {
     pub fn new(scrollback: usize) -> Self {
         let cols = 120;
@@ -149,6 +194,8 @@ impl TerminalPane {
             work_started_at: None,
             status_since: None,
             last_run: None,
+            slots: Vec::new(),
+            slot_ui: std::collections::HashMap::new(),
             command_phase: crate::session::protocol::PaneCommandPhase::Unknown,
             last_exit_status: None,
             runtime_sequence: 0,
@@ -192,6 +239,8 @@ impl TerminalPane {
             self.work_started_at = None;
             self.status_since = None;
             self.last_run = None;
+            self.slots.clear();
+            self.slot_ui.clear();
         }
         self.pane_id = pane_id;
         self.generation = generation;
@@ -534,6 +583,56 @@ impl TerminalPane {
                 .trim()
                 .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
         })
+    }
+
+    /// How long this pane's active agent run has lasted, for the sidebar's duration column.
+    ///
+    /// Replace the pane's published slots, recording each slot's finish edge.
+    ///
+    /// Returns the ids of slots that just finished a run. Their alerts are raised per slot rather
+    /// than per pane: a background tab finishing is news even while the pane is focused, because
+    /// focusing the pane only ever showed the slot the publisher had on screen.
+    pub fn apply_slots(&mut self, slots: Vec<crate::session::protocol::AgentSlot>) -> Vec<String> {
+        let mut finished = Vec::new();
+        for slot in &slots {
+            let previous = self
+                .slots
+                .iter()
+                .find(|candidate| candidate.id == slot.id)
+                .map(|candidate| candidate.status.as_str());
+            let was_working = previous.is_some_and(|status| {
+                status
+                    .trim()
+                    .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+            });
+            let now_working = slot
+                .status
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING);
+            let entry = self.slot_ui.entry(slot.id.clone()).or_default();
+            if now_working {
+                entry.finished_unseen = false;
+            } else if was_working && !status_is_blocked(&slot.status) {
+                entry.last_run = slot_age(previous_started(&self.slots, &slot.id));
+                entry.finished_unseen = true;
+                finished.push(slot.id.clone());
+            }
+        }
+        // A publisher that closed a tab should not leave its row's pulse behind.
+        self.slot_ui
+            .retain(|id, _| slots.iter().any(|s| &s.id == id));
+        self.slots = slots;
+        finished
+    }
+
+    /// How long a slot's current run has lasted, by the same rule as [`Self::status_age`].
+    pub fn slot_age(
+        &self,
+        slot: &crate::session::protocol::AgentSlot,
+    ) -> Option<std::time::Duration> {
+        (!status_is_quiescent(&slot.status))
+            .then(|| slot_age(slot.work_started_at))
+            .flatten()
     }
 
     /// How long this pane's active agent run has lasted, for the sidebar's duration column.

@@ -122,6 +122,7 @@ pub(crate) struct Row {
     title: String,
     title_style: Style,
     badge: Option<Element>,
+    meta: Option<Element>,
     detail: Vec<(String, Style)>,
 }
 
@@ -134,6 +135,7 @@ impl Row {
             title: title.into(),
             title_style: Style::default(),
             badge: None,
+            meta: None,
             detail: Vec::new(),
         }
     }
@@ -155,6 +157,14 @@ impl Row {
     /// than pushing it off.
     pub(super) fn badge(mut self, badge: impl Into<Element>) -> Self {
         self.badge = Some(badge.into());
+        self
+    }
+
+    /// A short token riding immediately after the title, before the badge — an agent's elapsed
+    /// run, say. Unlike the badge it does not pin to the right edge, so it stays attached to the
+    /// name it qualifies instead of drifting away from it on a wide sidebar.
+    pub(super) fn meta(mut self, text: impl Into<String>, style: Style) -> Self {
+        self.meta = Some(Text::new(text.into()).style(style).into());
         self
     }
 
@@ -231,18 +241,31 @@ impl Row {
             Some(close) => Some(close_affordance(ctx, close)),
             None => self.badge,
         };
-        let title: Element = match trailing {
-            None => Text::new(self.title).style(self.title_style).into(),
-            Some(trailing) => HStack::new()
+        // The name keeps only the width it needs when something rides beside it, so the meta
+        // token stays attached to the name rather than drifting to the far edge; the flex moves to
+        // the gap between them and the badge.
+        let name = Text::new(self.title).style(self.title_style);
+        let title: Element = match (self.meta, trailing) {
+            (None, None) => name.into(),
+            (None, Some(trailing)) => HStack::new()
                 .gap(1)
                 .height(Length::Px(1))
-                .child(
-                    Text::new(self.title)
-                        .style(self.title_style)
-                        .width(Length::Flex(1)),
-                )
+                .child(name.width(Length::Flex(1)))
                 .child(trailing)
                 .into(),
+            (Some(meta), trailing) => {
+                let mut line = HStack::new()
+                    .gap(1)
+                    .height(Length::Px(1))
+                    .child(name)
+                    .child(meta);
+                if let Some(trailing) = trailing {
+                    line = line
+                        .child(Spacer::new().width(Length::Flex(1)))
+                        .child(trailing);
+                }
+                line.into()
+            }
         };
 
         // The cursor changes the background only; every span keeps the color that carries its

@@ -89,7 +89,7 @@ shell, and package-manager wrappers are recognized without relying only on the e
 `HYPRMUX_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
 common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
-normalized agent name over a detail line carrying how long the current status has held and what the
+normalized agent name and how long its current run has lasted, over a detail line saying what the
 agent is doing; clicking a row switches workspace and focuses it. Closing panes, the scratchpad, and
 popups are excluded.
 
@@ -102,14 +102,21 @@ the badge off the edge.
 An agent working below its project root is badged with where it sits as well, as
 `services/api · 2`. The group header names the project, not the directory, so in a monorepo this is
 the only thing separating two rows that otherwise read identically. A deep path keeps its tail
-(`…/api`), which is the part that says which component the agent is in.
+(`…/api`), which is the part that says which component the agent is in, and gives up more of itself
+as the name line fills — the workspace number is what keybindings address and cannot be guessed from
+the row above, so the path yields to it rather than the two being clipped together.
 
-The detail line reads `<elapsed> <activity>`. Elapsed time is dated from the agent run's
-server-side start timestamp, so it survives a detach and reattach. A block and later resume keep
-the same run start rather than resetting the timer; idle and done end the run. It coarsens as it
-grows (`45s`, `12m`, `3h`, `2d`). An idle agent shows no elapsed time: how long a state that
-prompts no action has lasted measures the reader rather than the agent. Its row still gets a second
-line, carrying the status word alone, so rows stay two lines tall whatever the state.
+The elapsed run sits on the name line, in the gap between the agent's name and its badge, and the
+detail line below is the activity's alone. The time qualifies the agent rather than the task, and
+the name line had width going spare while the detail line was the one truncating.
+
+Elapsed time is dated from the agent run's server-side start timestamp, so it survives a detach and
+reattach. A block and later resume keep the same run start rather than resetting the timer; idle
+and done end the run. It reads at two units, coarsening as it grows (`45s`, `3m05s`, `2h12m`,
+`2d02h`), with the smaller one padded so the token holds its width as it counts. An idle agent
+shows no elapsed time: how long a state that prompts no action has lasted measures the reader
+rather than the agent. Its row still gets a second line, carrying the status word alone, so rows
+stay two lines tall whatever the state.
 
 A finished run is the exception: it reports how long the run *took*, measured when it ended, and
 that number never moves again. The attention pulse already says the finish is recent, so a figure
@@ -125,10 +132,9 @@ status glyphs agents decorate their titles with are stripped, since the row has 
 column. OpenCode's fixed `OC | ` title prefix is also omitted. The text is truncated to the
 configured sidebar width.
 
-The detail line always names a subject, so the elapsed time is never a bare number with nothing to
-modify. Where there is an activity, that is the subject and the status word is dropped — `working`,
-`blocked`, `done`, and `idle` each have their own themed glyph, so repeating them in text would only
-spend width. Where there is no activity, the status word takes the slot instead, capitalized like
+Where there is an activity, it has the detail line to itself and the status word is dropped —
+`working`, `blocked`, `done`, and `idle` each have their own themed glyph, so repeating them in text
+would only spend width. Where there is no activity, the status word takes the line instead, capitalized like
 the rest of the chrome (`Idle`) rather than echoing the value on the wire. A custom status such as
 `compacting` renders as a neutral `•` and keeps its word either way, having no glyph of its own to
 lean on — and keeps the publisher's own spelling, which is not hyprmux's to normalize.
@@ -167,8 +173,9 @@ the app.
 Elapsed times refresh once a second, and only while the Agents tab is the visible tab with at least
 one row showing a still-advancing one — a screen of finished runs, whose figures are frozen, stops
 the refresh entirely — as does a screen of idle agents, which show no elapsed time at all. It
-repaints only when the text it would draw actually changed, so a row sitting at `12m` costs a
-comparison per second rather than sixty redraws.
+repaints only when the text it would draw actually changed. Because the figure now carries seconds
+at every scale below an hour, a running row does change every second and so does repaint every
+second; the comparison still spares the frozen and idle rows, which are the ones that accumulate.
 
 When an agent finishes a run — its effective status goes from `working` to a quiescent state such
 as `idle` or `done` — the row shows a filled attention dot in the success color instead of the calm
@@ -205,10 +212,10 @@ activity — the same shape every other row uses, where the name column says wha
 detail line says what it is doing:
 
 ```text
- ! OpenCode #2                1
-   0s permission required
-▍⠋ OpenCode #1                1
-▍  0s audit the widget layer
+ ! OpenCode #2 1m04s          1
+   fix the flaky test
+▍⠋ OpenCode #1 12s            1
+▍  audit the widget layer
  ○ OpenCode #3                1
    update the changelog
 ```

@@ -440,16 +440,25 @@ pub(crate) fn status_glyph(value: &str, theme: &Theme) -> (&'static str, Color) 
 
 /// Compact elapsed time for the sidebar's narrow detail line: one unit, no padding. Resolution
 /// coarsens as the number grows, because past a minute nobody reads the seconds.
+/// A run's length, at two units so the figure keeps moving without spending the width a full
+/// breakdown would.
+///
+/// The smaller unit is zero-padded so the token holds a stable width as it counts, which matters
+/// now that it sits inline with the agent's name rather than alone on its own line. Precision
+/// tapers with scale: seconds stop mattering once a run is measured in hours.
 fn format_age(age: std::time::Duration) -> String {
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
     let secs = age.as_secs();
-    if secs < 60 {
+    if secs < MINUTE {
         format!("{secs}s")
-    } else if secs < 60 * 60 {
-        format!("{}m", secs / 60)
-    } else if secs < 24 * 60 * 60 {
-        format!("{}h", secs / (60 * 60))
+    } else if secs < HOUR {
+        format!("{}m{:02}s", secs / MINUTE, secs % MINUTE)
+    } else if secs < DAY {
+        format!("{}h{:02}m", secs / HOUR, (secs % HOUR) / MINUTE)
     } else {
-        format!("{}d", secs / (24 * 60 * 60))
+        format!("{}d{:02}h", secs / DAY, (secs % DAY) / HOUR)
     }
 }
 
@@ -507,14 +516,10 @@ pub(super) fn duration_digest(state: &State) -> Option<String> {
 /// so the width actually available to it — the configured sidebar width less the row chrome and
 /// whatever the duration column took — beats a fixed guess that overflows a narrow sidebar and
 /// wastes a wide one.
-fn activity_budget(width: u16, duration: Option<&str>) -> usize {
+fn activity_budget(width: u16) -> usize {
     // Gutter, glyph, their gaps, the divider, and the scrollbar column.
     let chrome = 5;
-    let duration = duration.map_or(0, |text| text.chars().count() + 1);
-    (usize::from(width))
-        .saturating_sub(chrome)
-        .saturating_sub(duration)
-        .max(8)
+    (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
 pub(super) fn agents_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
@@ -621,10 +626,31 @@ fn branch_budget(width: u16) -> usize {
     (usize::from(width) / 2).max(6)
 }
 
-/// How much of a row's in-project path may sit in the badge. The badge shares the name line with
-/// the agent's own name, which has to stay readable; a deeper path keeps its tail, the part that
-/// says which component the agent is actually in.
+/// How much of a row's in-project path may sit in the badge, before width forces it shorter.
+///
+/// The badge shares the name line with the agent's own name and its elapsed run, both of which have
+/// to stay readable; a deeper path keeps its tail, the part that says which component the agent is
+/// actually in.
 const SUBPATH_MAX_CHARS: usize = 12;
+
+/// The subpath's share of the name line, once the name, the elapsed run, and the workspace number
+/// have taken theirs.
+///
+/// The workspace number is the one thing in the badge that must survive: it is what the keybindings
+/// address, and unlike a path it cannot be guessed from the row above. So the subpath yields to it
+/// rather than the pair being clipped together from the right, which is what dropped the number.
+fn subpath_budget(width: u16, name: &str, duration: Option<&str>, workspace: &str) -> usize {
+    // Gutter, glyph, their gaps, the divider, the scrollbar column, and the ` · ` joining the
+    // subpath to the workspace number.
+    let chrome = 10;
+    let taken = name.chars().count()
+        + workspace.chars().count()
+        + duration.map_or(0, |text| text.chars().count() + 1);
+    usize::from(width)
+        .saturating_sub(chrome)
+        .saturating_sub(taken)
+        .min(SUBPATH_MAX_CHARS)
+}
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
 fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
@@ -659,30 +685,45 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
         // the only thing separating two rows that otherwise read identically, and the group header
         // can no longer say it now that it names the project rather than the directory.
         .badge_text(
-            match row.subpath.as_deref() {
-                Some(subpath) => format!(
-                    "{} · {}",
-                    row::truncate_start(subpath, SUBPATH_MAX_CHARS),
-                    super::workspace_badge(&ctx.state, row.workspace_index)
-                ),
-                None => super::workspace_badge(&ctx.state, row.workspace_index),
+            {
+                let workspace = super::workspace_badge(&ctx.state, row.workspace_index);
+                match row.subpath.as_deref() {
+                    Some(subpath) => {
+                        let budget = subpath_budget(
+                            ctx.state.sidebar_requested_width(),
+                            &row.title,
+                            duration.as_deref(),
+                            &workspace,
+                        );
+                        // Too little room to say anything useful about the path: keep the number
+                        // alone rather than an ellipsis standing in for it.
+                        if budget < 4 {
+                            workspace
+                        } else {
+                            format!("{} · {workspace}", row::truncate_start(subpath, budget))
+                        }
+                    }
+                    None => workspace,
+                }
             },
             super::super::fg_only(&ctx.state.theme.muted).dim(),
         );
 
-    // Detail line: how long, then what. It always names a subject, so the duration is never a bare
-    // number with nothing to modify — the activity when the agent published one, and the status
-    // word otherwise. A canonical status yields to a real activity, since its glyph already carries
-    // it; a custom one like "compacting" keeps its word either way, having only a `•` to lean on.
+    // The elapsed run rides beside the name, in the gap the badge left empty. It qualifies the
+    // agent, not the activity, and putting it here hands the whole detail line to the activity -
+    // which is the part that was truncating.
     if let Some(duration) = duration.as_deref() {
-        content = content.detail(duration.to_string(), Style::new().fg(color));
+        content = content.meta(duration.to_string(), Style::new().fg(color));
     }
+    // Detail line: what the agent is doing. A canonical status yields to a real activity, since its
+    // glyph already carries it; a custom one like "compacting" keeps its word either way, having
+    // only a `•` to lean on.
     let label = row_status_label(status, row.finished_unseen);
     if !status_is_canonical(&label) || row.activity.is_none() {
         content = content.detail(label, Style::new().fg(color));
     }
     if let Some(activity) = row.activity.as_deref() {
-        let budget = activity_budget(ctx.state.sidebar_requested_width(), duration.as_deref());
+        let budget = activity_budget(ctx.state.sidebar_requested_width());
         content = content.detail(
             row::truncate(activity, budget),
             super::super::fg_only(&ctx.state.theme.muted).dim(),
@@ -1272,11 +1313,16 @@ mod tests {
         use std::time::Duration;
         assert_eq!(format_age(Duration::from_secs(0)), "0s");
         assert_eq!(format_age(Duration::from_secs(59)), "59s");
-        assert_eq!(format_age(Duration::from_secs(60)), "1m");
-        assert_eq!(format_age(Duration::from_secs(59 * 60 + 59)), "59m");
-        assert_eq!(format_age(Duration::from_secs(60 * 60)), "1h");
-        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60 - 1)), "23h");
-        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60)), "1d");
+        // Two units from a minute up, so the figure keeps moving instead of sitting on `1m` for
+        // the next fifty-nine seconds. The smaller one is padded to hold a stable width.
+        assert_eq!(format_age(Duration::from_secs(60)), "1m00s");
+        assert_eq!(format_age(Duration::from_secs(3 * 60 + 5)), "3m05s");
+        assert_eq!(format_age(Duration::from_secs(59 * 60 + 59)), "59m59s");
+        assert_eq!(format_age(Duration::from_secs(60 * 60)), "1h00m");
+        assert_eq!(format_age(Duration::from_secs(2 * 3600 + 12 * 60)), "2h12m");
+        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60 - 1)), "23h59m");
+        assert_eq!(format_age(Duration::from_secs(24 * 60 * 60)), "1d00h");
+        assert_eq!(format_age(Duration::from_secs(50 * 60 * 60)), "2d02h");
 
         let row = |status: &str, finished_unseen: bool| AgentRow {
             pane_id: 1,
@@ -1298,11 +1344,11 @@ mod tests {
         // A live state reports how long it has held, and keeps advancing.
         assert_eq!(
             row_duration(&row("working", false)),
-            Some(("1m".into(), true))
+            Some(("1m30s".into(), true))
         );
         assert_eq!(
             row_duration(&row("compacting", false)),
-            Some(("1m".into(), true))
+            Some(("1m30s".into(), true))
         );
         // Idle times nothing: the row still gets its second line, but from the status word alone.
         assert_eq!(row_duration(&row("idle", false)), None);
@@ -1310,11 +1356,11 @@ mod tests {
         // stops advancing, so the tick has nothing left to refresh.
         assert_eq!(
             row_duration(&row("idle", true)),
-            Some(("12m".into(), false))
+            Some(("12m00s".into(), false))
         );
         assert_eq!(
             row_duration(&row("done", false)),
-            Some(("12m".into(), false))
+            Some(("12m00s".into(), false))
         );
     }
 
@@ -1352,16 +1398,38 @@ mod tests {
         }
     }
 
+    /// The workspace number is what keybindings address and cannot be recovered from the row
+    /// above, so the subpath is what gives way as the name line fills — not the pair together,
+    /// which clipped the number off the edge.
+    #[test]
+    fn the_subpath_yields_to_everything_else_on_the_name_line() {
+        // Room to spare: the subpath gets its full allowance.
+        assert_eq!(subpath_budget(48, "OpenCode", None, "1"), SUBPATH_MAX_CHARS);
+        // The elapsed run takes its share out of the subpath, not the number.
+        assert!(
+            subpath_budget(32, "OpenCode #1", Some("2h12m"), "1")
+                < subpath_budget(32, "OpenCode #1", None, "1")
+        );
+        // A longer name and a named workspace both come out of the same allowance.
+        assert!(
+            subpath_budget(32, "GitHub Copilot #12", Some("2h12m"), "2:review")
+                < subpath_budget(32, "OpenCode #1", Some("2h12m"), "1")
+        );
+        // Nothing left over saturates at zero rather than wrapping.
+        assert_eq!(
+            subpath_budget(16, "GitHub Copilot #12", Some("2h12m"), "2:review"),
+            0
+        );
+    }
+
     #[test]
     fn activity_budget_tracks_the_configured_width() {
-        // A default 32-wide sidebar, after a "12m" column.
-        assert_eq!(activity_budget(32, Some("12m")), 23);
-        // No duration column hands its width back to the text.
-        assert_eq!(activity_budget(32, None), 27);
+        // The elapsed time moved to the title line, so the whole detail line is the activity's.
+        assert_eq!(activity_budget(32), 27);
         // A wider sidebar spends the whole difference on the activity.
-        assert_eq!(activity_budget(48, Some("12m")), 39);
+        assert_eq!(activity_budget(48), 43);
         // A sidebar too narrow to budget for still gets a floor rather than zero.
-        assert_eq!(activity_budget(8, Some("12m")), 8);
+        assert_eq!(activity_budget(8), 8);
     }
 
     #[test]

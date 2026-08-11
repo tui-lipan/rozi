@@ -691,6 +691,7 @@ pub fn run() -> Result<()> {
 
     let cli = match parsed {
         cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
+        cli::ParsedCli::AgentSlots(command) => return cli::run_agent_slots_cli(command),
         cli::ParsedCli::Server { name, fresh } => return cli::run_server_cli(&name, fresh),
         cli::ParsedCli::RemoteServe { name } => return cli::run_remote_serve_cli(&name),
         cli::ParsedCli::ListSessions { format, remote } => {

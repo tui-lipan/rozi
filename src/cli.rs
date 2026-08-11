@@ -37,6 +37,19 @@ pub(crate) struct ControlCli {
     request: control::ControlRequest,
 }
 
+/// `hyprmux agent-slots`: the stdio bridge a program uses to publish the agents running inside its
+/// own pane.
+///
+/// This exists so a publisher needs no IPC code of its own. On Windows `HYPRMUX_SOCKET` names a
+/// discovery entry rather than the pipe itself, and the pipe name must be derived rather than read
+/// out of it, so a program cannot portably open the endpoint directly. Bridging through the binary
+/// that already owns endpoint discovery and its security checks keeps every publisher to plain
+/// line-delimited JSON on stdin and stdout.
+#[derive(Debug)]
+pub(crate) struct AgentSlotsCli {
+    socket: Option<PathBuf>,
+}
+
 #[derive(Debug)]
 pub(crate) enum ParsedCli {
     Help,
@@ -46,6 +59,7 @@ pub(crate) enum ParsedCli {
     Update(UpdateCommand),
     Run(CliArgs),
     Control(ControlCli),
+    AgentSlots(AgentSlotsCli),
     Server {
         name: String,
         fresh: bool,
@@ -401,6 +415,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }),
                 }));
             }
+            "agent-slots" => {
+                reject_trailing_control_args(&mut iter, "agent-slots")?;
+                return Ok(ParsedCli::AgentSlots(AgentSlotsCli { socket }));
+            }
             "split" | "new-pane" => {
                 let mut command = None;
                 let mut focus = false;
@@ -576,6 +594,74 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
         ),
         _ => Err("multiple live hyprmux sockets found; pass --socket PATH".to_string()),
     }
+}
+
+/// Bridge stdin/stdout to an `agent-slots` control stream for the calling pane.
+///
+/// Runs until either side closes: hyprmux withdraws the pane's slots on EOF, so a publisher that
+/// exits or crashes cleans up by construction and never has to say so.
+pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
+    let path = match discover_socket(command.socket) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    };
+    let Some(source_pane) = std::env::var("HYPRMUX_PANE")
+        .ok()
+        .and_then(|value| value.parse::<crate::state::PaneId>().ok())
+    else {
+        eprintln!("agent-slots must run inside a hyprmux pane (HYPRMUX_PANE is unset)");
+        std::process::exit(2);
+    };
+    let mut stream = match IpcEndpoint::at_path(&path).connect() {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("could not connect to {}: {err}", path.display());
+            std::process::exit(2);
+        }
+    };
+    let request = control::ControlRequest {
+        command: control::ControlCommand::AgentSlots,
+        source_pane: Some(source_pane),
+    };
+    writeln!(stream, "{}", serde_json::to_string(&request).unwrap())?;
+
+    let reader_stream = stream.try_clone()?;
+    let mut reply = String::new();
+    let mut reader = BufReader::new(reader_stream);
+    reader.read_line(&mut reply)?;
+    let value: serde_json::Value = serde_json::from_str(&reply).unwrap_or_default();
+    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+
+    // Activations arrive whenever the user clicks; forward them as they come rather than pairing
+    // them with anything this process writes.
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            let Ok(line) = line else { return };
+            let mut stdout = std::io::stdout().lock();
+            // A publisher that stopped reading its activations has gone away; end the thread
+            // rather than spinning on a broken pipe.
+            if writeln!(stdout, "{line}")
+                .and_then(|()| stdout.flush())
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+
+    for line in std::io::stdin().lock().lines() {
+        let line = line?;
+        writeln!(stream, "{line}")?;
+    }
+    Ok(())
 }
 
 pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {

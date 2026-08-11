@@ -258,6 +258,20 @@ pub enum Msg {
     PaneResize(PaneId, u16, u16),
     PaneScroll(PaneId, usize),
     ControlRequest(control::ControlEnvelope),
+    /// A pane's program opened an `agent-slots` stream. The sender carries activations back to it.
+    AgentSlotStreamOpen {
+        pane_id: crate::state::PaneId,
+        sender: std::sync::mpsc::SyncSender<String>,
+    },
+    /// One slot list from an open stream, replacing whatever that pane published before.
+    AgentSlotsReported {
+        pane_id: crate::state::PaneId,
+        slots: Vec<crate::session::protocol::AgentSlot>,
+    },
+    /// An `agent-slots` stream ended, withdrawing the pane's slots.
+    AgentSlotStreamClosed {
+        pane_id: crate::state::PaneId,
+    },
     SessionConnected {
         epoch: u64,
         name: String,

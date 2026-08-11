@@ -31,6 +31,20 @@ pub(crate) struct AgentRow {
     /// The agent finished a run (went quiescent) since the pane was last focused; drives the filled
     /// attention pulse until the pane is looked at.
     pub finished_unseen: bool,
+    /// Which published slot this row stands for, when its pane published any. `None` is the
+    /// one-row-per-pane path every agent that publishes nothing keeps taking.
+    pub slot: Option<SlotRef>,
+}
+
+/// A row's identity within a pane that publishes several agents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SlotRef {
+    pub id: String,
+    /// Publish order, so one pane's rows keep its tab order among themselves.
+    pub index: usize,
+    /// The slot the publisher currently has on screen. This, not pane focus, is what makes a row
+    /// read as the active one: focusing the pane only ever reveals one of its rows.
+    pub active: bool,
 }
 
 /// Agents that share a project, herdr-style "space" grouping. `project` is `None` for the trailing
@@ -157,7 +171,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         && !pane.closing
                         && pane.terminal.detected_agent.is_some()
                 })
-                .map(move |(pane_index, pane)| {
+                .flat_map(move |(pane_index, pane)| {
                     let detected = pane
                         .terminal
                         .detected_agent
@@ -179,7 +193,9 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                             .and_then(|(root, cwd)| {
                                 crate::platform::paths::project_relative_path(root, cwd)
                             });
-                    AgentRow {
+                    // Location is a property of the pane, so every slot inherits it and grouping is
+                    // untouched by the expansion below.
+                    let row = AgentRow {
                         pane_id: pane.id,
                         workspace_index,
                         pane_index,
@@ -202,7 +218,35 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
                         project_root,
                         subpath,
                         finished_unseen: pane.terminal.finished_unseen,
+                        slot: None,
+                    };
+                    if pane.terminal.slots.is_empty() {
+                        return vec![row];
                     }
+                    pane.terminal
+                        .slots
+                        .iter()
+                        .enumerate()
+                        .map(|(index, slot)| {
+                            let ui = pane.terminal.slot_ui.get(&slot.id);
+                            AgentRow {
+                                title: slot.title.clone(),
+                                status: Some(slot.status.clone()),
+                                // A publisher's reason is authoritative; the pane title only ever
+                                // describes whichever slot it currently draws.
+                                activity: slot.reason.clone(),
+                                age: pane.terminal.slot_age(slot),
+                                run: ui.and_then(|ui| ui.last_run),
+                                finished_unseen: ui.is_some_and(|ui| ui.finished_unseen),
+                                slot: Some(SlotRef {
+                                    id: slot.id.clone(),
+                                    index,
+                                    active: slot.active,
+                                }),
+                                ..row.clone()
+                            }
+                        })
+                        .collect()
                 })
         })
         .collect::<Vec<_>>();
@@ -211,6 +255,7 @@ pub(crate) fn agent_rows(state: &State) -> Vec<AgentRow> {
             status_rank(row.status.as_deref(), row.finished_unseen),
             row.workspace_index,
             row.pane_index,
+            row.slot.as_ref().map_or(0, |slot| slot.index),
         )
     });
     rows
@@ -461,8 +506,14 @@ pub(super) fn agents_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
             rows.push(SidebarRow::header(group_header(ctx, &group)));
         }
         for row in group.rows {
-            let id = row.pane_id;
-            rows.push(SidebarRow::item(agent_row(ctx, row), RowTarget::Pane(id)));
+            let target = match &row.slot {
+                Some(slot) => RowTarget::PaneSlot {
+                    pane_id: row.pane_id,
+                    slot_id: slot.id.clone(),
+                },
+                None => RowTarget::Pane(row.pane_id),
+            };
+            rows.push(SidebarRow::item(agent_row(ctx, row), target));
         }
     }
     rows
@@ -552,7 +603,12 @@ fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
     };
     let duration = row_duration(&row).map(|(text, _)| text);
     let mut content = Row::new(row.title.clone())
-        .active(ctx.state.current().focused_pane == Some(row.pane_id))
+        // For a published slot, being on screen in its own program decides this: a focused pane
+        // shows exactly one of its slots, so marking them all active would say nothing.
+        .active(
+            ctx.state.current().focused_pane == Some(row.pane_id)
+                && row.slot.as_ref().is_none_or(|slot| slot.active),
+        )
         .glyph(status_icon)
         .title_style(super::super::fg_only(&ctx.state.theme.primary))
         // Which workspace the agent lives on. Groups are projects, and a project's agents can be
@@ -664,6 +720,124 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![3, 7, 4, 2, 5, 1, 6]
         );
+    }
+
+    fn slot(id: &str, status: &str, active: bool) -> crate::session::protocol::AgentSlot {
+        crate::session::protocol::AgentSlot {
+            id: id.to_string(),
+            title: format!("tab {id}"),
+            status: status.to_string(),
+            reason: None,
+            active,
+            work_started_at: None,
+        }
+    }
+
+    /// The path every agent that publishes nothing takes must be untouched by slot expansion.
+    #[test]
+    fn a_pane_without_slots_still_produces_exactly_one_row() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.current_mut().workspaces[0].panes = vec![pane(1, Some("working"), false)];
+
+        let rows = agent_rows(&state);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].slot, None);
+        assert_eq!(rows[0].title, "Claude Code");
+    }
+
+    #[test]
+    fn a_pane_with_slots_becomes_one_row_per_slot_in_tab_order() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![
+            slot("a", "working", false),
+            slot("b", "working", true),
+            slot("c", "working", false),
+        ];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        let rows = agent_rows(&state);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.slot.as_ref().unwrap().id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"],
+            "one pane's rows keep the publisher's own order among themselves"
+        );
+        assert!(rows.iter().all(|row| row.pane_id == 1));
+        assert_eq!(rows[1].title, "tab b");
+    }
+
+    /// The point of the feature: a blocked tab has to reach the top of the list even though the
+    /// pane it lives in is the same pane as its working siblings.
+    #[test]
+    fn slot_rows_sort_by_status_across_their_own_pane() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![
+            slot("idle-tab", "idle", false),
+            slot("working-tab", "working", true),
+            slot("blocked-tab", "blocked", false),
+        ];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        assert_eq!(
+            agent_rows(&state)
+                .iter()
+                .map(|row| row.slot.as_ref().unwrap().id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["blocked-tab", "working-tab", "idle-tab"]
+        );
+    }
+
+    /// A background tab's finish is not acknowledged by looking at the pane, because looking at
+    /// the pane only ever showed the tab the publisher had on screen.
+    #[test]
+    fn attending_a_pane_clears_only_the_slot_on_screen() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![slot("shown", "idle", true), slot("hidden", "idle", false)];
+        for id in ["shown", "hidden"] {
+            publisher.terminal.slot_ui.insert(
+                id.to_string(),
+                crate::pane::SlotUiState {
+                    finished_unseen: true,
+                    last_run: None,
+                },
+            );
+        }
+        state.current_mut().workspaces[0].panes = vec![publisher];
+        state.window_focused = true;
+        state.current_mut().focused_pane = Some(1);
+
+        assert!(crate::ops::focus::acknowledge_pane_if_attended(
+            &mut state, 1
+        ));
+
+        let pulses = agent_rows(&state)
+            .into_iter()
+            .map(|row| (row.slot.unwrap().id, row.finished_unseen))
+            .collect::<Vec<_>>();
+        // The unacknowledged tab also rises above the acknowledged one: it still reads "done"
+        // while the attended slot has fallen back to plain idle.
+        assert_eq!(
+            pulses,
+            vec![("hidden".to_string(), true), ("shown".to_string(), false)]
+        );
+    }
+
+    /// Location belongs to the pane, so expanding it into several rows must not split its group.
+    #[test]
+    fn slot_rows_inherit_their_panes_project_grouping() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane_in_project(1, None, "/work/api/src", "/work/api", Some("main"));
+        publisher.terminal.slots = vec![slot("a", "working", true), slot("b", "idle", false)];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        let groups = agent_groups(&state);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].rows.len(), 2);
+        assert_eq!(groups[0].branch.as_deref(), Some("main"));
     }
 
     /// A finished-unseen agent reports `idle` but displays "done", and must sort with `done` —
@@ -1002,6 +1176,7 @@ mod tests {
             subpath: None,
             branch: None,
             finished_unseen,
+            slot: None,
         };
         // A live state reports how long it has held, and keeps advancing.
         assert_eq!(
@@ -1045,6 +1220,7 @@ mod tests {
             subpath: None,
             branch: None,
             finished_unseen: false,
+            slot: None,
         };
         assert_eq!(row_duration(&row), None);
     }

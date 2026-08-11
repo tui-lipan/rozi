@@ -120,6 +120,10 @@ pub enum ControlCommand {
         #[serde(default)]
         keep_open: Option<bool>,
     },
+    /// Publish the logical agents running inside the calling pane, and receive activations for
+    /// them. Unlike every other command this connection stays open in both directions; closing it
+    /// withdraws the pane's slots. Reached through `hyprmux agent-slots`.
+    AgentSlots,
     Subscribe {
         #[serde(default)]
         events: Vec<String>,
@@ -243,6 +247,73 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
     }
 }
 
+/// How many unread activations a publisher may accumulate before hyprmux stops keeping them.
+///
+/// Activations are user clicks, so this is generous relative to how fast anyone can produce them;
+/// a publisher that has stopped reading is wedged rather than busy.
+const AGENT_SLOT_ACTIVATION_BACKLOG: usize = 32;
+
+/// Serve one pane's `agent-slots` stream until its publisher goes away.
+///
+/// The only bidirectional command: after the acknowledgement, the publisher writes one slot list
+/// per line and hyprmux writes one activation per line back. Both directions run for the life of
+/// the connection, so a writer thread carries activations while this thread reads.
+fn run_agent_slot_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id: PaneId) {
+    let Ok(reader_stream) = stream.try_clone() else {
+        return;
+    };
+    let Ok(mut writer_stream) = stream.try_clone() else {
+        return;
+    };
+    let _ = writeln!(
+        stream,
+        "{}",
+        serde_json::to_string(&ControlResponse::empty()).unwrap()
+    );
+    // A publisher is silent between state changes, and those can be minutes apart.
+    let _ = stream.set_read_timeout(None);
+
+    let (tx, rx) = mpsc::sync_channel::<String>(AGENT_SLOT_ACTIVATION_BACKLOG);
+    link.send(Msg::AgentSlotStreamOpen {
+        pane_id,
+        sender: tx,
+    });
+    let writer = std::thread::spawn(move || {
+        while let Ok(line) = rx.recv() {
+            if writer_stream.write_all(line.as_bytes()).is_err() {
+                return;
+            }
+        }
+    });
+
+    for line in BufReader::new(reader_stream).lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        // A malformed line is the publisher's bug, not a reason to drop its rows; skip it and keep
+        // the stream open so the next good list still lands.
+        if let Ok(report) = serde_json::from_str::<AgentSlotReport>(&line) {
+            link.send(Msg::AgentSlotsReported {
+                pane_id,
+                slots: report.slots,
+            });
+        }
+    }
+
+    // Reaching here means EOF or a read error: the publisher is gone, so its slots go with it.
+    link.send(Msg::AgentSlotStreamClosed { pane_id });
+    drop(stream);
+    let _ = writer.join();
+}
+
+/// One line written by an `agent-slots` publisher.
+#[derive(Debug, serde::Deserialize)]
+struct AgentSlotReport {
+    #[serde(default)]
+    slots: Vec<crate::session::protocol::AgentSlot>,
+}
+
 fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hub: EventHub) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
@@ -309,6 +380,15 @@ fn handle_connection(mut stream: IpcConnection, link: CommandLink<Msg>, event_hu
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }
+    }
+    if let ControlCommand::AgentSlots = &request.command {
+        let Some(pane_id) = request.source_pane else {
+            let response = ControlResponse::error("agent-slots requires a source pane");
+            let _ = writeln!(stream, "{}", serde_json::to_string(&response).unwrap());
+            return;
+        };
+        run_agent_slot_stream(stream, link, pane_id);
+        return;
     }
     let (tx, rx) = mpsc::channel();
     link.send(Msg::ControlRequest(ControlEnvelope { request, reply: tx }));

@@ -12,6 +12,13 @@ pub(crate) enum RowTarget {
     /// Headers, spacers, and error rows: present in the list, never selected or activated.
     Inert,
     Pane(PaneId),
+    /// One agent inside a pane that publishes several. Focuses the pane and asks its program to
+    /// bring that slot on screen, since focusing alone would only ever reveal the slot it already
+    /// draws.
+    PaneSlot {
+        pane_id: PaneId,
+        slot_id: String,
+    },
     Session(Box<crate::session::discovery::DiscoveredSession>),
     /// "Click to connect" under an offline host in the Sessions tab: connect (probe) that host.
     HostConnect(crate::session::remote::RemoteTarget),

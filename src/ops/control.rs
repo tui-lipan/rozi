@@ -129,6 +129,9 @@ pub(crate) fn handle_control_request(
         ControlCommand::Subscribe { .. } => {
             ControlResponse::error("subscribe is handled by the control listener")
         }
+        ControlCommand::AgentSlots => {
+            ControlResponse::error("agent-slots is handled by the control listener")
+        }
         ControlCommand::PaneLogging { target, enabled } => {
             let id = target
                 .or(envelope.request.source_pane)

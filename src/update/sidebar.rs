@@ -806,6 +806,7 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, panel: usize, index: u
     match rows.swap_remove(index).target {
         RowTarget::Inert => Update::none(),
         RowTarget::Pane(id) => focus_pane(ctx, id),
+        RowTarget::PaneSlot { pane_id, slot_id } => activate_pane_slot(ctx, pane_id, slot_id),
         RowTarget::Session(entry) => activate_session(ctx, *entry),
         RowTarget::HostConnect(target) => connect_host(ctx, target),
         RowTarget::HostDisconnect(target) => disconnect_host(ctx, target, armed_disconnect),
@@ -1475,6 +1476,27 @@ pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId
     } else {
         Update::none()
     }
+}
+
+/// Focus a slot's pane and ask its program to bring that slot on screen.
+///
+/// The request travels back over the connection the publisher opened; a program that has since
+/// stopped listening still gets its pane focused, which is the part hyprmux can do alone.
+fn activate_pane_slot(
+    ctx: &mut Context<HyprmuxApp>,
+    pane_id: crate::state::PaneId,
+    slot_id: String,
+) -> Update {
+    let update = focus_pane(ctx, pane_id);
+    // Looking at a slot acknowledges its finish, exactly as focusing a pane acknowledges the
+    // pane's. The pane-wide chokepoint cannot do this: it does not know which slot was asked for.
+    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, pane_id)
+        && let Some(ui) = pane.terminal.slot_ui.get_mut(&slot_id)
+    {
+        ui.finished_unseen = false;
+    }
+    crate::ops::agent_slots::request_activation(ctx, pane_id, &slot_id);
+    update
 }
 
 #[cfg(test)]

@@ -166,6 +166,12 @@ pub struct State {
     pub popup_return_focus: Option<PaneId>,
     pub control_socket_path: Option<PathBuf>,
     pub event_hub: crate::events::EventHub,
+    /// Open `agent-slots` streams, keyed by the pane whose program opened one.
+    ///
+    /// Held so a sidebar click can ask that program to bring a slot on screen. Dropping the sender
+    /// closes the stream, which is also how a pane's slots are withdrawn - a publisher that dies
+    /// cannot leave rows behind.
+    pub agent_slot_streams: std::collections::HashMap<PaneId, std::sync::mpsc::SyncSender<String>>,
     /// The client's connection to the current session (client handle, identity, shared-layout
     /// lease, spawn/replay buffers, and its window-manager state). Reached through [`Self::current`]
     /// / [`Self::current_mut`].
@@ -329,6 +335,7 @@ impl State {
             popup_return_focus: None,
             control_socket_path: None,
             event_hub: crate::events::EventHub::default(),
+            agent_slot_streams: std::collections::HashMap::new(),
             attachment,
             background: HashMap::new(),
             launcher_seed: None,

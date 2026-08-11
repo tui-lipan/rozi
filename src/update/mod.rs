@@ -230,6 +230,15 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::PaneResize(id, cols, rows) => panes::pane_resize(ctx, id, cols, rows),
         Msg::PaneScroll(id, offset) => panes::pane_scroll(ctx, id, offset),
         Msg::ControlRequest(envelope) => panes::control_request(ctx, envelope),
+        Msg::AgentSlotStreamOpen { pane_id, sender } => {
+            crate::ops::agent_slots::stream_opened(ctx, pane_id, sender)
+        }
+        Msg::AgentSlotsReported { pane_id, slots } => {
+            crate::ops::agent_slots::slots_reported(ctx, pane_id, slots)
+        }
+        Msg::AgentSlotStreamClosed { pane_id } => {
+            crate::ops::agent_slots::stream_closed(ctx, pane_id)
+        }
         Msg::SessionConnected {
             epoch,
             name,

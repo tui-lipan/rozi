@@ -1,3 +1,4 @@
+pub(crate) mod agent_slots;
 pub(crate) mod config;
 pub(crate) mod confirm;
 pub(crate) mod control;

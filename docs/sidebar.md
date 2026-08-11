@@ -173,8 +173,8 @@ When an agent finishes a run — its effective status goes from `working` to a q
 as `idle` or `done` — the row shows a filled attention dot in the success color instead of the calm
 idle glyph, so a completed run does not blend in with agents that were idle all along. `blocked` is
 never replaced by the pulse, since it already has its own glyph, and an agent that resumes working
-drops the pulse. The pulse is cleared as soon as
-the pane is focused through any path, so looking at a finished agent acknowledges it.
+drops the pulse. The pulse is cleared as soon as the pane is attended — both its host window and the
+pane itself are focused — so selecting it in a background window does not falsely acknowledge it.
 
 Process detection infers `working` and `blocked` from server-owned terminal state where an agent
 exposes recognizable progress or prompt markers. Agent integrations can publish status through the

@@ -141,8 +141,9 @@ older output.
 
 ## Bell urgency
 
-With `[notifications].bell = true` (the default), BEL from an unfocused pane marks its workspace
-tab with `!`. Focusing that pane clears the marker. Attach replay and BEL used to terminate an OSC
+With `[notifications].bell = true` (the default), BEL from an unattended pane marks its workspace
+tab with `!`. A pane is attended only when both its host window and the pane itself are focused;
+returning to that focused window clears the marker. Attach replay and BEL used to terminate an OSC
 sequence do not create false urgency.
 
 ## Window / program titles

@@ -28,6 +28,41 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
         .any(|pane| pane.id == id && !pane.closing && pane.fullscreen)
 }
 
+/// Record host-window focus and acknowledge the one pane the user can now see.
+pub(crate) fn window_focus_changed(ctx: &mut Context<HyprmuxApp>, focused: bool) -> Update {
+    ctx.state.window_focused = focused;
+    let pane_id = ctx.state.current().focused_pane;
+    let changed =
+        focused && pane_id.is_some_and(|id| acknowledge_pane_if_attended(&mut ctx.state, id));
+    if changed {
+        Update::full()
+    } else {
+        Update::none()
+    }
+}
+
+/// Acknowledge attention only when the pane is selected in a focused host window.
+pub(crate) fn acknowledge_pane_if_attended(state: &mut State, pane_id: PaneId) -> bool {
+    if !state.is_pane_attended(pane_id) {
+        return false;
+    }
+    let Some(pane) = state
+        .active_workspace_mut()
+        .panes
+        .iter_mut()
+        .find(|pane| pane.id == pane_id)
+    else {
+        return false;
+    };
+
+    let changed =
+        pane.activity.has_unseen_output || pane.activity.bell || pane.terminal.finished_unseen;
+    pane.activity.has_unseen_output = false;
+    pane.activity.bell = false;
+    pane.terminal.finished_unseen = false;
+    changed
+}
+
 /// Whether focus is pinned to the pane currently covering the workspace.
 ///
 /// A fullscreen pane hides every tile behind it, so moving focus by direction or cycling order
@@ -59,9 +94,6 @@ pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId)
     if cross_workspace {
         // Cross-workspace jumps stay instant even when focus_pane arms Scrollable AxisChange.
         ctx.state.animation = GeometryAnimation::None;
-    }
-    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, target) {
-        pane.activity.has_unseen_output = false;
     }
     request_pane_focus(ctx, target);
     true
@@ -808,10 +840,6 @@ pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Upd
         return Update::none();
     }
     focus_pane(&mut ctx.state, id);
-    if let Some(pane) = crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id) {
-        pane.activity.has_unseen_output = false;
-        pane.activity.bell = false;
-    }
     request_pane_focus(ctx, id);
     Update::full()
 }
@@ -849,11 +877,10 @@ pub(crate) fn focus_pane(state: &mut State, id: PaneId) {
         .find(|pane| pane.id == id && !pane.closing)
     {
         anchored_tiled = !pane.floating;
-        pane.activity.has_unseen_output = false;
-        pane.activity.bell = false;
         state.current_mut().focused_pane = Some(id);
         state.active_workspace_mut().focused_pane = Some(id);
     }
+    acknowledge_pane_if_attended(state, id);
     if anchored_tiled {
         if scrollable {
             apply_scrollable_reveal_decision(
@@ -1036,15 +1063,7 @@ fn clear_focused_activity(state: &mut State) {
     let Some(id) = state.current().focused_pane else {
         return;
     };
-    if let Some(pane) = state
-        .active_workspace_mut()
-        .panes
-        .iter_mut()
-        .find(|pane| pane.id == id && !pane.closing)
-    {
-        pane.activity.has_unseen_output = false;
-        pane.activity.bell = false;
-    }
+    acknowledge_pane_if_attended(state, id);
 }
 
 pub(crate) fn choose_fallback_focus(state: &mut State) {
@@ -1263,6 +1282,124 @@ mod tests {
         }
         state.current_mut().next_pane_id = ids.iter().copied().max().unwrap_or(0) + 1;
         state
+    }
+
+    #[test]
+    fn window_focus_gain_acknowledges_only_the_selected_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::HyprmuxApp;
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let pane_id = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("fresh pane focus");
+                let other_id = 2;
+                let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+                backend.state_mut().current_mut().workspaces[0]
+                    .panes
+                    .push(Pane::new(other_id, 100, rect));
+                for pane in &mut backend.state_mut().current_mut().workspaces[0].panes {
+                    pane.activity.has_unseen_output = true;
+                    pane.activity.bell = true;
+                    pane.terminal.finished_unseen = true;
+                }
+
+                backend
+                    .set_window_focused(false)
+                    .expect("lose host-window focus");
+                backend
+                    .set_window_focused(true)
+                    .expect("gain host-window focus");
+
+                let panes = &backend.state().current().workspaces[0].panes;
+                let selected = panes
+                    .iter()
+                    .find(|pane| pane.id == pane_id)
+                    .expect("selected pane");
+                assert!(!selected.activity.has_unseen_output);
+                assert!(!selected.activity.bell);
+                assert!(!selected.terminal.finished_unseen);
+                let other = panes
+                    .iter()
+                    .find(|pane| pane.id == other_id)
+                    .expect("other pane");
+                assert!(other.activity.has_unseen_output);
+                assert!(other.activity.bell);
+                assert!(other.terminal.finished_unseen);
+            })
+            .expect("spawn focus lifecycle test")
+            .join()
+            .expect("focus lifecycle test completes");
+    }
+
+    #[test]
+    fn background_programmatic_focus_preserves_attention_until_window_focus_returns() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                use crate::HyprmuxApp;
+                use tui_lipan::TestBackend;
+
+                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let target = 2;
+                let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
+                let mut pane = Pane::new(target, 100, rect);
+                pane.activity.has_unseen_output = true;
+                pane.activity.bell = true;
+                pane.terminal.finished_unseen = true;
+                backend.state_mut().current_mut().workspaces[0]
+                    .panes
+                    .push(pane);
+                let original = backend.state_mut().current_mut().workspaces[0]
+                    .panes
+                    .iter_mut()
+                    .find(|pane| pane.id != target)
+                    .expect("original pane");
+                original.activity.has_unseen_output = true;
+                original.activity.bell = true;
+                original.terminal.finished_unseen = true;
+
+                backend
+                    .set_window_focused(false)
+                    .expect("lose host-window focus");
+                focus_pane(backend.state_mut(), target);
+                let target_pane = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == target)
+                    .expect("target pane");
+                assert!(target_pane.activity.has_unseen_output);
+                assert!(target_pane.activity.bell);
+                assert!(target_pane.terminal.finished_unseen);
+
+                backend
+                    .set_window_focused(true)
+                    .expect("gain host-window focus");
+                let target_pane = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == target)
+                    .expect("target pane");
+                assert!(!target_pane.activity.has_unseen_output);
+                assert!(!target_pane.activity.bell);
+                assert!(!target_pane.terminal.finished_unseen);
+                let original = backend.state().current().workspaces[0]
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id != target)
+                    .expect("original pane");
+                assert!(original.activity.has_unseen_output);
+                assert!(original.activity.bell);
+                assert!(original.terminal.finished_unseen);
+            })
+            .expect("spawn background focus test")
+            .join()
+            .expect("background focus test completes");
     }
 
     fn state_with_floating(placements: &[(PaneId, FloatRect)]) -> State {

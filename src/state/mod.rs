@@ -61,6 +61,9 @@ pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 pub struct State {
     pub config: HyprmuxConfig,
+    /// Whether the host terminal/window currently has focus. This is distinct from which pane the
+    /// app has selected: a selected pane is only attended while the host window is focused too.
+    pub window_focused: bool,
     pub runtime_epoch: u64,
     /// Next candidate attachment id. Allocation also checks current/background ids so restored
     /// sessions can never cause an id to be reused.
@@ -261,6 +264,7 @@ impl State {
 
         Self {
             config,
+            window_focused: true,
             runtime_epoch: 0,
             next_attachment_id: 1,
             command_link: None,
@@ -352,6 +356,11 @@ impl State {
     /// The current session attachment.
     pub fn current(&self) -> &Attachment {
         &self.attachment
+    }
+
+    /// Whether this client is currently attending `pane_id` in its active attachment.
+    pub fn is_pane_attended(&self, pane_id: PaneId) -> bool {
+        self.window_focused && self.current().focused_pane == Some(pane_id)
     }
 
     /// The current session's name, but only while it is a *local* session.
@@ -765,6 +774,24 @@ mod render_visibility_tests {
     fn an_unknown_pane_is_not_rendered() {
         let state = state_with_two_workspaces();
         assert!(!state.pane_is_rendered(999));
+    }
+
+    #[test]
+    fn pane_attendance_requires_focused_window_and_pane() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let pane_id = state.current().focused_pane.expect("fresh pane focus");
+
+        assert!(state.is_pane_attended(pane_id));
+
+        state.current_mut().focused_pane = None;
+        assert!(!state.is_pane_attended(pane_id));
+
+        state.current_mut().focused_pane = Some(pane_id);
+        state.window_focused = false;
+        assert!(!state.is_pane_attended(pane_id));
+
+        state.current_mut().focused_pane = None;
+        assert!(!state.is_pane_attended(pane_id));
     }
 }
 

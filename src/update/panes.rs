@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::anim::GeometryAnimation;
 use crate::key_routing::handle_key_routing;
-use crate::ops::focus::{focus_pane as focus, request_pane_focus};
+use crate::ops::focus::{acknowledge_pane_if_attended, focus_pane as focus, request_pane_focus};
 use crate::pane_lifecycle::find_pane_mut;
 use crate::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
@@ -16,9 +16,6 @@ pub(super) fn close_popup(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
     focus(&mut ctx.state, id);
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        pane.activity.has_unseen_output = false;
-    }
     request_pane_focus(ctx, id);
     Update::full()
 }
@@ -244,9 +241,7 @@ pub(super) fn pane_key(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent)
     if logical_focus_pending_activation(&ctx.state).is_none_or(|pending| pending == id) {
         focus(&mut ctx.state, id);
     }
-    if let Some(pane) = find_pane_mut(&mut ctx.state, id) {
-        pane.activity.has_unseen_output = false;
-    }
+    acknowledge_pane_if_attended(&mut ctx.state, id);
     let (_handled, update) = handle_key_routing(ctx, key, Some(id));
     update
 }

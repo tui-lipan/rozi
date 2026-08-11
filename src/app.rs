@@ -374,6 +374,10 @@ impl Component for HyprmuxApp {
         }
     }
 
+    fn on_window_focus_changed(&mut self, focused: bool, ctx: &mut Context<Self>) -> Update {
+        ops::focus::window_focus_changed(ctx, focused)
+    }
+
     fn view(&self, ctx: &Context<Self>) -> Element {
         if ctx.devtools_visible() {
             ctx.set_devtools_metrics(|| {

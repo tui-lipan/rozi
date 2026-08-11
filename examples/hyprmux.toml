@@ -141,13 +141,14 @@
 
 [notifications]
 # Desktop notifications via notify-send, off until you opt in. Status notifications run
-# only on the session controller and stay silent while the pane is locally focused.
+# only on the session controller and stay silent while the pane is attended (its host window and
+# pane are both focused).
 #enabled = false
 #pane_exit = true
 #pane_exit_error = true
 #pane_blocked = true
 #pane_done = false
-# Mark an unfocused pane urgent on BEL. Independent of the desktop notifications above.
+# Mark an unattended pane urgent on BEL. Independent of the desktop notifications above.
 #bell = true
 
 [sounds]

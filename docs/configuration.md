@@ -138,9 +138,9 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 enabled = false              # desktop notifications are opt-in (default: false)
 pane_exit = true             # notify on clean natural pane exits when enabled
 pane_exit_error = true       # notify on non-zero natural pane exits when enabled
-pane_blocked = true          # notify when an unfocused pane reports `blocked`
+pane_blocked = true          # notify when an unattended pane reports `blocked`
 pane_done = false            # optionally notify on the unseen finished working→quiescent edge
-bell = true                  # mark unfocused panes/workspaces urgent on BEL
+bell = true                  # mark unattended panes/workspaces urgent on BEL
 
 [sounds]
 enabled = false              # play alert cues (default: false)
@@ -444,7 +444,8 @@ See [Terminal features](terminal.md) for clipboard and selection behavior.
 Desktop notifications are disabled by default. When enabled, hyprmux sends natural pane-exit
 notifications (not user-initiated pane closes) and selected pane-status notifications via
 `notify-send` if it is available. Status notifications run only on the current session controller
-and are suppressed while that pane is locally focused, avoiding duplicate or distracting notices.
+and are suppressed while that pane is attended, avoiding duplicate or distracting notices. A pane is
+attended only when both its host window and the pane itself are focused.
 Failures are ignored and never block the UI.
 
 | Key | Default | Notes |
@@ -452,15 +453,16 @@ Failures are ignored and never block the UI.
 | `enabled` | `false` | Master switch for desktop notifications. |
 | `pane_exit` | `true` | Notify when a pane exits naturally with code `0`. |
 | `pane_exit_error` | `true` | Notify when a naturally exiting pane returns a non-zero code. `pane_exit` now covers clean exits only. |
-| `pane_blocked` | `true` | Notify when an unfocused pane effectively becomes blocked, including detected-only agents. |
+| `pane_blocked` | `true` | Notify when an unattended pane effectively becomes blocked, including detected-only agents. |
 | `pane_done` | `false` | Notify on the unseen working→quiescent finished edge. Reported-only transitions without a detected agent do not arm this existing edge. |
-| `bell` | `true` | Mark an unfocused pane urgent on BEL; focusing it clears urgency. Independent of desktop notifications. |
+| `bell` | `true` | Mark an unattended pane urgent on BEL; returning to its focused host window clears urgency. Independent of desktop notifications. |
 
 ## `[sounds]`
 
 Built-in WAV cues are extracted into hyprmux's cache and played best-effort. `player`, when set,
 receives the cue path as its final argument. The Alerts panel persists its toggle rows; do-not-disturb
-is in-memory for this client lifetime and mutes desktop and sound cues only.
+is in-memory for this client lifetime and mutes desktop and sound cues only. BEL and pane-status
+cues use the attended rule; non-zero exit cues play regardless of pane attendance.
 
 | Key | Default | Notes |
 | --- | --- | --- |

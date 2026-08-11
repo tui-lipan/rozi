@@ -395,7 +395,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         let command = update.command.take();
         update = Update::with_command(command);
     }
-    clear_finished_unseen_on_focus(ctx);
+    acknowledge_attended_pane(ctx);
     panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
@@ -429,24 +429,14 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
     }
 }
 
-/// Focus chokepoint for the sidebar's "unseen finish" pulse: after every message, clear the flag on
-/// the currently focused pane. Runs here rather than at the many places that move focus (click,
-/// keyboard, workspace switch, layout reconcile) so every path acknowledges a finished agent by the
-/// same rule — looking at it. Cheap: a single lookup in the active workspace.
-fn clear_finished_unseen_on_focus(ctx: &mut Context<HyprmuxApp>) {
+/// Attention chokepoint after every message: acknowledge the current pane only while the host window
+/// and pane are both focused. This keeps unseen output, BEL, and finished-run attention on one rule
+/// across clicks, keyboard focus, workspace switches, and layout reconciliation.
+fn acknowledge_attended_pane(ctx: &mut Context<HyprmuxApp>) {
     let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
-    if let Some(pane) = ctx
-        .state
-        .active_workspace_mut()
-        .panes
-        .iter_mut()
-        .find(|pane| pane.id == focused)
-        && pane.terminal.finished_unseen
-    {
-        pane.terminal.finished_unseen = false;
-    }
+    crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, focused);
 }
 
 pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {

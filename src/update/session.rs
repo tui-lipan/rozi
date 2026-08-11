@@ -616,6 +616,7 @@ pub(super) fn output(
         return Update::none();
     }
     let focused = ctx.state.current().focused_pane;
+    let attended = ctx.state.is_pane_attended(pane_id);
     let bell_notifications = ctx.state.config.notifications.bell;
     // Activity/bell indicators are workspace-agnostic (the workbar counts them across every
     // workspace), so an off-screen pane still needs a frame on the chunk that first raises one.
@@ -634,7 +635,7 @@ pub(super) fn output(
             let bell = pane.terminal.take_bell();
             bell_fired = bell;
             pane.activity.last_activity = Some(std::time::Instant::now());
-            if focused != Some(pane_id) {
+            if !attended {
                 indicator_raised |= !pane.activity.has_unseen_output;
                 pane.activity.has_unseen_output = true;
                 if bell && bell_notifications {
@@ -1057,11 +1058,12 @@ pub(super) fn pane_runtime_changed(
     if let (Some(edges), Some(title)) = (edges, title)
         && (edges.became_blocked || edges.finished)
     {
+        let attended = ctx.state.is_pane_attended(pane_id);
         if !ctx.state.do_not_disturb {
             maybe_notify_pane_status(
                 &ctx.state.config,
                 ctx.state.is_controller(),
-                ctx.state.current().focused_pane == Some(pane_id),
+                attended,
                 pane_id,
                 &title,
                 crate::pty_events::PaneStatusNotification {
@@ -1071,7 +1073,7 @@ pub(super) fn pane_runtime_changed(
                 },
             );
         }
-        if ctx.state.is_controller() && ctx.state.current().focused_pane != Some(pane_id) {
+        if ctx.state.is_controller() && !attended {
             if edges.became_blocked {
                 crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
             }
@@ -1750,6 +1752,135 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    #[test]
+    fn focused_pane_bell_raises_background_attention_and_focus_gain_clears_it() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let pane_id = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("fresh pane focus");
+                let generation = 42;
+                {
+                    let pane =
+                        crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    pane.pty_generation = generation;
+                    pane.terminal.bind_session(pane_id, generation);
+                }
+                let events = backend
+                    .state()
+                    .event_hub
+                    .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+
+                backend
+                    .set_window_focused(false)
+                    .expect("lose host-window focus");
+                backend
+                    .dispatch(Msg::SessionOutput {
+                        epoch,
+                        pane_id,
+                        generation,
+                        bytes: vec![7],
+                    })
+                    .expect("deliver BEL while unfocused");
+                assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
+                let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+                assert!(pane.activity.has_unseen_output);
+                assert!(pane.activity.bell);
+
+                backend
+                    .set_window_focused(true)
+                    .expect("gain host-window focus");
+                let pane = crate::pane_lifecycle::find_pane(backend.state(), pane_id).unwrap();
+                assert!(!pane.activity.has_unseen_output);
+                assert!(!pane.activity.bell);
+            })
+            .expect("spawn bell focus lifecycle test")
+            .join()
+            .expect("bell focus lifecycle test completes");
+    }
+
+    #[test]
+    fn finished_unseen_survives_background_updates_until_focus_gain() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let pane_id = backend
+                    .state()
+                    .current()
+                    .focused_pane
+                    .expect("fresh pane focus");
+                let generation = 42;
+                {
+                    let pane =
+                        crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    pane.pty_generation = generation;
+                    pane.terminal.bind_session(pane_id, generation);
+                    pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+                        value: crate::session::protocol::pane_status::WORKING.into(),
+                        reason: None,
+                        set_at: 1,
+                    });
+                    pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                        kind: crate::session::protocol::AgentKind::Claude,
+                        state: crate::session::protocol::DetectedAgentState::Idle,
+                    });
+                }
+
+                backend
+                    .set_window_focused(false)
+                    .expect("lose host-window focus");
+                backend
+                    .dispatch(Msg::SessionPaneRuntimeChanged {
+                        epoch,
+                        pane_id,
+                        generation,
+                        state: PaneRuntimeState {
+                            sequence: 1,
+                            status: Some(crate::session::protocol::PaneStatus {
+                                value: crate::session::protocol::pane_status::IDLE.into(),
+                                reason: None,
+                                set_at: 2,
+                            }),
+                            detected_agent: Some(crate::session::protocol::DetectedAgent {
+                                kind: crate::session::protocol::AgentKind::Claude,
+                                state: crate::session::protocol::DetectedAgentState::Idle,
+                            }),
+                            ..PaneRuntimeState::default()
+                        },
+                    })
+                    .expect("deliver finished edge while unfocused");
+                backend
+                    .dispatch(Msg::WorkbarTick)
+                    .expect("ordinary post-update pass");
+                assert!(
+                    crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                        .expect("finished pane")
+                        .terminal
+                        .finished_unseen
+                );
+
+                backend
+                    .set_window_focused(true)
+                    .expect("gain host-window focus");
+                assert!(
+                    !crate::pane_lifecycle::find_pane(backend.state(), pane_id)
+                        .expect("finished pane")
+                        .terminal
+                        .finished_unseen
+                );
+            })
+            .expect("spawn finished focus lifecycle test")
+            .join()
+            .expect("finished focus lifecycle test completes");
     }
 
     #[test]

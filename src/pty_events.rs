@@ -392,12 +392,18 @@ pub(crate) struct PaneStatusNotification<'a> {
 pub(crate) fn maybe_notify_pane_status(
     config: &crate::config::HyprmuxConfig,
     is_controller: bool,
-    is_focused: bool,
+    is_attended: bool,
     id: PaneId,
     title: &str,
     alert: PaneStatusNotification<'_>,
 ) {
-    if !should_notify_pane_status(config, is_controller, is_focused, alert.blocked, alert.done) {
+    if !should_notify_pane_status(
+        config,
+        is_controller,
+        is_attended,
+        alert.blocked,
+        alert.done,
+    ) {
         return;
     }
     let reported = alert.reported_status.filter(|status| {
@@ -432,11 +438,11 @@ pub(crate) fn maybe_notify_pane_status(
 fn should_notify_pane_status(
     config: &crate::config::HyprmuxConfig,
     is_controller: bool,
-    is_focused: bool,
+    is_attended: bool,
     blocked: bool,
     done: bool,
 ) -> bool {
-    if !config.notifications.enabled || !is_controller || is_focused {
+    if !config.notifications.enabled || !is_controller || is_attended {
         return false;
     }
     (config.notifications.pane_blocked && blocked) || (config.notifications.pane_done && done)
@@ -909,6 +915,24 @@ mod tests {
         config.notifications.enabled = false;
         assert!(!should_notify_pane_status(
             &config, true, false, true, false
+        ));
+    }
+
+    #[test]
+    fn status_notification_treats_a_focused_background_window_as_unattended() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        config.notifications.enabled = true;
+        let mut state = State::new(config.clone(), Theme::default());
+        let pane_id = state.current().focused_pane.expect("fresh pane focus");
+        state.window_focused = false;
+
+        assert!(!state.is_pane_attended(pane_id));
+        assert!(should_notify_pane_status(
+            &config,
+            true,
+            state.is_pane_attended(pane_id),
+            true,
+            false
         ));
     }
 

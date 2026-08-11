@@ -38,9 +38,9 @@ pub struct TerminalPane {
     pub reported_status: Option<crate::session::protocol::PaneStatus>,
     pub detected_agent: Option<crate::session::protocol::DetectedAgent>,
     /// Set when this agent pane's effective status transitions from `working` to a quiescent state
-    /// (finished) while the pane is not focused, and cleared once the pane is focused. Drives the
-    /// sidebar's "unseen finish" pulse so a completed run does not blend into panes that were idle
-    /// all along. Never set for `blocked`, which already has its own attention glyph.
+    /// (finished), and cleared once it is attended (its host window and the pane are both focused).
+    /// Drives the sidebar's "unseen finish" pulse so a completed run does not blend into panes that
+    /// were idle all along. Never set for `blocked`, which already has its own attention glyph.
     pub finished_unseen: bool,
     /// Server timestamp for the current active agent run. It stays unchanged while an agent is
     /// blocked and resumes working, so the sidebar can show one continuous run age.

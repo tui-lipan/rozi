@@ -426,15 +426,12 @@ pub enum AppearanceAction {
     ToggleHighlightFocusedBorder,
     ToggleHighlightFocusedTitlebar,
     CycleBorderMode,
-    CycleAlertBorder,
     ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
     CycleWorkbarTabStyle,
     CycleWorkbarStyle,
-    CycleWorkbarAlert,
-    CycleWorkbarAlertPaint,
 }
 
 /// Temporary values for the Appearance terminal-padding editor. Focus, rather than a second
@@ -490,9 +487,6 @@ impl AppearanceAction {
             Self::ToggleHighlightFocusedBorder if pane.border_mode == PaneBorderMode::None => {
                 Some("Needs pane borders")
             }
-            Self::CycleAlertBorder if pane.border_mode == PaneBorderMode::None => {
-                Some("Needs pane borders")
-            }
             Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
                 Some("Unsupported in this mode")
             }
@@ -502,8 +496,6 @@ impl AppearanceAction {
             | Self::CycleWorkbarBadgeStyle
             | Self::CycleWorkbarTabStyle
             | Self::CycleWorkbarStyle
-            | Self::CycleWorkbarAlert
-            | Self::CycleWorkbarAlertPaint
                 if !pane.show_workbar =>
             {
                 Some("Needs workbar")
@@ -834,12 +826,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            AppearanceAction::CycleAlertBorder.disabled_reason(&pane),
+            crate::state::AlertsAction::CycleAlertBorder.disabled_reason(&pane, true, true),
             Some("Needs pane borders")
         );
         pane.border_mode = PaneBorderMode::Dividers;
         assert_eq!(
-            AppearanceAction::CycleAlertBorder.disabled_reason(&pane),
+            crate::state::AlertsAction::CycleAlertBorder.disabled_reason(&pane, true, true),
             None
         );
     }

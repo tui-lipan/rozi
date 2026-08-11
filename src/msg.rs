@@ -18,6 +18,13 @@ pub enum Msg {
     ClosePalette,
     CloseHelp,
     CloseAppearance,
+    CloseAlerts,
+    AlertsSelect(crate::state::AlertsAction),
+    AlertsActivate(crate::state::AlertsAction),
+    /// Left/Right on an Alerts row. `reverse` is Left.
+    AlertsStep {
+        reverse: bool,
+    },
     AppearanceSelect(crate::state::AppearanceAction),
     AppearanceActivate(crate::state::AppearanceAction),
     /// Left/Right on a steppable appearance row. `reverse` is Left.

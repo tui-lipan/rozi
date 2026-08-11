@@ -276,10 +276,12 @@ have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux ru
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (rename pane, search,
-copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
-palette groups theme, titlebar, workbar, animation, and border controls, including
-`cycle-alert-border` and `cycle-workbar-alert` (Off/Static/Pulse); on a toggle or cycle
-row, `←` / `→` steps the value (Enter still activates, including Theme and Terminal padding).
+copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, alerts, help). The appearance
+palette groups theme, titlebar, workbar, animation, and border controls; **Alerts** groups pane,
+workspace, desktop, and sound cues. `alerts` opens that panel and `toggle-do-not-disturb` toggles
+its DND mode; it also contains `cycle-alert-border` and `cycle-workbar-alert` (Off/Static/Pulse).
+On Appearance and Alerts toggle or cycle rows, `←` / `→` steps the value (Enter still activates,
+including Theme and Terminal padding).
 Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
 overlay only, since the key is faster than a search box. "Change appearance" and "Toggle
 focus on hover" are palette-only - they have no default key. So are "Open config file" and

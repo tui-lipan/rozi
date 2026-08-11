@@ -77,6 +77,8 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "focused titlebar",
             "titlebar focus",
         ]),
+        "alerts" => alias_list(&["notifications", "sound", "desktop", "blocked", "urgent", "dnd"]),
+        "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
         "new-temporary-session" => alias_list(&["ephemeral"]),
         "collaborators" => alias_list(&[
             "clients",
@@ -168,26 +170,6 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "merge borders",
             "borderless panes",
             "pane dividers",
-        ]),
-        AppearanceAction::CycleAlertBorder => alias_list(&[
-            "blocked pane border",
-            "agent border",
-            "attention border",
-            "urgent border",
-            "alert pulse",
-        ]),
-        AppearanceAction::CycleWorkbarAlertPaint => alias_list(&[
-            "workspace tab alert paint",
-            "tab alert background",
-            "tab alert text",
-            "marker fill",
-        ]),
-        AppearanceAction::CycleWorkbarAlert => alias_list(&[
-            "workspace tab alert",
-            "workspace marker",
-            "tab alert",
-            "tab pulse",
-            "workbar alert",
         ]),
         AppearanceAction::ToggleBackgroundFollowsTerminal => alias_list(&[
             "background follows terminal",

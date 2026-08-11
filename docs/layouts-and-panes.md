@@ -159,9 +159,9 @@ Unfocused panes can signal a blocked agent with the configured error role, or a 
 agent with success; focusing a finished pane clears that signal, while focused panes keep the active
 border. `separate` and `merged` draw the alert ring (merged seams resolve quiet below alert below
 focus); `dividers` colors only touching internal seams, and `none` draws no pane alert. Use
-`[pane] alert_border = "pulse"` (the default) for a slow breathe, or `cycle-alert-border` in Appearance.
+`[pane] alert_border = "pulse"` (the default) for a slow breathe, or `cycle-alert-border` in Alerts.
 Workspace markers remain available independently through `[workbar.alert]`, whose own `mode` key
-(Appearance row **Workbar → Alert**, action `cycle-workbar-alert`) takes the same off/static/pulse
+(Alerts row **Workspace tab → Effect**, action `cycle-workbar-alert`) takes the same off/static/pulse
 values and breathes inactive marked tabs.
 
 A **new pane opens in the focused pane's current working directory** (when it can be

@@ -57,6 +57,7 @@ struct FileConfig {
     pane: PaneFileConfig,
     clipboard: ClipboardFileConfig,
     notifications: NotificationsFileConfig,
+    sounds: SoundsFileConfig,
     navigation: NavigationFileConfig,
     confirm: ConfirmFileConfig,
     scratchpad: ScratchpadFileConfig,
@@ -399,9 +400,26 @@ struct ClipboardFileConfig {
 struct NotificationsFileConfig {
     enabled: Option<bool>,
     pane_exit: Option<bool>,
+    pane_exit_error: Option<bool>,
     bell: Option<bool>,
     pane_blocked: Option<bool>,
     pane_done: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct SoundsFileConfig {
+    enabled: Option<bool>,
+    bell: Option<bool>,
+    blocked: Option<bool>,
+    done: Option<bool>,
+    error: Option<bool>,
+    throttle_ms: Option<u64>,
+    bell_file: Option<String>,
+    blocked_file: Option<String>,
+    done_file: Option<String>,
+    error_file: Option<String>,
+    player: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -694,6 +712,9 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     if let Some(pane_exit) = parsed.notifications.pane_exit {
         config.notifications.pane_exit = pane_exit;
     }
+    if let Some(pane_exit_error) = parsed.notifications.pane_exit_error {
+        config.notifications.pane_exit_error = pane_exit_error;
+    }
     if let Some(bell) = parsed.notifications.bell {
         config.notifications.bell = bell;
     }
@@ -703,6 +724,35 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     if let Some(pane_done) = parsed.notifications.pane_done {
         config.notifications.pane_done = pane_done;
     }
+    if let Some(enabled) = parsed.sounds.enabled {
+        config.sounds.enabled = enabled;
+    }
+    if let Some(bell) = parsed.sounds.bell {
+        config.sounds.bell = bell;
+    }
+    if let Some(blocked) = parsed.sounds.blocked {
+        config.sounds.blocked = blocked;
+    }
+    if let Some(done) = parsed.sounds.done {
+        config.sounds.done = done;
+    }
+    if let Some(error) = parsed.sounds.error {
+        config.sounds.error = error;
+    }
+    if let Some(throttle_ms) = parsed.sounds.throttle_ms {
+        let clamped = throttle_ms.clamp(100, 60_000);
+        if clamped != throttle_ms {
+            warnings.push(format!(
+                "Sound throttle {throttle_ms}ms out of range; clamped to {clamped}ms"
+            ));
+        }
+        config.sounds.throttle_ms = clamped;
+    }
+    config.sounds.bell_file = non_empty(parsed.sounds.bell_file).map(expand_path);
+    config.sounds.blocked_file = non_empty(parsed.sounds.blocked_file).map(expand_path);
+    config.sounds.done_file = non_empty(parsed.sounds.done_file).map(expand_path);
+    config.sounds.error_file = non_empty(parsed.sounds.error_file).map(expand_path);
+    config.sounds.player = non_empty(parsed.sounds.player);
     if let Some(editors) = parsed.navigation.editors {
         config.navigation.editors = editors
             .into_iter()
@@ -1121,6 +1171,19 @@ mod file_tests {
             parsed.navigation.editors,
             Some(vec!["nvim".into(), "hx".into()])
         );
+    }
+
+    #[test]
+    fn file_config_parses_sounds() {
+        let loaded = load_config_from_text(
+            "[sounds]\nenabled = true\nblocked = false\nthrottle_ms = 10\nbell_file = \"~/bell.wav\"\nplayer = \"play\"",
+            Path::new("test.toml"),
+        );
+        assert!(loaded.config.sounds.enabled);
+        assert!(!loaded.config.sounds.blocked);
+        assert_eq!(loaded.config.sounds.throttle_ms, 100);
+        assert!(loaded.config.sounds.bell_file.is_some());
+        assert_eq!(loaded.config.sounds.player.as_deref(), Some("play"));
     }
 
     const REFERENCE_EXAMPLE: &str = include_str!("../../examples/hyprmux.toml");

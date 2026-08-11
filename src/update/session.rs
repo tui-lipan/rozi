@@ -623,6 +623,8 @@ pub(super) fn output(
     // rather than one per output chunk.
     let mut indicator_raised = false;
     let mut chrome_changed = false;
+    let mut bell_fired = false;
+    let mut bell_alert_raised = false;
     let matched = match find_pane_mut(&mut ctx.state, pane_id) {
         Some(pane) if pane.pty_generation == generation => {
             chrome_changed |= matches!(
@@ -630,12 +632,14 @@ pub(super) fn output(
                 crate::pane::OutputFrame::Rebuild
             );
             let bell = pane.terminal.take_bell();
+            bell_fired = bell;
             pane.activity.last_activity = Some(std::time::Instant::now());
             if focused != Some(pane_id) {
                 indicator_raised |= !pane.activity.has_unseen_output;
                 pane.activity.has_unseen_output = true;
                 if bell && bell_notifications {
                     indicator_raised |= !pane.activity.bell;
+                    bell_alert_raised = !pane.activity.bell;
                     pane.activity.bell = true;
                 }
             }
@@ -651,6 +655,21 @@ pub(super) fn output(
             shared.buffer_orphan_output(pane_id, generation, &bytes);
         }
         return Update::none();
+    }
+    if bell_fired {
+        crate::events::emit(
+            &ctx.state,
+            crate::events::Event::new(
+                crate::events::EventKind::Bell,
+                vec![
+                    ("pane", pane_id.to_string()),
+                    ("focused", (focused == Some(pane_id)).to_string()),
+                ],
+            ),
+        );
+        if bell_alert_raised && !ctx.state.do_not_disturb {
+            crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Bell);
+        }
     }
     // Search coordinates are absolute within the retained terminal grid. Apply output first, drop
     // the pane borrow, then rebuild any affected scan so no result can address the pre-output grid.
@@ -759,7 +778,14 @@ pub(super) fn exited(
         &ctx.state,
         crate::events::Event::new(
             crate::events::EventKind::PaneExited,
-            vec![("pane", pane_id.to_string()), ("code", code.to_string())],
+            vec![
+                ("pane", pane_id.to_string()),
+                ("code", code.to_string()),
+                (
+                    "focused",
+                    (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
+                ),
+            ],
         ),
     );
     ctx.state.commands_dirty = true;
@@ -781,7 +807,12 @@ pub(super) fn exited(
     if !ctx.state.is_controller() {
         return Update::full();
     }
-    maybe_notify_pane_exit(&ctx.state.config, pane_id, code);
+    if !ctx.state.do_not_disturb {
+        maybe_notify_pane_exit(&ctx.state.config, pane_id, code);
+    }
+    if code != 0 {
+        crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Error);
+    }
     if !should_close {
         return Update::full();
     }
@@ -853,11 +884,16 @@ fn status_is_active_run(value: Option<&str>) -> bool {
 /// left un-armed: it already has its own loud glyph, and the server-owned run timestamp keeps the
 /// same timer ready for a later resume. A separate focus chokepoint clears the flag once the pane is
 /// actually looked at.
+struct AgentEdges {
+    became_blocked: bool,
+    finished: bool,
+}
 fn update_agent_status_edge(
     pane: &mut crate::pane::TerminalPane,
     previous: Option<&str>,
     previous_age: Option<std::time::Duration>,
-) {
+    previous_blocked: bool,
+) -> AgentEdges {
     let current = pane.agent_status();
     let current = current.as_deref();
     if current != previous {
@@ -866,6 +902,8 @@ fn update_agent_status_edge(
         }
         pane.status_since = Some(std::time::Instant::now());
     }
+    let became_blocked = !previous_blocked && pane.is_blocked();
+    let mut finished = false;
     if status_is(current, crate::session::protocol::pane_status::WORKING) {
         pane.finished_unseen = false;
     } else if status_is(previous, crate::session::protocol::pane_status::WORKING)
@@ -873,6 +911,11 @@ fn update_agent_status_edge(
         && !status_is(current, crate::session::protocol::pane_status::BLOCKED)
     {
         pane.finished_unseen = true;
+        finished = true;
+    }
+    AgentEdges {
+        became_blocked,
+        finished,
     }
 }
 
@@ -896,6 +939,7 @@ pub(super) fn pane_runtime_changed(
             {
                 let previous_agent_status = pane.terminal.agent_status();
                 let previous_age = pane.terminal.status_age();
+                let previous_blocked = pane.terminal.is_blocked();
                 pane.terminal.runtime_sequence = state.sequence;
                 pane.terminal.cwd = state.cwd;
                 pane.terminal.cwd_host = state.cwd_host;
@@ -908,10 +952,11 @@ pub(super) fn pane_runtime_changed(
                 pane.terminal.reported_status = state.status;
                 pane.terminal.detected_agent = state.detected_agent;
                 pane.terminal.work_started_at = state.work_started_at;
-                update_agent_status_edge(
+                let _ = update_agent_status_edge(
                     &mut pane.terminal,
                     previous_agent_status.as_deref(),
                     previous_age,
+                    previous_blocked,
                 );
             }
             if at_prompt {
@@ -926,6 +971,9 @@ pub(super) fn pane_runtime_changed(
             | crate::session::protocol::PaneCommandPhase::Input
     );
     let mut transition = None;
+    let mut edges = None;
+    let mut title = None;
+    let mut reported_status = None;
     if let Some(pane) = find_pane_mut(&mut ctx.state, pane_id)
         && pane.pty_generation == generation
         && state.sequence > pane.terminal.runtime_sequence
@@ -934,6 +982,7 @@ pub(super) fn pane_runtime_changed(
         let previous_agent_status = pane.terminal.agent_status();
         // Sampled before the incoming runtime state overwrites the status it dates.
         let previous_age = pane.terminal.status_age();
+        let previous_blocked = pane.terminal.is_blocked();
         pane.terminal.runtime_sequence = state.sequence;
         pane.terminal.cwd = state.cwd;
         pane.terminal.cwd_host = state.cwd_host;
@@ -944,22 +993,25 @@ pub(super) fn pane_runtime_changed(
         pane.terminal.command_phase = state.command_phase;
         pane.terminal.last_exit_status = state.last_exit_status;
         pane.terminal.reported_status = state.status;
+        reported_status = pane.terminal.reported_status.clone();
         pane.terminal.detected_agent = state.detected_agent;
         pane.terminal.work_started_at = state.work_started_at;
-        update_agent_status_edge(
+        edges = Some(update_agent_status_edge(
             &mut pane.terminal,
             previous_agent_status.as_deref(),
             previous_age,
-        );
+            previous_blocked,
+        ));
+        title = Some(pane.display_title(None));
         if previous != pane.terminal.reported_status {
             transition = Some((
                 previous,
                 pane.terminal.reported_status.clone(),
-                pane.display_title(None),
+                title.clone().expect("matched pane has a title"),
             ));
         }
     }
-    if let Some((previous, current, title)) = transition {
+    if let Some((previous, current, _title)) = transition {
         crate::events::emit_with_controller_hooks(
             &ctx.state,
             crate::events::Event::new(
@@ -972,6 +1024,10 @@ pub(super) fn pane_runtime_changed(
                             .as_ref()
                             .map(|status| status.value.clone())
                             .unwrap_or_default(),
+                    ),
+                    (
+                        "focused",
+                        (ctx.state.current().focused_pane == Some(pane_id)).to_string(),
                     ),
                     (
                         "reason",
@@ -997,14 +1053,32 @@ pub(super) fn pane_runtime_changed(
                 ],
             ),
         );
-        maybe_notify_pane_status(
-            &ctx.state.config,
-            ctx.state.is_controller(),
-            ctx.state.current().focused_pane == Some(pane_id),
-            pane_id,
-            &title,
-            current.as_ref(),
-        );
+    }
+    if let (Some(edges), Some(title)) = (edges, title)
+        && (edges.became_blocked || edges.finished)
+    {
+        if !ctx.state.do_not_disturb {
+            maybe_notify_pane_status(
+                &ctx.state.config,
+                ctx.state.is_controller(),
+                ctx.state.current().focused_pane == Some(pane_id),
+                pane_id,
+                &title,
+                crate::pty_events::PaneStatusNotification {
+                    blocked: edges.became_blocked,
+                    done: edges.finished,
+                    reported_status: reported_status.as_ref(),
+                },
+            );
+        }
+        if ctx.state.is_controller() && ctx.state.current().focused_pane != Some(pane_id) {
+            if edges.became_blocked {
+                crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Blocked);
+            }
+            if edges.finished {
+                crate::ops::sound::cue(ctx, crate::platform::sound::Cue::Done);
+            }
+        }
     }
     // The shell reached its first prompt: deliver any queued replay input now, so readline
     // echoes it exactly once at the prompt (see `flush_replay_input`).
@@ -1635,6 +1709,50 @@ mod tests {
     }
 
     #[test]
+    fn bell_events_include_focused_for_current_panes() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let epoch = backend.state().runtime_epoch;
+                let pane_id = backend.state().current().focused_pane.unwrap();
+                let generation = 42;
+                {
+                    let pane =
+                        crate::pane_lifecycle::find_pane_mut(backend.state_mut(), pane_id).unwrap();
+                    pane.pty_generation = generation;
+                    pane.terminal.bind_session(pane_id, generation);
+                }
+                let events = backend
+                    .state()
+                    .event_hub
+                    .subscribe(Some(HashSet::from([crate::events::EventKind::Bell])));
+                backend
+                    .update_level(Msg::SessionOutput {
+                        epoch,
+                        pane_id,
+                        generation,
+                        bytes: vec![7],
+                    })
+                    .unwrap();
+                assert!(events.recv().unwrap().contains("\"focused\":\"true\""));
+                backend.state_mut().current_mut().focused_pane = None;
+                backend
+                    .update_level(Msg::SessionOutput {
+                        epoch,
+                        pane_id,
+                        generation,
+                        bytes: vec![7],
+                    })
+                    .unwrap();
+                assert!(events.recv().unwrap().contains("\"focused\":\"false\""));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn parked_disconnect_preserves_identity_and_marks_attachment_offline() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1731,11 +1849,11 @@ mod tests {
     fn finished_unseen_arms_on_working_to_quiescent_and_disarms_on_resume() {
         // working -> idle arms the pulse.
         let mut pane = agent_pane("idle");
-        update_agent_status_edge(&mut pane, Some("working"), None);
+        update_agent_status_edge(&mut pane, Some("working"), None, false);
         assert!(pane.finished_unseen);
 
         // A later idle -> idle poll leaves it armed until the pane is looked at.
-        update_agent_status_edge(&mut pane, Some("idle"), None);
+        update_agent_status_edge(&mut pane, Some("idle"), None, false);
         assert!(pane.finished_unseen);
 
         // Resuming work disarms it: a spinning agent must not wear a completed dot.
@@ -1744,7 +1862,7 @@ mod tests {
             reason: None,
             set_at: 2,
         });
-        update_agent_status_edge(&mut pane, Some("idle"), None);
+        update_agent_status_edge(&mut pane, Some("idle"), None, false);
         assert!(!pane.finished_unseen);
     }
 
@@ -1754,10 +1872,10 @@ mod tests {
     fn status_since_stamps_transitions_and_survives_unchanged_polls() {
         let mut pane = agent_pane("working");
         assert!(pane.status_since.is_none());
-        update_agent_status_edge(&mut pane, Some("idle"), None);
+        update_agent_status_edge(&mut pane, Some("idle"), None, false);
         let stamped = pane.status_since.expect("a transition stamps the pane");
 
-        update_agent_status_edge(&mut pane, Some("working"), None);
+        update_agent_status_edge(&mut pane, Some("working"), None, false);
         assert_eq!(pane.status_since, Some(stamped));
 
         pane.reported_status = Some(crate::session::protocol::PaneStatus {
@@ -1765,7 +1883,7 @@ mod tests {
             reason: None,
             set_at: 2,
         });
-        update_agent_status_edge(&mut pane, Some("working"), None);
+        update_agent_status_edge(&mut pane, Some("working"), None, false);
         assert!(pane.status_since.expect("re-stamped") > stamped);
     }
 
@@ -1775,7 +1893,7 @@ mod tests {
     fn finishing_a_run_banks_its_length_and_freezes_it() {
         let run = std::time::Duration::from_secs(12 * 60);
         let mut pane = agent_pane("idle");
-        update_agent_status_edge(&mut pane, Some("working"), Some(run));
+        update_agent_status_edge(&mut pane, Some("working"), Some(run), false);
         assert_eq!(pane.last_run, Some(run));
 
         // Repeated idle polls afterwards leave the banked run alone.
@@ -1783,6 +1901,7 @@ mod tests {
             &mut pane,
             Some("idle"),
             Some(std::time::Duration::from_secs(1)),
+            false,
         );
         assert_eq!(pane.last_run, Some(run));
 
@@ -1796,6 +1915,7 @@ mod tests {
             &mut pane,
             Some("blocked"),
             Some(std::time::Duration::from_secs(3)),
+            false,
         );
         assert_eq!(pane.last_run, Some(run));
     }
@@ -1803,7 +1923,7 @@ mod tests {
     #[test]
     fn finished_unseen_ignores_working_to_blocked() {
         let mut pane = agent_pane("blocked");
-        update_agent_status_edge(&mut pane, Some("working"), None);
+        update_agent_status_edge(&mut pane, Some("working"), None, false);
         assert!(!pane.finished_unseen);
     }
 
@@ -1812,9 +1932,41 @@ mod tests {
         let mut pane = agent_pane("idle");
         pane.detected_agent.as_mut().expect("agent").state =
             crate::session::protocol::DetectedAgentState::Blocked;
-        update_agent_status_edge(&mut pane, Some("working"), None);
+        update_agent_status_edge(&mut pane, Some("working"), None, false);
         assert_eq!(pane.agent_status().as_deref(), Some("blocked"));
         assert!(!pane.finished_unseen);
+    }
+
+    #[test]
+    fn agent_edges_report_detected_only_blocked() {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::Claude,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        });
+
+        let edges = update_agent_status_edge(&mut pane, Some("idle"), None, false);
+
+        assert!(edges.became_blocked);
+        assert!(!edges.finished);
+        assert!(pane.reported_status.is_none());
+    }
+
+    #[test]
+    fn agent_edges_report_reported_only_blocked_once() {
+        let mut pane = crate::pane::TerminalPane::new(100);
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: crate::session::protocol::pane_status::BLOCKED.into(),
+            reason: None,
+            set_at: 1,
+        });
+
+        let first = update_agent_status_edge(&mut pane, None, None, false);
+        let repeated = update_agent_status_edge(&mut pane, None, None, true);
+
+        assert!(first.became_blocked);
+        assert!(!repeated.became_blocked);
+        assert!(pane.detected_agent.is_none());
     }
 
     #[test]

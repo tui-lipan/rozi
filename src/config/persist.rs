@@ -138,6 +138,26 @@ pub fn persist_animation_flag(key: &str, value: bool) -> std::result::Result<Pat
     Ok(path)
 }
 
+pub fn persist_notification_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("notifications", key, value)
+}
+pub fn persist_sound_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("sounds", key, value)
+}
+pub fn persist_workbar_alert_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("workbar.alert", key, value)
+}
+fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+    write_config_text(&path, upsert_bool_in_section(&text, section, key, value))?;
+    Ok(path)
+}
+
 pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -746,6 +766,14 @@ mod tests {
             "\"off\"",
         );
         assert!(bare.contains("[workbar.alert]\nmode = \"off\""));
+    }
+
+    #[test]
+    fn workbar_alert_flag_uses_the_nested_table() {
+        assert_eq!(
+            upsert_bool_in_section("", "workbar.alert", "blocked", false),
+            "[workbar.alert]\nblocked = false\n"
+        );
     }
 
     #[test]

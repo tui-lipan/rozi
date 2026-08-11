@@ -136,10 +136,24 @@ enable_osc52 = true          # allow programs to set the system clipboard via OS
 
 [notifications]
 enabled = false              # desktop notifications are opt-in (default: false)
-pane_exit = true             # notify on natural pane process exits when enabled
+pane_exit = true             # notify on clean natural pane exits when enabled
+pane_exit_error = true       # notify on non-zero natural pane exits when enabled
 pane_blocked = true          # notify when an unfocused pane reports `blocked`
-pane_done = false            # optionally notify when an unfocused pane reports `done`
+pane_done = false            # optionally notify on the unseen finished working→quiescent edge
 bell = true                  # mark unfocused panes/workspaces urgent on BEL
+
+[sounds]
+enabled = false              # play alert cues (default: false)
+bell = true                  # BEL cue
+blocked = true               # effective blocked-status cue
+done = true                  # unseen finished-run cue
+error = true                 # non-zero pane exit cue
+throttle_ms = 2000           # same-cue minimum interval
+bell_file = ""               # empty uses built-in WAV
+blocked_file = ""            # empty uses built-in WAV
+done_file = ""               # empty uses built-in WAV
+error_file = ""              # empty uses built-in WAV
+player = ""                  # empty auto-detects; path is its final argument
 
 [navigation]
 # Programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to them
@@ -296,7 +310,7 @@ Pane focus and chrome behavior.
 | `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The appearance cycle writes this back to config. |
 | `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The appearance cycle writes this back to config. |
 | `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The appearance row is disabled when the selected mode has no pane frames. |
-| `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Appearance action is `cycle-alert-border`; it is disabled in `none` mode. |
+| `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
 | `keep_special_borders` | `false` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Fullscreen panes remain consistent with the selected global mode. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
 
@@ -436,10 +450,25 @@ Failures are ignored and never block the UI.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
-| `pane_exit` | `true` | Notify when a pane's process exits naturally. |
-| `pane_blocked` | `true` | Notify when an unfocused pane transitions into the well-known `blocked` status. |
-| `pane_done` | `false` | Notify when an unfocused pane transitions into the well-known `done` status. |
+| `pane_exit` | `true` | Notify when a pane exits naturally with code `0`. |
+| `pane_exit_error` | `true` | Notify when a naturally exiting pane returns a non-zero code. `pane_exit` now covers clean exits only. |
+| `pane_blocked` | `true` | Notify when an unfocused pane effectively becomes blocked, including detected-only agents. |
+| `pane_done` | `false` | Notify on the unseen working→quiescent finished edge. Reported-only transitions without a detected agent do not arm this existing edge. |
 | `bell` | `true` | Mark an unfocused pane urgent on BEL; focusing it clears urgency. Independent of desktop notifications. |
+
+## `[sounds]`
+
+Built-in WAV cues are extracted into hyprmux's cache and played best-effort. `player`, when set,
+receives the cue path as its final argument. The Alerts panel persists its toggle rows; do-not-disturb
+is in-memory for this client lifetime and mutes desktop and sound cues only.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `false` | Master sound switch. |
+| `bell`, `blocked`, `done`, `error` | `true` | Per-cue switches. |
+| `throttle_ms` | `2000` | Per-cue repeat suppression; clamped to 100–60000. |
+| `bell_file`, `blocked_file`, `done_file`, `error_file` | empty | Optional WAV override. |
+| `player` | empty | Optional executable override; the file path is appended as its final argument. |
 
 ## `[navigation]`
 
@@ -761,7 +790,7 @@ constructed from command output.
 Customize the workbar. By default the `hyprmux` badge and workspace tabs are on the left, while the
 remote `location` and named `session` badges are on the right. Every configured segment renders as
 a colored badge; each kind has a curated default color that you can override by theme role (see
-below). The `PREFIX`/`RESIZE`/`COPY`/`HINT`/`SIDEBAR`/`SYNC` mode chips render only while `show_workbar` is
+below). The `PREFIX`/`RESIZE`/`COPY`/`HINT`/`SIDEBAR`/`SYNC`/`DND` mode chips render only while `show_workbar` is
 enabled, and sit to the left of the right-region segments so a `session` badge stays pinned to the
 trailing edge. `SYNC` marks a workspace where [pane synchronization](layouts-and-panes.md) is on, so
 the state that multiplies every keystroke across panes is always visible rather than announced once.
@@ -911,7 +940,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `choose-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `collaborators`, `request-control`, `grant-control`, `toggle-input-lock`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`, `restart-session`,
-`choose-theme`, `command-palette`,
+`choose-theme`, `command-palette`, `alerts`, `toggle-do-not-disturb`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `toggle-sidebar-split`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
@@ -985,7 +1014,7 @@ Multiple entries may target the same event; each command is launched asynchronou
 `HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
 are warned and ignored.
 
-See [Hooks](hooks.md) for all 16 events and fields, the complete environment contract, command
+See [Hooks](hooks.md) for all 17 events and fields, the complete environment contract, command
 lifecycle and client-side semantics, migration examples, and control-socket callbacks.
 
 ## Pane synchronization

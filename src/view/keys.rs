@@ -65,6 +65,9 @@ pub fn sidebar_body_key() -> &'static str {
 pub fn appearance_palette_key() -> &'static str {
     "hyprmux-appearance-palette"
 }
+pub fn alerts_palette_key() -> &'static str {
+    "hyprmux-alerts-palette"
+}
 
 pub fn pane_padding_vertical_key() -> &'static str {
     "hyprmux-pane-padding-vertical"

@@ -307,6 +307,10 @@ fn execute_action_inner(
     if is_blocked_by_scratchpad(&ctx.state, action) {
         return Update::none();
     }
+    if opens_non_alert_overlay(action) {
+        ctx.state.show_alerts = false;
+        ctx.state.alerts_selected = None;
+    }
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
     // `Msg::RunAction` path and control-socket `RunAction` requests
@@ -485,6 +489,21 @@ fn execute_action_inner(
             ctx.request_focus(crate::view::appearance_palette_key());
             Update::full()
         }
+        Action::OpenAlerts => {
+            clear_non_alert_overlays(ctx);
+            ctx.state.show_alerts = true;
+            ctx.state.alerts_selected = Some(crate::state::AlertsAction::ToggleDoNotDisturb);
+            ctx.state.show_palette = false;
+            ctx.state.show_help = false;
+            ctx.state.show_appearance = false;
+            ctx.request_focus(crate::view::alerts_palette_key());
+            Update::full()
+        }
+        Action::ToggleDoNotDisturb => {
+            // A persistent in-session mode earns a workbar chip, not a redundant toast.
+            ctx.state.do_not_disturb = !ctx.state.do_not_disturb;
+            Update::full()
+        }
         Action::TogglePalette => {
             ctx.state.pane_padding_editor = None;
             ctx.state.show_palette = !ctx.state.show_palette;
@@ -624,6 +643,55 @@ fn execute_action_inner(
             Update::full()
         }
     }
+}
+
+/// Overlay-opening actions share this boundary so Alerts cannot remain underneath another modal.
+/// The nested overlay-return flow does not open Alerts, so it retains its own parent bookkeeping.
+fn opens_non_alert_overlay(action: Action) -> bool {
+    matches!(
+        action,
+        Action::OpenAppearance
+            | Action::TogglePalette
+            | Action::ToggleHelp
+            | Action::OpenThemePicker
+            | Action::OpenLayoutPicker
+            | Action::OpenSearch
+            | Action::RenamePane
+            | Action::RenameWorkspace
+            | Action::RenameSession
+            | Action::SaveProfile
+            | Action::OpenProfilePicker
+            | Action::ApplyProfile
+            | Action::OpenSessionPicker
+            | Action::OpenCollaborators
+    )
+}
+
+/// Alerts is a top-level settings overlay, never a child in `overlay_return`. Starting it abandons
+/// any other modal instead of rendering it under the new palette.
+fn clear_non_alert_overlays(ctx: &mut Context<HyprmuxApp>) {
+    crate::ops::theme::cancel_theme_picker(ctx);
+    if ctx.state.show_layout_picker || ctx.state.layout_picker.is_some() {
+        let _ = crate::ops::layout_picker::cancel_layout_picker(ctx);
+    }
+    ctx.state.show_palette = false;
+    ctx.state.show_help = false;
+    ctx.state.show_appearance = false;
+    ctx.state.appearance_selected = None;
+    ctx.state.pane_padding_editor = None;
+    ctx.state.search = None;
+    ctx.state.rename = None;
+    ctx.state.rename_session = None;
+    ctx.state.save_profile_prompt = None;
+    ctx.state.show_profile_picker = false;
+    ctx.state.profile_picker = None;
+    ctx.state.profile_picker_epoch = ctx.state.profile_picker_epoch.wrapping_add(1);
+    ctx.state.show_session_picker = false;
+    ctx.state.session_picker = None;
+    ctx.state.session_picker_epoch = ctx.state.session_picker_epoch.wrapping_add(1);
+    ctx.state.collaboration = None;
+    ctx.state.follow_prompt = None;
+    ctx.state.overlay_return = None;
 }
 
 #[cfg(test)]

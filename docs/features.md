@@ -115,7 +115,7 @@ with the mouse and remember their geometry.
 **Focus** — directional (`focus-<dir>`), directional-without-wrap, cycle next/previous, and
 `focus-next-blocked-pane` to jump to a pane waiting on input (reported and screen-detected blocked
 states agree). Unfocused blocked and finished-unseen agents can mark pane borders and workspace tabs;
-`cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse. **Focus-on-hover** is available as a
+`cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse in **Alerts**. **Focus-on-hover** is available as a
 toggle. Focus survives layout changes.
 
 **Smart focus (vim-aware)** — `smart-focus-<dir>` moves hyprmux focus *unless* the focused pane
@@ -453,10 +453,10 @@ long-lived client receives the event stream over the socket.
 **Injected pane environment** — `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are set in every
 spawned pane. `PaneIdentity::env` adds never-persisted per-spawn variables.
 
-**Hooks** — `[[hooks]]` runs client-side commands for 16 UI events, injecting `HYPRMUX_EVENT`, the
+**Hooks** — `[[hooks]]` runs client-side commands for 17 UI events, injecting `HYPRMUX_EVENT`, the
 event's fields, `HYPRMUX_SOCKET`, and `HYPRMUX_REMOTE_HOST` when remote:
 
-`pane-spawned`, `pane-exited`, `pane-status-changed`, `focus-changed`, `workspace-switched`,
+`pane-spawned`, `pane-exited`, `pane-status-changed`, `bell`, `focus-changed`, `workspace-switched`,
 `session-attached`, `session-detached`, `session-renamed`, `session-created`,
 `controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
 `profile-saved`, `config-reloaded`.

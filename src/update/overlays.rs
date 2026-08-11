@@ -48,7 +48,7 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
     }
     if matches!(
         action,
-        Action::OpenAppearance | Action::TogglePalette | Action::ToggleHelp
+        Action::OpenAppearance | Action::OpenAlerts | Action::TogglePalette | Action::ToggleHelp
     ) {
         ctx.state.pane_padding_editor = None;
     }
@@ -66,7 +66,10 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
         Action::OpenSearch => request_search_focus(ctx),
         Action::RenamePane => request_rename_focus(ctx),
         Action::RenameWorkspace | Action::RenameSession => request_rename_session_focus(ctx),
-        Action::OpenAppearance | Action::OpenThemePicker | Action::OpenLayoutPicker => {}
+        Action::OpenAppearance
+        | Action::OpenAlerts
+        | Action::OpenThemePicker
+        | Action::OpenLayoutPicker => {}
         Action::SaveProfile
         | Action::OpenProfilePicker
         | Action::ApplyProfile
@@ -105,6 +108,213 @@ pub(super) fn close_appearance(ctx: &mut Context<HyprmuxApp>) -> Update {
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
+}
+
+pub(super) fn close_alerts(ctx: &mut Context<HyprmuxApp>) -> Update {
+    ctx.state.show_alerts = false;
+    ctx.state.alerts_selected = None;
+    ctx.state.commands_dirty = true;
+    request_current_pane_focus(ctx);
+    Update::full()
+}
+pub(super) fn alerts_select(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::AlertsAction,
+) -> Update {
+    ctx.state.alerts_selected = Some(action);
+    Update::none()
+}
+pub(super) fn alerts_activate(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::AlertsAction,
+) -> Update {
+    alerts_activate_dir(ctx, action, false)
+}
+
+pub(super) fn alerts_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> Update {
+    let Some(action) = ctx.state.alerts_selected else {
+        return Update::none();
+    };
+    if !action.steps_horizontally() {
+        return Update::none();
+    }
+    alerts_activate_dir(ctx, action, reverse)
+}
+
+fn alerts_activate_dir(
+    ctx: &mut Context<HyprmuxApp>,
+    action: crate::state::AlertsAction,
+    reverse: bool,
+) -> Update {
+    if action
+        .disabled_reason(
+            &ctx.state.config.pane,
+            ctx.state.config.notifications.enabled,
+            ctx.state.config.sounds.enabled,
+        )
+        .is_some()
+    {
+        ctx.request_focus(crate::view::alerts_palette_key());
+        return Update::full();
+    }
+    use crate::state::AlertsAction::*;
+    let mut persisted: Option<(&str, &str, bool)> = None;
+    match action {
+        ToggleDoNotDisturb => ctx.state.do_not_disturb = !ctx.state.do_not_disturb,
+        ToggleBellUrgency => {
+            ctx.state.config.notifications.bell = !ctx.state.config.notifications.bell;
+            persisted = Some(("notifications", "bell", ctx.state.config.notifications.bell));
+        }
+        CycleAlertBorder => {
+            let value = if reverse {
+                ctx.state.config.pane.alert_border.prev()
+            } else {
+                ctx.state.config.pane.alert_border.next()
+            };
+            ctx.state.config.pane.alert_border = value;
+            if let Err(err) = crate::config::persist_pane_string("alert_border", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleWorkbarAlert => {
+            let value = if reverse {
+                ctx.state.config.workbar.alert.mode.prev()
+            } else {
+                ctx.state.config.workbar.alert.mode.next()
+            };
+            ctx.state.config.workbar.alert.mode = value;
+            if let Err(err) = crate::config::persist_workbar_alert_string("mode", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
+        CycleWorkbarAlertPaint => {
+            let value = if reverse {
+                ctx.state.config.workbar.alert.paint.prev()
+            } else {
+                ctx.state.config.workbar.alert.paint.next()
+            };
+            ctx.state.config.workbar.alert.paint = value;
+            if let Err(err) = crate::config::persist_workbar_alert_string("paint", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
+        ToggleMarkBell => {
+            ctx.state.config.workbar.alert.bell = !ctx.state.config.workbar.alert.bell;
+            persisted = Some(("workbar.alert", "bell", ctx.state.config.workbar.alert.bell));
+        }
+        ToggleMarkBlocked => {
+            ctx.state.config.workbar.alert.blocked = !ctx.state.config.workbar.alert.blocked;
+            persisted = Some((
+                "workbar.alert",
+                "blocked",
+                ctx.state.config.workbar.alert.blocked,
+            ));
+        }
+        ToggleMarkFinished => {
+            ctx.state.config.workbar.alert.finished = !ctx.state.config.workbar.alert.finished;
+            persisted = Some((
+                "workbar.alert",
+                "finished",
+                ctx.state.config.workbar.alert.finished,
+            ));
+        }
+        ToggleMarkWorking => {
+            ctx.state.config.workbar.alert.working = !ctx.state.config.workbar.alert.working;
+            persisted = Some((
+                "workbar.alert",
+                "working",
+                ctx.state.config.workbar.alert.working,
+            ));
+        }
+        ToggleMarkIdle => {
+            ctx.state.config.workbar.alert.idle = !ctx.state.config.workbar.alert.idle;
+            persisted = Some(("workbar.alert", "idle", ctx.state.config.workbar.alert.idle));
+        }
+        ToggleDesktopEnabled => {
+            ctx.state.config.notifications.enabled = !ctx.state.config.notifications.enabled;
+            persisted = Some((
+                "notifications",
+                "enabled",
+                ctx.state.config.notifications.enabled,
+            ));
+        }
+        ToggleDesktopBlocked => {
+            ctx.state.config.notifications.pane_blocked =
+                !ctx.state.config.notifications.pane_blocked;
+            persisted = Some((
+                "notifications",
+                "pane_blocked",
+                ctx.state.config.notifications.pane_blocked,
+            ));
+        }
+        ToggleDesktopDone => {
+            ctx.state.config.notifications.pane_done = !ctx.state.config.notifications.pane_done;
+            persisted = Some((
+                "notifications",
+                "pane_done",
+                ctx.state.config.notifications.pane_done,
+            ));
+        }
+        ToggleDesktopExit => {
+            ctx.state.config.notifications.pane_exit = !ctx.state.config.notifications.pane_exit;
+            persisted = Some((
+                "notifications",
+                "pane_exit",
+                ctx.state.config.notifications.pane_exit,
+            ));
+        }
+        ToggleDesktopExitError => {
+            ctx.state.config.notifications.pane_exit_error =
+                !ctx.state.config.notifications.pane_exit_error;
+            persisted = Some((
+                "notifications",
+                "pane_exit_error",
+                ctx.state.config.notifications.pane_exit_error,
+            ));
+        }
+        ToggleSoundEnabled => {
+            ctx.state.config.sounds.enabled = !ctx.state.config.sounds.enabled;
+            persisted = Some(("sounds", "enabled", ctx.state.config.sounds.enabled));
+        }
+        ToggleSoundBell => {
+            ctx.state.config.sounds.bell = !ctx.state.config.sounds.bell;
+            persisted = Some(("sounds", "bell", ctx.state.config.sounds.bell));
+        }
+        ToggleSoundBlocked => {
+            ctx.state.config.sounds.blocked = !ctx.state.config.sounds.blocked;
+            persisted = Some(("sounds", "blocked", ctx.state.config.sounds.blocked));
+        }
+        ToggleSoundDone => {
+            ctx.state.config.sounds.done = !ctx.state.config.sounds.done;
+            persisted = Some(("sounds", "done", ctx.state.config.sounds.done));
+        }
+        ToggleSoundError => {
+            ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
+            persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
+        }
+    }
+    if let Some((section, key, value)) = persisted {
+        let result = match section {
+            "notifications" => crate::config::persist_notification_flag(key, value),
+            "sounds" => crate::config::persist_sound_flag(key, value),
+            _ => crate::config::persist_workbar_alert_flag(key, value),
+        };
+        if let Err(err) = result {
+            preference_error(ctx, err);
+        }
+    }
+    ctx.state.show_alerts = true;
+    ctx.state.alerts_selected = Some(action);
+    ctx.request_focus(crate::view::alerts_palette_key());
+    Update::full()
+}
+fn preference_error(ctx: &mut Context<HyprmuxApp>, err: String) {
+    crate::pty_events::notify_on(
+        ctx,
+        crate::state::ToastChannel::PreferenceSave,
+        Some("Preference not saved".to_string()),
+        err,
+    );
 }
 
 pub(super) fn appearance_select(
@@ -196,30 +406,6 @@ fn appearance_activate_dir(
         crate::state::AppearanceAction::CycleBorderMode => {
             execute_action(ctx, Action::CycleBorderMode);
         }
-        crate::state::AppearanceAction::CycleAlertBorder if reverse => {
-            let prev = ctx.state.config.pane.alert_border.prev();
-            ctx.state.config.pane.alert_border = prev;
-            persist_pane_string_or_toast(ctx, "alert_border", prev.id());
-        }
-        crate::state::AppearanceAction::CycleAlertBorder => {
-            execute_action(ctx, Action::CycleAlertBorder);
-        }
-        crate::state::AppearanceAction::CycleWorkbarAlert if reverse => {
-            let prev = ctx.state.config.workbar.alert.mode.prev();
-            ctx.state.config.workbar.alert.mode = prev;
-            persist_workbar_alert_string_or_toast(ctx, "mode", prev.id());
-        }
-        crate::state::AppearanceAction::CycleWorkbarAlert => {
-            execute_action(ctx, Action::CycleWorkbarAlert);
-        }
-        crate::state::AppearanceAction::CycleWorkbarAlertPaint if reverse => {
-            let prev = ctx.state.config.workbar.alert.paint.prev();
-            ctx.state.config.workbar.alert.paint = prev;
-            persist_workbar_alert_string_or_toast(ctx, "paint", prev.id());
-        }
-        crate::state::AppearanceAction::CycleWorkbarAlertPaint => {
-            execute_action(ctx, Action::CycleWorkbarAlertPaint);
-        }
         crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
             execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
         }
@@ -286,17 +472,6 @@ fn appearance_activate_dir(
 
 fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
-        crate::pty_events::notify_on(
-            ctx,
-            crate::state::ToastChannel::PreferenceSave,
-            Some("Preference not saved".to_string()),
-            err,
-        );
-    }
-}
-
-fn persist_workbar_alert_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
-    if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
         crate::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::PreferenceSave,
@@ -434,6 +609,16 @@ pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Upd
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tui_lipan::TestBackend;
+
+    fn on_large_stack(body: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(body)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn padding_input_accepts_empty_or_one_ascii_digit_in_range() {
@@ -442,5 +627,87 @@ mod tests {
         assert!(!valid_padding_text("9"));
         assert!(!valid_padding_text("12"));
         assert!(!valid_padding_text("８"));
+    }
+
+    #[test]
+    fn alerts_left_right_steps_modes_and_keeps_selection() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().show_alerts = true;
+            backend.state_mut().config.pane.show_workbar = true;
+            backend.state_mut().alerts_selected =
+                Some(crate::state::AlertsAction::CycleAlertBorder);
+
+            backend.dispatch(Msg::AlertsStep { reverse: true }).unwrap();
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Static
+            );
+            assert_eq!(
+                backend.state().alerts_selected,
+                Some(crate::state::AlertsAction::CycleAlertBorder)
+            );
+
+            backend
+                .dispatch(Msg::AlertsStep { reverse: false })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.pane.alert_border,
+                crate::state::AlertMode::Pulse
+            );
+
+            backend.state_mut().alerts_selected =
+                Some(crate::state::AlertsAction::CycleWorkbarAlert);
+            backend.dispatch(Msg::AlertsStep { reverse: true }).unwrap();
+            assert_eq!(
+                backend.state().config.workbar.alert.mode,
+                crate::state::AlertMode::Static
+            );
+        });
+    }
+
+    #[test]
+    fn opening_another_overlay_closes_alerts() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            backend.state_mut().show_alerts = true;
+            backend
+                .dispatch(Msg::RunAction(Action::OpenAppearance))
+                .unwrap();
+            assert!(!backend.state().show_alerts);
+            assert!(backend.state().show_appearance);
+        });
+    }
+
+    #[test]
+    fn opening_alerts_clears_a_session_picker_and_focuses_alerts() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(HyprmuxApp::default());
+            {
+                let state = backend.state_mut();
+                state.show_session_picker = true;
+                state.session_picker = Some(crate::state::SessionPickerState::new(Vec::new()));
+                state.show_help = true;
+                state.overlay_return = Some(crate::state::OverlayOrigin::Appearance);
+            }
+
+            backend
+                .dispatch(Msg::RunAction(Action::OpenAlerts))
+                .unwrap();
+
+            assert!(!backend.state().show_session_picker);
+            assert!(backend.state().session_picker.is_none());
+            assert!(!backend.state().show_help);
+            assert!(backend.state().overlay_return.is_none());
+            assert!(backend.state().show_alerts);
+            assert_eq!(
+                backend.state().alerts_selected,
+                Some(crate::state::AlertsAction::ToggleDoNotDisturb)
+            );
+            assert_eq!(
+                backend.focused_key().map(|key| key.as_ref()),
+                Some(crate::view::alerts_palette_key())
+            );
+        });
     }
 }

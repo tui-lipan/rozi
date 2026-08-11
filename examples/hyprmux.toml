@@ -144,10 +144,25 @@
 # only on the session controller and stay silent while the pane is locally focused.
 #enabled = false
 #pane_exit = true
+#pane_exit_error = true
 #pane_blocked = true
 #pane_done = false
 # Mark an unfocused pane urgent on BEL. Independent of the desktop notifications above.
 #bell = true
+
+[sounds]
+# Play built-in WAV cues through an available player; custom paths and player stay in TOML.
+#enabled = false
+#bell = true
+#blocked = true
+#done = true
+#error = true
+#throttle_ms = 2000
+#bell_file = ""
+#blocked_file = ""
+#done_file = ""
+#error_file = ""
+#player = ""
 
 [navigation]
 # Foreground programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to
@@ -315,7 +330,7 @@
 
 # Client-side commands run on hyprmux events, launched asynchronously through
 # command_shell. Hooks receive HYPRMUX_EVENT, event fields, and HYPRMUX_SOCKET. Events:
-# pane-spawned, pane-exited, pane-status-changed, focus-changed, workspace-switched,
+# pane-spawned, pane-exited, pane-status-changed, bell, focus-changed, workspace-switched,
 # session-attached, session-detached, session-renamed, session-created,
 # controller-changed, client-joined, client-left, profile-loaded, profile-applied,
 # profile-saved, config-reloaded. See docs/hooks.md.

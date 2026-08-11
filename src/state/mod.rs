@@ -8,6 +8,7 @@ use crate::anim::GeometryAnimation;
 use crate::config::HyprmuxConfig;
 use crate::tiling::append_tiled_window;
 
+mod alerts;
 mod appearance;
 mod attachment;
 mod drag;
@@ -23,6 +24,7 @@ mod sidebar;
 mod workbar;
 mod workspace;
 
+pub use alerts::*;
 pub use appearance::*;
 pub use attachment::*;
 pub use drag::*;
@@ -94,9 +96,13 @@ pub struct State {
     pub show_palette: bool,
     pub show_help: bool,
     pub show_appearance: bool,
+    pub show_alerts: bool,
     /// Highlighted appearance-palette row. Drives Left/Right stepping and
     /// `initial_selected_item_index` while the overlay is open.
     pub appearance_selected: Option<AppearanceAction>,
+    pub alerts_selected: Option<AlertsAction>,
+    pub do_not_disturb: bool,
+    pub(crate) sound_cues: HashMap<crate::platform::sound::Cue, std::time::Instant>,
     pub pane_padding_editor: Option<PanePaddingEditorState>,
     pub show_theme_picker: bool,
     pub theme_picker_preview: Option<ThemePickerPreview>,
@@ -276,7 +282,11 @@ impl State {
             show_palette: false,
             show_help: false,
             show_appearance: false,
+            show_alerts: false,
             appearance_selected: None,
+            alerts_selected: None,
+            do_not_disturb: false,
+            sound_cues: HashMap::new(),
             pane_padding_editor: None,
             show_theme_picker: false,
             theme_picker_preview: None,

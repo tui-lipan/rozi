@@ -81,6 +81,9 @@ pub(crate) fn workbar(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     if state.current().workspaces[state.current().active_workspace].synchronized {
         trailing.push(TrailingChip::badge(" SYNC ", text_fg, theme.status.warning));
     }
+    if state.do_not_disturb {
+        trailing.push(TrailingChip::badge(" DND ", text_fg, theme.status.warning));
+    }
     // Keep session identity in the configured session badge and collaboration state in one chip.
     // A normal solo client needs no status; read-only remains visible because it explains why
     // typing is blocked.

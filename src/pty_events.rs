@@ -365,7 +365,7 @@ pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: Pane
 }
 
 pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: PaneId, code: i32) {
-    if !config.notifications.enabled || !config.notifications.pane_exit {
+    if !should_notify_pane_exit(config, code) {
         return;
     }
     crate::platform::notifications::notify(
@@ -374,23 +374,57 @@ pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: 
     );
 }
 
+fn should_notify_pane_exit(config: &crate::config::HyprmuxConfig, code: i32) -> bool {
+    config.notifications.enabled
+        && if code == 0 {
+            config.notifications.pane_exit
+        } else {
+            config.notifications.pane_exit_error
+        }
+}
+
+pub(crate) struct PaneStatusNotification<'a> {
+    pub blocked: bool,
+    pub done: bool,
+    pub reported_status: Option<&'a crate::session::protocol::PaneStatus>,
+}
+
 pub(crate) fn maybe_notify_pane_status(
     config: &crate::config::HyprmuxConfig,
     is_controller: bool,
     is_focused: bool,
     id: PaneId,
     title: &str,
-    status: Option<&crate::session::protocol::PaneStatus>,
+    alert: PaneStatusNotification<'_>,
 ) {
-    let Some(status) = status else {
-        return;
-    };
-    if !should_notify_pane_status(config, is_controller, is_focused, &status.value) {
+    if !should_notify_pane_status(config, is_controller, is_focused, alert.blocked, alert.done) {
         return;
     }
-    let body = status.reason.as_deref().map_or_else(
-        || format!("Pane {id} ({title}) is {}", status.value),
-        |reason| format!("Pane {id} ({title}) is {}: {reason}", status.value),
+    let reported = alert.reported_status.filter(|status| {
+        (alert.blocked
+            && status
+                .value
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED))
+            || (alert.done
+                && status
+                    .value
+                    .trim()
+                    .eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE))
+    });
+    let body = reported.map_or_else(
+        || {
+            format!(
+                "Pane {id} ({title}) is {}",
+                if alert.blocked { "blocked" } else { "done" }
+            )
+        },
+        |status| {
+            status.reason.as_deref().map_or_else(
+                || format!("Pane {id} ({title}) is {}", status.value),
+                |reason| format!("Pane {id} ({title}) is {}: {reason}", status.value),
+            )
+        },
     );
     crate::platform::notifications::notify("hyprmux", &body);
 }
@@ -399,16 +433,13 @@ fn should_notify_pane_status(
     config: &crate::config::HyprmuxConfig,
     is_controller: bool,
     is_focused: bool,
-    status: &str,
+    blocked: bool,
+    done: bool,
 ) -> bool {
     if !config.notifications.enabled || !is_controller || is_focused {
         return false;
     }
-    let status = status.trim();
-    (config.notifications.pane_blocked
-        && status.eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED))
-        || (config.notifications.pane_done
-            && status.eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE))
+    (config.notifications.pane_blocked && blocked) || (config.notifications.pane_done && done)
 }
 
 pub(crate) fn handle_pane_input(
@@ -865,14 +896,33 @@ mod tests {
         let mut config = crate::config::HyprmuxConfig::default();
         config.notifications.enabled = true;
 
-        assert!(should_notify_pane_status(&config, true, false, "blocked"));
-        assert!(!should_notify_pane_status(&config, false, false, "blocked"));
-        assert!(!should_notify_pane_status(&config, true, true, "blocked"));
-        assert!(!should_notify_pane_status(&config, true, false, "done"));
+        assert!(should_notify_pane_status(&config, true, false, true, false));
+        assert!(!should_notify_pane_status(
+            &config, false, false, true, false
+        ));
+        assert!(!should_notify_pane_status(&config, true, true, true, false));
+        assert!(!should_notify_pane_status(
+            &config, true, false, false, true
+        ));
         config.notifications.pane_done = true;
-        assert!(should_notify_pane_status(&config, true, false, "DONE"));
+        assert!(should_notify_pane_status(&config, true, false, false, true));
         config.notifications.enabled = false;
-        assert!(!should_notify_pane_status(&config, true, false, "blocked"));
+        assert!(!should_notify_pane_status(
+            &config, true, false, true, false
+        ));
+    }
+
+    #[test]
+    fn pane_exit_notification_splits_clean_and_error_codes() {
+        let mut config = crate::config::HyprmuxConfig::default();
+        config.notifications.enabled = true;
+        assert!(should_notify_pane_exit(&config, 0));
+        assert!(should_notify_pane_exit(&config, 1));
+        config.notifications.pane_exit = false;
+        assert!(!should_notify_pane_exit(&config, 0));
+        assert!(should_notify_pane_exit(&config, 1));
+        config.notifications.pane_exit_error = false;
+        assert!(!should_notify_pane_exit(&config, 1));
     }
 
     #[test]

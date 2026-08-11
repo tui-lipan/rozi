@@ -33,6 +33,7 @@
 //!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
 //! - [`notifications`] - desktop notifications (Phase 10).
+//! - [`sound`] - best-effort alert cue playback.
 //! - [`install`] - thin hyprmux path/policy adapter over the `relswap` signed-release engine.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
@@ -50,3 +51,4 @@ pub mod notifications;
 pub mod process;
 pub mod server_lifecycle;
 pub mod shell_integration;
+pub mod sound;

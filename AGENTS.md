@@ -19,7 +19,7 @@ server-backed named sessions for detach/reattach workflows.
 - `target/` - Cargo build output; generated and ignored.
 - `Cargo.toml` / `Cargo.lock` - Rust package manifest and locked dependency graph.
 - `README.md` - Public project overview and documentation index.
-- `CLAUDE.md` - Legacy agent guide copy; update only when intentionally keeping it in sync.
+- `CLAUDE.md` - A symlink to `AGENTS.md`, not a copy. Edit `AGENTS.md`; there is nothing to sync.
 - `AGENTS.md` - This file: operational guidance for automated coding agents.
 - `LICENSE-APACHE` / `LICENSE-MIT` - Dual-license terms.
 
@@ -277,6 +277,41 @@ Major module map:
 - `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
 - `benches/` - Criterion targets for terminal ingest, snapshot rebuilding, protocol framing, and
   the end-to-end session pipeline; `benches/support/mod.rs` generates deterministic corpora.
+
+### Overlays and pickers - use the shared shells
+
+Every overlay in `view/overlays/` is one of three shapes, and each already has a helper. Filtering,
+fuzzy matching, keyboard navigation, scrolling, hover, and headers are `tui-lipan`'s
+`SearchPalette` - do not hand-roll any of it, and do not restyle a palette per call site.
+
+- **Searchable picker** (commands, appearance, themes, layouts, profiles, sessions, collaborators):
+  `view::shared_search_palette::<T>(ctx, height, highlight_matches)` returns a fully styled
+  `SearchPalette<T>`; add `.entries(...)`, `.on_select`, `.on_activate` and nothing cosmetic. Wrap it
+  in `view::action_palette_modal(ctx, title)` (or `..._with_width`) plus `action_palette_frame`.
+  Grouped rows come from `view::search_entries_with_groups([(category, vec![...])])`, which just
+  prefixes each bucket with a `SearchEntry::header`.
+- **Text prompt** (rename pane / workspace / session, save profile): `overlays::prompts`'s private
+  `prompt_overlay` already does input binding, hints, Esc/Enter wiring, and the armed-confirm
+  recolor. Add a thin wrapper beside `rename_overlay`; do not build a `Modal` + `Input` by hand.
+- **Plain modal** (help): `view::styled_modal(ctx, title, width)`.
+
+Wiring a new picker is mostly bookkeeping, not rendering:
+
+1. `state/` - a `bool` + `Option<…Selected>` pair beside the appearance ones in `state/mod.rs`.
+   There is no unified `PickerKind`; each overlay owns its pair.
+2. `msg.rs` - `…Select` / `…Activate`, routed in `update/mod.rs`.
+3. `update/overlays.rs` - the activate arm. **Settings overlays stay open**: re-assert `show_* =
+   true`, restore the highlight, re-grab focus (see the appearance arm). A row greyed by
+   `disabled_reason` must be inert - return without acting.
+4. `input.rs` + `commands.rs` - one `Action` to open it, in both files (see the `Action` rule above).
+5. `ops/overlay_return.rs` - only if the overlay can be raised *from* another one. `restore` reopens
+   the parent with its query and highlighted row intact; `finish` closes to the parent or the pane.
+
+Row conventions: right-aligned status text via `ItemDescription`; the words `"Enabled"`/`"Disabled"`
+for a boolean (`enabled_status` in `overlays/appearance.rs` is private - copy the three lines rather
+than exporting it); greying through a `disabled_reason` returning `Some("Needs …")`. **There are no
+checkbox glyphs anywhere in this codebase - do not introduce any.** See also the structured-data rule
+under Code Style.
 
 ## Testing Strategy
 

@@ -211,12 +211,12 @@ Escape, or Space dismisses a completed popup. Pass `"keep_open":false` to have t
 its command. A popup also closes when its backdrop is clicked or through the normal close action;
 while the command is running, Escape is sent to the popup application.
 
-Subscriptions support `pane-spawned`, `pane-exited`, `pane-status-changed`, `focus-changed`,
+Subscriptions support `pane-spawned`, `pane-exited`, `pane-status-changed`, `bell`, `focus-changed`,
 `workspace-switched`, `session-attached`, `session-detached`, `session-renamed`,
 `controller-changed`, `client-joined`, `client-left`, `profile-loaded`, `profile-applied`,
 `profile-saved`, `session-created`, and `config-reloaded`. An empty `events` list subscribes to all
-16. `pane-status-changed` carries
-`pane`, `status`, `reason`, `previous_status`, and `previous_reason`; cleared or absent values are
+17. `pane-status-changed` carries
+`pane`, `status`, `reason`, `previous_status`, `previous_reason`, and `focused`; cleared or absent values are
 empty strings. Initial status received while attaching is state seeding, not a transition, and does
 not emit this event.
 Event names and existing fields are stable; later versions may add events or fields. See

@@ -406,6 +406,7 @@ impl Default for HyprmuxClipboardConfig {
 pub struct HyprmuxNotificationsConfig {
     pub enabled: bool,
     pub pane_exit: bool,
+    pub pane_exit_error: bool,
     pub bell: bool,
     pub pane_blocked: bool,
     pub pane_done: bool,
@@ -416,9 +417,60 @@ impl Default for HyprmuxNotificationsConfig {
         Self {
             enabled: false,
             pane_exit: true,
+            pane_exit_error: true,
             bell: true,
             pane_blocked: true,
             pane_done: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HyprmuxSoundsConfig {
+    pub enabled: bool,
+    pub bell: bool,
+    pub blocked: bool,
+    pub done: bool,
+    pub error: bool,
+    pub throttle_ms: u64,
+    pub bell_file: Option<PathBuf>,
+    pub blocked_file: Option<PathBuf>,
+    pub done_file: Option<PathBuf>,
+    pub error_file: Option<PathBuf>,
+    pub player: Option<String>,
+}
+impl Default for HyprmuxSoundsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bell: true,
+            blocked: true,
+            done: true,
+            error: true,
+            throttle_ms: 2000,
+            bell_file: None,
+            blocked_file: None,
+            done_file: None,
+            error_file: None,
+            player: None,
+        }
+    }
+}
+impl HyprmuxSoundsConfig {
+    pub fn enabled_for(&self, cue: crate::platform::sound::Cue) -> bool {
+        match cue {
+            crate::platform::sound::Cue::Bell => self.bell,
+            crate::platform::sound::Cue::Blocked => self.blocked,
+            crate::platform::sound::Cue::Done => self.done,
+            crate::platform::sound::Cue::Error => self.error,
+        }
+    }
+    pub fn file_for(&self, cue: crate::platform::sound::Cue) -> Option<&PathBuf> {
+        match cue {
+            crate::platform::sound::Cue::Bell => self.bell_file.as_ref(),
+            crate::platform::sound::Cue::Blocked => self.blocked_file.as_ref(),
+            crate::platform::sound::Cue::Done => self.done_file.as_ref(),
+            crate::platform::sound::Cue::Error => self.error_file.as_ref(),
         }
     }
 }
@@ -590,6 +642,7 @@ pub struct HyprmuxConfig {
     pub pane: HyprmuxPaneConfig,
     pub clipboard: HyprmuxClipboardConfig,
     pub notifications: HyprmuxNotificationsConfig,
+    pub sounds: HyprmuxSoundsConfig,
     pub navigation: HyprmuxNavigationConfig,
     pub confirm: HyprmuxConfirmConfig,
     pub scratchpad: HyprmuxScratchpadConfig,
@@ -1006,6 +1059,7 @@ impl Default for HyprmuxConfig {
             pane: HyprmuxPaneConfig::default(),
             clipboard: HyprmuxClipboardConfig::default(),
             notifications: HyprmuxNotificationsConfig::default(),
+            sounds: HyprmuxSoundsConfig::default(),
             navigation: HyprmuxNavigationConfig::default(),
             confirm: HyprmuxConfirmConfig::default(),
             scratchpad: HyprmuxScratchpadConfig::default(),

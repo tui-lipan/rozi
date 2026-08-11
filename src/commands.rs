@@ -483,6 +483,20 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::OpenAlerts,
+        label: "Alerts…",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::ToggleDoNotDisturb,
+        label: "Do not disturb",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::ToggleTitles,
         label: "Titlebar",
         category: "Appearance",
@@ -1170,6 +1184,7 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::ToggleAnimations => {
             enable_disable_label("animations", state.config.animations.enabled)
         }
+        Action::ToggleDoNotDisturb => enable_disable_label("do not disturb", state.do_not_disturb),
         Action::ToggleInputLock => enable_disable_label(
             "input lock",
             state

@@ -6,10 +6,11 @@ pub(crate) mod sidebar;
 mod workbar;
 
 pub use keys::{
-    appearance_palette_key, collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
-    pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
-    profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
-    search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
+    alerts_palette_key, appearance_palette_key, collaboration_key, follow_prompt_key,
+    layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
+    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
+    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
+    sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
     PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
@@ -31,7 +32,7 @@ use crate::{HyprmuxApp, Msg};
 use pane::pane_title_bg;
 
 use overlays::{
-    appearance_overlay, collaboration_overlay, follow_prompt_overlay, help_overlay,
+    alerts_overlay, appearance_overlay, collaboration_overlay, follow_prompt_overlay, help_overlay,
     layout_picker_overlay, palette_overlay, pane_padding_overlay, profile_picker_overlay,
     rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
     session_picker_overlay, theme_picker_overlay,
@@ -98,6 +99,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let dialog_open = ctx.state.show_palette
         || ctx.state.show_help
         || ctx.state.show_appearance
+        || ctx.state.show_alerts
         || ctx.state.show_theme_picker
         || ctx.state.show_layout_picker
         || ctx.state.rename.is_some()
@@ -513,6 +515,9 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     }
     if ctx.state.show_appearance {
         root = root.child(appearance_overlay(app, ctx));
+    }
+    if ctx.state.show_alerts {
+        root = root.child(alerts_overlay(ctx));
     }
     if ctx.state.show_appearance && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));

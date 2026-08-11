@@ -330,6 +330,9 @@ fn published_slots_render_one_numbered_row_each() {
                     // Titled after the agent itself, so it has no activity to show and its
                     // detail line falls back to the state word.
                     slot("ses_d", "OpenCode", "idle", None, false),
+                    // A fresh session, blocked on its first question before anything has titled
+                    // it: the reason is all this row has to say until a title arrives.
+                    slot("ses_e", "", "blocked", Some("answer required"), false),
                 ];
                 state.current_mut().workspaces[0].panes = vec![publisher];
             }
@@ -350,13 +353,20 @@ fn published_slots_render_one_numbered_row_each() {
                     "sidebar shows {name:?}"
                 );
             }
-            // Each slot's own title is its activity, and a published reason outranks it.
+            // A slot's own title is its activity, and it outranks a reason: the name column
+            // cannot say which tab this is, so a prompt must not hide the one thing that can.
             assert!(sidebar.iter().any(|line| line.contains("audit the widget")));
+            assert!(sidebar.iter().any(|line| line.contains("fix the flaky")));
             assert!(
-                sidebar
+                !sidebar
                     .iter()
-                    .any(|line| line.contains("permission required"))
+                    .any(|line| line.contains("permission required")),
+                "a titled slot shows its title, not its reason"
             );
+            // Until a title exists, the reason is all the row has.
+            assert!(sidebar.iter().any(|line| line.contains("answer required")));
+            // An id is an opaque handle and must never stand in for a missing title.
+            assert!(!sidebar.iter().any(|line| line.contains("ses_")));
             // A slot with nothing to say about its work falls back to the state word, which is
             // capitalized like the rest of the chrome rather than echoing the wire value.
             assert!(

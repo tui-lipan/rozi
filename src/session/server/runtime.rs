@@ -460,7 +460,11 @@ fn sanitize_slots(
             // first, since the rest cannot also be in view.
             let active = slot.active && !std::mem::replace(&mut active_seen, slot.active);
             Some(protocol::AgentSlot {
-                title: clean_text(&slot.title, PANE_STATUS_MAX_LEN).unwrap_or_else(|| id.clone()),
+                // Left empty when the publisher has none yet - a session is often created, and
+                // can even ask its first question, before anything has titled it. The id is not a
+                // stand-in: it is an opaque handle, and rendering it would put `ses_9f2c` on
+                // screen where a description belongs.
+                title: clean_text(&slot.title, PANE_STATUS_MAX_LEN).unwrap_or_default(),
                 id,
                 status,
                 reason: clean_text(&slot.reason.unwrap_or_default(), PANE_STATUS_REASON_MAX_LEN),

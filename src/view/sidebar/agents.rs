@@ -113,19 +113,22 @@ fn activity_text(pane: &crate::pane::TerminalPane, kind_label: &str) -> Option<S
 
 /// What a published slot is doing, for its detail line.
 ///
-/// The publisher's reason wins where it set one, exactly as a reported status beats a scraped
-/// title elsewhere; otherwise the slot's own title is the closest thing it has to a task. A title
-/// saying nothing the row does not already — the agent's own name — is dropped rather than
-/// repeated beside it.
+/// The title wins here, unlike everywhere else, because it is the only thing that says *which* of a
+/// pane's agents this row is: the name column now reads `OpenCode #2` for every one of them. A
+/// reason stands in until the agent has titled its work — a fresh session is `blocked` on its first
+/// question before it has a title to show — and the glyph already carries the state either way, so
+/// nothing is lost by yielding to the title once one exists.
+///
+/// A title that only repeats the agent's own name says nothing the row does not already.
 fn slot_activity(slot: &crate::session::protocol::AgentSlot, kind_label: &str) -> Option<String> {
+    let title = strip_agent_title_prefix(strip_title_decoration(&slot.title), kind_label);
+    if !title.is_empty() && !title.eq_ignore_ascii_case(kind_label) {
+        return Some(title.to_string());
+    }
     slot.reason
         .as_deref()
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-        .or_else(|| {
-            let title = strip_agent_title_prefix(strip_title_decoration(&slot.title), kind_label);
-            (!title.is_empty() && !title.eq_ignore_ascii_case(kind_label)).then_some(title)
-        })
         .map(str::to_string)
 }
 
@@ -808,11 +811,16 @@ mod tests {
         assert_eq!(rows[1].activity.as_deref(), Some("tab b"));
     }
 
+    /// The name column reads `Claude Code #1` for every slot in a pane, so the title is the only
+    /// thing saying which one this is. A reason cannot be allowed to hide it: a session is often
+    /// blocked on its first question before anything has titled it, and the row would then be
+    /// stuck reading "answer required" for the rest of the run.
     #[test]
-    fn a_slots_reason_outranks_its_title_on_the_detail_line() {
+    fn a_titled_slot_shows_its_title_even_while_blocked() {
         let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+            title: "audit the widget layer".into(),
             reason: Some("permission required".into()),
             ..slot("a", "blocked", true)
         }];
@@ -820,7 +828,25 @@ mod tests {
 
         let rows = agent_rows(&state);
         assert_eq!(rows[0].title, "Claude Code #1");
-        assert_eq!(rows[0].activity.as_deref(), Some("permission required"));
+        assert_eq!(rows[0].activity.as_deref(), Some("audit the widget layer"));
+    }
+
+    /// Until a title exists the reason is all the row has to say.
+    #[test]
+    fn an_untitled_slot_falls_back_to_its_reason() {
+        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut publisher = pane(1, None, false);
+        publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
+            title: String::new(),
+            reason: Some("answer required".into()),
+            ..slot("a", "blocked", true)
+        }];
+        state.current_mut().workspaces[0].panes = vec![publisher];
+
+        assert_eq!(
+            agent_rows(&state)[0].activity.as_deref(),
+            Some("answer required")
+        );
     }
 
     /// A slot titled after the agent itself would repeat the name column beside it.

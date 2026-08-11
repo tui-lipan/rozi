@@ -256,6 +256,11 @@ it is what ties a run to its clock across reordering and retitling. `active` mar
 currently have on screen, which is how hyprmux knows a finish on a *different* slot has not been
 seen. `status` takes the same values as `set-status`.
 
+`title` is what the row shows, and it outranks `reason`. Send an empty one while you have nothing
+real to say — an agent that has not titled its work yet — and the row falls back to `reason` until
+you do; never send an id or a placeholder, which would pin the row to it. Publishing again with a
+title swaps the row over immediately.
+
 Publishing replaces the whole list, and an empty list withdraws it. Closing the connection also
 withdraws it, so a publisher that exits or crashes never leaves rows behind. While a pane publishes
 slots, hyprmux stops scraping its screen entirely and takes the pane's own state from them: blocked

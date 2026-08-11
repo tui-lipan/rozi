@@ -214,8 +214,14 @@ detail line says what it is doing:
 ```
 
 The number is what separates one pane's rows from each other; without it three tabs of one program
-would read as three identical rows. A published reason outranks the slot's title, and a title that
-only repeats the agent's own name is dropped rather than shown beside it.
+would read as three identical rows.
+
+The title outranks a published reason here, unlike a pane row's activity, because it is the only
+thing saying *which* agent a row is — the name column reads the same for all of them, and the glyph
+already carries the state. A slot with no title yet shows its reason instead: a session is often
+created, and can ask its first question, before anything has titled it, so the row reads
+`answer required` until a title arrives and then switches to it. A title that only repeats the
+agent's own name is dropped rather than shown beside it.
 
 Clicking a row focuses the pane and asks the program to bring that agent on screen. The filled
 marker follows what the program is showing rather than which pane is focused: a focused pane

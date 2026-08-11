@@ -158,8 +158,8 @@ fn path_basename(value: &str) -> &str {
         .unwrap_or(value)
 }
 
-/// Claude Code keeps its spinner title running while an approval dialog waits, so the dialog drawn
-/// on screen is the only evidence that the run stopped for an answer.
+/// The dialog drawn on screen is the only evidence that a Claude Code run stopped for an answer:
+/// it reports nothing through its title (2.1.227 emits no `OSC 0` at all, spinner or otherwise).
 ///
 /// Match its *structure* - the selection cursor sitting on a numbered choice - rather than the
 /// question above it. Those questions are ordinary English that varies per dialog ("do you want to
@@ -189,6 +189,25 @@ const INTERRUPT_HINTS: &[&str] = &[
     "ctrl+c to interrupt",
     "esc interrupt",
 ];
+
+/// How far above the last written row an agent's status chrome can sit.
+///
+/// Claude Code's shortcut row is the final row and its spinner line rides just above the composer;
+/// OpenCode's shortcut row sits above its model and cwd rows. Eight covers both with room to spare
+/// while staying far from the transcript, which is the point: an interrupt hint is chrome, and
+/// chrome is drawn at the bottom of the screen. Found the hard way - an idle pane whose transcript
+/// discussed these very hints, 34 rows up, read as a run in flight.
+const FOOTER_ROWS: usize = 8;
+
+/// Whether the agent's *footer* says one of `needles`, as opposed to its transcript quoting it.
+fn footer_says(screen: &str, needles: &[&str]) -> bool {
+    screen
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .rev()
+        .take(FOOTER_ROWS)
+        .any(|line| needles.iter().any(|needle| line.contains(needle)))
+}
 
 /// OpenCode's subagent view, which replaces the composer and the status line - the only places a
 /// run's progress bar and interrupt hint are ever drawn - with a child-session navigator.
@@ -243,9 +262,7 @@ fn detect_state(kind: AgentKind, screen: &str, title: &str) -> Option<DetectedAg
         return Some(DetectedAgentState::Blocked);
     }
 
-    let interrupt_hint = INTERRUPT_HINTS
-        .iter()
-        .any(|pattern| screen.contains(pattern));
+    let interrupt_hint = footer_says(&screen, INTERRUPT_HINTS);
     let opencode_progress = screen
         .chars()
         .fold((0usize, false), |(run, found), ch| {
@@ -417,8 +434,8 @@ mod tests {
     }
 
     #[test]
-    fn claude_approval_dialogs_block_through_a_running_spinner_title() {
-        // The plan dialog, which keeps the working title of the run it just finished.
+    fn claude_approval_dialogs_block_over_any_working_evidence() {
+        // Captured from the plan dialog, which is what a finished plan-mode run stops on.
         let plan = "\
    Ready to code?
 
@@ -471,6 +488,48 @@ mod tests {
         assert_eq!(
             detect_state(AgentKind::Claude, transcript, "⠋ Fix agent state detection"),
             Some(DetectedAgentState::Working)
+        );
+    }
+
+    /// Reduced from two live panes: an idle Claude Code pane that read as a run in flight because
+    /// its transcript discussed interrupt hints, and the working pane beside it whose footer was
+    /// the real thing. The two screens differ only in where the hint sits.
+    #[test]
+    fn an_interrupt_hint_counts_only_in_the_footer() {
+        let transcript = "\
+     OpenCode's footer reads esc interrupt, not esc to interrupt. None of the
+     existing hints matched it, so detection was riding on the progress bar alone.
+
+     The dead code
+
+     title_spinner matched a braille spinner in the pane title for OpenCode and
+     Codex. Neither ever emits one, so the branch could not fire.
+
+     What I changed
+
+     detect_state now returns Option<DetectedAgentState>, where None means the
+     agent was recognized but the screen said nothing either way.
+
+     Verify this in a pane before you rely on it.
+   ✻ Cogitated for 1h 41m 48s
+   ──────────────────────────────────────────────────────────────────────────────
+   ❯
+   ──────────────────────────────────────────────────────────────────────────────
+     ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent";
+        assert_eq!(
+            detect_state(AgentKind::Claude, transcript, ""),
+            Some(DetectedAgentState::Idle),
+            "an idle pane that merely writes about interrupt hints is not working"
+        );
+
+        let working = transcript.replace(
+            "(shift+tab to cycle) · ← 1 agent",
+            "(shift+tab to cycle) · esc to interrupt · ← 1 agent",
+        );
+        assert_eq!(
+            detect_state(AgentKind::Claude, &working, ""),
+            Some(DetectedAgentState::Working),
+            "the same hint in the footer is the live one"
         );
     }
 

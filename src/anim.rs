@@ -6,6 +6,24 @@ pub const GEOMETRY_MS: u64 = 220;
 pub const CLOSE_MS: u64 = 120;
 pub const OPEN_DELAY_MS: u64 = 36;
 pub const FOCUS_CHROME_MS: u64 = 160;
+pub const ALERT_PULSE_MS: u64 = 1600;
+pub const ALERT_PULSE_MIN_HALF_MS: u64 = 400;
+/// Alert borders remain recognizably alert-colored at the bottom of their breathe.
+pub const ALERT_PULSE_BLEND: f32 = 0.55;
+
+/// How much longer a "calm" alert breathes than an urgent one. A finished agent is good news you
+/// have not read yet, not a request for an answer, so it should not compete with a blocked pane for
+/// attention. An integer multiple keeps the two in a harmonic relationship: they realign every
+/// `ALERT_PULSE_CALM_FACTOR` beats instead of drifting past each other, which is what makes two
+/// simultaneous breathes read as one system rather than as noise.
+pub const ALERT_PULSE_CALM_FACTOR: u32 = 2;
+
+/// How far a marked workspace tab's *background* is tinted toward its alert role at the peak of the
+/// breathe. Tabs mark on background rather than foreground: a coloured glyph on the panel surface is
+/// too quiet to catch peripheral vision in a one-row bar, while a fully saturated cell block is
+/// alarm-grade. A partial tint reads as a filled, marked tab without shouting, and the trough is the
+/// untinted panel surface, so the tab breathes between neutral and its role colour.
+pub const ALERT_TAB_TINT: f32 = 0.72;
 const SCRATCH_DURATION_NUMERATOR: u32 = 2;
 const SCRATCH_DURATION_DENOMINATOR: u32 = 3;
 
@@ -31,6 +49,7 @@ pub struct WindowAnimationConfig {
     pub geometry_duration: Duration,
     pub close_duration: Duration,
     pub focus_chrome_duration: Duration,
+    pub alert_pulse_duration: Duration,
     pub open_delay: Duration,
 }
 
@@ -47,9 +66,23 @@ impl Default for WindowAnimationConfig {
             geometry_duration: Duration::from_millis(GEOMETRY_MS),
             close_duration: Duration::from_millis(CLOSE_MS),
             focus_chrome_duration: Duration::from_millis(FOCUS_CHROME_MS),
+            alert_pulse_duration: Duration::from_millis(ALERT_PULSE_MS),
             open_delay: Duration::from_millis(OPEN_DELAY_MS),
         }
     }
+}
+
+/// Half the configured breathe period, floored to prevent alert colors becoming a strobe.
+pub fn alert_pulse_half_period(animations: WindowAnimationConfig) -> Duration {
+    (animations.alert_pulse_duration / 2).max(Duration::from_millis(ALERT_PULSE_MIN_HALF_MS))
+}
+
+/// Half period for calm alerts. Derived from the urgent half period rather than configured
+/// separately, so the two stay an exact multiple apart however `alert_pulse_ms` is set - the tick
+/// chain runs at the urgent rate and calm alerts simply flip on every `ALERT_PULSE_CALM_FACTOR`th
+/// beat.
+pub fn alert_pulse_calm_half_period(animations: WindowAnimationConfig) -> Duration {
+    alert_pulse_half_period(animations) * ALERT_PULSE_CALM_FACTOR
 }
 
 pub fn geometry_transition(duration: Duration) -> TransitionConfig {
@@ -138,6 +171,25 @@ mod tests {
                 ..animations
             }),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn alert_pulse_half_period_has_an_accessible_floor() {
+        let mut animations = WindowAnimationConfig::default();
+        assert_eq!(
+            alert_pulse_half_period(animations),
+            Duration::from_millis(800)
+        );
+        animations.alert_pulse_duration = Duration::from_millis(100);
+        assert_eq!(
+            alert_pulse_half_period(animations),
+            Duration::from_millis(400)
+        );
+        animations.alert_pulse_duration = Duration::ZERO;
+        assert_eq!(
+            alert_pulse_half_period(animations),
+            Duration::from_millis(400)
         );
     }
 }

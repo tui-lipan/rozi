@@ -73,6 +73,7 @@
 # separate = one frame per pane, merged = shared junctions between neighbors,
 # none = no frames, dividers = lines along internal splits only.
 #border_mode = "separate"
+#alert_border = "pulse"
 # Frame glyphs for separate/merged: rounded, plain, double, thick.
 #border_style = "rounded"
 # Keep frames around floating panes, popups, and the scratchpad even in none/dividers.
@@ -101,6 +102,12 @@
 # Pin the canvas backdrop to the host terminal's own background, overriding whatever the
 # active theme authored.
 #background_follows_terminal = false
+# Alert border colors by theme role; use "off" to suppress a state.
+#[pane.alert]
+#blocked = "error"
+#finished = "success"
+#working = "off"
+#idle = "off"
 
 [animations]
 # Position and opacity animate; pane *size* always snaps, because animating it would spam
@@ -115,6 +122,7 @@
 #geometry_ms = 220
 #close_ms = 120
 #focus_chrome_ms = 160
+#alert_pulse_ms = 1600
 #open_delay_ms = 36
 
 [theme]
@@ -234,6 +242,20 @@
 # strftime format, read only by a clock segment. A clock enables a once-a-second repaint;
 # without one the workbar never wakes an idle app.
 #clock_format = "%H:%M"
+
+# Workspace alert markers. The flags pick which states mark a tab; `mode` picks how they mark it,
+# mirroring [pane.alert] plus pane.alert_border. `off` drops the marker entirely, `static` colors it,
+# and `pulse` also breathes it - inactive marked tabs only, since the active tab has its own pill.
+#[workbar.alert]
+#bell = true
+#blocked = true
+#finished = true
+#working = false
+#idle = false
+#mode = "pulse"
+# What a marked tab colors: `background` fills and end-caps it like the active tab, `text` colors
+# only the label and leaves the tab flat.
+#paint = "background"
 
 [logging]
 # Files written by toggle-pane-logging. Session directories are mode 0700, logs 0600.

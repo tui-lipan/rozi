@@ -5,7 +5,8 @@ use tui_lipan::prelude::*;
 
 use crate::anim::WindowAnimationConfig;
 use crate::state::{
-    DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, ThemePreset,
+    AlertMode, AlertPaint, DEFAULT_SPLIT_WIDTH_MULTIPLIER, PaneBorderMode, PaneBorderStyle,
+    PaneTitlebarMode, ThemePreset,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -315,6 +316,10 @@ pub struct HyprmuxPaneConfig {
     pub titlebar: PaneTitlebarMode,
     /// Whether panes use separate frames, merged frames, no borders, or internal dividers.
     pub border_mode: PaneBorderMode,
+    /// Whether configured pane alert colors are drawn on pane borders.
+    pub alert_border: AlertMode,
+    /// Per-state theme roles for pane-alert borders. `None` disables that state.
+    pub alert_colors: PaneAlertColors,
     /// Keep double frames around floating panes, popups, and the scratchpad when the selected
     /// border mode otherwise disables per-pane frames. Config-file only.
     pub keep_special_borders: bool,
@@ -370,6 +375,8 @@ impl Default for HyprmuxPaneConfig {
             show_titles: true,
             titlebar: PaneTitlebarMode::Bar,
             border_mode: PaneBorderMode::Separate,
+            alert_border: AlertMode::Pulse,
+            alert_colors: PaneAlertColors::default(),
             keep_special_borders: false,
             background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
@@ -1092,6 +1099,26 @@ pub enum BadgeColor {
     Panel,
 }
 
+/// Per-state theme roles for pane-alert borders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaneAlertColors {
+    pub blocked: Option<BadgeColor>,
+    pub finished: Option<BadgeColor>,
+    pub working: Option<BadgeColor>,
+    pub idle: Option<BadgeColor>,
+}
+
+impl Default for PaneAlertColors {
+    fn default() -> Self {
+        Self {
+            blocked: Some(BadgeColor::Error),
+            finished: Some(BadgeColor::Success),
+            working: None,
+            idle: None,
+        }
+    }
+}
+
 impl BadgeColor {
     /// Accepted role names for the `color` field of a `[workbar]` segment table.
     pub const NAMES: &'static str = "accent, info, success, warning, error, neutral, panel";
@@ -1132,6 +1159,35 @@ pub struct WorkbarConfig {
     pub left: Vec<WorkbarItem>,
     pub right: Vec<WorkbarItem>,
     pub clock_format: String,
+    pub alert: WorkbarAlertConfig,
+}
+
+/// Workspace tab alerts. The flags say *which* states mark a tab, `mode` whether the mark holds
+/// still or breathes, and `paint` what it colors — three independent axes, mirroring `[pane.alert]`
+/// colors plus `[pane] alert_border` on the pane side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkbarAlertConfig {
+    pub bell: bool,
+    pub blocked: bool,
+    pub finished: bool,
+    pub working: bool,
+    pub idle: bool,
+    pub mode: AlertMode,
+    pub paint: AlertPaint,
+}
+
+impl Default for WorkbarAlertConfig {
+    fn default() -> Self {
+        Self {
+            bell: true,
+            blocked: true,
+            finished: true,
+            working: false,
+            idle: false,
+            mode: AlertMode::Pulse,
+            paint: AlertPaint::Background,
+        }
+    }
 }
 
 impl Default for WorkbarConfig {
@@ -1148,6 +1204,7 @@ impl Default for WorkbarConfig {
                 WorkbarItem::new(WorkbarSegment::Session),
             ],
             clock_format: "%H:%M".to_string(),
+            alert: WorkbarAlertConfig::default(),
         }
     }
 }

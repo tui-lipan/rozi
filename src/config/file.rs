@@ -6,14 +6,14 @@ use serde::Deserialize;
 
 #[cfg(test)]
 use crate::state::DEFAULT_SPLIT_WIDTH_MULTIPLIER;
-use crate::state::{PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
+use crate::state::{AlertMode, PaneBorderMode, PaneBorderStyle, PaneTitlebarMode, parse_cap_style};
 
 use super::appearance::{apply_animations, resolve_pane_padding};
 use super::input::{apply_input_config, build_key_overrides};
 use super::rules::{build_hints, build_rules};
 use super::schema::*;
 use super::sidebar::apply_sidebar_config;
-use super::workbar::{apply_workbar_config, apply_workbar_style_config};
+use super::workbar::{apply_pane_alert_colors, apply_workbar_config, apply_workbar_style_config};
 
 #[derive(Debug)]
 pub struct LoadedConfig {
@@ -209,6 +209,19 @@ pub(super) struct WorkbarFileConfig {
     pub(super) left: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) right: Option<Vec<WorkbarSegmentSpec>>,
     pub(super) clock_format: Option<String>,
+    pub(super) alert: WorkbarAlertFileConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct WorkbarAlertFileConfig {
+    pub(super) bell: Option<bool>,
+    pub(super) blocked: Option<bool>,
+    pub(super) finished: Option<bool>,
+    pub(super) working: Option<bool>,
+    pub(super) idle: Option<bool>,
+    pub(super) mode: Option<String>,
+    pub(super) paint: Option<String>,
 }
 
 /// A `[workbar]` list entry: either a bare segment name (`"clock"`, `"text:.."`, `"command:.."`)
@@ -300,6 +313,8 @@ pub(super) struct PaneFileConfig {
     workbar_at_bottom: Option<bool>,
     show_titles: Option<bool>,
     border_mode: Option<String>,
+    alert_border: Option<String>,
+    pub(super) alert: PaneAlertFileConfig,
     keep_special_borders: Option<bool>,
     background_follows_terminal: Option<bool>,
     border_style: Option<String>,
@@ -311,6 +326,15 @@ pub(super) struct PaneFileConfig {
     pub(super) workbar_tab_style: Option<String>,
     pub(super) workbar_style: Option<String>,
     pub(super) toast_opacity: Option<f32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct PaneAlertFileConfig {
+    pub(super) blocked: Option<String>,
+    pub(super) finished: Option<String>,
+    pub(super) working: Option<String>,
+    pub(super) idle: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -399,6 +423,7 @@ pub(super) struct AnimationFileConfig {
     pub(super) geometry_ms: Option<u64>,
     pub(super) close_ms: Option<u64>,
     pub(super) focus_chrome_ms: Option<u64>,
+    pub(super) alert_pulse_ms: Option<u64>,
     pub(super) open_delay_ms: Option<u64>,
 }
 
@@ -614,6 +639,19 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
             )),
         }
     }
+    if let Some(alert_border) = parsed.pane.alert_border.as_deref() {
+        match AlertMode::parse(alert_border) {
+            Some(mode) => config.pane.alert_border = mode,
+            None => warnings.push(format!(
+                "Ignored unknown pane.alert_border \"{alert_border}\" (expected one of: off, on, pulse)"
+            )),
+        }
+    }
+    apply_pane_alert_colors(
+        &mut config.pane.alert_colors,
+        parsed.pane.alert.clone(),
+        &mut warnings,
+    );
     if let Some(background_follows_terminal) = parsed.pane.background_follows_terminal {
         config.pane.background_follows_terminal = background_follows_terminal;
     }
@@ -1041,6 +1079,32 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_badge_style.as_deref(), Some("arrow"));
         assert_eq!(parsed.pane.workbar_tab_style.as_deref(), Some("round"));
         assert_eq!(parsed.pane.workbar_style.as_deref(), Some("half"));
+    }
+
+    #[test]
+    fn pane_alert_border_applies_known_values_and_warns_on_unknown_mode() {
+        let loaded = load_config_from_text(
+            r#"
+            [pane]
+            alert_border = "pulse"
+            [pane.alert]
+            blocked = "warning"
+            finished = "off"
+            "#,
+            Path::new("test.toml"),
+        );
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.config.pane.alert_border, AlertMode::Pulse);
+        assert_eq!(
+            loaded.config.pane.alert_colors.blocked,
+            Some(BadgeColor::Warning)
+        );
+        assert_eq!(loaded.config.pane.alert_colors.finished, None);
+
+        let loaded =
+            load_config_from_text("[pane]\nalert_border = \"flash\"", Path::new("test.toml"));
+        assert_eq!(loaded.config.pane.alert_border, AlertMode::Pulse);
+        assert_eq!(loaded.warnings.len(), 1);
     }
 
     #[test]

@@ -196,6 +196,30 @@ fn appearance_activate_dir(
         crate::state::AppearanceAction::CycleBorderMode => {
             execute_action(ctx, Action::CycleBorderMode);
         }
+        crate::state::AppearanceAction::CycleAlertBorder if reverse => {
+            let prev = ctx.state.config.pane.alert_border.prev();
+            ctx.state.config.pane.alert_border = prev;
+            persist_pane_string_or_toast(ctx, "alert_border", prev.id());
+        }
+        crate::state::AppearanceAction::CycleAlertBorder => {
+            execute_action(ctx, Action::CycleAlertBorder);
+        }
+        crate::state::AppearanceAction::CycleWorkbarAlert if reverse => {
+            let prev = ctx.state.config.workbar.alert.mode.prev();
+            ctx.state.config.workbar.alert.mode = prev;
+            persist_workbar_alert_string_or_toast(ctx, "mode", prev.id());
+        }
+        crate::state::AppearanceAction::CycleWorkbarAlert => {
+            execute_action(ctx, Action::CycleWorkbarAlert);
+        }
+        crate::state::AppearanceAction::CycleWorkbarAlertPaint if reverse => {
+            let prev = ctx.state.config.workbar.alert.paint.prev();
+            ctx.state.config.workbar.alert.paint = prev;
+            persist_workbar_alert_string_or_toast(ctx, "paint", prev.id());
+        }
+        crate::state::AppearanceAction::CycleWorkbarAlertPaint => {
+            execute_action(ctx, Action::CycleWorkbarAlertPaint);
+        }
         crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
             execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
         }
@@ -262,6 +286,17 @@ fn appearance_activate_dir(
 
 fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
+        crate::pty_events::notify_on(
+            ctx,
+            crate::state::ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
+}
+
+fn persist_workbar_alert_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
         crate::pty_events::notify_on(
             ctx,
             crate::state::ToastChannel::PreferenceSave,

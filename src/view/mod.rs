@@ -12,10 +12,11 @@ pub use keys::{
     search_input_key, session_picker_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
-    PaneKind, PaneMerge, divider_title_element, pane_element, pane_has_tile_above,
-    seam_title_element,
+    PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
+    pane_has_tile_above, seam_title_element,
 };
 pub(crate) use sidebar::body_focus_key as sidebar_focus_key;
+pub(crate) use workbar::{has_inactive_marked_workspace, workspace_marker, workspace_marker_color};
 
 use tui_lipan::prelude::*;
 
@@ -37,6 +38,20 @@ use overlays::{
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
+
+/// How far a surface lifts under the pointer or the keyboard cursor. One constant across the
+/// sidebar and the workbar so the two never drift to different hover weights.
+pub(crate) const HOVER_LIFT: f32 = 0.08;
+
+/// The hover lift as a *transform* rather than a color.
+///
+/// `ColorTransform::Elevate` is the relative form of `Color::elevate_by`, so it lands on the same
+/// color as an absolute lift while composing with whatever background the target already carries.
+/// That matters wherever an element paints its own background - an alerting workspace tab, a
+/// selected row - because an absolute hover color would replace the signal instead of lifting it.
+pub(crate) fn hover_lift() -> ColorTransform {
+    ColorTransform::Elevate(HOVER_LIFT)
+}
 
 pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
@@ -110,6 +125,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let merge_layering = ctx.state.config.pane.border_mode.merges_frames();
     let divider_mode = ctx.state.config.pane.border_mode.draws_dividers();
     let mut divider_panes = Vec::new();
+    let mut divider_alerts = Vec::new();
     let mut seam_titles: Vec<(FloatRect, Element)> = Vec::new();
     let mut animating_tiles: Vec<(FloatRect, Element)> = Vec::new();
     let mut dragged_tiles: Vec<(FloatRect, Element)> = Vec::new();
@@ -156,10 +172,12 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 h: f32::from(WORKBAR_HEIGHT),
             }
         };
-        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(ctx));
+        canvas = canvas.child_at(workbar_rect.to_rect(), workbar(app, ctx));
     }
 
-    for pane in ordered_panes(workspace, focused_pane) {
+    for pane in ordered_panes(workspace, focused_pane, |pane| {
+        pane_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane).is_some()
+    }) {
         // Floating geometry is stored in canvas-origin coordinates; translate it by the (possibly
         // negative) letterbox origin so a follower's floats sit inside the centered canvas. This is
         // a no-op for the controller and local sessions, where `bounds` starts at the origin.
@@ -224,6 +242,11 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
         // instead of vanishing for the whole spawn/close geometry animation.
         if divider_mode && !pane.floating && !pane.fullscreen && !pane.closing && moving.is_none() {
             divider_panes.push(pane.id);
+            if let Some((_, color)) =
+                pane_alert(pane, focused_pane == Some(pane.id), &ctx.state.config.pane)
+            {
+                divider_alerts.push((pane.id, color));
+            }
         }
         // Capped titles paint their seam cap in the neighbor's title color so a shared cell reads
         // as a split junction; only same-row neighbors (their titlebar on this pane's top row)
@@ -320,15 +343,31 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
                 ctx.state.config.pane.titlebar,
                 crate::state::PaneTitlebarMode::Border | crate::state::PaneTitlebarMode::Integrated
             );
-        // Unfocused seams first, focused contacts last so junction cells inherit the accent.
+        // Quiet seams first, alerting seams next, focused contacts last so junctions inherit the
+        // highest-priority visible state. Divider alerts are deliberately static.
         let mut dividers = internal_dividers_for(&placements, &divider_panes);
         dividers.sort_by_key(|divider| {
-            focused_pane.is_some_and(|id| divider.touches_pane(id)) && highlight_focused
+            (
+                divider_alerts
+                    .iter()
+                    .any(|(id, _)| divider.touches_pane(*id)),
+                focused_pane.is_some_and(|id| divider.touches_pane(id)) && highlight_focused,
+            )
         });
         for divider in dividers {
             let accent =
                 highlight_focused && focused_pane.is_some_and(|id| divider.touches_pane(id));
-            let divider_style = if accent { focused_style } else { normal_style };
+            let alert = divider_alerts
+                .iter()
+                .find(|(id, _)| divider.touches_pane(*id))
+                .map(|(_, color)| *color);
+            let divider_style = if accent {
+                focused_style
+            } else if let Some(color) = alert {
+                Style::new().fg(crate::ops::theme::pane_frame_alert_foreground(theme, color))
+            } else {
+                normal_style
+            };
             let element: Element = match divider.orientation {
                 Orientation::Vertical => Divider::vertical().style(divider_style).into(),
                 Orientation::Horizontal => {
@@ -537,7 +576,7 @@ pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
             .surface
             .element
             .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
-        let divider_style = Style::new().fg(divider_bg.elevate(0.15)).bg(divider_bg);
+        let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         let mut splitter = Splitter::vertical()
             .split_id("hyprmux-sidebar-shell")
             .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
@@ -818,7 +857,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
         .list_unselected_symbol("")
         .list_selection_style(selection_style)
         .list_unfocused_selection_style(selection_style)
-        .list_item_hover_style(Style::new().bg(theme.surface.element.elevate(0.08)))
+        .list_item_hover_style(Style::new().bg(theme.surface.element.elevate_by(0.08)))
         .list_item_horizontal_padding((0, 1))
         .list_header_horizontal_padding((0, 1))
         .item_style(fg_only(&theme.primary))

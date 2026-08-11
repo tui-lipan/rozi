@@ -169,6 +169,26 @@ fn appearance_palette_aliases(action: AppearanceAction) -> Vec<Arc<str>> {
             "borderless panes",
             "pane dividers",
         ]),
+        AppearanceAction::CycleAlertBorder => alias_list(&[
+            "blocked pane border",
+            "agent border",
+            "attention border",
+            "urgent border",
+            "alert pulse",
+        ]),
+        AppearanceAction::CycleWorkbarAlertPaint => alias_list(&[
+            "workspace tab alert paint",
+            "tab alert background",
+            "tab alert text",
+            "marker fill",
+        ]),
+        AppearanceAction::CycleWorkbarAlert => alias_list(&[
+            "workspace tab alert",
+            "workspace marker",
+            "tab alert",
+            "tab pulse",
+            "workbar alert",
+        ]),
         AppearanceAction::ToggleBackgroundFollowsTerminal => alias_list(&[
             "background follows terminal",
             "terminal background",

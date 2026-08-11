@@ -493,6 +493,28 @@ impl HyprmuxApp {
         }
     }
 
+    /// Breathe timing for an alert. `calm` stretches the fade to the calm half period so a slower
+    /// alert is genuinely slower rather than a fast fade that then sits still waiting for its beat.
+    pub(crate) fn alert_pulse_transition_config(
+        &self,
+        ctx: &Context<Self>,
+        calm: bool,
+    ) -> TransitionConfig {
+        let animations = ctx.state.config.animations;
+        if animations.enabled && animations.focus_chrome {
+            TransitionConfig {
+                duration: if calm {
+                    anim::alert_pulse_calm_half_period(animations)
+                } else {
+                    anim::alert_pulse_half_period(animations)
+                },
+                easing: Easing::EaseInOutCubic,
+            }
+        } else {
+            anim::instant_transition()
+        }
+    }
+
     /// A pane chrome colour, as a paint the renderer resolves while drawing.
     ///
     /// `animated_color` rather than `transition`: chrome colours only ever land in styles, so naming
@@ -506,6 +528,39 @@ impl HyprmuxApp {
         slot: &str,
         target: Color,
     ) -> Paint {
+        self.chrome_color_with(
+            ctx,
+            pane,
+            slot,
+            target,
+            self.focus_chrome_transition_config(ctx),
+        )
+    }
+
+    pub(crate) fn chrome_color_with(
+        &self,
+        ctx: &Context<Self>,
+        pane: PaneId,
+        slot: &str,
+        target: Color,
+        config: TransitionConfig,
+    ) -> Paint {
+        self.chrome_paint(
+            ctx,
+            format!("hyprmux-pane-chrome-{pane}-{slot}"),
+            target,
+            config,
+        )
+    }
+
+    /// A caller-keyed chrome paint. Palette/indexed colors deliberately snap rather than blend.
+    pub(crate) fn chrome_paint(
+        &self,
+        ctx: &Context<Self>,
+        key: String,
+        target: Color,
+        config: TransitionConfig,
+    ) -> Paint {
         // Only truecolor targets may fade. Named/indexed ANSI colors must be emitted
         // verbatim so the user's terminal palette resolves them; blending them animates
         // through `Color::Rgb` (`blend_toward` always returns Rgb), which bypasses the
@@ -513,11 +568,11 @@ impl HyprmuxApp {
         // shows as true cyan while the focus animation runs but as the palette color at
         // rest. Snapping keeps palette themes consistent (and matching the workbar).
         let config = if chrome_color_animates(target) {
-            self.focus_chrome_transition_config(ctx)
+            config
         } else {
             anim::instant_transition()
         };
-        ctx.animated_color(format!("hyprmux-pane-chrome-{pane}-{slot}"), target, config)
+        ctx.animated_color(key, target, config)
     }
 }
 
@@ -525,6 +580,12 @@ impl HyprmuxApp {
 /// animate; named/indexed palette colors snap so the terminal palette stays in control.
 pub(crate) fn chrome_color_animates(target: Color) -> bool {
     matches!(target, Color::Rgb(..))
+}
+
+/// A chrome breathe can move only between distinct truecolor endpoints. Named/indexed palette
+/// colors deliberately snap so terminal palette ownership remains intact.
+pub(crate) fn chrome_colors_animate(peak: Color, trough: Color) -> bool {
+    peak != trough && chrome_color_animates(peak) && chrome_color_animates(trough)
 }
 
 pub(crate) fn schedule_theme_tick() -> Command {
@@ -547,6 +608,12 @@ pub(crate) fn schedule_workbar_tick() -> Command {
 pub(crate) fn schedule_agent_tick() -> Command {
     Command::after(Duration::from_secs(1), move |link: CommandLink<Msg>| {
         link.send(Msg::AgentTick);
+    })
+}
+
+pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {
+    Command::after(half_period, move |link: CommandLink<Msg>| {
+        link.send(Msg::AlertPulseTick);
     })
 }
 

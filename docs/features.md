@@ -113,7 +113,9 @@ with the mouse and remember their geometry.
 - `promote-to-master` moves the focused pane into the master slot.
 
 **Focus** — directional (`focus-<dir>`), directional-without-wrap, cycle next/previous, and
-`focus-next-blocked-pane` to jump to a pane waiting on input. **Focus-on-hover** is available as a
+`focus-next-blocked-pane` to jump to a pane waiting on input (reported and screen-detected blocked
+states agree). Unfocused blocked and finished-unseen agents can mark pane borders and workspace tabs;
+`cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse. **Focus-on-hover** is available as a
 toggle. Focus survives layout changes.
 
 **Smart focus (vim-aware)** — `smart-focus-<dir>` moves hyprmux focus *unless* the focused pane
@@ -376,6 +378,7 @@ Presets: `lipan` (default), `one-dark`, `dracula`, `nord`, `gruvbox-dark`, `gruv
 
 **Runtime appearance toggles** — titlebar on/off and layout style, titlebar cap style, border mode
 and style, focused-pane background / border / titlebar highlighting, background-follows-terminal,
+alert-border mode,
 animations on/off, and every workbar style knob listed above. All are live, and reachable from both
 the command palette and the appearance dialog.
 

@@ -151,6 +151,24 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
     Ok(path)
 }
 
+/// Persist a `[workbar.alert]` string key. The nested section is upserted like any other, so a
+/// config that has never mentioned workbar alerts gains the header on first use.
+pub fn persist_workbar_alert_string(
+    key: &str,
+    value: &str,
+) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_value_in_section(&text, "workbar.alert", key, &format!("\"{value}\""));
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
 pub fn persist_layout_default(
     kind: crate::state::LayoutKind,
 ) -> std::result::Result<PathBuf, String> {
@@ -704,6 +722,30 @@ mod tests {
     fn upsert_bool_in_section_appends_missing_section() {
         let updated = upsert_bool_in_section("", "pane", "show_workbar", true);
         assert_eq!(updated, "[pane]\nshow_workbar = true\n");
+    }
+
+    /// `[workbar.alert]` is the first nested section anything persists into, so pin that the
+    /// dotted header is matched as a section of its own rather than folded into `[workbar]`.
+    #[test]
+    fn upsert_value_in_section_handles_the_nested_workbar_alert_table() {
+        let created = upsert_value_in_section("", "workbar.alert", "mode", "\"static\"");
+        assert_eq!(created, "[workbar.alert]\nmode = \"static\"\n");
+
+        let text = "[workbar]\nclock_format = \"%H:%M\"\n\n[workbar.alert]\nbell = true\nmode = \"pulse\"\n";
+        let updated = upsert_value_in_section(text, "workbar.alert", "mode", "\"off\"");
+        assert!(updated.contains("clock_format = \"%H:%M\""));
+        assert!(updated.contains("bell = true"));
+        assert!(updated.contains("mode = \"off\""));
+        assert!(!updated.contains("mode = \"pulse\""));
+
+        // A `[workbar]` that has never mentioned alerts must not have the key spliced into it.
+        let bare = upsert_value_in_section(
+            "[workbar]\nclock_format = \"%H:%M\"\n",
+            "workbar.alert",
+            "mode",
+            "\"off\"",
+        );
+        assert!(bare.contains("[workbar.alert]\nmode = \"off\""));
     }
 
     #[test]

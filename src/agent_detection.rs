@@ -156,18 +156,20 @@ fn detect_state(kind: AgentKind, screen: &str, title: &str) -> DetectedAgentStat
         "do you want to proceed?",
         "waiting for permission",
         "allow command?",
-        "enter to submit answer",
-        "enter to submit all",
-        "enter to confirm or esc to cancel",
         "[y/n]",
         "yes (y)",
-        "review your answers",
     ]
     .iter()
     .any(|pattern| screen.contains(pattern))
         || title.contains("action required")
-        || (screen.contains("esc to cancel")
-            && (screen.contains("enter to select") || screen.contains("enter confirm")));
+        // Current OpenCode question prompts use this footer in every state: single choice,
+        // multi-select, custom answer, and review. Scope it to OpenCode so another program's
+        // ordinary dismiss hint cannot masquerade as an agent waiting for input.
+        || (kind == AgentKind::OpenCode
+            && screen.contains("esc dismiss")
+            && ["enter submit", "enter toggle", "enter confirm"]
+                .iter()
+                .any(|hint| screen.contains(hint)));
     if blocked {
         return DetectedAgentState::Blocked;
     }
@@ -334,6 +336,28 @@ mod tests {
         assert_eq!(
             detect_state(AgentKind::Codex, "", "codex ⠹ working"),
             DetectedAgentState::Working
+        );
+        for screen in [
+            "Choose a target\nType your own answer\n↑↓ select  enter submit  esc dismiss",
+            "Select checks (select all that apply)\nenter toggle  esc dismiss",
+            "Question 1  Question 2  Confirm\nenter confirm  esc dismiss",
+            "Review\nScope: (not answered)\nenter submit  esc dismiss",
+        ] {
+            assert_eq!(
+                detect_state(AgentKind::OpenCode, screen, ""),
+                DetectedAgentState::Blocked,
+                "question chrome should be blocked: {screen:?}"
+            );
+        }
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, "enter submit", ""),
+            DetectedAgentState::Idle,
+            "a generic submit hint is not enough to identify the question dialog"
+        );
+        assert_eq!(
+            detect_state(AgentKind::OpenCode, "log output quoting `esc dismiss`", ""),
+            DetectedAgentState::Idle,
+            "a transcript quoting one footer token is not a live question dialog"
         );
         assert_eq!(
             detect_state(AgentKind::Goose, "plain screen", ""),

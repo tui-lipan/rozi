@@ -492,28 +492,48 @@ impl TerminalPane {
             .filter(|title| !title.is_empty())
     }
 
-    /// The effective agent status for a detected-agent pane: the explicitly reported status if the
-    /// integration published one, otherwise the server's inferred `working`/`idle`/`blocked` state.
+    /// The effective agent status for a detected-agent pane. An explicit active status wins, while
+    /// a detected blocked prompt elevates over a stale quiescent `idle`/`done` report.
     /// `None` when the pane is not a detected agent. Single source of truth shared by the sidebar
-    /// and the "unseen finish" edge detector so they never disagree on what "working" means.
+    /// and the "unseen finish" edge detector so they never disagree on what "working" means. See
+    /// [`Self::is_blocked`] and [`Self::is_working`] for reported-only status predicates.
     pub fn agent_status(&self) -> Option<String> {
         let detected = self.detected_agent.as_ref()?;
-        let value = self
-            .reported_status
-            .as_ref()
-            .map(|status| status.value.as_str())
-            .unwrap_or_else(|| match detected.state {
-                crate::session::protocol::DetectedAgentState::Idle => {
-                    crate::session::protocol::pane_status::IDLE
-                }
-                crate::session::protocol::DetectedAgentState::Working => {
-                    crate::session::protocol::pane_status::WORKING
-                }
-                crate::session::protocol::DetectedAgentState::Blocked => {
-                    crate::session::protocol::pane_status::BLOCKED
-                }
-            });
+        let value = crate::session::protocol::effective_agent_status(
+            self.reported_status.as_ref(),
+            Some(detected),
+        )?;
         Some(value.to_string())
+    }
+
+    /// Whether this pane's agent is waiting on the user.
+    ///
+    /// Uses the shared reported/detected authority rule from [`Self::agent_status`].
+    /// Unlike `agent_status`, a reported-only pane can be blocked.
+    pub fn is_blocked(&self) -> bool {
+        crate::session::protocol::effective_agent_status(
+            self.reported_status.as_ref(),
+            self.detected_agent.as_ref(),
+        )
+        .is_some_and(|status| {
+            status
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::BLOCKED)
+        })
+    }
+
+    /// Whether this pane's agent is actively working, under the same shared authority rule as
+    /// [`Self::is_blocked`].
+    pub fn is_working(&self) -> bool {
+        crate::session::protocol::effective_agent_status(
+            self.reported_status.as_ref(),
+            self.detected_agent.as_ref(),
+        )
+        .is_some_and(|status| {
+            status
+                .trim()
+                .eq_ignore_ascii_case(crate::session::protocol::pane_status::WORKING)
+        })
     }
 
     /// How long this pane's active agent run has lasted, for the sidebar's duration column.
@@ -763,6 +783,44 @@ mod tests {
         assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
         pane.reported_status.as_mut().unwrap().value = "working".into();
         assert!(pane.status_age().unwrap() >= std::time::Duration::from_secs(120));
+    }
+
+    #[test]
+    fn agent_alert_predicates_prefer_reported_status_and_accept_each_source() {
+        let mut pane = TerminalPane::new(100);
+        pane.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        });
+        assert!(pane.is_blocked());
+        assert!(!pane.is_working());
+
+        pane.detected_agent.as_mut().unwrap().state =
+            crate::session::protocol::DetectedAgentState::Working;
+        assert!(!pane.is_blocked());
+        assert!(pane.is_working());
+
+        pane.detected_agent.as_mut().unwrap().state =
+            crate::session::protocol::DetectedAgentState::Blocked;
+        pane.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: " Working ".into(),
+            reason: None,
+            set_at: 1,
+        });
+        assert!(!pane.is_blocked());
+        assert!(pane.is_working());
+
+        for value in ["idle", "done"] {
+            pane.reported_status.as_mut().unwrap().value = value.into();
+            assert!(pane.is_blocked(), "detected prompt elevates stale {value}");
+            assert!(!pane.is_working());
+            assert_eq!(pane.agent_status().as_deref(), Some("blocked"));
+        }
+
+        pane.detected_agent = None;
+        pane.reported_status.as_mut().unwrap().value = "BLOCKED".into();
+        assert!(pane.is_blocked());
+        assert!(!pane.is_working());
     }
 
     #[test]

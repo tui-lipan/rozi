@@ -92,14 +92,7 @@ pub(crate) fn next_blocked_pane(state: &State) -> Option<PaneId> {
         .map_or(0, |index| index + 1);
     (0..panes.len())
         .map(|offset| &panes[(start + offset) % panes.len()])
-        .find(|pane| {
-            Some(pane.id) != state.current().focused_pane
-                && pane
-                    .terminal
-                    .reported_status
-                    .as_ref()
-                    .is_some_and(|status| status.value.trim().eq_ignore_ascii_case("blocked"))
-        })
+        .find(|pane| Some(pane.id) != state.current().focused_pane && pane.awaits_input())
         .map(|pane| pane.id)
 }
 
@@ -2203,6 +2196,30 @@ mod tests {
         state.current_mut().workspaces[0].panes[1]
             .terminal
             .reported_status = None;
+        assert_eq!(next_blocked_pane(&state), None);
+    }
+
+    #[test]
+    fn next_blocked_pane_uses_effective_status_and_skips_exited() {
+        let mut state = state_with_tiled(&[1, 2]);
+        {
+            let panes = &mut state.current_mut().workspaces[0].panes;
+            panes[0].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                kind: crate::session::protocol::AgentKind::OpenCode,
+                state: crate::session::protocol::DetectedAgentState::Blocked,
+            });
+            panes[1].terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+                kind: crate::session::protocol::AgentKind::OpenCode,
+                state: crate::session::protocol::DetectedAgentState::Blocked,
+            });
+            set_reported_status(&mut panes[0], "idle");
+            set_reported_status(&mut panes[1], "working");
+        }
+        state.current_mut().focused_pane = None;
+        assert_eq!(next_blocked_pane(&state), Some(1));
+
+        state.current_mut().workspaces[0].panes[0].terminal.status =
+            ManagedTerminalStatus::Exited(0);
         assert_eq!(next_blocked_pane(&state), None);
     }
 

@@ -258,7 +258,7 @@ impl Row {
             .style(if selected {
                 super::row_highlight(theme)
             } else if self.active {
-                Style::new().bg(theme.surface.element.elevate(0.04))
+                Style::new().bg(theme.surface.element.elevate_by(0.04))
             } else {
                 Style::default()
             })

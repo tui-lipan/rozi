@@ -1,7 +1,9 @@
 use tui_lipan::prelude::CapStyle as TuiCapStyle;
 
 use super::file::{PaneFileConfig, WorkbarFileConfig, WorkbarSegmentSpec};
-use super::schema::{BadgeColor, HyprmuxPaneConfig, WorkbarConfig, WorkbarItem, WorkbarSegment};
+use super::schema::{
+    BadgeColor, HyprmuxPaneConfig, PaneAlertColors, WorkbarConfig, WorkbarItem, WorkbarSegment,
+};
 use crate::state::parse_cap_style;
 
 pub(super) fn apply_workbar_config(
@@ -65,6 +67,71 @@ pub(super) fn apply_workbar_config(
             ));
         }
     }
+    if let Some(value) = raw.alert.bell {
+        workbar.alert.bell = value;
+    }
+    if let Some(value) = raw.alert.blocked {
+        workbar.alert.blocked = value;
+    }
+    if let Some(value) = raw.alert.finished {
+        workbar.alert.finished = value;
+    }
+    if let Some(value) = raw.alert.working {
+        workbar.alert.working = value;
+    }
+    if let Some(value) = raw.alert.idle {
+        workbar.alert.idle = value;
+    }
+    if let Some(value) = super::file::non_empty(raw.alert.mode) {
+        match crate::state::AlertMode::parse(&value) {
+            Some(mode) => workbar.alert.mode = mode,
+            None => warnings.push(format!(
+                "Unknown workbar alert mode `{value}` (expected one of: off, static, pulse); using `{}`",
+                workbar.alert.mode.id()
+            )),
+        }
+    }
+    if let Some(value) = super::file::non_empty(raw.alert.paint) {
+        match crate::state::AlertPaint::parse(&value) {
+            Some(paint) => workbar.alert.paint = paint,
+            None => warnings.push(format!(
+                "Unknown workbar alert paint `{value}` (expected one of: background, text); using `{}`",
+                workbar.alert.paint.id()
+            )),
+        }
+    }
+}
+
+pub(super) fn apply_pane_alert_colors(
+    colors: &mut PaneAlertColors,
+    raw: super::file::PaneAlertFileConfig,
+    warnings: &mut Vec<String>,
+) {
+    fn apply(
+        target: &mut Option<BadgeColor>,
+        value: Option<String>,
+        state: &str,
+        warnings: &mut Vec<String>,
+    ) {
+        let Some(value) = value else {
+            return;
+        };
+        if value.trim().eq_ignore_ascii_case("off") {
+            *target = None;
+        } else if let Some(color) = BadgeColor::parse(&value) {
+            *target = Some(color);
+        } else {
+            warnings.push(format!(
+                "Unknown pane alert color `{value}` for `{state}` (expected one of: {}, off); using default",
+                BadgeColor::NAMES
+            ));
+        }
+    }
+
+    apply(&mut colors.blocked, raw.blocked, "blocked", warnings);
+    apply(&mut colors.finished, raw.finished, "finished", warnings);
+    apply(&mut colors.working, raw.working, "working", warnings);
+    apply(&mut colors.idle, raw.idle, "idle", warnings);
 }
 
 pub(super) fn apply_workbar_style_config(
@@ -166,6 +233,57 @@ mod tests {
             }]
         );
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn workbar_alert_config_overrides_each_trigger() {
+        let raw: WorkbarFileConfig = toml::from_str(
+            "[alert]\nbell = false\nblocked = false\nfinished = false\nworking = true\nidle = true\nmode = \"static\"",
+        )
+        .expect("config parses");
+        let mut workbar = WorkbarConfig::default();
+        apply_workbar_config(&mut workbar, raw, &mut Vec::new());
+        assert_eq!(
+            workbar.alert,
+            super::super::schema::WorkbarAlertConfig {
+                bell: false,
+                blocked: false,
+                finished: false,
+                working: true,
+                idle: true,
+                mode: crate::state::AlertMode::Static,
+                paint: crate::state::AlertPaint::Background,
+            }
+        );
+    }
+
+    #[test]
+    fn workbar_alert_mode_warns_and_keeps_the_default_when_unknown() {
+        let raw: WorkbarFileConfig =
+            toml::from_str("[alert]\nmode = \"blinky\"").expect("config parses");
+        let mut workbar = WorkbarConfig::default();
+        let mut warnings = Vec::new();
+        apply_workbar_config(&mut workbar, raw, &mut warnings);
+        assert_eq!(workbar.alert.mode, crate::state::AlertMode::Pulse);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("blinky"), "{warnings:?}");
+    }
+
+    #[test]
+    fn pane_alert_colors_parse_roles_and_preserve_invalid_defaults() {
+        let raw: PaneFileConfig = toml::from_str(
+            "[alert]\nblocked = \"warning\"\nfinished = \"off\"\nworking = \"info\"\nidle = \"chartreuse\"",
+        )
+        .expect("config parses");
+        let mut colors = PaneAlertColors::default();
+        let mut warnings = Vec::new();
+        apply_pane_alert_colors(&mut colors, raw.alert, &mut warnings);
+        assert_eq!(colors.blocked, Some(BadgeColor::Warning));
+        assert_eq!(colors.finished, None);
+        assert_eq!(colors.working, Some(BadgeColor::Info));
+        assert_eq!(colors.idle, None);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains(BadgeColor::NAMES));
     }
 
     #[test]

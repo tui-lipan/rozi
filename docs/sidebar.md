@@ -177,8 +177,9 @@ drops the pulse. The pulse is cleared as soon as
 the pane is focused through any path, so looking at a finished agent acknowledges it.
 
 Process detection infers `working` and `blocked` from server-owned terminal state where an agent
-exposes recognizable progress or prompt markers. Agent integrations can publish a more reliable
-status through the control socket; reported status takes precedence over inference.
+exposes recognizable progress or prompt markers. Agent integrations can publish status through the
+control socket; explicit `working` wins, while a detected prompt elevates over stale reported
+`idle` or `done`.
 
 ### OpenCode Status Plugin
 
@@ -397,8 +398,11 @@ can be visible at once, and on the same row.
 - `sidebar-next-tab` and `sidebar-prev-tab` cycle configured tabs while visible. Bound to
   `<prefix> PageDown` / `Alt+PageDown` and `<prefix> PageUp` / `Alt+PageUp` respectively.
 - `focus-next-blocked-pane` scans all workspaces in pane order, wraps after the focused pane, and
-  focuses the next pane whose reported status is `blocked`. It skips closing and special panes and
-  does nothing when the current pane is the only blocked pane.
+  focuses the next pane whose reported or detected state is `blocked`. It skips closing, exited,
+  and special panes and does nothing when the current pane is the only blocked pane.
+- Workspace tabs signal the same states by background color rather than a glyph: error for a bell or
+  blocked agent, success for an unseen finished one, info while working. See `[workbar.alert]` in
+  [Configuration](configuration.md).
 - `focus-next-blocked-pane` is unbound by default. All six sidebar actions can be rebound under
   `[keys]` or invoked with `hyprmux run-action <id>`.
 

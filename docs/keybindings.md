@@ -249,7 +249,7 @@ second confirmation.
 | Focus sidebar (`focus-sidebar`) | `shift-b` | Move the keyboard into the sidebar's row list, revealing the sidebar first if it was hidden. |
 | Next sidebar tab (`sidebar-next-tab`) | `page-down` | Cycle forward through configured tabs while the sidebar is visible. |
 | Previous sidebar tab (`sidebar-prev-tab`) | `page-up` | Cycle backward through configured tabs while the sidebar is visible. |
-| Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next pane reporting `blocked`; wraps after the current focus and skips closing/special panes. |
+| Focus next blocked pane (`focus-next-blocked-pane`) | *(no default)* | Scan panes across all workspaces in deterministic order and focus the next reported or screen-detected blocked pane; wraps after the current focus and skips closing/exited/special panes. |
 
 All six actions are available from the command palette and `hyprmux run-action`, and all are
 rebindable under `[keys]`.
@@ -277,7 +277,8 @@ have no stable id, so they can't be rebound elsewhere or invoked via `hyprmux ru
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
 keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (rename pane, search,
 copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, help). The appearance
-palette groups theme, titlebar, workbar, animation, and border controls; on a toggle or cycle
+palette groups theme, titlebar, workbar, animation, and border controls, including
+`cycle-alert-border` and `cycle-workbar-alert` (Off/Static/Pulse); on a toggle or cycle
 row, `←` / `→` steps the value (Enter still activates, including Theme and Terminal padding).
 Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
 overlay only, since the key is faster than a search box. "Change appearance" and "Toggle

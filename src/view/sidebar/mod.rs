@@ -16,7 +16,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>) -> Element {
     let theme = &ctx.state.theme;
     let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
         let divider_style = Style::new()
-            .fg(theme.surface.element.elevate(0.15))
+            .fg(theme.surface.element.elevate_by(0.15))
             .bg(theme.surface.element);
         Splitter::horizontal()
             .split_id("hyprmux-sidebar-panels")
@@ -78,7 +78,7 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
         .theme
         .surface
         .element
-        .elevate(0.08));
+        .elevate_by(0.08));
     let tab_bar = DraggableTabBar::new()
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
@@ -116,7 +116,7 @@ fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
                 .theme
                 .surface
                 .element
-                .elevate(0.08)),
+                .elevate_by(0.08)),
         )
         .on_change(
             ctx.link()
@@ -359,7 +359,7 @@ fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Elemen
             // through a scope around the row; the ✕ keeps its foreground-only native effect, and
             // nested effects compose without another hover state machine.
             element = EffectScope::new()
-                .effect(VisualEffect::transform_bg(hover_lift()))
+                .effect(VisualEffect::transform_bg(super::hover_lift()))
                 .child(element)
                 .into();
         }
@@ -383,7 +383,7 @@ fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Elemen
                 // A transform rather than a style: it lifts whatever the row already painted, so
                 // the active pane's row and the row under the keyboard cursor still respond to the
                 // pointer. An absolute hover style sits *under* those backgrounds and never shows.
-                region = region.hover_effect(VisualEffect::transform_bg(hover_lift()));
+                region = region.hover_effect(VisualEffect::transform_bg(super::hover_lift()));
             }
             region.into()
         } else {
@@ -470,19 +470,7 @@ pub(super) fn scrollbar_config() -> ScrollbarConfig {
 /// Pointer hover is a *transform* of the same size rather than this style, so hovering a row that
 /// is already active or already under the cursor still reads as a change.
 pub(super) fn row_highlight(theme: &Theme) -> Style {
-    Style::new().bg(theme.surface.element.elevate(HOVER_LIFT))
-}
-
-/// How far a row lifts under the pointer or the keyboard cursor. Shared so the two stay the same
-/// weight even though one is an absolute background and the other a transform of what is there.
-const HOVER_LIFT: f32 = 0.08;
-
-/// The pointer-hover lift, as a transform.
-///
-/// `ColorTransform::Elevate` is the relative form of the `Color::elevate` [`row_highlight`] paints
-/// absolutely, so the two land on the same color whatever background the row carries.
-fn hover_lift() -> ColorTransform {
-    ColorTransform::Elevate(HOVER_LIFT)
+    Style::new().bg(theme.surface.element.elevate_by(super::HOVER_LIFT))
 }
 
 pub(super) fn placeholder(ctx: &Context<HyprmuxApp>, text: &str) -> Element {

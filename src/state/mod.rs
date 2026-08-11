@@ -81,6 +81,13 @@ pub struct State {
     /// would redraw an identical string. Recorded by the view (rather than reformatted in the
     /// handler) so the comparison is against what is really on screen, with no sampling skew.
     pub last_clock_text: RefCell<Option<String>>,
+    /// Shared half-period phase for urgent alert borders and inactive workspace markers.
+    pub alert_pulse_phase: bool,
+    /// Phase for calm alerts (a finished agent), flipped once per full urgent cycle so it breathes
+    /// `anim::ALERT_PULSE_CALM_FACTOR` times slower off the same tick chain.
+    pub alert_pulse_calm_phase: bool,
+    /// Whether one delayed alert-pulse tick is already queued.
+    pub alert_pulse_armed: bool,
     pub sidebar_visible: bool,
     pub sidebar: SidebarState,
     pub workbar: WorkbarState,
@@ -260,6 +267,9 @@ impl State {
             last_viewport: Cell::new(None),
             last_content_viewport: Cell::new(None),
             last_clock_text: RefCell::new(None),
+            alert_pulse_phase: false,
+            alert_pulse_calm_phase: false,
+            alert_pulse_armed: false,
             sidebar_visible,
             sidebar,
             workbar: WorkbarState::default(),

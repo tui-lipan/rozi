@@ -93,6 +93,7 @@ show_titles = true            # show pane titles (default: true)
 titlebar = "bar"              # pane title layout: bar|border|integrated (default: bar)
 border_mode = "separate"      # separate|merged|none|dividers (default: separate)
 border_style = "rounded"      # rounded|plain|double|thick (frame modes only)
+alert_border = "pulse"        # off|static|pulse (default: pulse)
 keep_special_borders = false  # frame floating/popup/scratch panes in borderless modes
 padding = 0                   # blank cells between border and terminal (default: 0)
                                # scalar = all sides; [v, h]; or [top, right, bottom, left]
@@ -103,6 +104,12 @@ workbar_tab_style = "padded" # workspace/sidebar tab caps: padded|round|arrow (d
 workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
 toast_opacity = 0.8           # toast background opacity over pane content (default: 0.8)
 background_follows_terminal = false  # pin surface.backdrop to the host terminal bg (default: false)
+
+[pane.alert]
+blocked = "error"             # BadgeColor role, or off
+finished = "success"
+working = "off"
+idle = "off"
 
 [animations]
 enabled = true               # master switch (default: true)
@@ -115,6 +122,7 @@ focus_chrome = true          # animate focus border/title color changes
 geometry_ms = 220            # base geometry transition duration (default: 220)
 close_ms = 120               # close transition duration (default: 120)
 focus_chrome_ms = 160        # focus-chrome transition duration (default: 160)
+alert_pulse_ms = 1600        # shared border/tab breathe period (minimum effective: 800)
 open_delay_ms = 36           # delay before a spawned pane fades in (default: 36)
 
 [theme]
@@ -165,6 +173,15 @@ right = ["location", "session"]             # default
 # A segment can be a table to override its badge color by theme role:
 # right = [{ segment = "clock", color = "info" }, "session"]
 clock_format = "%H:%M"                       # strftime, only used by a clock segment
+
+[workbar.alert]
+bell = true
+blocked = true
+finished = true
+working = false
+idle = false
+mode = "pulse"                               # off|static|pulse (default: pulse)
+paint = "background"                         # background|text (default: background)
 
 [keys]
 # A bare key replaces an action's key while following the input scheme.
@@ -279,8 +296,19 @@ Pane focus and chrome behavior.
 | `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The appearance cycle writes this back to config. |
 | `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The appearance cycle writes this back to config. |
 | `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The appearance row is disabled when the selected mode has no pane frames. |
+| `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Appearance action is `cycle-alert-border`; it is disabled in `none` mode. |
 | `keep_special_borders` | `false` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Fullscreen panes remain consistent with the selected global mode. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
+
+`[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen
+`finished = "success"` default on; `working` and `idle` default `off` because they are ambient,
+not normally actionable. Configured-off states fall through to the next applicable state. A finished
+alert clears when you focus its pane; closing and exited panes never alert.
+
+`alert_pulse_ms` sets the shared breathe period for `alert_border = "pulse"` and optional inactive
+workspace-tab breathing. It needs both `animations.enabled` and `focus_chrome`; its half-period is
+floored at 400 ms. No pulse timer runs until an eligible alert is visible.
+Blocked and finished alerts are visible state, so they do not create success toasts.
 | `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
 | `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `hyprmux` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
 | `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
@@ -748,6 +776,23 @@ workspace and sidebar tab caps are controlled separately with `workbar_tab_style
 | `right` | `["location", "session"]` | Ordered right-region segments. |
 | `clock_format` | `"%H:%M"` | strftime format, used by a `clock` segment. |
 
+`[workbar.alert]` controls workspace-tab alerts independently of `[pane.alert]`. A marked tab is
+tinted toward its state's color - error for a bell or blocked agent, success for an unseen finished
+one, info while working - and its label stays plain identity text, so a workspace never changes
+width when an agent blocks and the tabs beside it never shift. The flags enable bell, blocked, and
+finished only, and say *which* states mark a tab.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `mode` | `pulse` | How a marked tab is drawn: `off` shows no marker at all, `static` colors it, `pulse` also breathes it. Mirrors `pane.alert_border`; the Appearance action is `cycle-workbar-alert` and the row is **Workbar → Alert**, disabled while the workbar is hidden. |
+| `paint` | `background` | What a marked tab colors. `background` fills it and gives it the same end caps as the active tab, so it reads from across the screen; `text` colors the label only and leaves the tab flat, which is quieter beside the active tab. Appearance row **Workbar → Alert paint**, action `cycle-workbar-alert-paint`. |
+
+Only **inactive** marked tabs are colored or breathed — the active workspace keeps its solid tab pill,
+and its pane border already carries the alert. Several marked tabs share one phase, so they breathe in
+unison rather than to separate rhythms, while still using their own state's color. Breathing uses the
+shared `alert_pulse_ms` period. Markers stay visible when pane borders or colors are off, including
+`alert_border = "off"` and `border_mode = "none"`.
+
 Segment kinds: `title` (the badge), `workspaces` (the tabs), `location` (the active remote host, or
 the number of retained remote connections while local), `session` (the active profile/session
 name), `clock`, `layout` (active workspace layout name), `activity` (panes with unseen output, shown as
@@ -871,7 +916,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `toggle-sidebar-split`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,
 `toggle-highlight-focused-background`, `toggle-highlight-focused-border`,
-`toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-title-style`,
+`toggle-highlight-focused-titlebar`, `cycle-border-mode`, `cycle-border-style`, `cycle-alert-border`, `cycle-workbar-alert`, `cycle-title-style`,
 `cycle-workbar-badge-style`, `cycle-workbar-tab-style`, `cycle-workbar-style`,
 `toggle-pane-synchronization`, `open-config`. These same ids also work with `hyprmux run-action <id>` over the control socket
 (see `docs/control.md`).

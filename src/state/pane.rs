@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use tui_lipan::prelude::FloatRect;
+use tui_lipan::prelude::{FloatRect, ManagedTerminalStatus};
 
 use crate::pane::{TerminalPane, shell_title_parts};
 
@@ -153,6 +153,13 @@ impl Pane {
             .as_deref()
             .or(self.identity.cwd.as_deref())
     }
+
+    /// Whether this pane is blocked and still worth acting on.
+    pub fn awaits_input(&self) -> bool {
+        !self.closing
+            && !matches!(self.terminal.status, ManagedTerminalStatus::Exited(_))
+            && self.terminal.is_blocked()
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +268,21 @@ mod tests {
 
         assert_eq!(pane.identity.custom_title, None);
         assert_eq!(pane.display_title(None), "shell");
+    }
+
+    #[test]
+    fn awaits_input_ignores_closing_and_exited_panes() {
+        let mut pane = pane();
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "blocked".into(),
+            reason: None,
+            set_at: 1,
+        });
+        assert!(pane.awaits_input());
+        pane.closing = true;
+        assert!(!pane.awaits_input());
+        pane.closing = false;
+        pane.terminal.status = ManagedTerminalStatus::Exited(0);
+        assert!(!pane.awaits_input());
     }
 }

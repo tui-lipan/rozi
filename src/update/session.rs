@@ -1808,6 +1808,16 @@ mod tests {
     }
 
     #[test]
+    fn detected_blocked_over_stale_idle_does_not_arm_finished_unseen() {
+        let mut pane = agent_pane("idle");
+        pane.detected_agent.as_mut().expect("agent").state =
+            crate::session::protocol::DetectedAgentState::Blocked;
+        update_agent_status_edge(&mut pane, Some("working"), None);
+        assert_eq!(pane.agent_status().as_deref(), Some("blocked"));
+        assert!(!pane.finished_unseen);
+    }
+
+    #[test]
     fn hold_on_exit_excludes_disabled_and_scratch_panes() {
         assert!(should_hold_on_exit(true, 1, false));
         assert!(!should_hold_on_exit(false, 1, false));

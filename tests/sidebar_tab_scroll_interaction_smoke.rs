@@ -220,7 +220,7 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
             assert!(backend.hovered().is_some());
             assert_eq!(
                 backend.capture_frame().cell(9, 0).bg,
-                theme.surface.element.elevate(0.08)
+                theme.surface.element.elevate_by(0.08)
             );
 
             click_label(&mut backend, "Build");

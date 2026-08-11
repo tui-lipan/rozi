@@ -236,13 +236,20 @@ pub fn placement_for(placements: &[PanePlacement], id: PaneId) -> Option<FloatRe
         .map(|placement| placement.rect)
 }
 
-pub fn ordered_panes(workspace: &Workspace, focused: Option<PaneId>) -> Vec<&Pane> {
+/// Painter order with a caller-supplied alert predicate, keeping layout independent from view
+/// policy. In merged frames the later pane owns a shared seam: quiet < alert < focused.
+pub fn ordered_panes(
+    workspace: &Workspace,
+    focused: Option<PaneId>,
+    is_alerting: impl Fn(&Pane) -> bool,
+) -> Vec<&Pane> {
     let mut panes: Vec<&Pane> = workspace.panes.iter().collect();
     panes.sort_by_key(|pane| {
         (
             pane_z_group(pane),
             pane.fullscreen,
             focused == Some(pane.id),
+            is_alerting(pane),
             pane.id,
         )
     });
@@ -625,12 +632,30 @@ mod tests {
             active_floating,
         ];
 
-        let ids: Vec<PaneId> = ordered_panes(&workspace, Some(2))
+        let ids: Vec<PaneId> = ordered_panes(&workspace, Some(2), |_| false)
             .into_iter()
             .map(|pane| pane.id)
             .collect();
 
         assert_eq!(ids, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ordered_panes_paints_alerts_above_quiet_peers_below_focus() {
+        let rect = FloatRect {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 24.0,
+        };
+        let mut workspace = Workspace::new(0);
+        workspace.panes = vec![Pane::new(1, 100, rect), Pane::new(2, 100, rect)];
+
+        let ids: Vec<_> = ordered_panes(&workspace, Some(1), |pane| pane.id == 2)
+            .into_iter()
+            .map(|pane| pane.id)
+            .collect();
+        assert_eq!(ids, vec![2, 1]);
     }
 
     #[test]

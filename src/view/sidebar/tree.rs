@@ -55,7 +55,7 @@ pub(super) fn tree_tab(
         .max_entries_per_dir(config.max_entries)
         .indent_style(IndentStyle::Short)
         .indent_width(1)
-        .indent_guide_style(Style::new().fg(theme.surface.element.elevate(0.15)))
+        .indent_guide_style(Style::new().fg(theme.surface.element.elevate_by(0.15)))
         .change_view(if changed_only {
             FileTreeChangeView::ChangedOnly
         } else {

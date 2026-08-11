@@ -42,6 +42,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         Msg::ConfigFileChanged => overlays::config_file_changed(ctx),
         Msg::WorkbarTick => overlays::workbar_tick(ctx),
         Msg::AgentTick => sidebar::agent_tick(ctx),
+        Msg::AlertPulseTick => panes::alert_pulse_tick(ctx),
         Msg::WorkbarCommandPoll { epoch, command } => workbar::poll_command(ctx, epoch, command),
         Msg::WorkbarCommandOutput {
             epoch,
@@ -391,6 +392,7 @@ pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<Hypr
         update = Update::with_command(command);
     }
     clear_finished_unseen_on_focus(ctx);
+    panes::arm_alert_pulse(ctx);
     sidebar::sync_tree_roots(ctx);
     // Keep the Sessions tab's auto-refresh loop alive across session switches, creates, and reopens,
     // which bump the sessions epoch and would otherwise leave the tab frozen until it is reopened.

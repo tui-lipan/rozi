@@ -7,8 +7,8 @@ use crate::pane_lifecycle::find_pane_mut;
 use crate::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
 };
-use crate::state::{PaneId, ResizeCorner, State};
-use crate::{HyprmuxApp, control};
+use crate::state::{AlertMode, PaneId, ResizeCorner, State};
+use crate::{HyprmuxApp, control, schedule_alert_pulse_tick};
 
 pub(super) fn close_popup(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::popup::close(ctx)
@@ -282,6 +282,101 @@ pub(super) fn control_request(
     crate::ops::control::handle_control_request(ctx, envelope)
 }
 
+/// One shared, self-cancelling pulse chain for visible pane frames and inactive marked tabs.
+pub(crate) fn arm_alert_pulse(ctx: &mut Context<HyprmuxApp>) {
+    if ctx.state.alert_pulse_armed || !alert_pulse_should_run(&ctx.state) {
+        return;
+    }
+    let Some(link) = ctx.state.command_link.clone() else {
+        return;
+    };
+    ctx.state.alert_pulse_armed = true;
+    link.send_after(
+        crate::anim::alert_pulse_half_period(ctx.state.config.animations),
+        crate::Msg::AlertPulseTick,
+    );
+}
+
+pub(super) fn alert_pulse_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+    if !alert_pulse_should_run(&ctx.state) {
+        let changed = ctx.state.alert_pulse_phase || ctx.state.alert_pulse_calm_phase;
+        ctx.state.alert_pulse_armed = false;
+        ctx.state.alert_pulse_phase = false;
+        ctx.state.alert_pulse_calm_phase = false;
+        return if changed {
+            Update::full()
+        } else {
+            Update::none()
+        };
+    }
+    ctx.state.alert_pulse_phase = !ctx.state.alert_pulse_phase;
+    // One chain drives both rates: the calm phase turns over once per full urgent cycle, which is
+    // why it needs no timer of its own and can never drift out of step with the urgent one.
+    if !ctx.state.alert_pulse_phase {
+        ctx.state.alert_pulse_calm_phase = !ctx.state.alert_pulse_calm_phase;
+    }
+    Update::with_command(schedule_alert_pulse_tick(
+        crate::anim::alert_pulse_half_period(ctx.state.config.animations),
+    ))
+}
+
+fn alert_pulse_should_run(state: &State) -> bool {
+    let animations = state.config.animations;
+    if !animations.enabled || !animations.focus_chrome {
+        return false;
+    }
+    (state.config.pane.alert_border == AlertMode::Pulse && visible_pane_alert_can_pulse(state))
+        || (state.config.workbar.alert.mode == AlertMode::Pulse
+            && inactive_tab_marker_can_pulse(state))
+}
+
+fn visible_pane_alert_can_pulse(state: &State) -> bool {
+    if !crate::view::has_pane_alert(state) {
+        return false;
+    }
+    let workspace = &state.current().workspaces[state.current().active_workspace];
+    let focused = workspace.focused_pane.or(state.current().focused_pane);
+    workspace.panes.iter().any(|pane| {
+        crate::view::pane_alert(pane, focused == Some(pane.id), &state.config.pane).is_some_and(
+            |(_, color)| crate::ops::theme::pane_frame_alert_can_pulse(&state.theme, color),
+        )
+    })
+}
+
+fn inactive_tab_marker_can_pulse(state: &State) -> bool {
+    if !state.config.pane.show_workbar
+        || !state
+            .config
+            .workbar
+            .left
+            .iter()
+            .chain(state.config.workbar.right.iter())
+            .any(|item| matches!(item.segment, crate::config::WorkbarSegment::Workspaces))
+    {
+        return false;
+    }
+    if !crate::view::has_inactive_marked_workspace(state) {
+        return false;
+    }
+    state
+        .current()
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != state.current().active_workspace)
+        .filter_map(|(_, workspace)| {
+            crate::view::workspace_marker(workspace, &state.config.workbar.alert)
+        })
+        .map(crate::view::workspace_marker_color)
+        .any(|color| {
+            crate::ops::theme::tab_alert_can_pulse(
+                &state.theme,
+                color,
+                state.config.workbar.alert.paint,
+            )
+        })
+}
+
 fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
     let id = state.current().focused_pane?;
     let workspace = &state.current().workspaces[state.current().active_workspace];
@@ -290,4 +385,139 @@ fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
         .iter()
         .any(|pane| pane.id == id && !pane.terminal_active && !pane.closing)
         .then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HyprmuxConfig;
+    use crate::state::{Pane, PaneBorderMode};
+    use tui_lipan::prelude::{Color, Style};
+
+    fn blocked_pane(id: PaneId) -> Pane {
+        let mut pane = Pane::new(
+            id,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "blocked".into(),
+            reason: None,
+            set_at: 0,
+        });
+        pane
+    }
+
+    #[test]
+    fn default_pulse_sleeps_without_alerts_and_arms_for_visible_frame_alerts() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        assert!(!alert_pulse_should_run(&state));
+        state.current_mut().workspaces[0]
+            .panes
+            .push(blocked_pane(2));
+        assert!(alert_pulse_should_run(&state));
+
+        state.config.pane.border_mode = PaneBorderMode::Dividers;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.pane.border_mode = PaneBorderMode::Separate;
+        state.config.animations.focus_chrome = false;
+        assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn workbar_pulse_can_arm_for_a_background_marker_when_borders_are_off() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.config.pane.alert_border = AlertMode::Off;
+        state.config.workbar.alert.mode = AlertMode::Pulse;
+        let mut pane = blocked_pane(2);
+        pane.terminal.reported_status = None;
+        pane.terminal.finished_unseen = true;
+        state.current_mut().workspaces[1].panes.push(pane);
+        assert!(alert_pulse_should_run(&state));
+
+        // `static` keeps the marker and its color but stops the tick; `off` removes the marker
+        // outright. Neither may leave a pulse chain running.
+        state.config.workbar.alert.mode = AlertMode::Static;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.workbar.alert.mode = AlertMode::Off;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.workbar.alert.mode = AlertMode::Pulse;
+
+        state.config.pane.show_workbar = false;
+        assert!(!alert_pulse_should_run(&state));
+        state.config.pane.show_workbar = true;
+        state.config.workbar.left.clear();
+        state.config.workbar.right.clear();
+        assert!(!alert_pulse_should_run(&state));
+
+        state.config.pane.alert_border = AlertMode::Pulse;
+        state.current_mut().workspaces[0].panes.push({
+            let mut pane = blocked_pane(3);
+            pane.terminal.reported_status = None;
+            pane.terminal.finished_unseen = true;
+            pane
+        });
+        assert!(
+            alert_pulse_should_run(&state),
+            "a visible pane pulse is independent of hidden/absent workspace tabs"
+        );
+
+        state.current_mut().workspaces[1].panes.clear();
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .finished_unseen = true;
+        state.config.pane.alert_border = AlertMode::Off;
+        assert!(!alert_pulse_should_run(&state));
+    }
+
+    #[test]
+    fn pulse_surfaces_ignore_each_others_nonanimatable_roles() {
+        let mut pane_state = State::new(HyprmuxConfig::default(), Theme::default());
+        pane_state.config.pane.alert_border = AlertMode::Pulse;
+        pane_state.config.workbar.alert.mode = AlertMode::Pulse;
+        let mut finished = blocked_pane(2);
+        finished.terminal.reported_status = None;
+        finished.terminal.finished_unseen = true;
+        pane_state.current_mut().workspaces[0].panes.push(finished);
+        pane_state.current_mut().workspaces[1]
+            .panes
+            .push(blocked_pane(3));
+        pane_state.theme.status.error = Color::Red;
+        assert!(alert_pulse_should_run(&pane_state));
+
+        let mut tab_state = State::new(HyprmuxConfig::default(), Theme::default());
+        tab_state.config.pane.alert_border = AlertMode::Pulse;
+        tab_state.config.workbar.alert.mode = AlertMode::Pulse;
+        tab_state.current_mut().workspaces[0]
+            .panes
+            .push(blocked_pane(2));
+        let mut finished = blocked_pane(3);
+        finished.terminal.reported_status = None;
+        finished.terminal.finished_unseen = true;
+        tab_state.current_mut().workspaces[1].panes.push(finished);
+        tab_state.theme.status.error = Color::Red;
+        assert!(alert_pulse_should_run(&tab_state));
+    }
+
+    #[test]
+    fn equal_or_palette_alert_endpoints_do_not_arm_a_pane_pulse() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.config.pane.alert_border = AlertMode::Pulse;
+        state.current_mut().workspaces[0]
+            .panes
+            .push(blocked_pane(2));
+        state.theme.status.error = Color::rgb(255, 0, 1);
+        state.theme.border = Style::new().fg(state.theme.status.error);
+        assert!(!alert_pulse_should_run(&state));
+
+        state.theme.border = Style::default();
+        state.theme.status.error = Color::Red;
+        state.theme.status.warning = Color::Yellow;
+        assert!(!alert_pulse_should_run(&state));
+    }
 }

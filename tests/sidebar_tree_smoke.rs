@@ -327,7 +327,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             settle(&mut backend);
 
             // The cursor shares the pointer-hover lift, one visual language across every tab.
-            let selection_bg = backend.state().theme.surface.element.elevate(0.08);
+            let selection_bg = backend.state().theme.surface.element.elevate_by(0.08);
 
             // Find and click the `src` directory row.
             let row_text = |backend: &TestBackend<HyprmuxApp>, row: u16| -> String {

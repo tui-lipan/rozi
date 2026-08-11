@@ -234,6 +234,17 @@ fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value:
     }
 }
 
+fn persist_workbar_alert_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+    if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
+        crate::pty_events::notify_on(
+            ctx,
+            ToastChannel::PreferenceSave,
+            Some("Preference not saved".to_string()),
+            err,
+        );
+    }
+}
+
 /// Whether `action` changes the shared window-manager layout (pane membership/order, tiling,
 /// geometry, workspace/pane identity). Followers are blocked from these until they take control;
 /// focus/workspace-switch/copy/search/palette/theme and terminal input stay local and are allowed.
@@ -546,6 +557,24 @@ fn execute_action_inner(
             let next = ctx.state.config.pane.border_mode.next();
             ctx.state.config.pane.border_mode = next;
             persist_pane_string_or_toast(ctx, "border_mode", next.id());
+            Update::full()
+        }
+        Action::CycleAlertBorder => {
+            let next = ctx.state.config.pane.alert_border.next();
+            ctx.state.config.pane.alert_border = next;
+            persist_pane_string_or_toast(ctx, "alert_border", next.id());
+            Update::full()
+        }
+        Action::CycleWorkbarAlert => {
+            let next = ctx.state.config.workbar.alert.mode.next();
+            ctx.state.config.workbar.alert.mode = next;
+            persist_workbar_alert_string_or_toast(ctx, "mode", next.id());
+            Update::full()
+        }
+        Action::CycleWorkbarAlertPaint => {
+            let next = ctx.state.config.workbar.alert.paint.next();
+            ctx.state.config.workbar.alert.paint = next;
+            persist_workbar_alert_string_or_toast(ctx, "paint", next.id());
             Update::full()
         }
         Action::ToggleBackgroundFollowsTerminal => {

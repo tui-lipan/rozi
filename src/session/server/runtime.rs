@@ -304,39 +304,6 @@ fn compute_runtime_state(
     }
 }
 
-/// Return the status the sidebar would see when an explicit report takes precedence over process
-/// detection. This is kept server-side so inferred agents get the same run timestamp semantics as
-/// agents using the control-socket integration.
-fn effective_agent_status<'a>(
-    status: Option<&'a PaneStatus>,
-    detected: Option<&'a DetectedAgent>,
-) -> Option<&'a str> {
-    status.map(|status| status.value.as_str()).or_else(|| {
-        detected.map(|detected| match detected.state {
-            crate::session::protocol::DetectedAgentState::Idle => {
-                crate::session::protocol::pane_status::IDLE
-            }
-            crate::session::protocol::DetectedAgentState::Working => {
-                crate::session::protocol::pane_status::WORKING
-            }
-            crate::session::protocol::DetectedAgentState::Blocked => {
-                crate::session::protocol::pane_status::BLOCKED
-            }
-        })
-    })
-}
-
-fn status_is_quiescent(value: Option<&str>) -> bool {
-    value.is_some_and(|value| {
-        value
-            .trim()
-            .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
-            || value
-                .trim()
-                .eq_ignore_ascii_case(crate::session::protocol::pane_status::DONE)
-    })
-}
-
 /// Keep one run's wall-clock start across blocked and resumed states. The server owns this value so
 /// a client can detach and reattach without turning a still-live run into a new one.
 fn next_work_started_at(
@@ -344,13 +311,17 @@ fn next_work_started_at(
     next_status: Option<&PaneStatus>,
     next_detected: Option<&DetectedAgent>,
 ) -> Option<u64> {
-    let previous_status =
-        effective_agent_status(previous.status.as_ref(), previous.detected_agent.as_ref());
-    let next_status = effective_agent_status(next_status, next_detected);
-    if next_status.is_none() || status_is_quiescent(next_status) {
+    let previous_status = crate::session::protocol::effective_agent_status(
+        previous.status.as_ref(),
+        previous.detected_agent.as_ref(),
+    );
+    let next_status = crate::session::protocol::effective_agent_status(next_status, next_detected);
+    if next_status.is_none() || crate::session::protocol::status_is_quiescent(next_status) {
         return None;
     }
-    if previous.work_started_at.is_some() && !status_is_quiescent(previous_status) {
+    if previous.work_started_at.is_some()
+        && !crate::session::protocol::status_is_quiescent(previous_status)
+    {
         return previous.work_started_at;
     }
     Some(
@@ -817,5 +788,32 @@ mod tests {
             &mut LazyProcessScan::default(),
         );
         assert_eq!(resumed.work_started_at, Some(started));
+    }
+
+    #[test]
+    fn detected_blocked_over_reported_idle_keeps_the_server_run_timestamp() {
+        let previous = PaneRuntimeState {
+            status: Some(PaneStatus {
+                value: "working".into(),
+                reason: None,
+                set_at: 1,
+            }),
+            work_started_at: Some(42),
+            ..PaneRuntimeState::default()
+        };
+        let idle = PaneStatus {
+            value: "idle".into(),
+            reason: None,
+            set_at: 2,
+        };
+        let blocked = DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        };
+
+        assert_eq!(
+            next_work_started_at(&previous, Some(&idle), Some(&blocked)),
+            Some(42)
+        );
     }
 }

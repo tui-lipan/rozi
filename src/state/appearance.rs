@@ -81,6 +81,151 @@ pub enum PaneBorderMode {
     Dividers,
 }
 
+/// A pane state that may mark its border, in attention precedence order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneAlert {
+    Blocked,
+    Finished,
+    Working,
+    Idle,
+}
+
+impl PaneAlert {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Blocked => "blocked",
+            Self::Finished => "finished",
+            Self::Working => "working",
+            Self::Idle => "idle",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Blocked => "Blocked",
+            Self::Finished => "Finished",
+            Self::Working => "Working",
+            Self::Idle => "Idle",
+        }
+    }
+
+    /// Whether this state breathes at the slower calm rate. Only `Blocked` is a request for an
+    /// answer; everything else is information you will get to, and should not compete with it.
+    pub const fn is_calm(self) -> bool {
+        !matches!(self, Self::Blocked)
+    }
+}
+
+/// What a marked workspace tab colors. Orthogonal to [`AlertMode`], which says whether that color
+/// holds still or breathes.
+///
+/// Workbar-only: a pane border *is* a foreground glyph, so it has no such choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AlertPaint {
+    /// Fill the tab, and shape it with the same end caps the active tab uses. Reads from across the
+    /// screen; the default because the workbar is usually in peripheral vision.
+    #[default]
+    Background,
+    /// Color the label only, leaving the tab flat. Quieter, and the right choice when a filled tab
+    /// would compete with the active one.
+    Text,
+}
+
+impl AlertPaint {
+    pub fn all() -> &'static [Self] {
+        &[Self::Background, Self::Text]
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Text => "text",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Background => "Background",
+            Self::Text => "Text",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "background" | "bg" | "fill" => Some(Self::Background),
+            "text" | "fg" | "foreground" => Some(Self::Text),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
+    }
+}
+
+/// How a surface draws configured alert colors. Shared by pane borders (`[pane] alert_border`) and
+/// workspace tab markers (`[workbar.alert] mode`) so the two read and behave identically.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AlertMode {
+    Off,
+    Static,
+    #[default]
+    Pulse,
+}
+
+impl AlertMode {
+    pub fn all() -> &'static [Self] {
+        &[Self::Off, Self::Static, Self::Pulse]
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Static => "static",
+            Self::Pulse => "pulse",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            // Names what it does rather than merely that it is enabled, and contrasts with `Pulse`.
+            Self::Static => "Static",
+            Self::Pulse => "Pulse",
+        }
+    }
+
+    /// Compact UI status that preserves the stored mode while explaining a static pulse fallback.
+    pub fn status_label(self, animations_enabled: bool, focus_chrome: bool) -> String {
+        match self {
+            Self::Pulse if !animations_enabled => "Pulse (animations off)".to_string(),
+            Self::Pulse if !focus_chrome => "Pulse (static)".to_string(),
+            _ => self.label().to_string(),
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "static" => Some(Self::Static),
+            "pulse" => Some(Self::Pulse),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        step_ring(Self::all(), self, false)
+    }
+
+    pub fn prev(self) -> Self {
+        step_ring(Self::all(), self, true)
+    }
+}
+
 impl PaneBorderMode {
     pub fn all() -> &'static [PaneBorderMode] {
         &[Self::Separate, Self::Merged, Self::None, Self::Dividers]
@@ -281,12 +426,15 @@ pub enum AppearanceAction {
     ToggleHighlightFocusedBorder,
     ToggleHighlightFocusedTitlebar,
     CycleBorderMode,
+    CycleAlertBorder,
     ToggleBackgroundFollowsTerminal,
     CycleBorderStyle,
     CycleTitleStyle,
     CycleWorkbarBadgeStyle,
     CycleWorkbarTabStyle,
     CycleWorkbarStyle,
+    CycleWorkbarAlert,
+    CycleWorkbarAlertPaint,
 }
 
 /// Temporary values for the Appearance terminal-padding editor. Focus, rather than a second
@@ -342,6 +490,9 @@ impl AppearanceAction {
             Self::ToggleHighlightFocusedBorder if pane.border_mode == PaneBorderMode::None => {
                 Some("Needs pane borders")
             }
+            Self::CycleAlertBorder if pane.border_mode == PaneBorderMode::None => {
+                Some("Needs pane borders")
+            }
             Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
                 Some("Unsupported in this mode")
             }
@@ -351,6 +502,8 @@ impl AppearanceAction {
             | Self::CycleWorkbarBadgeStyle
             | Self::CycleWorkbarTabStyle
             | Self::CycleWorkbarStyle
+            | Self::CycleWorkbarAlert
+            | Self::CycleWorkbarAlertPaint
                 if !pane.show_workbar =>
             {
                 Some("Needs workbar")
@@ -646,6 +799,47 @@ mod tests {
         pane.border_mode = PaneBorderMode::Dividers;
         assert_eq!(
             AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
+            None
+        );
+    }
+
+    #[test]
+    fn alert_border_mode_round_trips_and_cycles() {
+        assert_eq!(AlertMode::default(), AlertMode::Pulse);
+        for mode in AlertMode::all() {
+            assert_eq!(AlertMode::parse(mode.id()), Some(*mode));
+        }
+        assert_eq!(AlertMode::Off.next(), AlertMode::Static);
+        assert_eq!(AlertMode::Static.next(), AlertMode::Pulse);
+        assert_eq!(AlertMode::Pulse.next(), AlertMode::Off);
+        assert_eq!(AlertMode::Off.prev(), AlertMode::Pulse);
+        assert_eq!(AlertMode::Pulse.prev(), AlertMode::Static);
+    }
+
+    #[test]
+    fn alert_border_status_label_explains_static_pulse_fallbacks() {
+        assert_eq!(
+            AlertMode::Pulse.status_label(false, true),
+            "Pulse (animations off)"
+        );
+        assert_eq!(AlertMode::Pulse.status_label(true, false), "Pulse (static)");
+        assert_eq!(AlertMode::Pulse.status_label(true, true), "Pulse");
+        assert_eq!(AlertMode::Static.status_label(false, false), "Static");
+    }
+
+    #[test]
+    fn alert_border_control_requires_visible_borders_only_in_none_mode() {
+        let mut pane = crate::config::HyprmuxPaneConfig {
+            border_mode: PaneBorderMode::None,
+            ..Default::default()
+        };
+        assert_eq!(
+            AppearanceAction::CycleAlertBorder.disabled_reason(&pane),
+            Some("Needs pane borders")
+        );
+        pane.border_mode = PaneBorderMode::Dividers;
+        assert_eq!(
+            AppearanceAction::CycleAlertBorder.disabled_reason(&pane),
             None
         );
     }

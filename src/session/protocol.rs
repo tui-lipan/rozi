@@ -163,6 +163,14 @@ pub mod pane_status {
     pub const IDLE: &str = "idle";
 }
 
+/// Whether a status describes a quiescent agent rather than an active run.
+pub fn status_is_quiescent(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value.trim().eq_ignore_ascii_case(pane_status::IDLE)
+            || value.trim().eq_ignore_ascii_case(pane_status::DONE)
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneStatus {
     pub value: String,
@@ -241,6 +249,32 @@ pub enum DetectedAgentState {
 pub struct DetectedAgent {
     pub kind: AgentKind,
     pub state: DetectedAgentState,
+}
+
+fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
+    match detected.state {
+        DetectedAgentState::Idle => pane_status::IDLE,
+        DetectedAgentState::Working => pane_status::WORKING,
+        DetectedAgentState::Blocked => pane_status::BLOCKED,
+    }
+}
+
+/// The agent status shared by clients and the session server.
+///
+/// Explicit active reports remain authoritative, but a detected blocked prompt elevates over a
+/// stale quiescent `idle`/`done` report. This prevents OpenCode permission prompts from reading as
+/// completed while preserving reported-only status consumers.
+pub fn effective_agent_status<'a>(
+    reported: Option<&'a PaneStatus>,
+    detected: Option<&'a DetectedAgent>,
+) -> Option<&'a str> {
+    let reported = reported.map(|status| status.value.as_str());
+    if detected.is_some_and(|agent| agent.state == DetectedAgentState::Blocked)
+        && status_is_quiescent(reported)
+    {
+        return Some(pane_status::BLOCKED);
+    }
+    reported.or_else(|| detected.map(detected_agent_status))
 }
 
 impl From<TerminalCommandPhase> for PaneCommandPhase {
@@ -996,6 +1030,38 @@ fn decode_pane_frame<T>(payload: &[u8]) -> std::io::Result<Frame<T>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detected_blocked_elevates_over_quiescent_reports_but_not_working() {
+        let detected = DetectedAgent {
+            kind: AgentKind::OpenCode,
+            state: DetectedAgentState::Blocked,
+        };
+        for value in [pane_status::IDLE, pane_status::DONE] {
+            let reported = PaneStatus {
+                value: value.into(),
+                reason: None,
+                set_at: 0,
+            };
+            assert_eq!(
+                effective_agent_status(Some(&reported), Some(&detected)),
+                Some(pane_status::BLOCKED)
+            );
+        }
+        let working = PaneStatus {
+            value: pane_status::WORKING.into(),
+            reason: None,
+            set_at: 0,
+        };
+        assert_eq!(
+            effective_agent_status(Some(&working), Some(&detected)),
+            Some(pane_status::WORKING)
+        );
+        assert_eq!(
+            effective_agent_status(Some(&working), None),
+            Some(pane_status::WORKING)
+        );
+    }
     use crate::shared_layout::{
         SHARED_LAYOUT_VERSION, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
         SharedWorkspace,

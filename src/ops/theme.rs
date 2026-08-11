@@ -1,8 +1,10 @@
 use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
+use tui_lipan::utils::color_contrast::readable_text_color;
 
+use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
-use crate::state::{Mode, State, ThemePickerPreview, ThemePreset};
+use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset};
 use crate::{HyprmuxApp, Msg, schedule_theme_tick};
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
@@ -329,6 +331,161 @@ pub(crate) fn pane_frame_foreground(
     )
 }
 
+/// Resolve the shared `BadgeColor` vocabulary to its theme role. Workbar badges and pane alerts
+/// intentionally use this one mapping so a role means the same thing on both surfaces.
+pub(crate) fn badge_role_color(theme: &Theme, color: BadgeColor) -> Color {
+    match color {
+        BadgeColor::Accent => theme.border_active,
+        BadgeColor::Info => theme.status.info,
+        BadgeColor::Success => theme.status.success,
+        BadgeColor::Warning => theme.status.warning,
+        BadgeColor::Error => theme.status.error,
+        BadgeColor::Neutral => theme.surface.menu,
+        BadgeColor::Panel => theme.surface.panel,
+    }
+}
+
+/// Readable peak color for an unfocused pane alert border.
+pub(crate) fn pane_frame_alert_foreground(theme: &Theme, color: BadgeColor) -> Color {
+    readable_chrome_color(
+        badge_role_color(theme, color),
+        pane_frame_background(theme, false, false),
+        theme.status.warning,
+    )
+}
+
+/// Readable alert trough, blended partway toward `neutral` so an alert never becomes quiet.
+pub(crate) fn alert_trough(peak: Color, neutral: Color, background: Color, blend: f32) -> Color {
+    readable_chrome_color(peak.blend_toward(neutral, blend), background, peak)
+}
+
+pub(crate) fn pane_frame_alert_trough(theme: &Theme, color: BadgeColor) -> Color {
+    let peak = pane_frame_alert_foreground(theme, color);
+    alert_trough(
+        peak,
+        pane_frame_foreground(theme, false, false),
+        pane_frame_background(theme, false, false),
+        crate::anim::ALERT_PULSE_BLEND,
+    )
+}
+
+pub(crate) fn pane_frame_alert_can_pulse(theme: &Theme, color: BadgeColor) -> bool {
+    crate::app::chrome_colors_animate(
+        pane_frame_alert_foreground(theme, color),
+        pane_frame_alert_trough(theme, color),
+    )
+}
+
+pub(crate) fn pane_frame_alert_color(
+    theme: &Theme,
+    color: BadgeColor,
+    pulse: bool,
+    trough_phase: bool,
+) -> Color {
+    if pulse && trough_phase {
+        pane_frame_alert_trough(theme, color)
+    } else {
+        pane_frame_alert_foreground(theme, color)
+    }
+}
+
+/// The peak background of a marked workspace tab: the panel surface tinted toward the alert role.
+///
+/// Tabs mark on background where pane borders mark on foreground. A pane border *is* a foreground
+/// glyph, so colouring it is the only option; a tab is a filled region in a permanently visible bar,
+/// where a recoloured glyph is too quiet to catch peripheral vision. Tinting rather than filling
+/// keeps it short of the active tab's solid pill.
+pub(crate) fn tab_alert_background(theme: &Theme, color: BadgeColor) -> Color {
+    theme
+        .surface
+        .panel
+        .blend_toward(badge_role_color(theme, color), crate::anim::ALERT_TAB_TINT)
+}
+
+/// The trough background: the plain panel surface, so the tab breathes between neutral and its role
+/// colour. Unlike a pane border, reaching neutral loses nothing - the label is still there and the
+/// tint is the whole signal, so only the tint comes and goes.
+pub(crate) fn tab_alert_background_trough(theme: &Theme) -> Color {
+    theme.surface.panel
+}
+
+/// The label colour a marked tab ends the breathe on: what the renderer's contrast policy would
+/// pick for the *peak* tint, computed once here instead of per frame.
+///
+/// Leaving the policy to the renderer re-derives the foreground against whatever the background
+/// holds mid-fade, so a label flips white then black as the tint crosses the readability threshold.
+/// Resolving against the final background and animating toward that value turns the flip into the
+/// same fade the background is already doing. The tab style pairs this with
+/// `ContrastPolicy::Off` - without that the renderer would overwrite it again every frame.
+pub(crate) fn tab_alert_foreground(theme: &Theme, color: BadgeColor) -> Color {
+    tab_label_on(theme, tab_alert_background(theme, color))
+}
+
+/// The tab label colour resolved for `background`.
+///
+/// Every endpoint of a marked tab's fade goes through this, not just the tinted one: the tab opts
+/// out of the renderer's contrast policy so the label can fade instead of flipping, which also means
+/// nothing downstream will rescue an unreadable pair. Some themes (Lipan) put `surface.menu` below
+/// the readable threshold on `surface.panel` already, so even the untinted end needs resolving.
+fn tab_label_on(theme: &Theme, background: Color) -> Color {
+    readable_text_color(Some(theme.surface.menu), background)
+}
+
+/// The label colour of an unmarked tab, and so the resting end of a marked tab's fade.
+pub(crate) fn tab_foreground(theme: &Theme) -> Color {
+    tab_label_on(theme, tab_alert_background_trough(theme))
+}
+
+/// Whether a marked tab's breathe can actually fade, for the channel that moves.
+///
+/// Derived from the endpoint pairs rather than hardcoding the background, because the two paints
+/// move different channels: `background` fades the fill, `text` fades only the label. Requiring the
+/// *unmoved* channel to be animatable would disable the breathe for no reason, and checking only the
+/// background would let a palette-theme label snap mid-breathe under `text`.
+pub(crate) fn tab_alert_can_pulse(theme: &Theme, color: BadgeColor, paint: AlertPaint) -> bool {
+    let (peak_fg, peak_bg) = tab_alert_colors(theme, color, paint, true, false);
+    let (trough_fg, trough_bg) = tab_alert_colors(theme, color, paint, true, true);
+    let channel_ok = |peak: Color, trough: Color| {
+        peak == trough || crate::app::chrome_colors_animate(peak, trough)
+    };
+    (peak_fg != trough_fg || peak_bg != trough_bg)
+        && channel_ok(peak_fg, trough_fg)
+        && channel_ok(peak_bg, trough_bg)
+}
+
+/// The `(foreground, background)` a marked tab paints this frame.
+///
+/// Returned as a pair rather than two calls because the foreground is only correct *for its own
+/// background*: computing them against different ends of the breathe is exactly the mismatch that
+/// produces an unreadable label. A static tab rests on the peak, so it takes the peak's foreground.
+pub(crate) fn tab_alert_colors(
+    theme: &Theme,
+    color: BadgeColor,
+    paint: AlertPaint,
+    pulse: bool,
+    trough_phase: bool,
+) -> (Color, Color) {
+    let resting = (tab_foreground(theme), tab_alert_background_trough(theme));
+    if pulse && trough_phase {
+        return resting;
+    }
+    match paint {
+        AlertPaint::Background => (
+            tab_alert_foreground(theme, color),
+            tab_alert_background(theme, color),
+        ),
+        // The label carries the alert and the tab stays flat, so the colour is read against the
+        // untinted panel - the same contrast question, just a different background.
+        AlertPaint::Text => (
+            readable_text_color(
+                Some(badge_role_color(theme, color)),
+                tab_alert_background_trough(theme),
+            ),
+            resting.1,
+        ),
+    }
+}
+
 pub(crate) fn pane_title_foreground(theme: &Theme, focused: bool, background: Color) -> Color {
     let fallback = theme
         .primary
@@ -400,6 +557,81 @@ mod tests {
     use super::*;
     use crate::config::HyprmuxConfig;
     use crate::state::{Pane, PaneId};
+
+    /// Both ends of a marked tab's breathe must be readable *on their own background*. The bug this
+    /// pins is pairing a foreground with the wrong end: the renderer's own contrast policy is off
+    /// for these tabs, so nothing downstream will rescue a mismatched pair.
+    #[test]
+    fn tab_alert_colors_stay_readable_at_both_ends_of_the_breathe() {
+        for preset in ThemePreset::all() {
+            let theme = crate::config::resolve_theme(preset.id(), None).theme;
+            for role in [BadgeColor::Error, BadgeColor::Success, BadgeColor::Info] {
+                for paint in AlertPaint::all().iter().copied() {
+                    for (pulse, trough) in
+                        [(true, false), (true, true), (false, false), (false, true)]
+                    {
+                        let (fg, bg) = tab_alert_colors(&theme, role, paint, pulse, trough);
+                        assert_eq!(
+                            fg,
+                            readable_text_color(Some(fg), bg),
+                            "{preset:?}/{role:?}/{paint:?} pulse={pulse} trough={trough}: label is \
+                             not readable on the background it is painted on"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A static tab never reaches the trough, so it must take the peak's foreground rather than the
+    /// resting one — the mismatch that would otherwise appear only outside `pulse` mode.
+    #[test]
+    fn a_static_tab_takes_the_peak_pair() {
+        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        for paint in AlertPaint::all().iter().copied() {
+            let peak = tab_alert_colors(&theme, BadgeColor::Error, paint, true, false);
+            assert_eq!(
+                tab_alert_colors(&theme, BadgeColor::Error, paint, false, false),
+                peak
+            );
+            assert_eq!(
+                tab_alert_colors(&theme, BadgeColor::Error, paint, false, true),
+                peak
+            );
+        }
+    }
+
+    /// The two paints must move different channels, or `text` would just be a second name for the
+    /// background variant.
+    #[test]
+    fn the_two_paints_move_different_channels() {
+        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        let role = BadgeColor::Error;
+        let (bg_fg, bg_bg) = tab_alert_colors(&theme, role, AlertPaint::Background, true, false);
+        let (text_fg, text_bg) = tab_alert_colors(&theme, role, AlertPaint::Text, true, false);
+        let (rest_fg, rest_bg) = tab_alert_colors(&theme, role, AlertPaint::Background, true, true);
+
+        assert_ne!(bg_bg, rest_bg, "background paint must tint the fill");
+        assert_eq!(
+            text_bg, rest_bg,
+            "text paint must leave the fill at the resting panel colour"
+        );
+        assert_ne!(text_fg, rest_fg, "text paint must colour the label");
+        assert_ne!(text_fg, bg_fg, "the two paints resolve different labels");
+    }
+
+    /// The pulse gate must follow the channel each paint actually moves, or `text` would be judged
+    /// on a background that never changes.
+    #[test]
+    fn each_paint_can_pulse_on_its_own_channel() {
+        let theme = crate::config::resolve_theme(ThemePreset::TokyoNight.id(), None).theme;
+        for paint in AlertPaint::all().iter().copied() {
+            assert!(
+                tab_alert_can_pulse(&theme, BadgeColor::Error, paint),
+                "{paint:?} cannot pulse on a truecolor theme"
+            );
+        }
+    }
 
     fn pane_palette_background(state: &State, id: PaneId) -> Option<Color> {
         state.current().workspaces[0]
@@ -548,6 +780,36 @@ mod tests {
             pane_frame_foreground(&theme, true, true),
             theme.border_active
         );
+    }
+
+    #[test]
+    fn alert_peak_and_trough_are_readable_and_stay_alert_colored() {
+        for preset in ThemePreset::all() {
+            let theme = preset.theme();
+            let background = pane_frame_background(&theme, false, false);
+            let error_peak = pane_frame_alert_foreground(&theme, BadgeColor::Error);
+            let success_peak = pane_frame_alert_foreground(&theme, BadgeColor::Success);
+            for role in [BadgeColor::Error, BadgeColor::Success] {
+                let peak = pane_frame_alert_foreground(&theme, role);
+                let trough = pane_frame_alert_trough(&theme, role);
+                assert!(
+                    is_readable_chrome_pair(peak, background),
+                    "{preset:?} {role:?}"
+                );
+                assert!(
+                    is_readable_chrome_pair(trough, background),
+                    "{preset:?} {role:?}"
+                );
+                if pane_frame_alert_can_pulse(&theme, role) {
+                    assert_ne!(peak, trough, "{preset:?} {role:?}");
+                }
+            }
+            if pane_frame_alert_can_pulse(&theme, BadgeColor::Error)
+                && pane_frame_alert_can_pulse(&theme, BadgeColor::Success)
+            {
+                assert_ne!(error_peak, success_peak, "{preset:?}");
+            }
+        }
     }
 
     #[test]

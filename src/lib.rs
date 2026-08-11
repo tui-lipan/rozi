@@ -50,4 +50,6 @@ pub use ops::search::{
     advance_search_scan as benchmark_advance_search_scan,
 };
 
-pub(crate) use app::{schedule_agent_tick, schedule_theme_tick, schedule_workbar_tick};
+pub(crate) use app::{
+    schedule_agent_tick, schedule_alert_pulse_tick, schedule_theme_tick, schedule_workbar_tick,
+};

@@ -94,6 +94,19 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
                     enabled_status(pane.workbar_powerline),
                     AppearanceAction::ToggleWorkbarPowerline,
                 ),
+                row(
+                    "Alert",
+                    ctx.state.config.workbar.alert.mode.status_label(
+                        ctx.state.config.animations.enabled,
+                        ctx.state.config.animations.focus_chrome,
+                    ),
+                    AppearanceAction::CycleWorkbarAlert,
+                ),
+                row(
+                    "Alert paint",
+                    ctx.state.config.workbar.alert.paint.label().to_string(),
+                    AppearanceAction::CycleWorkbarAlertPaint,
+                ),
             ],
         ),
         (
@@ -128,6 +141,14 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
                     "Style",
                     pane.border_style.label().to_string(),
                     AppearanceAction::CycleBorderStyle,
+                ),
+                row(
+                    "Alert",
+                    pane.alert_border.status_label(
+                        ctx.state.config.animations.enabled,
+                        ctx.state.config.animations.focus_chrome,
+                    ),
+                    AppearanceAction::CycleAlertBorder,
                 ),
             ],
         ),

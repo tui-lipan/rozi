@@ -87,6 +87,9 @@ pub(super) fn apply_animations(target: &mut WindowAnimationConfig, raw: Animatio
     if let Some(value) = raw.focus_chrome_ms {
         target.focus_chrome_duration = Duration::from_millis(value);
     }
+    if let Some(value) = raw.alert_pulse_ms {
+        target.alert_pulse_duration = Duration::from_millis(value);
+    }
     if let Some(value) = raw.open_delay_ms {
         target.open_delay = Duration::from_millis(value);
     }
@@ -155,5 +158,14 @@ mod tests {
             None
         );
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn animations_apply_alert_pulse_duration() {
+        let raw: AnimationFileConfig =
+            toml::from_str("alert_pulse_ms = 2400").expect("config parses");
+        let mut animations = WindowAnimationConfig::default();
+        apply_animations(&mut animations, raw);
+        assert_eq!(animations.alert_pulse_duration, Duration::from_millis(2400));
     }
 }

@@ -39,6 +39,8 @@ pub enum Msg {
     /// Advance the Agents sidebar's elapsed-time column. Self-rescheduling while the tab is showing
     /// a duration; see [`crate::update::sidebar::arm_agent_tick`].
     AgentTick,
+    /// Advance the shared alert-border/workspace-marker breathe phase.
+    AlertPulseTick,
     /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
     /// Run one scheduled `WorkbarSegment::Command` refresh for the current configuration epoch.

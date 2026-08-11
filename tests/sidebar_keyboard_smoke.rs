@@ -738,7 +738,7 @@ fn the_cursor_highlight_covers_both_lines_of_a_row() {
             let mut backend = backend_with_panes();
             // The cursor uses the same lift as pointer hover, so it reads as "about to act on this"
             // rather than as a second, louder kind of selection.
-            let selection = backend.state().theme.surface.element.elevate(0.08);
+            let selection = backend.state().theme.surface.element.elevate_by(0.08);
 
             backend
                 .dispatch(Msg::RunAction(Action::FocusSidebar))
@@ -776,7 +776,7 @@ fn keyboard_navigation_suppresses_stale_row_hover_until_the_pointer_moves() {
             backend.state_mut().current_mut().workspaces[1].panes[0].title =
                 "pointer target".into();
             settle(&mut backend);
-            let highlight = backend.state().theme.surface.element.elevate(0.08);
+            let highlight = backend.state().theme.surface.element.elevate_by(0.08);
             let target_row = backend
                 .capture_frame()
                 .to_fixed_grid_lines()

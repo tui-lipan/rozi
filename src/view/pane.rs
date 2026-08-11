@@ -1,8 +1,9 @@
 use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
 
+use crate::config::{BadgeColor, HyprmuxPaneConfig};
 use crate::state::{
-    LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
+    AlertMode, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
 };
 use crate::tiling::PanePlacement;
 use crate::{HyprmuxApp, Msg};
@@ -64,6 +65,89 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
     } else {
         ScrollbarVariant::Integrated
     }
+}
+
+/// The configured attention state this pane currently draws. Configured-off states deliberately
+/// fall through, so disabling `blocked` can still expose a finished/working/idle state.
+/// The alert a pane draws, as the state that raised it plus its configured colour. The state is
+/// carried alongside the colour because the colour is user-configurable and so cannot identify it:
+/// `finished = "error"` would otherwise be indistinguishable from a blocked pane, and the two
+/// breathe at different rates.
+pub(crate) fn pane_alert(
+    pane: &Pane,
+    focused: bool,
+    config: &HyprmuxPaneConfig,
+) -> Option<(crate::state::PaneAlert, BadgeColor)> {
+    if focused
+        || pane.closing
+        || matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
+        || config.alert_border == AlertMode::Off
+    {
+        return None;
+    }
+    use crate::state::PaneAlert;
+    let colors = config.alert_colors;
+    [
+        (PaneAlert::Blocked, pane.awaits_input(), colors.blocked),
+        (
+            PaneAlert::Finished,
+            pane.terminal.finished_unseen,
+            colors.finished,
+        ),
+        (
+            PaneAlert::Working,
+            pane.terminal.is_working(),
+            colors.working,
+        ),
+        (
+            PaneAlert::Idle,
+            pane.terminal
+                .agent_status()
+                .as_deref()
+                .is_some_and(|status| {
+                    status
+                        .trim()
+                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
+                }),
+            colors.idle,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(alert, active, color)| Some((alert, active.then_some(color).flatten()?)))
+}
+
+/// Whether a visible pane frame has an alert that can breathe. Other workspaces are represented by
+/// tab markers, and divider-only/none modes have no per-pane frame to animate.
+pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
+    state.config.pane.border_mode.draws_frames()
+        && state.current().workspaces[state.current().active_workspace]
+            .panes
+            .iter()
+            .any(|pane| {
+                pane_alert(
+                    pane,
+                    state.current().workspaces[state.current().active_workspace]
+                        .focused_pane
+                        .or(state.current().focused_pane)
+                        == Some(pane.id),
+                    &state.config.pane,
+                )
+                .is_some()
+            })
+}
+
+fn pane_alert_pulses(
+    theme: &Theme,
+    color: BadgeColor,
+    config: &HyprmuxPaneConfig,
+    armed: bool,
+    animations: crate::anim::WindowAnimationConfig,
+) -> bool {
+    config.alert_border == AlertMode::Pulse
+        && armed
+        && animations.enabled
+        && animations.focus_chrome
+        && crate::ops::theme::pane_frame_alert_can_pulse(theme, color)
 }
 
 /// A pane's titlebar background: the active border color when focused, otherwise the neutral
@@ -516,15 +600,47 @@ pub(crate) fn pane_element(
         ctx.state.config.pane.border_style.to_border_style()
     };
 
-    let frame_fg = app.chrome_color(
-        ctx,
-        pane.id,
-        "frame-fg",
-        crate::ops::theme::pane_frame_foreground(
+    let alert = border_mode
+        .draws_frames()
+        .then(|| pane_alert(pane, focused, &ctx.state.config.pane))
+        .flatten();
+    let alert_pulses = alert.is_some_and(|(_, color)| {
+        pane_alert_pulses(
+            theme,
+            color,
+            &ctx.state.config.pane,
+            ctx.state.alert_pulse_armed,
+            ctx.state.config.animations,
+        )
+    });
+    // A finished pane is good news you have not read; only a blocked one is asking for an answer,
+    // so the two breathe at different rates off the same beat.
+    let alert_calm = alert.is_some_and(|(state, _)| state.is_calm());
+    let alert_phase = if alert_calm {
+        ctx.state.alert_pulse_calm_phase
+    } else {
+        ctx.state.alert_pulse_phase
+    };
+    let frame_fg_target = match alert {
+        Some((_, color)) => {
+            crate::ops::theme::pane_frame_alert_color(theme, color, alert_pulses, alert_phase)
+        }
+        None => crate::ops::theme::pane_frame_foreground(
             theme,
             focused,
             ctx.state.config.pane.highlight_focused_border,
         ),
+    };
+    let frame_fg = app.chrome_color_with(
+        ctx,
+        pane.id,
+        "frame-fg",
+        frame_fg_target,
+        if alert_pulses && ctx.state.alert_pulse_armed {
+            app.alert_pulse_transition_config(ctx, alert_calm)
+        } else {
+            app.focus_chrome_transition_config(ctx)
+        },
     );
     let frame_bg_target = crate::ops::theme::pane_frame_background(
         theme,
@@ -1557,6 +1673,117 @@ fn app_allows_cursor(hint_target: Option<PaneId>, id: PaneId, exited: bool) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::PaneAlert;
+
+    fn alert_test_pane() -> Pane {
+        Pane::new(
+            1,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        )
+    }
+
+    #[test]
+    fn pane_alert_obeys_precedence_and_all_gates() {
+        let mut config = HyprmuxPaneConfig::default();
+        let mut pane = alert_test_pane();
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "blocked".into(),
+            reason: None,
+            set_at: 0,
+        });
+        pane.terminal.finished_unseen = true;
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Blocked, BadgeColor::Error))
+        );
+
+        config.alert_colors.blocked = None;
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Finished, BadgeColor::Success))
+        );
+        pane.terminal.finished_unseen = false;
+        pane.terminal
+            .reported_status
+            .as_mut()
+            .expect("status")
+            .value = "working".into();
+        config.alert_colors.working = Some(BadgeColor::Info);
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Working, BadgeColor::Info))
+        );
+
+        pane.terminal
+            .reported_status
+            .as_mut()
+            .expect("status")
+            .value = "idle".into();
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        });
+        config.alert_colors.blocked = Some(BadgeColor::Error);
+        assert_eq!(
+            pane_alert(&pane, false, &config),
+            Some((PaneAlert::Blocked, BadgeColor::Error))
+        );
+        assert_eq!(pane_alert(&pane, true, &config), None);
+        pane.closing = true;
+        assert_eq!(pane_alert(&pane, false, &config), None);
+        pane.closing = false;
+        pane.terminal.status = ManagedTerminalStatus::Exited(0);
+        assert_eq!(pane_alert(&pane, false, &config), None);
+        config.alert_border = AlertMode::Off;
+        assert_eq!(pane_alert(&pane, false, &config), None);
+    }
+
+    #[test]
+    fn static_alert_borders_stay_at_peak_while_tab_pulse_uses_the_shared_phase() {
+        let theme = crate::state::ThemePreset::OneDark.theme();
+        let mut config = HyprmuxPaneConfig {
+            alert_border: AlertMode::Static,
+            ..HyprmuxPaneConfig::default()
+        };
+        assert!(!pane_alert_pulses(
+            &theme,
+            BadgeColor::Error,
+            &config,
+            true,
+            crate::anim::WindowAnimationConfig::default(),
+        ));
+        assert_eq!(
+            crate::ops::theme::pane_frame_alert_color(&theme, BadgeColor::Error, false, true),
+            crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
+        );
+        config.alert_border = AlertMode::Pulse;
+        let mut animations = crate::anim::WindowAnimationConfig::default();
+        assert!(pane_alert_pulses(
+            &theme,
+            BadgeColor::Error,
+            &config,
+            true,
+            animations,
+        ));
+        animations.enabled = false;
+        assert!(!pane_alert_pulses(
+            &theme,
+            BadgeColor::Error,
+            &config,
+            true,
+            animations,
+        ));
+        assert_eq!(
+            crate::ops::theme::pane_frame_alert_color(&theme, BadgeColor::Error, false, true),
+            crate::ops::theme::pane_frame_alert_foreground(&theme, BadgeColor::Error)
+        );
+    }
 
     #[test]
     fn merged_frames_use_a_standalone_terminal_scrollbar() {

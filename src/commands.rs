@@ -606,6 +606,27 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
+        action: Action::CycleAlertBorder,
+        label: "Cycle alert border",
+        category: "Appearance",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CycleWorkbarAlert,
+        label: "Cycle workspace tab alert",
+        category: "Appearance",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
+        action: Action::CycleWorkbarAlertPaint,
+        label: "Cycle workspace tab alert paint",
+        category: "Appearance",
+        default_keys: &[],
+        palette: false,
+    },
+    BuiltinCommand {
         action: Action::ToggleBackgroundFollowsTerminal,
         label: "Background follows terminal",
         category: "Appearance",
@@ -1195,6 +1216,30 @@ fn toggle_command_label(action: Action, state: &State) -> Option<String> {
         Action::CycleBorderMode => {
             format!("Border mode: {}", state.config.pane.border_mode.label())
         }
+        Action::CycleAlertBorder => {
+            format!(
+                "Alert border: {}",
+                state.config.pane.alert_border.status_label(
+                    state.config.animations.enabled,
+                    state.config.animations.focus_chrome,
+                )
+            )
+        }
+        Action::CycleWorkbarAlert => {
+            format!(
+                "Workspace tab alert: {}",
+                state.config.workbar.alert.mode.status_label(
+                    state.config.animations.enabled,
+                    state.config.animations.focus_chrome,
+                )
+            )
+        }
+        Action::CycleWorkbarAlertPaint => {
+            format!(
+                "Workspace tab alert paint: {}",
+                state.config.workbar.alert.paint.label()
+            )
+        }
         Action::ToggleBackgroundFollowsTerminal => enable_disable_label(
             "background follows terminal",
             state.config.pane.background_follows_terminal,
@@ -1307,6 +1352,22 @@ mod tests {
                 ..KeyMods::NONE
             },
         }
+    }
+
+    #[test]
+    fn alert_border_dynamic_label_matches_the_appearance_static_fallback() {
+        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        state.config.animations.enabled = false;
+        assert_eq!(
+            toggle_command_label(Action::CycleAlertBorder, &state).as_deref(),
+            Some("Alert border: Pulse (animations off)")
+        );
+        state.config.animations.enabled = true;
+        state.config.animations.focus_chrome = false;
+        assert_eq!(
+            toggle_command_label(Action::CycleAlertBorder, &state).as_deref(),
+            Some("Alert border: Pulse (static)")
+        );
     }
 
     #[test]

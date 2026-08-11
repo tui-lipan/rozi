@@ -1,11 +1,11 @@
 use tui_lipan::prelude::*;
 
-use crate::config::{BadgeColor, InputConfig, WorkbarItem, WorkbarSegment};
+use crate::config::{BadgeColor, InputConfig, WorkbarAlertConfig, WorkbarItem, WorkbarSegment};
 use crate::input::Action;
-use crate::state::{Mode, WORKBAR_HEIGHT};
+use crate::state::{AlertMode, AlertPaint, Mode, Pane, WORKBAR_HEIGHT, Workspace};
 use crate::{HyprmuxApp, Msg};
 
-pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn workbar(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
@@ -24,7 +24,7 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
     let mut right_cap_color = panel_bg;
 
     for item in &workbar_cfg.left {
-        if let Some(element) = left_segment_element(ctx, item) {
+        if let Some(element) = left_segment_element(app, ctx, item) {
             row = row.child(element);
             let color = segment_edge_color(ctx, item);
             left_cap_color.get_or_insert(color);
@@ -88,7 +88,7 @@ pub(crate) fn workbar(ctx: &Context<HyprmuxApp>) -> Element {
         trailing.push(TrailingChip::badge(label, text_fg, color));
     }
     for item in &workbar_cfg.right {
-        if let Some(chip) = trailing_chip(ctx, item) {
+        if let Some(chip) = trailing_chip(app, ctx, item) {
             trailing.push(chip);
         }
     }
@@ -186,11 +186,15 @@ impl TrailingChip {
 /// The trailing chip for a configured right-region segment, or `None` when it renders nothing.
 /// Every segment that has a text label becomes a colored `Badge` chip (so it can chain into the
 /// powerline); the workspace tab strip is the one non-badge entry and rides along as a `Flex` chip.
-fn trailing_chip(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option<TrailingChip> {
+fn trailing_chip(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    item: &WorkbarItem,
+) -> Option<TrailingChip> {
     match &item.segment {
-        WorkbarSegment::Workspaces => {
-            Some(TrailingChip::Flex(Box::new(workspace_tabs_element(ctx))))
-        }
+        WorkbarSegment::Workspaces => Some(TrailingChip::Flex(Box::new(workspace_tabs_element(
+            app, ctx,
+        )))),
         _ => {
             let label = segment_label(ctx, &item.segment)?;
             let (bg, fg) = item_colors(ctx, item);
@@ -340,15 +344,13 @@ fn resolve_badge_color(theme: &Theme, color: BadgeColor) -> (Color, Color) {
         .fg
         .map(Paint::color)
         .unwrap_or(theme.surface.backdrop);
-    match color {
-        BadgeColor::Accent => (theme.border_active, on_accent),
-        BadgeColor::Info => (theme.status.info, on_accent),
-        BadgeColor::Success => (theme.status.success, on_accent),
-        BadgeColor::Warning => (theme.status.warning, on_accent),
-        BadgeColor::Error => (theme.status.error, on_accent),
-        BadgeColor::Neutral => (theme.surface.menu, text),
-        BadgeColor::Panel => (theme.surface.panel, text),
-    }
+    (
+        crate::ops::theme::badge_role_color(theme, color),
+        match color {
+            BadgeColor::Neutral | BadgeColor::Panel => text,
+            _ => on_accent,
+        },
+    )
 }
 
 /// Wrap the full-width workbar in end caps so the whole panel bar reads as a pill/point over the
@@ -565,9 +567,13 @@ fn location_label(state: &crate::state::State) -> Option<String> {
 /// The element for a left-region workbar item: the workspace tab strip, or a colored badge. Left
 /// badges cap on their right (leading pills, like the title chip) and stay gap-separated by the row
 /// - powerline chaining is a trailing-cluster feature.
-fn left_segment_element(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Option<Element> {
+fn left_segment_element(
+    app: &HyprmuxApp,
+    ctx: &Context<HyprmuxApp>,
+    item: &WorkbarItem,
+) -> Option<Element> {
     if matches!(item.segment, WorkbarSegment::Workspaces) {
-        return Some(workspace_tabs_element(ctx));
+        return Some(workspace_tabs_element(app, ctx));
     }
     let label = segment_label(ctx, &item.segment)?;
     let (bg, fg) = item_colors(ctx, item);
@@ -634,7 +640,7 @@ fn workbar_hostname() -> String {
     crate::platform::user::hostname().unwrap_or_else(|| "localhost".to_string())
 }
 
-fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
+fn workspace_tabs_element(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
@@ -643,17 +649,69 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
         .map(|idx| {
             let count = state.current().workspaces[idx].visible_count();
             let workspace = &state.current().workspaces[idx];
-            let urgent = workspace
-                .panes
-                .iter()
-                .any(|pane| !pane.closing && pane.activity.bell);
-            let label = workspace_tab_label(
-                state.current().workspaces[idx].name.as_deref(),
-                idx,
-                count,
-                urgent,
-            );
-            Tab::new(label)
+            let marker = workspace_marker(workspace, &state.config.workbar.alert);
+            let label =
+                workspace_tab_label(state.current().workspaces[idx].name.as_deref(), idx, count);
+            let mut tab = Tab::new(label);
+            // `static` colors the marked tab without moving it; only `pulse` breathes. The active
+            // tab is never restyled - its solid `active_style` pill already reads as current, and
+            // the pane border carries the alert on the workspace you are looking at.
+            if let Some(marker) = marker
+                && idx != state.current().active_workspace
+            {
+                let role = workspace_marker_color(marker);
+                let paint = state.config.workbar.alert.paint;
+                let animations = state.config.animations;
+                let pulse = state.config.workbar.alert.mode == AlertMode::Pulse
+                    && state.alert_pulse_armed
+                    && animations.enabled
+                    && animations.focus_chrome
+                    && crate::ops::theme::tab_alert_can_pulse(theme, role, paint);
+                // A finished workspace is good news you have not read; only blocked is asking for an
+                // answer, so it breathes slower off the same beat.
+                let calm = marker.is_calm();
+                let phase = if calm {
+                    state.alert_pulse_calm_phase
+                } else {
+                    state.alert_pulse_phase
+                };
+                // The label fades on the same clock as the tint, between the bar's resting
+                // foreground and the contrast-correct one for the *peak* background.
+                //
+                // `ContrastPolicy::Off` is what makes that hold: left on, the renderer re-derives
+                // the foreground against whatever the background holds mid-fade, so the label snaps
+                // to white and then to black as the tint crosses the readability threshold. Naming
+                // both endpoints ourselves turns that flip into a fade, and matches how every other
+                // piece of hyprmux chrome already picks its own readable colours.
+                let (fg_target, target) =
+                    crate::ops::theme::tab_alert_colors(theme, role, paint, pulse, phase);
+                let transition = if pulse && state.alert_pulse_armed {
+                    app.alert_pulse_transition_config(ctx, calm)
+                } else {
+                    crate::anim::instant_transition()
+                };
+                tab = tab.style(
+                    Style::new()
+                        .fg(app.chrome_paint(
+                            ctx,
+                            format!("hyprmux-workspace-tab-{idx}-fg"),
+                            fg_target,
+                            transition,
+                        ))
+                        .bg(app.chrome_paint(
+                            ctx,
+                            format!("hyprmux-workspace-tab-{idx}"),
+                            target,
+                            transition,
+                        ))
+                        .contrast_policy(ContrastPolicy::Off),
+                );
+                // A filled tab is emphasized the same way the active one is, so it earns the same
+                // shaping - flat next to a capped peer reads as a rendering glitch. A text-painted
+                // tab has no background to fill a cap glyph with, so it stays flat by nature.
+                tab = tab.capped(paint == AlertPaint::Background);
+            }
+            tab
         })
         .collect();
 
@@ -687,11 +745,17 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
                 .bg(theme.border_active)
                 .bold(),
         )
-        .tab_hover_style(
-            Style::new()
-                .fg(theme.surface.menu)
-                .bg(theme.surface.panel.elevate(0.08)),
-        )
+        // A relative transform, not an absolute color: an alerting tab carries its own background,
+        // and `bg(panel.elevate_by(..))` would resolve to a fixed panel-derived color that overwrites
+        // it, so hovering a marked tab would drop the alert. `Elevate` stacks on whatever the tab
+        // already resolved to, mid-fade included, so hover lifts the alert instead of replacing it.
+        // Elevate rather than Lighten: it is luminance-aware (lifting a dark tab, dimming a light
+        // one) and preserves hue, so a light theme still gains contrast on hover and a hovered red
+        // tab reads as brighter red rather than drifting toward pink.
+        //
+        // `transform_bg` rather than `elevate_by`, which would transform the foreground too: the
+        // label is already contrast-picked against the tab, so lifting it as well would erode that.
+        .tab_hover_style(Style::new().transform_bg(crate::view::hover_lift()))
         .on_change(
             ctx.link()
                 .callback(|event: TabsEvent| Msg::RunAction(Action::SwitchWorkspace(event.index))),
@@ -701,21 +765,103 @@ fn workspace_tabs_element(ctx: &Context<HyprmuxApp>) -> Element {
 
 /// Label for a workspace tab: `<number>` normally, `<number>:<name>` when a custom name is set,
 /// with a ` ·<count>` suffix while it holds panes.
-fn workspace_tab_label(
-    name: Option<&str>,
-    index: usize,
-    pane_count: usize,
-    urgent: bool,
-) -> String {
+/// Tab text is identity only - number, optional name, pane count. Alerts are carried entirely by the
+/// tab's background color, so a workspace does not change width when an agent blocks and the tabs
+/// beside it do not shift.
+fn workspace_tab_label(name: Option<&str>, index: usize, pane_count: usize) -> String {
     let base = match name {
         Some(name) if !name.is_empty() => format!("{}:{name}", index + 1),
         _ => (index + 1).to_string(),
     };
-    let base = if urgent { format!("!{base}") } else { base };
     if pane_count > 0 {
         format!("{base} ·{pane_count}")
     } else {
         base
+    }
+}
+
+/// Fixed sidebar-compatible workspace marker vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkspaceMarker {
+    Attention,
+    Finished,
+    Working,
+    Idle,
+}
+
+impl WorkspaceMarker {
+    /// Whether this marker breathes at the slower calm rate. Mirrors `PaneAlert::is_calm`: only
+    /// something asking for an answer gets the urgent rate.
+    const fn is_calm(self) -> bool {
+        !matches!(self, Self::Attention)
+    }
+}
+
+fn live_pane(pane: &Pane) -> bool {
+    !pane.closing && !matches!(pane.terminal.status, ManagedTerminalStatus::Exited(_))
+}
+
+/// The marker for a workspace, driven only by `[workbar.alert]`. Bell/blocked is actionable and
+/// therefore wins over finished, then ambient working/idle markers.
+///
+/// `mode` is checked here rather than at the call sites so `off` suppresses the glyph, its color,
+/// and the pulse arming together - one switch, no surface left half-marked.
+pub(crate) fn workspace_marker(
+    workspace: &Workspace,
+    alert: &WorkbarAlertConfig,
+) -> Option<WorkspaceMarker> {
+    if alert.mode == AlertMode::Off {
+        return None;
+    }
+    let mut panes = workspace.panes.iter().filter(|pane| live_pane(pane));
+    if (alert.bell && panes.clone().any(|pane| pane.activity.bell))
+        || (alert.blocked && panes.clone().any(Pane::awaits_input))
+    {
+        return Some(WorkspaceMarker::Attention);
+    }
+    if alert.finished && panes.clone().any(|pane| pane.terminal.finished_unseen) {
+        return Some(WorkspaceMarker::Finished);
+    }
+    if alert.working && panes.clone().any(|pane| pane.terminal.is_working()) {
+        return Some(WorkspaceMarker::Working);
+    }
+    if alert.idle
+        && panes.any(|pane| {
+            pane.terminal
+                .agent_status()
+                .as_deref()
+                .is_some_and(|status| {
+                    status
+                        .trim()
+                        .eq_ignore_ascii_case(crate::session::protocol::pane_status::IDLE)
+                })
+        })
+    {
+        return Some(WorkspaceMarker::Idle);
+    }
+    None
+}
+
+/// Background tabs alone can keep the shared pulse alive; the active workspace's solid marker
+/// remains visible but its tab never breathes.
+pub(crate) fn has_inactive_marked_workspace(state: &crate::state::State) -> bool {
+    state
+        .current()
+        .workspaces
+        .iter()
+        .enumerate()
+        .any(|(index, workspace)| {
+            index != state.current().active_workspace
+                && workspace_marker(workspace, &state.config.workbar.alert).is_some()
+        })
+}
+
+pub(crate) fn workspace_marker_color(marker: WorkspaceMarker) -> BadgeColor {
+    match marker {
+        WorkspaceMarker::Attention => BadgeColor::Error,
+        WorkspaceMarker::Finished => BadgeColor::Success,
+        WorkspaceMarker::Working => BadgeColor::Info,
+        WorkspaceMarker::Idle => BadgeColor::Neutral,
     }
 }
 
@@ -882,11 +1028,13 @@ pub(crate) fn connecting_workspace_panel(
 #[cfg(test)]
 mod tests {
     use super::{
-        collaboration_status, curated_color, location_label, resolve_badge_color,
+        WorkspaceMarker, collaboration_status, curated_color, has_inactive_marked_workspace,
+        location_label, resolve_badge_color, workspace_marker, workspace_marker_color,
         workspace_placeholder_label, workspace_tab_label,
     };
-    use crate::config::{BadgeColor, WorkbarSegment};
-    use tui_lipan::prelude::Theme;
+    use crate::config::{BadgeColor, WorkbarAlertConfig, WorkbarSegment};
+    use crate::state::{AlertMode, Pane, Workspace};
+    use tui_lipan::prelude::{FloatRect, Theme};
 
     #[test]
     fn curated_color_assigns_distinct_roles() {
@@ -957,16 +1105,111 @@ mod tests {
 
     #[test]
     fn workspace_tab_label_falls_back_to_number_without_a_name() {
-        assert_eq!(workspace_tab_label(None, 0, 0, false), "1");
-        assert_eq!(workspace_tab_label(Some(""), 0, 0, false), "1");
-        assert_eq!(workspace_tab_label(None, 0, 3, false), "1 ·3");
-        assert_eq!(workspace_tab_label(None, 0, 3, true), "!1 ·3");
+        assert_eq!(workspace_tab_label(None, 0, 0), "1");
+        assert_eq!(workspace_tab_label(Some(""), 0, 0), "1");
+        assert_eq!(workspace_tab_label(None, 0, 3), "1 ·3");
     }
 
     #[test]
     fn workspace_tab_label_prefixes_the_custom_name_with_the_number() {
-        assert_eq!(workspace_tab_label(Some("code"), 0, 0, false), "1:code");
-        assert_eq!(workspace_tab_label(Some("code"), 0, 2, false), "1:code ·2");
+        assert_eq!(workspace_tab_label(Some("code"), 0, 0), "1:code");
+        assert_eq!(workspace_tab_label(Some("code"), 0, 2), "1:code ·2");
+    }
+
+    fn marker_pane(id: u32) -> Pane {
+        Pane::new(
+            id,
+            100,
+            FloatRect {
+                x: 0.0,
+                y: 0.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        )
+    }
+
+    #[test]
+    fn workspace_markers_are_precedence_ordered_and_independent_of_border_config() {
+        let mut workspace = Workspace::new(0);
+        let mut pane = marker_pane(1);
+        pane.activity.bell = true;
+        pane.terminal.finished_unseen = true;
+        workspace.panes.push(pane);
+        let alert = WorkbarAlertConfig::default();
+        assert_eq!(
+            workspace_marker(&workspace, &alert),
+            Some(WorkspaceMarker::Attention)
+        );
+
+        workspace.panes[0].activity.bell = false;
+        assert_eq!(
+            workspace_marker(&workspace, &alert),
+            Some(WorkspaceMarker::Finished)
+        );
+        workspace.panes[0].closing = true;
+        assert_eq!(workspace_marker(&workspace, &alert), None);
+        // `off` is the one switch that silences the whole surface: no glyph, so no color and
+        // nothing for the pulse to arm on either.
+        workspace.panes[0].closing = false;
+        let off = WorkbarAlertConfig {
+            mode: AlertMode::Off,
+            ..alert
+        };
+        assert_eq!(workspace_marker(&workspace, &off), None);
+        assert_eq!(
+            workspace_marker(
+                &workspace,
+                &WorkbarAlertConfig {
+                    mode: AlertMode::Static,
+                    ..alert
+                }
+            ),
+            Some(WorkspaceMarker::Finished),
+            "static still marks; it only stops the tab from breathing"
+        );
+        workspace.panes[0].closing = true;
+        assert_eq!(
+            workspace_marker_color(WorkspaceMarker::Attention),
+            BadgeColor::Error
+        );
+        assert_eq!(
+            workspace_marker_color(WorkspaceMarker::Finished),
+            BadgeColor::Success
+        );
+
+        let mut pane = marker_pane(2);
+        pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
+            value: "idle".into(),
+            reason: None,
+            set_at: 0,
+        });
+        pane.terminal.detected_agent = Some(crate::session::protocol::DetectedAgent {
+            kind: crate::session::protocol::AgentKind::OpenCode,
+            state: crate::session::protocol::DetectedAgentState::Blocked,
+        });
+        let mut workspace = Workspace::new(1);
+        workspace.panes.push(pane);
+        assert_eq!(
+            workspace_marker(&workspace, &WorkbarAlertConfig::default()),
+            Some(WorkspaceMarker::Attention)
+        );
+    }
+
+    #[test]
+    fn inactive_marker_scan_excludes_the_active_workspace() {
+        let mut state =
+            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        state.current_mut().workspaces[0].panes[0]
+            .terminal
+            .finished_unseen = true;
+        assert!(!has_inactive_marked_workspace(&state));
+        state.current_mut().workspaces[1].panes.push({
+            let mut pane = marker_pane(2);
+            pane.terminal.finished_unseen = true;
+            pane
+        });
+        assert!(has_inactive_marked_workspace(&state));
     }
 
     #[test]

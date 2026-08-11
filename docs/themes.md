@@ -115,7 +115,8 @@ or `rgb(r,g,b)`. Style-table `fg`/`bg`/`underline_color` fields additionally acc
 `status` and `surface` are opaque-only.
 
 For example, a theme that keeps Dracula everywhere but swaps only the success/error status
-colors and brightens the active border:
+colors and brightens the active border. `status.error` and `status.success` also color blocked and
+finished pane alerts; an unreadable alert role falls back through `status.warning` to readable text:
 
 ```toml
 extends = "dracula"

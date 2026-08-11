@@ -190,6 +190,21 @@ A held state that goes fifteen minutes without any confirming evidence falls bac
 is a backstop for an agent detection lost track of rather than a limit on how long a run may take.
 Publishing status through the control socket avoids the guesswork entirely.
 
+### One row per agent in a pane
+
+A program running several agents behind one terminal can publish them through
+[`hyprmux agent-slots`](control.md#agent-slots), and each becomes its own row. The rows carry the
+pane's project, directory, and branch — location belongs to the terminal, so grouping is unchanged
+— but each keeps its own status, elapsed time, and finished pulse, and they sort among every other
+row by status. A blocked tab therefore reaches the top of the list even though the tab beside it in
+the same pane is still working.
+
+Clicking a row focuses the pane and asks the program to bring that agent on screen. The filled
+marker follows what the program is showing rather than which pane is focused: a focused pane
+displays exactly one of its rows, so marking them all would say nothing. For the same reason,
+looking at the pane acknowledges only the row on screen; a background tab that finished keeps
+pulsing until you open it.
+
 ### OpenCode Status Plugin
 
 OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, and blocked states.

@@ -78,6 +78,7 @@ hyprmux capture-pane --scrollback full
 hyprmux capture-pane --last-output
 hyprmux status <VALUE> [--reason <TEXT>]
 hyprmux status --clear
+hyprmux agent-slots
 ```
 
 `send-keys` accepts tmux-style names such as `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
@@ -87,6 +88,10 @@ hyprmux status --clear
 `capture-pane` defaults to the visible grid. `--scrollback N` captures trailing history,
 `--scrollback full` captures all retained history, and `--last-output` captures the last shell
 integration command output. `status` reports a short pane status; `status --clear` removes it.
+`agent-slots` is for a program running several agents in one pane: it bridges stdin/stdout to
+hyprmux, publishing one JSON slot list per line and reading back `{"activate":"<id>"}` when a user
+clicks a row. It runs until closed, and closing withdraws the pane's slots. See
+`docs/control.md`.
 
 `split`/`new-pane` waits for the pane's PTY and replies with a numeric `id`, `accepted:true`, and
 `pty_ready`. `pty_ready:true` means input sent to that id will reach the shell. A slow spawn (a

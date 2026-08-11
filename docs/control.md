@@ -165,12 +165,14 @@ on the remote host; they are not control-socket commands. See [Remote SSH sessio
 ## Wire protocol
 
 The socket accepts one newline-delimited JSON request per connection and returns one JSON response.
-`subscribe` is the exception: after its acknowledgement, the connection remains open and streams
-newline-delimited event objects until disconnected.
+`subscribe` and `agent-slots` are the exceptions: after their acknowledgement the connection stays
+open. `subscribe` then streams newline-delimited event objects until disconnected, and
+`agent-slots` runs in both directions.
 
 Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
-`run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`, or
-`subscribe`. A client may include `source_pane`; the CLI derives it from `HYPRMUX_PANE`.
+`run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`,
+`agent-slots`, or `subscribe`. A client may include `source_pane`; the CLI derives it from
+`HYPRMUX_PANE`.
 
 Examples:
 
@@ -223,6 +225,48 @@ Event names and existing fields are stable; later versions may add events or fie
 [Hooks](hooks.md#events-and-fields) for the complete field table. Slow subscribers are bounded and
 disconnected rather than blocking the UI. Example:
 `printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$HYPRMUX_SOCKET | jq`.
+
+## Agent slots
+
+A pane is one terminal, but a program running inside it may be running several agents at once — a
+client with its own tab bar, a parent session and its subagents. Screen detection can only ever see
+the one on screen, so it reports a single state for all of them and cannot say which it belongs to.
+Such a program publishes them instead:
+
+```bash
+hyprmux agent-slots
+```
+
+The command bridges stdin and stdout to hyprmux and runs until either side closes. Write one JSON
+object per line to publish the current list; read one per line to learn that a user clicked a row:
+
+```json
+{"slots":[{"id":"ses_a","title":"audit the widget layer","status":"working","active":true},
+          {"id":"ses_b","title":"fix the flaky test","status":"blocked","reason":"permission required"}]}
+```
+
+```json
+{"activate":"ses_b"}
+```
+
+Each slot becomes its own row in the sidebar's [Agents tab](sidebar.md), with its own elapsed time
+and its own finished pulse — so a background tab that finishes, or one that stops for a permission
+prompt, is visible without switching to it. `id` is yours and opaque to hyprmux; keep it stable, as
+it is what ties a run to its clock across reordering and retitling. `active` marks the slot you
+currently have on screen, which is how hyprmux knows a finish on a *different* slot has not been
+seen. `status` takes the same values as `set-status`.
+
+Publishing replaces the whole list, and an empty list withdraws it. Closing the connection also
+withdraws it, so a publisher that exits or crashes never leaves rows behind. While a pane publishes
+slots, hyprmux stops scraping its screen entirely and takes the pane's own state from them: blocked
+if any slot is blocked, working if any is working, idle once all are.
+
+Activating a row focuses the pane and writes `{"activate":"<id>"}` back to you; bringing that slot
+on screen is your side of the exchange. Use `hyprmux agent-slots` rather than opening
+`HYPRMUX_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
+be derived rather than read, so the bridge is what makes a publisher portable.
+
+`integrations/opencode/hyprmux-agent-state.js` is a worked example of the simpler `set-status` form.
 
 ## Pane logging
 

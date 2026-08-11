@@ -889,6 +889,7 @@ USAGE:
     hyprmux [--socket PATH] send-text <TEXT>
     hyprmux [--socket PATH] status <VALUE> [--reason <TEXT>]
     hyprmux [--socket PATH] status --clear
+    hyprmux [--socket PATH] agent-slots
     hyprmux [--socket PATH] split [COMMAND] [--focus]
     hyprmux [--socket PATH] run-action <ACTION_ID>
     hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]

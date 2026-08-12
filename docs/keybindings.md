@@ -145,7 +145,7 @@ by default**, so you opt in explicitly.
 
 | Action id | Behavior |
 | --- | --- |
-| `smart-focus-left` / `-down` / `-up` / `-right` | If the focused pane is running a split-aware program (see `[navigation] editors` in [Configuration](configuration.md#navigation)), forward the matching `Ctrl-h/j/k/l` to it; otherwise move rozi pane focus in that direction. |
+| `smart-focus-left` / `-down` / `-up` / `-right` | If the focused pane is running a split-aware program (see `[navigation] editors`), forward the matching `Ctrl-h/j/k/l` to it; otherwise move pane focus in that direction. |
 
 The pieces that make this work:
 
@@ -206,7 +206,7 @@ with a live pane count.
 | --- | --- |
 | Switch to workspace _N_ | `1`–`9` |
 | Move focused pane to workspace _N_ | `Shift+1`–`Shift+9` (or the shifted symbols `!@#$%^&*(`); switches to the target workspace |
-| Move whole workspace to workspace _N_ | `Ctrl+Shift+1`–`Ctrl+Shift+9`; moves every pane, the layout, and the workspace name, then switches there. An empty target slot receives the content; an occupied target swaps with the source so both layouts stay intact |
+| Move whole workspace to workspace _N_ | `Ctrl+Shift+1`–`Ctrl+Shift+9`; moves every pane, the layout, and the workspace name, then switches there. An empty target receives the content; an occupied target swaps with the source. |
 | Rename workspace | `n` |
 
 A named workspace shows as `<number>:<name>` in the tabs (e.g. `1:code`) instead of just the
@@ -230,25 +230,59 @@ name. Names are saved with profiles and session autosave.
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Quit client / Detach | `q` / `d` | Leave the client. Both actions run the same behavior; the separate `detach` action id remains valid for `[keys] detach` and `rozi run-action detach`, including the tmux-style `d` default. Named sessions are detached and their servers keep running; a temporary session you never touched is closed silently. A temporary session you *worked in* raises **Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name (twice — the prompt says what the second press closes) to close it, or `Esc` to stay. Disable the second press via `[confirm] quit_ephemeral = false`. |
-| Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Rarely used and destructive, so it ships unbound - reach it via the command palette or bind `kill-workspace` under `[keys]`. |
-| Kill session | *(palette only)* | Shut down the attached session completely. Does not quit and does not auto-attach elsewhere: opens the session picker when another choice remains, otherwise the sessionless launcher. Ephemeral sessions are removed, not recreated. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].kill_session` controls whether it needs a second trigger. |
-| Restart session | *(palette / picker `Ctrl+E`)* | Shut down the selected (or attached) session's server and immediately recreate it as the active session with fresh panes. Distinct from *Kill session*. Palette selection runs directly; picker requires a second `Ctrl+E`. `[confirm].kill_session` also gates the palette second trigger when bound. |
+| Quit client / Detach | `q` / `d` | Leave the client. Both run the same behavior; `detach` remains valid for `[keys] detach` and `rozi run-action detach`. Named sessions keep running. |
+| Kill workspace | *(no default)* | Close every pane on the active workspace (press twice to confirm; see `[confirm]`). Unbound by default; reach it via the command palette or bind `kill-workspace` under `[keys]`. |
+| Kill session | *(palette only)* | Shut down the attached session. Opens the picker when another choice remains, otherwise the launcher. Ephemeral sessions are removed, not recreated. Bound/`run-action` uses `[confirm].kill_session`. |
+| Restart session | *(palette / picker `Ctrl+E`)* | Shut down the selected (or attached) session's server and recreate it as the active session with fresh panes. Distinct from *Kill session*. Picker requires a second `Ctrl+E`. |
+
+An untouched temporary session is closed silently. A temporary session you *worked in* raises
+**Keep this session?**: type a name and `Enter` to keep it running, press `Enter` on an empty name
+(twice — the prompt says what the second press closes) to close it, or `Esc` to stay. Disable the
+second press via `[confirm] quit_ephemeral = false`.
 
 Configured `[confirm]` prompts apply to key/chord and control-socket action triggers. Commands
 chosen from the command palette are treated as explicit selections and run without an extra
-second confirmation.
+second confirmation. `[confirm].kill_session` also gates a bound *Restart session*.
 
 ### Sessions
 
 | Command | Default keys | What it does |
 | --- | --- | --- |
-| Sessions… | `s` | Open the session picker. `Enter` is **switch** for a background-connected session and **connect** otherwise — both make the session active immediately while retaining the current attachment. Typing a name + `Ctrl+N` creates and switches to a fresh empty session (fails if that name is already running). `Ctrl+K` (twice) **kills** the selected session; `Ctrl+E` (twice) **restarts** it as the active session with fresh panes. `Ctrl+W` **disconnects** this client's background attachment (server keeps running); it does not apply to the current session. `Ctrl+X` disconnects a whole remote host. `Ctrl+R` opens **Connect remote host…**. Detach is not offered in the picker — leave the client with *Quit* / *Detach* outside it. Killing the current session opens the picker when another choice remains, otherwise the sessionless launcher. The list auto-refreshes while open and shows `from <profile>` when creation-origin metadata is available. This picker opens at startup by default (`[session] startup = "picker"`, or `--pick`) whenever there is something to pick, and attaches nothing until you choose; `Esc` there leaves the client in the launcher with no session, where a bare `Enter` — or any `spawn` binding — starts a shell. `Ctrl+T` (or `Enter` when the list is empty) goes to this client's scratch session — starting it when there is none, switching to it when there already is — so a startup picker does not have to be dismissed to reach a shell. It is hinted only when the list cannot point the way itself. |
-| Rename session | `Shift+S` | Rename the **current** session in place, keeping every live pane and its scrollback. The palette label shows **Name session** for an ephemeral session (naming it for the first time, without leaving) and **Rename session** for an already-named one. Distinct from leaving, which offers to name a temporary session on the way out. See [Sessions](sessions.md). |
-| New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded and its panes are killed. Palette selection runs directly; if you bind this action or call it via `run-action`, `[confirm].new_temporary_session` controls confirmation before discarding an ephemeral session. |
-| Take / request layout control | `g` | Acquire the layout-control lease when several clients share a session, so you drive splits, moves, resizes, and workspace edits. By default (`[session].allow_takeover = true`) this takes the lease immediately, and the other client takes it back the same way; with `allow_takeover = false` it instead asks the current controller, which sees a toast and a `wants control` badge. If nobody holds the lease, it is always auto-granted. No effect when you already control the layout or a single client is attached. See [Shared live layouts](sessions.md#shared-live-layouts). |
-| Grant layout control | `e` | As the controller, hand the lease to the client that requested it (the earliest requester when several are waiting). Only active while a request is pending; when it arrives the request toast shows this key (following any rebind). You can also grant a specific client from *Manage collaborators* (`Enter`). |
+| Sessions… | `s` | Open the session picker. Keys inside the picker are listed below. Opens at startup by default (`[session] startup = "picker"`, or `--pick`). |
+| Rename session | `Shift+S` | Rename the **current** session in place, keeping every live pane and its scrollback. The palette shows **Name session** for an ephemeral session. See [Sessions](sessions.md). |
+| New temporary session | *(palette only)* | Start a fresh empty ephemeral session. The current named session is detached and left running; a current ephemeral session is discarded. Bound/`run-action` uses `[confirm].new_temporary_session`. |
+| Take / request layout control | `g` | Acquire the layout-control lease so you drive splits, moves, resizes, and workspace edits. Immediate when `[session].allow_takeover` is true; otherwise asks the controller. |
+| Grant layout control | `e` | As the controller, hand the lease to the client that requested it (the earliest requester when several are waiting). Only active while a request is pending. |
 | Toggle immediate control takeover | *(palette only)* | As the current controller, enable or disable immediate takeover for this running session. The `[session].allow_takeover` config sets the initial server policy. |
+
+*Rename session* is distinct from leaving, which offers to name a temporary session on the way out.
+You can also grant a specific client from *Manage collaborators* (`Enter`). When a control request
+arrives, the request toast shows the grant key (following any rebind). `request-control` has no
+effect when you already control the layout or only one client is attached; if nobody holds the
+lease, it is always auto-granted. See [Shared live layouts](sessions.md#shared-live-layouts).
+
+### Session picker
+
+Full behavior is in [Switching sessions in-app](sessions.md#switching-sessions-in-app-the-picker).
+While the picker is open:
+
+| Key | Action |
+| --- | --- |
+| `Enter` | **Switch** a background-connected session, **connect** otherwise. Both make it active immediately and retain the current attachment. |
+| Type a name + `Ctrl+N` | Create and switch to a fresh empty session (fails if that name is already running). |
+| `Ctrl+K` (twice) | Kill the selected session. |
+| `Ctrl+E` (twice) | Restart it as the active session with fresh panes. |
+| `Ctrl+W` | Disconnect this client's background attachment (server keeps running). Does not apply to the current session. |
+| `Ctrl+X` | Disconnect a whole remote host. |
+| `Ctrl+R` | Open **Connect remote host…**. |
+| `Ctrl+T` | Go to this client's scratch session (start it if needed). Also `Enter` when the list is empty. Hinted only when the list cannot point the way itself. |
+| `Esc` | At startup, leave the client in the launcher with no session. A bare `Enter` — or any `spawn` binding — starts a shell. |
+
+Detach is not offered in the picker — leave the client with *Quit* / *Detach* outside it. Killing
+the current session opens the picker when another choice remains, otherwise the sessionless
+launcher. The list auto-refreshes while open and shows `from <profile>` when creation-origin
+metadata is available. It always opens at startup for `startup = "picker"` or `--pick`, even when
+the list is empty, and attaches nothing until you choose.
 
 ### Sidebar
 

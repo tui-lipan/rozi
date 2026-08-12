@@ -45,8 +45,11 @@ rozi watches the config file and applies every save live - config fields, `[keys
 bindings/user commands, theme (including switching which file the theme watcher follows), and
 workbar segments - without touching running panes, workspaces, or the active session. A parse
 failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
-save again. Changes rozi persists itself (theme selection, Settings preferences, the default
-profile) are already applied and don't trigger a reload.
+save again.
+
+Toggles and cycles in Settings, Appearance, and Alerts write the new value back to this file.
+Those writes, along with theme selection and the default profile, are already applied and don't
+trigger a reload.
 
 The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
 (falling back to `$VISUAL`, then `vi`) in a new pane. From the sessionless launcher it starts an
@@ -55,161 +58,31 @@ works as `rozi run-action open-config` over the control socket (see `docs/contro
 
 ## Full example
 
+The copyable file is [`examples/config.toml`](../examples/config.toml): every setting, commented
+out at its default. Uncomment only the lines you want to change. The rest of this page is the
+reference for each key.
+
 ```toml
-# Shell and working directory for new panes
-shell = "/bin/zsh"          # default: $SHELL chosen by the system
-# shell = ["pwsh.exe", "-NoLogo"]  # argument-preserving array form; first element is the program
-cwd = "~/code"              # default: the directory rozi was launched from
-scrollback = 10000          # default: 5000 lines per pane
-
-# Deterministic shell used to run one-off command lines: pane/popup commands, hooks, workbar
-# `command:` segments, `[keys] run`, and control-socket run requests. (Profile commands are
-# instead typed into the pane's interactive shell so aliases and rc-file PATH resolve.) Unlike
-# `shell`, this is never detection-based, so a config snippet using it behaves the same on every
-# machine. Accepts the same bare-string or argument-preserving-array forms as `shell`.
-# command_shell = ["/bin/sh", "-c"]  # default on Linux/macOS
-# command_shell = ["cmd.exe", "/D", "/S", "/C"]  # default on Windows (via %COMSPEC%)
-
-[shell_integration]
-# Emit OSC 7/133 cwd and command-lifecycle metadata from recognized interactive shells.
-# `auto` (default) injects bash, zsh, and fish without editing dotfiles; `off` leaves shell
-# initialization entirely untouched.
-mode = "auto"
+#shell = "/bin/sh"
+#cwd = "~/code"
+#scrollback = 5000
 
 [input]
-modifier = "alt"             # held WM modifier: "alt" (default) or "super"
-prefix = "ctrl-a"            # prefix key (default: ctrl-a)
-modifier_shortcuts = true     # mirror each built-in default onto Alt+<key> (default: true)
-which_key = true              # show what the prefix can do next while a chord is pending
-which_key_delay = "short"     # how long the prefix is held first: instant, short, long
+#modifier = "alt"
+#prefix = "ctrl-a"
 
 [layout]
-split_width_multiplier = 2.3  # terminal cell height / width for dwindle splits (default: 2.3)
-default = "dwindle"           # layout mode new workspaces start in (default: dwindle)
+#default = "dwindle"
 
 [pane]
-focus_on_hover = true         # mouse hover focuses panes (default: true)
-highlight_focused_background = false  # keep focused pane bg unchanged by default
-highlight_focused_border = true       # accent focused frame / touching divider seams (default: true)
-highlight_focused_titlebar = true     # accent the focused pane titlebar (default: true)
-show_workbar = true           # workbar with workspace tabs and mode chips (default: true)
-workbar_gap = true            # 1-line gap between workbar and panes (default: true)
-workbar_at_bottom = false     # draw the workbar below the panes (default: false)
-show_titles = true            # show pane titles (default: true)
-titlebar = "bar"              # pane title layout: bar|border|integrated|inset (default: bar)
-border_mode = "separate"      # separate|merged|none|dividers (default: separate)
-border_style = "rounded"      # rounded|plain|double|thick (frame modes only)
-alert_border = "pulse"        # off|static|pulse (default: pulse)
-keep_special_borders = true   # frame floating/popup/scratch panes in borderless modes
-padding = 0                   # blank cells between border and terminal (default: 0)
-                               # scalar = all sides; [v, h]; or [top, right, bottom, left]
-title_style = "padded"        # bar/integrated title caps: padded|half|round|arrow (default: padded)
-workbar_badge_style = "padded" # workbar badge caps: padded|round|arrow (default: padded)
-workbar_powerline = true      # chain trailing badges into a powerline (default: true)
-workbar_tab_style = "padded" # workspace/sidebar tab caps: padded|round|arrow (default: padded)
-workbar_style = "padded"      # workbar end caps: padded|half|round|arrow (default: padded)
-toast_opacity = 0.8           # toast background opacity over pane content (default: 0.8)
-background_follows_terminal = false  # pin surface.backdrop to the host terminal bg (default: false)
-
-[pane.alert]
-blocked = "error"             # BadgeColor role, or off
-finished = "success"
-working = "off"
-idle = "off"
-
-[animations]
-enabled = true               # master switch (default: true)
-spawn = true                 # animate new panes
-close = true                 # animate closing panes
-fullscreen = true            # animate fullscreen toggle
-tile_float = true            # animate tiling <-> floating
-axis_change = true           # animate split-axis flips
-focus_chrome = true          # animate focus border/title color changes
-geometry_ms = 220            # base geometry transition duration (default: 220)
-close_ms = 120               # close transition duration (default: 120)
-focus_chrome_ms = 160        # focus-chrome transition duration (default: 160)
-alert_pulse_ms = 1600        # shared border/tab breathe period (minimum effective: 800)
-open_delay_ms = 36           # delay before a spawned pane fades in (default: 36)
+#show_workbar = true
+#titlebar = "bar"
 
 [theme]
-name = "tokyo-night"        # built-in preset, `system`, or a file in ~/.config/rozi/themes/
-
-[profile]
-default = "dev"              # named profile in ~/.config/rozi/profiles/
-
-[clipboard]
-enable_osc52 = true          # allow programs to set the system clipboard via OSC52 (default: true)
-
-[notifications]
-enabled = false              # desktop notifications are opt-in (default: false)
-pane_exit = true             # notify on clean natural pane exits when enabled
-pane_exit_error = true       # notify on non-zero natural pane exits when enabled
-pane_blocked = true          # notify when an unattended pane reports `blocked`
-pane_done = false            # optionally notify on the unseen finished working→quiescent edge
-bell = true                  # mark unattended panes/workspaces urgent on BEL
-
-[sounds]
-enabled = false              # play alert cues (default: false)
-bell = true                  # BEL cue
-blocked = true               # effective blocked-status cue
-done = true                  # unseen finished-run cue
-error = true                 # non-zero pane exit cue
-throttle_ms = 2000           # same-cue minimum interval
-bell_file = ""               # empty uses built-in WAV
-blocked_file = ""            # empty uses built-in WAV
-done_file = ""               # empty uses built-in WAV
-error_file = ""              # empty uses built-in WAV
-player = ""                  # empty auto-detects; path is its final argument
-
-[navigation]
-# Programs that handle their own splits: smart-focus-* forwards Ctrl-h/j/k/l to them
-# instead of moving pane focus. Matched case-insensitively on the pane's foreground process.
-editors = ["vim", "nvim", "vi", "view", "vimdiff", "nvim-wrapped", "hx", "helix", "kak", "emacs", "emacsclient", "fzf"]
-
-[confirm]
-close_pane = false             # confirm closing a pane with a live process (default: false)
-kill_workspace = true          # confirm killing all panes on a workspace (default: true)
-kill_session = true            # confirm shutting down the attached session (default: true)
-quit_ephemeral = true          # second Enter before the leave prompt closes a temporary session (default: true)
-new_temporary_session = true   # confirm discarding the current ephemeral session for a fresh one (default: true)
-load_profile = true            # confirm replacing a live ephemeral session from Profiles (default: true)
+#name = "lipan"
 
 [session]
-autosave = true              # save the live layout on quit, restore it next launch (default: false)
-resurrect = true             # snapshot named sessions for restart after server loss (default: true)
-startup = "picker"           # "picker" (default), "ephemeral", "last", or "profile"
-allow_takeover = true        # writable followers take layout control immediately (default: true;
-                             # false makes a request wait for the controller to grant it)
-# path = "~/.local/state/rozi/session.toml"  # default location if omitted
-
-[scratchpad]
-command = "btop"             # default: the normal shell
-cwd = "~"                    # default: the configured cwd
-height = 0.4                 # fraction of the viewport height, 0.1–0.9 (default: 0.4)
-
-[workbar]
-left = ["title", "workspaces"]              # default
-right = ["location", "session"]             # default
-# A segment can be a table to override its badge color by theme role:
-# right = [{ segment = "clock", color = "info" }, "session"]
-clock_format = "%H:%M"                       # strftime, only used by a clock segment
-
-[workbar.alert]
-bell = true
-blocked = true
-finished = true
-working = false
-idle = false
-mode = "pulse"                               # off|static|pulse (default: pulse)
-paint = "background"                         # background|text (default: background)
-
-[keys]
-# A bare key replaces an action's key while following the input scheme.
-copy-mode = "b"
-# An additive override keeps the generated defaults and adds another binding.
-spawn = { add = "super-enter" }
-# A literal replacement can intentionally make one action prefix-only.
-close = "ctrl-a q"
+#startup = "picker"
 ```
 
 ## Top-level keys
@@ -217,10 +90,10 @@ close = "ctrl-a q"
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `shell` | string or array | see below | Interactive shell launched in each new pane. |
-| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). Profile commands are typed into the pane's interactive shell instead. |
+| `command_shell` | string or array | see below | Shell used to run one-off command lines (pane/popup commands, hooks, workbar `command:` segments, `[keys] run`, control-socket run requests). |
 | `shell_integration.mode` | `auto` or `off` | `auto` | Inject OSC cwd/command metadata into supported interactive shells. |
 | `cwd` | path | launch directory | Working directory for new panes. `~` expands to `$HOME`. |
-| `scrollback` | integer | `5000` | Scrollback buffer size, in lines, per pane (minimum 1). Applies when a terminal screen is created. Existing screens keep their current capacity; restart a named server (or create new panes) after changing it. |
+| `scrollback` | integer | `5000` | Scrollback lines per pane (minimum 1). Existing screens keep their current capacity; restart a named server or create new panes after changing it. |
 
 Both `shell` and `command_shell` accept either a bare string (a program with no arguments - the
 historical form) or an argument-preserving array whose first element is the program, e.g.
@@ -250,13 +123,16 @@ never a full command line.
 | bash | Generated `--rcfile` wrapper | Everything. Chains `/etc/bash.bashrc` and `~/.bashrc`, then the integration. Login-shell configurations are intentionally left untouched, because bash ignores `--rcfile` for login shells. |
 | zsh | Temporary `ZDOTDIR` shim | Everything. Chains the original `ZDOTDIR` (or `$HOME`) `.zshenv`/`.zshrc`, then the integration. |
 | fish | Temporary `XDG_DATA_DIRS` vendor `conf.d` entry | Everything. Composes with Fish event hooks; prompt frameworks loaded later can replace its final prompt marker. |
-| PowerShell | `-NoExit -Command . <script>` | Everything. Runs *after* your `$PROFILE`, so your prompt (oh-my-posh, Starship, a hand-rolled `prompt` function) and PSReadLine configuration are wrapped, not replaced. A pane whose `shell` already carries `-Command`/`-File` is left alone — that is a "run this and exit" launch, not an interactive session. |
-| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook, and rozi will not touch the `AutoRun` registry key, so there is no way to report the running command or its exit status. Install [Clink](https://chrisant996.github.io/clink/) if you want the rest. |
+| PowerShell | `-NoExit -Command . <script>` | Everything. Runs *after* `$PROFILE`, wrapping your prompt and PSReadLine rather than replacing them. A pane whose `shell` already carries `-Command`/`-File` is left alone. |
+| cmd.exe | `PROMPT` environment variable | Working directory and prompt boundaries only. cmd has no pre-execution hook; rozi will not touch the `AutoRun` registry key. Install [Clink](https://chrisant996.github.io/clink/) for the rest. |
 
 Set `mode = "off"` if your shell already emits suitable OSC metadata or if you want rozi to
 leave shell startup completely unchanged.
 
 ### PowerShell sessions rozi did not launch
+
+A pane whose `shell` already carries `-Command`/`-File` is a "run this and exit" launch, not an
+interactive session, so injection is skipped.
 
 The `-NoExit -Command` injection above only applies to panes rozi starts. For a PowerShell
 reached some other way — nested inside a pane, or launched through a `command =` pane — add one
@@ -326,8 +202,10 @@ prefix is reported as a warning and the default is kept.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to compare a focused pane's visual width and height when choosing the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
-| `default` | string | `"dwindle"` | Layout mode every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. Profiles override this per workspace. The *Choose layout…* picker can set it for you (`ctrl+f` on a mode). |
+| `split_width_multiplier` | float | `2.3` | Terminal cell height divided by cell width. Dwindle uses this to choose the next split axis. Must be positive. Increase it when panes that look taller than wide split side-by-side. |
+| `default` | string | `"dwindle"` | Layout every fresh workspace starts in: `dwindle`, `master`, `grid`, `columns`, `rows`, `scrollable`, or `monocle`. Profiles override this per workspace. |
+
+The *Choose layout…* picker can persist `default` with `ctrl+f` on a mode.
 
 ## `[pane]`
 
@@ -335,38 +213,95 @@ Pane focus and chrome behavior.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. The palette toggle writes this back to config. |
-| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code and the `respawn-pane` action restarts the retained command and cwd in place. This governs panes with no launch command of their own (a plain shell you typed `exit` in); a pane launched with a command is governed by that command's `keep_open` instead, which replaces the dead PTY with a live shell rather than retaining a husk. |
-| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. The palette toggle writes this back to config. |
-| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. In `separate`/`merged` this accents the frame; in `dividers` it accents only the internal seams that touch the focused pane. The palette toggle writes this back to config. |
-| `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis in every titlebar layout. The palette toggle writes this back to config. |
+| `focus_on_hover` | `true` | Moving the mouse over a pane focuses it. |
+| `hold_on_exit` | `false` | Keep naturally exited panes in the layout. Their title shows the exit code; `respawn-pane` restarts the retained command and cwd in place. |
+| `highlight_focused_background` | `false` | Give the focused pane the theme panel background. When `false`, focus does not change the pane background. |
+| `highlight_focused_border` | `true` | Give the focused pane the theme's active border color. In `separate`/`merged` this accents the frame; in `dividers` it accents only the internal seams that touch the focused pane. |
+| `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis in every titlebar layout. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
-| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The Settings toggle writes this back to config. |
-| `show_titles` | `true` | Show the selected pane titlebar layout. The palette toggle writes this back to config without changing the selected `titlebar` layout. |
-| `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row above the frame; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip; `inset` leaves the top border unbroken and writes the title on the first row inside the frame, beneath it, with no background of its own. `border` and `integrated` each retain the terminal row that `bar` and `inset` consume. The Settings cycle writes this back to config. |
-| `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The Settings cycle writes this back to config. |
-| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
-| `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
-| `keep_special_borders` | `true` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes, where nothing else marks the edge of a pane floating above the tiles. Set `false` to let those panes go frameless with everything else. Fullscreen panes remain consistent with the selected global mode. |
-| `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. Settings → Terminal padding writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
+| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first. The gap, when enabled, moves with it. |
+| `show_titles` | `true` | Show the selected pane titlebar layout. Toggling this does not change the selected `titlebar` layout. |
+| `titlebar` | `bar` | Pane title layout: `bar`, `border`, `integrated`, or `inset`. See [Titlebar layouts](#titlebar-layouts). |
+| `border_mode` | `separate` | Pane border presentation: `separate` (one frame per pane), `merged` (shared junctions), `none` (no frames), or `dividers` (lines along internal tiled splits only). |
+| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. Does not affect `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
+| `alert_border` | `pulse` | `off`, `static`, or `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
+| `keep_special_borders` | `true` | Keep double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Set `false` to let those panes go frameless. Fullscreen panes follow the selected global mode. |
+| `padding` | `0` | Blank cells between each pane's border and its terminal grid. A single number, `[vertical, horizontal]`, or `[top, right, bottom, left]`. Each side is clamped to `8`. |
+| `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded`, `half`, `round`, or `arrow`. See [End-cap styles](#end-cap-styles). |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges: `padded`, `round`, or `arrow` (`half` is not available). See [End-cap styles](#end-cap-styles). |
+| `workbar_powerline` | `true` | Chain trailing badges into a powerline: gaps collapse and each cap blends into its left neighbor. Independent of `workbar_badge_style`. |
+| `toast_opacity` | `0.8` | Toast background opacity over the pane it covers, in `[0.0, 1.0]`. `1.0` is solid; below that the panel blends with whatever is behind. Raise it if toasts read poorly. |
+| `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Same values as `workbar_badge_style`. When unset, `workbar_badge_style` is used. |
+| `workbar_style` | `padded` | End-cap style for the workbar itself, so the panel reads as a pill/point over the backdrop. Same values as `title_style`. |
+| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's background, overriding the active theme. |
+
+`hold_on_exit` governs panes with no launch command of their own (a plain shell you typed `exit`
+in). A pane launched with a command follows that command's `keep_open` instead, which replaces the
+dead PTY with a live shell rather than retaining a husk.
+
+See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background)
+for `background_follows_terminal`.
+
+### Titlebar layouts
+
+- `bar` — a separate full-width title row above the frame (default).
+- `border` — icon and title in the top frame border.
+- `integrated` — fills the top border row as a compact title strip.
+- `inset` — top border unbroken; title on the first row inside the frame, with no background of its own.
+
+`border` and `integrated` each retain the terminal row that `bar` and `inset` consume.
+
+### Padding
+
+Accepts CSS-style shorthand: one number for all sides, two for vertical/horizontal, or four for
+top/right/bottom/left. Other lengths are ignored with a warning. Each cell costs a column or row of
+usable terminal space, painted with the pane's frame background.
+
+Settings → Terminal padding writes the two-value `[vertical, horizontal]` form and normalizes any
+four-side asymmetric padding.
+
+### End-cap styles
+
+`title_style`, `workbar_badge_style`, `workbar_tab_style`, and `workbar_style` share these values:
+`padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow`
+(powerline pill/point caps). `round` and `arrow` need a patched/Nerd font, like the titlebar icons.
+
+- `title_style` applies to `titlebar = "bar"` or `"integrated"`. Integrated half-block caps replace
+  the frame corners; round and arrow caps sit immediately inside them. The Settings row is disabled
+  under `border` and `inset`, which draw plain text with no strip to cap.
+- `workbar_badge_style` is the same except `half` is not available. The `rozi` title chip caps on
+  its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off
+  toward the workbar's edge. Existing configs without `workbar_tab_style` also apply this value to
+  workspace and sidebar tabs.
+- `workbar_tab_style` caps only the active and hovered tab (tabs are peers, so they do not chain).
+  When unset, `workbar_badge_style` is used.
+- `workbar_style` caps the workbar itself so the panel reads as a pill/point over the backdrop.
+  Caps replace the bar's outer side padding rather than widening it.
+
+When `workbar_powerline` is `false`, trailing badges keep a 1-cell gap and each cap is drawn over
+the panel bar. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps,
+`▏` for round and padded badges). The `[workbar]` section covers the same chaining for mode chips
+and right-region badges.
+
+### Toast opacity
+
+The default reads as tinted glass: the theme's `surface.panel` blended per cell with the content
+underneath. Contrast then depends on what the toast covers and how much headroom the theme's
+panel/text pair has. Raise the value if your theme's toasts are hard to read. Values outside
+`[0.0, 1.0]` warn and are ignored.
+
+See also [In-app toasts](#in-app-toasts).
+
+### `[pane.alert]`
 
 `[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen
 `finished = "success"` default on; `working` and `idle` default `off` because they are ambient,
 not normally actionable. Configured-off states fall through to the next applicable state. A finished
 alert clears when you focus its pane; closing and exited panes never alert.
 
-`alert_pulse_ms` sets the shared breathe period for `alert_border = "pulse"` and optional inactive
-workspace-tab breathing. It needs both `animations.enabled` and `focus_chrome`; its half-period is
-floored at 400 ms. No pulse timer runs until an eligible alert is visible.
-Blocked and finished alerts are visible state, so they do not create success toasts.
-| `title_style` | `padded` | End-cap style for the filled layouts, `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. The Settings row is disabled under `border` and `inset`, which draw plain text with no strip to cap. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The Settings cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `rozi` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The Settings cycle writes this back to config. |
-| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The Settings toggle writes this back to config. |
-| `toast_opacity` | `0.8` | How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`. The default reads as tinted glass: the theme's `surface.panel` blended per cell with whatever is behind, so content underneath stays visible instead of being replaced. `1.0` paints the panel solid. Below `1.0` the text contrast depends on what the toast covers, and themes vary a lot in how much headroom their panel/text pair has — measured over white, yellow, red, and dark panes across the 30 bundled themes, the worst case falls under the 4.5:1 readability floor on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` (those last 2 sit at their own theme's ceiling either way). Raise it if your theme's toasts read poorly. Values outside `[0.0, 1.0]` warn and are ignored. |
-| `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The Settings cycle writes this back to config. |
-| `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The Settings cycle writes this back to config. |
-| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The Settings toggle writes this back to config. |
+Blocked and finished alerts are visible state, so they do not create success toasts. The shared
+breathe period is [`[animations] alert_pulse_ms`](#animations).
 
 ## `[[rules]]`
 
@@ -442,7 +377,11 @@ milliseconds.
 | `geometry_ms` | `220` | Base geometry transition duration; scratchpad slide uses two-thirds of this. |
 | `close_ms` | `120` | Close transition duration. |
 | `focus_chrome_ms` | `160` | Focus-chrome transition duration. |
+| `alert_pulse_ms` | `1600` | Shared breathe period for `alert_border = "pulse"` and inactive workspace-tab breathing. Half-period is floored at 400 ms. |
 | `open_delay_ms` | `36` | Delay before a spawned pane begins fading in. |
+
+Pulse needs both `enabled` and `focus_chrome`. No pulse timer runs until an eligible alert is
+visible.
 
 > **Size changes are snapped, not animated.** During an active move/resize or a viewport
 > change, transitions become instant for the affected pane. This is deliberate: animating a
@@ -464,7 +403,12 @@ active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. With `[session] startup = "profile"` it also names the session a bare launch opens. Also writable via **Ctrl+f** in **Profiles**, which resets `[session] startup` from `"profile"` back to `"picker"` if clearing the default would strand it. |
+| `default` | _none_ | Profile seeding every session opened without a recipe. Explicit named targets, `--profile`, and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
+
+It seeds the launch, each new temporary session, and each named session created without a recipe.
+With `[session] startup = "profile"` it also names the session a bare launch opens. Clearing the
+default while startup is `"profile"` resets startup to `"picker"` so that mode is not left pointing
+at nothing.
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
@@ -488,7 +432,7 @@ Failures are ignored and never block the UI.
 | Key | Default | Notes |
 | --- | --- | --- |
 | `enabled` | `false` | Master switch for desktop notifications. |
-| `pane_exit` | `false` | Notify when a pane exits naturally with code `0`. Off by default: unlike the status notifications, this edge cannot be attendance-gated — the pane is gone — so it would announce a clean exit the user just watched happen. |
+| `pane_exit` | `false` | Notify when a pane exits naturally with code `0`. Off by default because this edge cannot be attendance-gated — the pane is gone. |
 | `pane_exit_error` | `true` | Notify when a naturally exiting pane returns a non-zero code. `pane_exit` now covers clean exits only. |
 | `pane_blocked` | `true` | Notify when an unattended pane effectively becomes blocked, including detected-only agents. |
 | `pane_done` | `false` | Notify on the unseen working→quiescent finished edge. Reported-only transitions without a detected agent do not arm this existing edge. |
@@ -522,7 +466,7 @@ move its own split; otherwise rozi moves pane focus in that direction.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `editors` | vim family + `hx`/`helix`/`kak`/`emacs`/`emacsclient`/`fzf` | Foreground process names (matched case-insensitively) that should receive `Ctrl-h/j/k/l` themselves. Setting this **replaces** the default list. Names match the executable basename as seen by the OS (e.g. `nvim`, not a full path). |
+| `editors` | vim family + `hx`/`helix`/`kak`/`emacs`/`emacsclient`/`fzf` | Foreground process names that should receive `Ctrl-h/j/k/l` themselves. Setting this **replaces** the default list. Names match the executable basename (e.g. `nvim`). |
 
 Foreground detection prefers what the shell itself reports (see
 [`[shell_integration]`](#shell_integration)), and falls back to `/proc` on Linux and `libproc` on
@@ -556,7 +500,8 @@ Validation errors from a prompt render *inside* the prompt, under the field they
 clear as soon as you edit it.
 
 Toasts render as tinted glass: the theme's panel color blended per cell with the pane content they
-cover. [`[pane] toast_opacity`](#pane) controls how far, up to `1.0` for a solid panel.
+cover. [`[pane] toast_opacity`](#toast-opacity) controls how far, up to `1.0` for a solid panel.
+Raise it if your theme's toasts are hard to read.
 
 ## `[confirm]`
 
@@ -573,7 +518,7 @@ skips the confirmation - picking it from a searchable list is already a delibera
 | `close_pane` | `false` | Closing a pane whose process is still running. |
 | `kill_workspace` | `true` | Closing every pane on the active workspace. |
 | `kill_session` | `true` | Shutting down the attached named session. |
-| `quit_ephemeral` | `true` | Closing a temporary session from the leave prompt: `Enter` on an empty name arms, a second `Enter` closes it (the prompt says what it closes). With this off, the first press closes. Named sessions are never closed by leaving. |
+| `quit_ephemeral` | `true` | Closing a temporary session from the leave prompt: `Enter` on an empty name arms, a second `Enter` closes it. With this off, the first press closes. Named sessions are never closed by leaving. |
 | `new_temporary_session` | `true` | Discarding the current ephemeral session to start a fresh one (its panes are killed). Named sessions are detached and left running, so switching from one does not require confirmation. |
 | `load_profile` | `true` | Replacing a live disposable session by opening a profile-backed named target. |
 
@@ -598,10 +543,15 @@ background session server and can be detached/reattached with live terminal stat
 | Key | Default | Notes |
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. Also **Settings → Sessions → Layout autosave**. |
-| `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. Also **Settings → Sessions → Resurrect named sessions**, which applies to servers started after the change - a running server already read this value. |
-| `startup` | `"picker"` | What a bare launch does: `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted; `"profile"` opens the session named after `[profile] default`. Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place. Also **Settings → Sessions → Startup mode**, which cycles the four in this order but offers `"profile"` only while a default profile is set. |
+| `resurrect` | `true` | Snapshot named sessions so layout, commands, and scrollback can be restored after the server exits. Also **Settings → Sessions → Resurrect named sessions**. |
+| `startup` | `"picker"` | What a bare launch does: `"picker"`, `"ephemeral"`, `"last"`, or `"profile"`. Also **Settings → Sessions → Startup mode**. |
 | `path` | `$XDG_STATE_HOME/rozi/session.toml` | Session file location (falls back to `~/.local/state/...`). |
-| `allow_takeover` | `true` | Let any writable, active follower take the layout-control lease immediately with `request-control`. Set `false` to make a request wait for the controller to grant or decline it. The session server reads this when it starts; use `toggle-control-takeover` to change a running session. Read-only and parked clients can never take control. |
+| `allow_takeover` | `true` | Let a writable follower take the layout-control lease immediately with `request-control`. Set `false` to wait for the controller to grant it. Read-only and parked clients can never take control. |
+
+Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place.
+**Settings → Sessions → Startup mode** cycles the four in this order but offers `"profile"` only
+while a default profile is set. `resurrect` applies to servers started after the change; a running
+server already read this value.
 
 An explicit target takes precedence over startup configuration. `startup = "last"` and `startup =
 "profile"` choose a *named session*, so they take precedence over `[profile] default` and autosave;
@@ -614,12 +564,12 @@ it attaches to that session when it is running, and otherwise creates it from
 is not a usable session name, or nothing to open under that name, it warns and falls back to the
 `picker` path rather than attaching something else.
 
-With `startup = "picker"` (the default, also reachable with `--pick`), the picker is shown at launch
-**only when there is something to pick** - a running named session, a resurrection snapshot, or a
-remote host with cached sessions; otherwise the launch attaches to an ephemeral session as usual.
-Opening the picker creates no session: nothing is attached until you choose. Dismissing it with
-`Esc` leaves the client in the launcher with no session, where `Enter` (or any `spawn` binding)
-starts a shell and the picker can be reopened at any time. See [Sessions](sessions.md).
+With `startup = "picker"` (the default, also reachable with `--pick`), the picker is always shown at
+launch, including when its list is empty. Opening the picker creates no session: nothing is attached
+until you choose. `Enter` on an empty list starts an ephemeral shell, while `Ctrl+N` creates a named
+session. Resurrection snapshots appear as restorable rows. Dismissing the picker with `Esc` leaves
+the client in the launcher with no session, where `Enter` (or any `spawn` binding) starts a shell and
+the picker can be reopened at any time. See [Sessions](sessions.md).
 
 When several clients attach to one session they share a live, server-authoritative layout with a
 single controlling client. By default `request-control` (`g`) transfers the lease immediately: every
@@ -693,24 +643,22 @@ restart.
 ## `[sidebar]`
 
 The optional sidebar is a resizable local navigation surface docked beside the app content.
-See [Sidebar](sidebar.md) for the built-in Panes tab, tab configuration, interaction, and shared
-session sizing behavior.
+See [Sidebar](sidebar.md) for how the built-in tabs behave, interaction, and shared session sizing.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `visible` | `false` | Initial visibility. `toggle-sidebar` updates and persists this the same way `toggle-sidebar-split` writes `split`. |
-| `width` | `32` | Requested width in columns, clamped to `16..=80`. Drag the divider or use the focused-sidebar resize keys to update and persist it. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
+| `visible` | `false` | Initial visibility. `toggle-sidebar` persists this the same way `toggle-sidebar-split` writes `split`. |
+| `width` | `32` | Requested width in columns (`16..=80`). On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
 | `tabs` | `["agents", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
-| `panels` | `[["agents", "panes", "sessions"], ["files", "git"]]` | Durable placement recipe: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. Naming `tabs` replaces the built-in catalog and its two-panel placement together, so those configs get one panel unless they also name `panels`. |
-| `split` | inferred from `panels`, so `true` by default | Render two saved panel groups vertically. When omitted, it is true for two panel arrays and false for one. Turning it off displays all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
+| `panels` | `[["agents", "panes", "sessions"], ["files", "git"]]` | Durable placement: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
+| `split` | inferred from `panels` (`true` by default) | Render two saved panel groups vertically. Turning it off shows all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
 | `split_ratio` | `0.4` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
 
-The tab strips are draggable. Reordering within a panel or moving a tab between two panels updates
-only the ID placement in `panels`; custom tab definitions remain in `tabs` and are never rewritten.
-The `toggle-sidebar` and `toggle-sidebar-split` commands persist `visible` and `split` respectively;
-neither rewrites `panels`. External edits to `tabs`, `panels`, `split`, `visible`, `width`, or
-`split_ratio` apply on normal live reload.
+Naming `tabs` replaces the built-in catalog and its two-panel placement together, so those configs
+get one panel unless they also name `panels`. When `split` is omitted, it is true for two panel
+arrays and false for one. Reordering tabs updates only `panels`; custom tab definitions in `tabs`
+are never rewritten. Drag, persist, and live-reload behavior is in [Sidebar](sidebar.md#configure).
 
 ```toml
 [sidebar]
@@ -726,14 +674,9 @@ built-ins with launcher and command-backed tabs.
 
 ### File tree tabs
 
-`files` and `git` are two views of one file tree. `files` browses the focused pane's working
-directory; `git` shows only the paths git reports as changed, grouped under their directories, with
-`+N -M` diff stats. Both follow focus: change pane or `cd`, and the tree re-roots.
-
-Neither runs anything until its tab is the visible sidebar's active tab, and directory reads and
-`git status` both run off the UI thread. Git status is refreshed when the focused pane's command
-finishes rather than on a timer, so a build or checkout updates the tab immediately while reading
-costs nothing.
+`files` and `git` are two projections of one tree; option defaults differ by view (`root`,
+`diff_stats`). How they re-root, when they load, and git refresh are in
+[Sidebar](sidebar.md#built-in-tabs).
 
 | Key | Default | Description |
 | --- | --- | --- |
@@ -767,9 +710,8 @@ tabs = [
 ]
 ```
 
-`label` is ignored for a built-in, which keeps its own name. Clicking a directory expands it;
-clicking a file runs `on_click`. The default types the path at the prompt without a newline, so
-nothing executes until you press Enter.
+`label` is ignored for a built-in, which keeps its own name. The default `on_click` types the path
+at the prompt without a newline, so nothing executes until you press Enter.
 
 #### Opening a diff viewer or editor from a row
 
@@ -844,7 +786,7 @@ the state that multiplies every keystroke across panes is always visible rather 
 With `workbar_powerline` on (the default) the mode chips and right-region badges lose the gap
 between them and interlock into a powerline: each chip's cap blends into its left neighbor's color.
 `workbar_badge_style` controls the pill shape (rounded/pointed vs flush) independently. Workspace
-workspace and sidebar tab caps are controlled separately with `workbar_tab_style`.
+and sidebar tab caps are controlled separately with `workbar_tab_style`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -860,8 +802,11 @@ finished only, and say *which* states mark a tab.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `mode` | `pulse` | How a marked tab is drawn: `off` shows no marker at all, `static` colors it, `pulse` also breathes it. Mirrors `pane.alert_border`; the Settings action is `cycle-workbar-alert` and the row is **Alerts → Workspace tab effect**, disabled while the workbar is hidden. |
-| `paint` | `background` | What a marked tab colors. `background` fills it and gives it the same end caps as the active tab, so it reads from across the screen; `text` colors the label only and leaves the tab flat, which is quieter beside the active tab. Settings row **Alerts → Workspace tab highlight**, action `cycle-workbar-alert-paint`. |
+| `mode` | `pulse` | How a marked tab is drawn: `off`, `static` (color only), or `pulse` (also breathes). Mirrors `pane.alert_border`. Settings: **Alerts → Workspace tab effect**. |
+| `paint` | `background` | What a marked tab colors. `background` fills it with the same end caps as the active tab; `text` colors the label only. Settings: **Alerts → Workspace tab highlight**. |
+
+The Settings actions are `cycle-workbar-alert` and `cycle-workbar-alert-paint`. The effect row is
+disabled while the workbar is hidden.
 
 Only **inactive** marked tabs are colored or breathed — the active workspace keeps its solid tab pill,
 and its pane border already carries the alert. Several marked tabs share one phase, so they breathe in

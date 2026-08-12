@@ -144,11 +144,17 @@ every run:
 | `protocol_framing` | Pane-output encode/decode round trips at 64 B, 4 KiB, and 1 MiB, plus serde of large `Attached` and `LayoutCommitted` control frames. |
 | `session_pipeline` | In-memory frame encode, decode, client terminal processing, and snapshot rebuild; Unix also measures a 4 KiB socket-pair path. |
 | `app_render` | Whole-app view + expand + layout at 1/2/4/8/16 tiled panes, with and without terminal content. This is the work `Update::full()` adds over `Update::paint()`. |
-| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained deterministic lines per pane, plus explicit 512-line cooperative slices for sparse (one match per 100 lines), dense (every line), and no-match queries. `slice_*` isolates the range scanner; `full_slice_*` is the acceptance row and includes the production update-thread mapping, accumulated item-cache cloning, and description formatting. |
-| `server_fairness` | Public `SessionServer`/`SessionClient` key-to-helper acknowledgement latency under sustainable paced continuous ingress; a separate unpaced saturation probe proves the 4 MiB PTY ingress high-water and expected bounded downstream client disconnect. The same target measures server-reported durable resurrection snapshot duration for 1/8/16 real panes with 0/1,000/5,000 retained rows at 250x60. Helpers and owned, bounded-lifecycle servers are modes of the benchmark executable itself. |
+| `scrollback_search` | `TerminalPane::search_scrollback` across 1/8/16 panes at 250x60 with 5,000 retained lines per pane, plus 512-line cooperative slices for sparse, dense, and no-match queries. |
+| `server_fairness` | Key-to-helper acknowledgement latency under paced continuous ingress, plus a saturation probe of the 4 MiB PTY ingress high-water, and resurrection snapshot duration for 1/8/16 panes. |
 
 When changing a generator, treat it as a benchmark-definition change: save a fresh baseline rather
 than comparing incompatible corpora.
+
+`scrollback_search` `slice_*` isolates the range scanner; `full_slice_*` is the acceptance row and
+includes the production update-thread mapping, accumulated item-cache cloning, and description
+formatting. Sparse queries match once per 100 lines; dense queries match every line.
+`server_fairness` helpers and owned, bounded-lifecycle servers are modes of the benchmark
+executable itself.
 
 `server_fairness/key_round_trip/continuous_pty_ingress` retains a 1 ms producer interval so the
 attached client can sustainably drain output while Criterion measures key-to-helper

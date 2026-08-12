@@ -17,14 +17,13 @@ split = true
 ```
 
 That is the built-in shape, shown here spelled out: the session's own state on top, the repository
-below. Naming `tabs` without `panels` replaces the whole catalog *and* its placement, so a config
-that lists its own tabs gets one panel unless it also lists `panels`.
+below. Keys, defaults, and clamps are in [Configuration](configuration.md#sidebar). A config that
+lists `tabs` without `panels` gets one panel.
 
-`width` is clamped to 16-80 columns. The effective width may be smaller on narrow terminals: the
-sidebar yields space before the pane canvas is allowed to fall below its minimum, and always leaves
-at least one canvas column. `position` is `left` or `right`. The outer divider moves the sidebar,
-pane canvas, and PTYs live through the normal resize debounce; releasing it writes the final width
-back to this key.
+The outer divider moves the sidebar, pane canvas, and PTYs live through the normal resize debounce;
+releasing it writes the final width back to `width`. On a narrow terminal the sidebar yields space
+before the pane canvas is allowed to fall below its minimum, and always leaves at least one canvas
+column.
 
 `tabs` is the catalog of available tab definitions. `panels` is a separate placement recipe made
 only of those tabs' stable IDs, so persisting a drag never rewrites a custom tab definition. The
@@ -36,16 +35,14 @@ split = true
 split_ratio = 0.5
 ```
 
-With two `panels` arrays, `split` defaults to `true`; spelling it out makes the presentation choice
-explicit. Set it to `false` to keep the recipe while showing one bar.
-
-Both tab bars share a drag group, so tabs reorder live within one bar and move between bars. The
-panel divider is also draggable. Dragging its junction with the outer divider resizes both axes at
-once; the junction ends at the sidebar gutter and does not extend onto pane borders. Tab
-order/assignment and both splitter sizes persist to `config.toml` and remain live-editable there.
-Toggling the sidebar (`toggle-sidebar` / `b`) writes `visible` the same way. Disabling `split`
-temporarily presents the saved groups as one tab bar; it does not merge or erase
-the `panels` recipe, so enabling it again restores the previous groups.
+Set `split` to `false` to keep the recipe while showing one bar. Both tab bars share a drag group,
+so tabs reorder live within one bar and move between bars. The panel divider is also draggable.
+Dragging its junction with the outer divider resizes both axes at once; the junction ends at the
+sidebar gutter and does not extend onto pane borders. Tab order/assignment and both splitter sizes
+persist to `config.toml` and remain live-editable there. Toggling the sidebar (`toggle-sidebar` /
+`b`) writes `visible` the same way. Disabling `split` temporarily presents the saved groups as one
+tab bar; it does not merge or erase the `panels` recipe, so enabling it again restores the previous
+groups.
 
 The built-in IDs are `agents`, `panes`, `sessions`, `files`, and `git`. IDs are stable machine
 identities used for selection and reload reconciliation, while custom `label` values are

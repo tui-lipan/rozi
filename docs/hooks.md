@@ -35,7 +35,7 @@ an uppercase `ROZI_` prefix, for example the `client_id` field becomes
 | --- | --- | --- |
 | `pane-spawned` | A workspace pane is created. | `pane`: pane id; `workspace`: 1-based workspace; `command`: configured command, or empty for a shell pane; `cwd`: configured working directory, or empty when inherited. |
 | `pane-exited` | A pane process exit is reported to the client. | `pane`: pane id; `code`: process exit code; `focused`: `true` or `false`. |
-| `pane-status-changed` | A pane's server-owned reported status changes or is cleared. Initial attach seeding does not fire an event. | `pane`: pane id; `status`: new status; `reason`: new reason; `previous_status`: prior status; `previous_reason`: prior reason; `focused`: `true` or `false`. Missing or cleared values are empty strings. |
+| `pane-status-changed` | A pane's server-owned reported status changes or is cleared. Initial attach seeding does not fire an event. | `pane`: pane id; `status`: new status; `reason`: new reason; `previous_status`: prior status; `previous_reason`: prior reason; `focused`: `true` or `false`. |
 | `bell` | A pane emits BEL. | `pane`: pane id; `focused`: `true` or `false`. |
 | `focus-changed` | Focus moves to another workspace pane. | `pane`: newly focused pane id. |
 | `workspace-switched` | The active workspace changes, including a move or relocation that switches workspaces. | `workspace`: new 1-based workspace. |

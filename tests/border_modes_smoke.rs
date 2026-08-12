@@ -285,37 +285,43 @@ fn merged_stack_keeps_both_titles(titlebar: PaneTitlebarMode) {
     );
 }
 
+/// A floating pane keeps its double frame in the frameless modes by default - nothing else marks
+/// where the layer above the tiles ends - and only an explicit opt-out drops it.
 #[test]
-fn special_pane_frames_are_config_only_and_off_by_default() {
+fn special_pane_frames_are_on_by_default_and_config_only() {
     on_large_stack(|| {
-        let mut backend = backend(PaneBorderMode::None, 1);
-        {
-            let state = backend.state_mut();
-            state.current_mut().workspaces[0].panes[0].floating = true;
-            state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
-                x: 2.0,
-                y: 1.0,
-                w: 20.0,
-                h: 7.0,
-            };
-        }
-        backend.render();
-        assert!(
-            backend
-                .capture_frame()
-                .cells
-                .iter()
-                .all(|cell| !matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝"))
-        );
+        for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
+            let mut backend = backend(mode, 1);
+            {
+                let state = backend.state_mut();
+                state.current_mut().workspaces[0].panes[0].floating = true;
+                state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
+                    x: 2.0,
+                    y: 1.0,
+                    w: 20.0,
+                    h: 7.0,
+                };
+            }
+            backend.render();
+            assert!(
+                backend
+                    .capture_frame()
+                    .cells
+                    .iter()
+                    .any(|cell| matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
+                "{mode:?} should frame a floating pane by default"
+            );
 
-        backend.state_mut().config.pane.keep_special_borders = true;
-        backend.render();
-        assert!(
-            backend
-                .capture_frame()
-                .cells
-                .iter()
-                .any(|cell| matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝"))
-        );
+            backend.state_mut().config.pane.keep_special_borders = false;
+            backend.render();
+            assert!(
+                backend
+                    .capture_frame()
+                    .cells
+                    .iter()
+                    .all(|cell| !matches!(cell.symbol.as_str(), "═" | "║" | "╔" | "╗" | "╚" | "╝")),
+                "{mode:?} opt-out should drop the floating frame"
+            );
+        }
     });
 }

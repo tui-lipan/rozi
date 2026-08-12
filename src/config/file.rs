@@ -1098,7 +1098,7 @@ mod file_tests {
             workbar_at_bottom = true
             show_titles = false
             border_mode = "dividers"
-            keep_special_borders = true
+            keep_special_borders = false
             padding = 2
             titlebar = "integrated"
             title_style = "round"
@@ -1118,7 +1118,7 @@ mod file_tests {
         assert_eq!(parsed.pane.workbar_at_bottom, Some(true));
         assert_eq!(parsed.pane.show_titles, Some(false));
         assert_eq!(parsed.pane.border_mode.as_deref(), Some("dividers"));
-        assert_eq!(parsed.pane.keep_special_borders, Some(true));
+        assert_eq!(parsed.pane.keep_special_borders, Some(false));
         assert_eq!(parsed.pane.padding, Some(PaddingSpec::All(2)));
         assert_eq!(parsed.pane.titlebar.as_deref(), Some("integrated"));
         assert_eq!(parsed.pane.title_style.as_deref(), Some("round"));

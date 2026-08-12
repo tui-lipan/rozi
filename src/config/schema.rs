@@ -390,7 +390,9 @@ pub struct PaneConfig {
     /// Per-state theme roles for pane-alert borders. `None` disables that state.
     pub alert_colors: PaneAlertColors,
     /// Keep double frames around floating panes, popups, and the scratchpad when the selected
-    /// border mode otherwise disables per-pane frames. Config-file only.
+    /// border mode otherwise disables per-pane frames. On by default: a floating pane, popup, or
+    /// scratchpad is a layer above the tiles, and in `none`/`dividers` its frame is the only thing
+    /// that says where it ends. Config-file only.
     pub keep_special_borders: bool,
     /// Whether `surface.backdrop` (canvas gaps, unfocused pane frames) always tracks the host
     /// terminal's own background instead of the active theme's authored value. Overrides any
@@ -446,7 +448,7 @@ impl Default for PaneConfig {
             border_mode: PaneBorderMode::Separate,
             alert_border: AlertMode::Pulse,
             alert_colors: PaneAlertColors::default(),
-            keep_special_borders: false,
+            keep_special_borders: true,
             background_follows_terminal: false,
             border_style: PaneBorderStyle::Rounded,
             padding: (0, 0, 0, 0),
@@ -1520,7 +1522,7 @@ mod tests {
         assert!(PaneConfig::default().workbar_powerline);
         assert!(PaneConfig::default().show_titles);
         assert_eq!(PaneConfig::default().border_mode, PaneBorderMode::Separate);
-        assert!(!PaneConfig::default().keep_special_borders);
+        assert!(PaneConfig::default().keep_special_borders);
         assert!(PaneConfig::default().highlight_focused_titlebar);
     }
 

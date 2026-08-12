@@ -94,7 +94,7 @@ titlebar = "bar"              # pane title layout: bar|border|integrated|inset (
 border_mode = "separate"      # separate|merged|none|dividers (default: separate)
 border_style = "rounded"      # rounded|plain|double|thick (frame modes only)
 alert_border = "pulse"        # off|static|pulse (default: pulse)
-keep_special_borders = false  # frame floating/popup/scratch panes in borderless modes
+keep_special_borders = true   # frame floating/popup/scratch panes in borderless modes
 padding = 0                   # blank cells between border and terminal (default: 0)
                                # scalar = all sides; [v, h]; or [top, right, bottom, left]
 title_style = "padded"        # bar/integrated title caps: padded|half|round|arrow (default: padded)
@@ -311,7 +311,7 @@ Pane focus and chrome behavior.
 | `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The Settings cycle writes this back to config. |
 | `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
 | `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
-| `keep_special_borders` | `false` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Fullscreen panes remain consistent with the selected global mode. |
+| `keep_special_borders` | `true` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes, where nothing else marks the edge of a pane floating above the tiles. Set `false` to let those panes go frameless with everything else. Fullscreen panes remain consistent with the selected global mode. |
 | `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. Settings → Terminal padding writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
 
 `[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen

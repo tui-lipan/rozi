@@ -77,8 +77,9 @@
 #alert_border = "pulse"
 # Frame glyphs for separate/merged: rounded, plain, double, thick.
 #border_style = "rounded"
-# Keep frames around floating panes, popups, and the scratchpad even in none/dividers.
-#keep_special_borders = false
+# Keep frames around floating panes, popups, and the scratchpad even in none/dividers,
+# where nothing else marks the edge of a pane floating above the tiles.
+#keep_special_borders = true
 # Blank cells between a pane's border and its terminal grid. A single number covers all
 # sides; arrays are [vertical, horizontal] or [top, right, bottom, left]. Each side is
 # clamped to 8, and every cell costs usable terminal space.

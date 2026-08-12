@@ -121,10 +121,11 @@ Jumps to a *named* pane are not locked: the sidebar, `focus-next-blocked-pane`, 
 socket's `focus-pane` still move focus out of a fullscreen pane, because those name a destination
 rather than walking the layout.
 
-`none` and `dividers` also remove frames from floating panes, popups, scratchpads, and fullscreen
-panes for a consistent borderless presentation. Set the config-file-only
-`keep_special_borders = true` to retain double frames around floating panes, popups, and the
-scratchpad; fullscreen panes always follow the global mode.
+`none` and `dividers` remove frames from tiled and fullscreen panes, but floating panes, popups,
+and scratchpads keep their double frames: they sit on a layer above the tiles, and with no divider
+or frame anywhere else, that border is the only thing marking where they end. Set the
+config-file-only `keep_special_borders = false` for a fully borderless presentation instead;
+fullscreen panes always follow the global mode either way.
 
 ## Focus and movement
 

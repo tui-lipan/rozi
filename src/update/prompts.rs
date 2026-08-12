@@ -131,10 +131,9 @@ pub(super) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
 }
 
 pub(super) fn close_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
-    cancel_profile_picker(ctx);
-    // Raised from Settings' `Default profile` row, Esc steps back into Settings; opened standalone
-    // it lands on the pane.
-    crate::ops::overlay_return::finish(ctx)
+    let update = cancel_profile_picker(ctx);
+    request_current_pane_focus(ctx);
+    update
 }
 
 pub(super) fn profile_sessions_discovered(

@@ -251,7 +251,6 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "ephemeral",
             "last session",
         ]),
-        DefaultProfile => alias_list(&["profile default", "startup profile", "default recipe"]),
         ToggleSessionAutosave => {
             alias_list(&["session autosave", "restore layout", "save layout on quit"])
         }

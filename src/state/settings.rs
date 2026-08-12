@@ -46,22 +46,15 @@ pub enum SettingsAction {
     ToggleSoundDone,
     ToggleSoundError,
     CycleStartupMode,
-    DefaultProfile,
     ToggleSessionAutosave,
     ToggleSessionResurrect,
 }
 
 impl SettingsAction {
-    /// Rows whose value can be nudged with Left/Right. Theme, padding, and the default profile open
-    /// nested UI, so arrows stay with the search caret there.
+    /// Rows whose value can be nudged with Left/Right. Theme and padding open nested UI, so arrows
+    /// stay with the search caret there.
     pub const fn steps_horizontally(self) -> bool {
-        !matches!(self, Self::Theme | Self::EditPadding | Self::DefaultProfile)
-    }
-
-    /// Rows that hand off to another dialog instead of changing a value in place. They own their own
-    /// focus and must not be treated as a value the list can step or re-highlight on return.
-    pub const fn opens_nested_dialog(self) -> bool {
-        matches!(self, Self::Theme | Self::EditPadding | Self::DefaultProfile)
+        !matches!(self, Self::Theme | Self::EditPadding)
     }
 
     /// Dependent settings stay visible but inert while their parent feature is unavailable.

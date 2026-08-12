@@ -414,12 +414,6 @@ fn settings_activate_dir(
                 preference_error(ctx, err);
             }
         }
-        DefaultProfile => {
-            // The profile list owns this value, so hand off the way `Theme` hands off to the theme
-            // picker: `open_profile_picker` records Settings as the return target and highlights the
-            // current default, so `ctrl+f` there is one keypress from the row that sent you.
-            execute_action(ctx, Action::OpenProfilePicker);
-        }
         ToggleSessionAutosave => {
             ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
             persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
@@ -440,7 +434,7 @@ fn settings_activate_dir(
             preference_error(ctx, err);
         }
     }
-    if !action.opens_nested_dialog() {
+    if !matches!(action, Theme | EditPadding) {
         ctx.state.show_settings = true;
         ctx.state.settings_selected = Some(action);
         ctx.request_focus(crate::view::settings_palette_key());
@@ -786,59 +780,6 @@ mod tests {
                 assert_eq!(after, !before, "{key} should toggle");
                 assert_eq!(backend.state().settings_selected, Some(action));
                 assert!(backend.state().show_settings, "the dialog stays open");
-            }
-        });
-    }
-
-    /// The default-profile row hands off to the Profiles picker instead of stepping a value, and
-    /// lands on the current default so `ctrl+f` is one keypress away.
-    #[test]
-    fn default_profile_row_opens_the_profile_picker_on_the_current_default() {
-        on_large_stack(|| {
-            let profiles = crate::config::profiles_dir();
-            std::fs::create_dir_all(&profiles).expect("profiles dir");
-            for name in ["aaa-settings-row", "zzz-settings-row"] {
-                crate::profiles::save_profile(
-                    &profiles.join(format!("{name}.toml")),
-                    &crate::profiles::Profile::default(),
-                )
-                .expect("write profile");
-            }
-
-            let mut backend = TestBackend::new(AppRoot::default());
-            backend.state_mut().show_settings = true;
-            backend.state_mut().config.profile.default = Some("zzz-settings-row".to_string());
-            backend.state_mut().settings_selected =
-                Some(crate::state::SettingsAction::DefaultProfile);
-            backend
-                .dispatch(Msg::SettingsActivate(
-                    crate::state::SettingsAction::DefaultProfile,
-                ))
-                .unwrap();
-
-            assert!(backend.state().show_profile_picker);
-            assert!(
-                !backend.state().show_settings,
-                "the picker replaces Settings rather than stacking on it"
-            );
-            let selected_name = backend
-                .state()
-                .profile_picker
-                .as_ref()
-                .map(|picker| picker.entries[picker.selected].name.clone());
-            assert_eq!(selected_name.as_deref(), Some("zzz-settings-row"));
-
-            // Esc is "never mind": back to Settings, on the row that sent us there.
-            backend.dispatch(Msg::CloseProfilePicker).unwrap();
-            assert!(!backend.state().show_profile_picker);
-            assert!(backend.state().show_settings);
-            assert_eq!(
-                backend.state().settings_selected,
-                Some(crate::state::SettingsAction::DefaultProfile)
-            );
-
-            for name in ["aaa-settings-row", "zzz-settings-row"] {
-                let _ = std::fs::remove_file(profiles.join(format!("{name}.toml")));
             }
         });
     }

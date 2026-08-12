@@ -98,9 +98,8 @@ startup = "profile"
 A bare `rozi` then does exactly what `rozi dev` does — attach to session `dev`, or create it from
 `profiles/dev.toml`. See [startup policies](sessions.md#other-startup-policies).
 
-Both keys are also in **Settings → Startup**, as **Startup mode** and **Default profile**. The latter
-opens this picker on the current default (`none` when there is none), so **Ctrl+f** is one keypress
-away and **Esc** steps back into Settings.
+`startup` is also **Settings → Sessions → Startup mode**; the default profile is set here in
+**Profiles** with **Ctrl+f**, which is the one place that owns it.
 
 Set a default profile in config:
 

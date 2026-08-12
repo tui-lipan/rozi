@@ -174,26 +174,8 @@ fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Upd
     let mut picker = ProfilePickerState::new(entries);
     picker.apply_mode = apply_mode;
     picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
-    // Opened from Settings' `Default profile` row, land on the current default so `ctrl+f` needs no
-    // navigation; opened any other way, the list starts at the top as always.
-    if ctx.state.show_settings
-        && let Some(default) = ctx.state.config.profile.default.as_deref()
-        && let Some(index) = picker
-            .entries
-            .iter()
-            .position(|entry| entry.name == default)
-    {
-        picker.selected = index;
-    }
     ctx.state.profile_picker = Some(picker);
     ctx.state.show_profile_picker = true;
-    // Always assign: from Settings this leads back there, standalone it clears whatever a previous
-    // child left behind (see `ops::overlay_return`).
-    ctx.state.overlay_return = ctx
-        .state
-        .show_settings
-        .then_some(crate::state::OverlayOrigin::Settings);
-    ctx.state.show_settings = false;
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;

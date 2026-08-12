@@ -630,10 +630,6 @@ fn execute_action_inner(
 
 /// Theme is the one child that records Settings as its parent before hiding it. Every unrelated
 /// overlay opener closes Settings immediately so no modal remains interactive underneath another.
-/// Overlays that replace Settings outright. The two dialogs Settings *hands off* to - the theme
-/// picker and, for `Default profile`, the profile picker - are absent on purpose: their openers read
-/// `show_settings` to record Settings as the dialog to return to, so clearing it here would strand
-/// them (see `ops::overlay_return`).
 fn closes_settings(action: Action) -> bool {
     matches!(
         action,
@@ -645,6 +641,7 @@ fn closes_settings(action: Action) -> bool {
             | Action::RenameWorkspace
             | Action::RenameSession
             | Action::SaveProfile
+            | Action::OpenProfilePicker
             | Action::ApplyProfile
             | Action::OpenSessionPicker
             | Action::OpenCollaborators

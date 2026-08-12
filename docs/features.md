@@ -186,7 +186,8 @@ hosts, and cached remote sessions, with `ctrl+t` to reach a scratch ephemeral sh
 **Startup policy** — `[session] startup` decides what a bare launch does: `picker` (default, attaches
 nothing until you choose), `ephemeral`, `last` (the most recent named session), or `profile` (the
 session named after `[profile] default`). Explicit targets, `--pick`, and `--remote` take precedence.
-Settable in **Settings → Startup**, alongside the default profile it depends on.
+Settable in **Settings → Sessions → Startup mode**; the `[profile] default` it depends on is set
+in **Profiles** with **Ctrl+f**.
 
 **Autosave** — `[session] autosave` persists layout locally and restores it on next launch.
 
@@ -309,7 +310,7 @@ See [Keybindings](keybindings.md).
 - **Layout picker** (`shift+m`) with live preview.
 - **Theme picker** — built-in presets, custom themes, and `system`, in one fuzzy modal.
 - **Settings dialog** — fuzzy-search durable appearance, focus, alert, notification, sound, startup,
-  and session-persistence preferences; step values with left/right arrows.
+  and session preferences; step values with left/right arrows.
 - **Session picker**, **profile picker**, and **collaborators dialog**.
 - **Launcher** — a startup surface when there is no obvious session to attach to.
 - **DevTools overlay** — `tui-lipan`'s built-in inspector (`devtools` feature).

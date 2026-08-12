@@ -12,7 +12,11 @@ portable path because it does not depend on the terminal delivering modified key
 
 - A held modifier with the prefix is ignored; press the prefix *then* release, then the key.
 - `Ctrl-a` again (while in prefix mode) sends a **literal** `Ctrl-a` to the focused pane.
-- `Esc` cancels prefix mode. An unrecognized key is forwarded to the pane.
+- `Esc` cancels prefix mode, and is consumed doing so - it does not also reach the pane.
+- An unbound key does nothing and leaves prefix mode. Pressing the prefix is an explicit entry into
+  rozi's command state, so every key from that point belongs to rozi: it runs a binding, cancels
+  with `Esc`, is sent through by `Ctrl-a` again, or - being unbound - is simply swallowed. A
+  mistyped chord never types a stray character into the shell.
 - The workbar shows a yellow **PREFIX** indicator while you are in prefix mode.
 - The focused pane's caret is withheld while the prefix is pending: the next key belongs to rozi,
   not to the shell.

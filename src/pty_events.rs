@@ -704,6 +704,71 @@ mod tests {
         );
     }
 
+    /// The prefix is an explicit entry into rozi's command state, so an unbound key there resolves
+    /// to nothing rather than being replayed into the shell. Without this, a mistyped chord types a
+    /// stray character into whatever is running in the pane.
+    #[test]
+    fn an_unbound_key_after_the_prefix_reaches_no_pane() {
+        use crate::session::client::{ClientOutbound, SessionClient};
+        use tui_lipan::TestBackend;
+
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let app = App::new()
+                    .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
+                    .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+                    .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
+                let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
+                let (client, rx) = SessionClient::test_channel();
+                {
+                    let state = backend.state_mut();
+                    state.current_mut().session_client = Some(client);
+                    let pane = &mut state.current_mut().workspaces[0].panes[0];
+                    pane.opening = false;
+                    pane.terminal_active = true;
+                }
+                backend.render();
+                backend.focus_next();
+                while rx.try_recv().is_ok() {}
+
+                let prefix = key(KeyCode::Char('a'), KeyMods::CTRL);
+                backend.send_key(prefix).expect("prefix enters chord");
+                // `y` is deliberately unbound as a prefix chord: nothing should reach the pane.
+                backend
+                    .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
+                    .expect("unbound key resolves");
+
+                let inputs: Vec<_> = rx
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
+                        ClientOutbound::Control(_) => None,
+                    })
+                    .collect();
+                assert!(
+                    inputs.is_empty(),
+                    "the prefix and the unbound key must both stay in rozi: {inputs:?}"
+                );
+
+                // The chord is over, so the next key is ordinary input again.
+                backend
+                    .send_key(key(KeyCode::Char('y'), KeyMods::NONE))
+                    .expect("plain key forwards");
+                let inputs: Vec<_> = rx
+                    .try_iter()
+                    .filter_map(|message| match message {
+                        ClientOutbound::PaneInput { bytes, .. } => Some(bytes),
+                        ClientOutbound::Control(_) => None,
+                    })
+                    .collect();
+                assert_eq!(inputs, vec![b"y".to_vec()]);
+            })
+            .expect("spawn test thread")
+            .join()
+            .expect("test thread panicked");
+    }
+
     #[test]
     fn double_prefix_forwards_one_prefix_key() {
         use crate::session::client::{ClientOutbound, SessionClient};
@@ -714,7 +779,8 @@ mod tests {
             .spawn(|| {
                 let app = App::new()
                     .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
-                    .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal);
+                    .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+                    .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly);
                 let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
                 let (client, rx) = SessionClient::test_channel();
                 {

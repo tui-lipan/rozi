@@ -962,6 +962,12 @@ pub fn run() -> Result<()> {
         // focused widgets/terminal passthrough so they win regardless of what has focus.
         .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
         .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+        // Pressing the prefix is an explicit entry into rozi's command state, so the next key
+        // belongs to rozi whatever it turns out to be: it runs a binding, cancels with Esc, is
+        // forwarded by the explicit `<prefix> <prefix>` command, or - being unbound - does nothing.
+        // The default policy instead replays an unbound key into the pane, which makes a mistyped
+        // chord type a stray character into the shell.
+        .chord_mismatch_policy(ChordMismatchPolicy::CancelOnly)
         // How long the prefix is held before the which-key strip appears. Only that strip reads the
         // delayed signal; the PREFIX badge, the withheld caret, and prefix mouse gestures all stay
         // on the instant `command_chord_pending`.

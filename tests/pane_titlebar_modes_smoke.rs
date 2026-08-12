@@ -1,5 +1,6 @@
 //! Pins the visible pane titlebar layouts and their independent visibility switch against a real
-//! `AppRoot` render. Only `Bar` may add a row before the frame.
+//! `AppRoot` render. Only `Bar` may add a row before the frame, and only `Inset` may spend one
+//! inside it.
 
 use rozi::AppRoot;
 use rozi::state::{Pane, PaneId, PaneTitlebarMode};
@@ -18,12 +19,34 @@ fn render(
     render_capture(mode, show_titles, title_style, floating, true).to_fixed_grid_lines()
 }
 
+fn render_padded(mode: PaneTitlebarMode, padding: (u16, u16, u16, u16)) -> Vec<String> {
+    render_with(mode, true, CapStyle::Padded, false, true, padding).to_fixed_grid_lines()
+}
+
 fn render_capture(
     mode: PaneTitlebarMode,
     show_titles: bool,
     title_style: CapStyle,
     floating: bool,
     highlight_focused_titlebar: bool,
+) -> tui_lipan::CapturedFrame {
+    render_with(
+        mode,
+        show_titles,
+        title_style,
+        floating,
+        highlight_focused_titlebar,
+        (0, 0, 0, 0),
+    )
+}
+
+fn render_with(
+    mode: PaneTitlebarMode,
+    show_titles: bool,
+    title_style: CapStyle,
+    floating: bool,
+    highlight_focused_titlebar: bool,
+    padding: (u16, u16, u16, u16),
 ) -> tui_lipan::CapturedFrame {
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
@@ -39,6 +62,7 @@ fn render_capture(
         state.config.pane.titlebar = mode;
         state.config.pane.title_style = title_style;
         state.config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
+        state.config.pane.padding = padding;
         state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
         state.current_mut().workspaces[0].panes.clear();
         state.current_mut().workspaces[0].tile_tree = None;
@@ -142,6 +166,56 @@ fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
                 integrated_round[0]
             );
 
+            let inset = render(PaneTitlebarMode::Inset, true, CapStyle::Padded, false);
+            assert!(
+                inset[0].starts_with('╭') && inset[0].ends_with('╮'),
+                "inset keeps an unbroken top border: {}",
+                inset[0]
+            );
+            assert!(
+                inset[1].starts_with("│ 󰖲  nvim src/pane.rs"),
+                "inset title on the first interior row: {}",
+                inset[1]
+            );
+            assert!(
+                inset[1].ends_with('│'),
+                "inset title stays inside the side borders: {}",
+                inset[1]
+            );
+            assert!(
+                inset[2].starts_with("│body"),
+                "inset body follows the title row: {}",
+                inset[2]
+            );
+            // The quiet layout: foreground only. The title row must carry the pane's own
+            // background, not a titlebar fill, and no cap style may put one back.
+            for title_style in [CapStyle::Padded, CapStyle::Round, CapStyle::Half] {
+                let frame = render_capture(PaneTitlebarMode::Inset, true, title_style, false, true);
+                let title_row_bgs: Vec<_> = (1..frame.width)
+                    .map(|x| frame.cell(x, 1).bg)
+                    .collect();
+                let body_bg = frame.cell(1, 3).bg;
+                assert!(
+                    title_row_bgs.iter().all(|bg| *bg == body_bg),
+                    "{title_style:?} inset title row must not be filled: {title_row_bgs:?} vs body {body_bg:?}"
+                );
+            }
+
+            // The title row gives up the frame's padding so it stays flush under the border and
+            // aligned with where `border` puts its label; the configured padding applies to the
+            // terminal below it instead.
+            let inset_padded = render_padded(PaneTitlebarMode::Inset, (1, 1, 1, 1));
+            assert!(
+                inset_padded[1].starts_with("│ 󰖲  nvim src/pane.rs"),
+                "padding never shifts the title row: {}",
+                inset_padded[1]
+            );
+            assert!(
+                inset_padded[3].starts_with("│ body"),
+                "padding still applies below the title row: {}",
+                inset_padded[3]
+            );
+
             assert!(
                 disabled[0].starts_with('╭'),
                 "disabled frame: {}",
@@ -153,11 +227,7 @@ fn pane_titlebar_layouts_and_visibility_use_the_expected_frame_rows() {
                 disabled[0]
             );
 
-            for mode in [
-                PaneTitlebarMode::Bar,
-                PaneTitlebarMode::Border,
-                PaneTitlebarMode::Integrated,
-            ] {
+            for mode in PaneTitlebarMode::all().iter().copied() {
                 let focused = render_capture(mode, true, CapStyle::Padded, false, true);
                 let unfocused_titlebar = render_capture(mode, true, CapStyle::Padded, false, false);
                 let focused_title = focused

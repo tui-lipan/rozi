@@ -196,17 +196,27 @@ transitions as workspace panes.
 ## Titlebars
 
 Each pane can show its icon (tiled / floating / fullscreen) and title as a separate bar, embedded
-in the frame border, or as an integrated top strip. Set `[pane] titlebar` to `bar`,
-`border`, or `integrated`; the compact modes preserve the terminal row used by the separate bar.
+in the frame border, as an integrated top strip, or inside the frame beneath the top border. Set
+`[pane] titlebar` to `bar`, `border`, `integrated`, or `inset`; `border` and `integrated` preserve
+the terminal row that `bar` and `inset` use. `bar` and `integrated` fill their row with the
+titlebar color, while `border` and `inset` write plain text over the pane, so `[pane] title_style`
+end caps apply only to the first two.
 Set `[pane] show_titles = false` to hide the selected layout without losing it, or toggle titles
 with the *Toggle pane titlebars* palette command. Set `[pane] highlight_focused_titlebar = false`
-to keep focused and unfocused titlebars styled identically across all three layouts.
+to keep focused and unfocused titlebars styled identically across all four layouts.
 Border and integrated headers remain visible in frameless modes: tui-lipan gives them their own
 row when no frame edge exists. In `border_mode = "dividers"`, a border title embeds in the
 horizontal divider above the pane (like a Frame border header: `├─title────`, with a leading
 dash after the junction and no trailing gap before the line continues), and an integrated title fills that
 divider row in place of the line. Top-row panes still get a Frame header because nothing sits
 above them to carry the title.
+
+`inset` is the only layout that never touches a border or divider row: the title is the frame's
+first interior row, so the top border stays unbroken and merged neighbors still fuse their borders
+normally. It reads as the quiet counterpart to `border` - same colors, same column, one row lower,
+and with an intact border above it. `[pane] padding` therefore applies to the terminal below the
+title rather than around it, which keeps the title locked to the border at any padding. In
+frameless modes there is no border above it, so it simply becomes the pane's first row.
 
 The displayed title uses this precedence:
 

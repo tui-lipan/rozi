@@ -317,7 +317,7 @@ pub(crate) fn scratch_resize_strip(
         || ctx.state.config.pane.keep_special_borders;
     let strip_h: f32 = if special_frame
         && ctx.state.config.pane.show_titles
-        && ctx.state.config.pane.titlebar.takes_title_row()
+        && ctx.state.config.pane.titlebar.takes_outer_row()
     {
         2.0
     } else {

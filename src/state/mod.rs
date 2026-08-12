@@ -639,7 +639,7 @@ impl State {
             PaneBorderMode::Merged => TileGap {
                 horizontal: -1.0,
                 vertical: if self.config.pane.show_titles
-                    && self.config.pane.titlebar.takes_title_row()
+                    && self.config.pane.titlebar.takes_outer_row()
                 {
                     0.0
                 } else {

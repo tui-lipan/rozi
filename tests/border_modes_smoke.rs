@@ -184,34 +184,38 @@ fn border_header_survives_a_borderless_frame() {
     });
 }
 
+/// With no frame edge to sit on or beneath, both compact layouts collapse to the same shape: one
+/// row of title, then the terminal.
 #[test]
-fn integrated_header_uses_one_row_in_borderless_modes() {
+fn compact_headers_use_one_row_in_borderless_modes() {
     on_large_stack(|| {
         for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
-            for title_style in [CapStyle::Padded, CapStyle::Half] {
-                let mut backend = backend(mode, 1);
-                {
-                    let state = backend.state_mut();
-                    state.config.pane.show_titles = true;
-                    state.config.pane.titlebar = PaneTitlebarMode::Integrated;
-                    state.config.pane.title_style = title_style;
-                    let pane = &mut state.current_mut().workspaces[0].panes[0];
-                    pane.set_custom_title("integrated title");
-                    pane.terminal.process_server_output(b"body");
-                }
+            for titlebar in [PaneTitlebarMode::Integrated, PaneTitlebarMode::Inset] {
+                for title_style in [CapStyle::Padded, CapStyle::Half] {
+                    let mut backend = backend(mode, 1);
+                    {
+                        let state = backend.state_mut();
+                        state.config.pane.show_titles = true;
+                        state.config.pane.titlebar = titlebar;
+                        state.config.pane.title_style = title_style;
+                        let pane = &mut state.current_mut().workspaces[0].panes[0];
+                        pane.set_custom_title("integrated title");
+                        pane.terminal.process_server_output(b"body");
+                    }
 
-                backend.render();
-                let lines = backend.capture_frame().to_fixed_grid_lines();
-                assert!(
-                    lines[0].contains("integrated title"),
-                    "{mode:?}/{title_style:?} title should occupy the first row: {}",
-                    lines[0]
-                );
-                assert!(
-                    lines[1].starts_with("body"),
-                    "{mode:?}/{title_style:?} terminal should start immediately below: {}",
-                    lines[1]
-                );
+                    backend.render();
+                    let lines = backend.capture_frame().to_fixed_grid_lines();
+                    assert!(
+                        lines[0].contains("integrated title"),
+                        "{mode:?}/{titlebar:?}/{title_style:?} title should occupy the first row: {}",
+                        lines[0]
+                    );
+                    assert!(
+                        lines[1].starts_with("body"),
+                        "{mode:?}/{titlebar:?}/{title_style:?} terminal should start immediately below: {}",
+                        lines[1]
+                    );
+                }
             }
         }
     });
@@ -220,57 +224,65 @@ fn integrated_header_uses_one_row_in_borderless_modes() {
 #[test]
 fn merged_border_titlebar_keeps_lower_title_when_upper_focused() {
     on_large_stack(|| {
-        let mut backend = TestBackend::new(AppRoot::default());
-        backend.set_viewport(Rect {
-            x: 0,
-            y: 0,
-            w: 40,
-            h: 12,
-        });
-        {
-            let state = backend.state_mut();
-            state.config.animations.enabled = false;
-            state.config.pane.show_workbar = false;
-            state.config.pane.show_titles = true;
-            state.config.pane.titlebar = PaneTitlebarMode::Border;
-            state.config.pane.border_mode = PaneBorderMode::Merged;
-            state.config.pane.highlight_focused_border = true;
-            let workspace = &mut state.current_mut().workspaces[0];
-            workspace.start_axis = SplitAxis::Vertical;
-            workspace.panes.clear();
-            workspace.tile_tree = None;
-            let ids = [10u32, 11u32];
-            for (i, id) in ids.iter().enumerate() {
-                let mut pane = Pane::new(
-                    *id,
-                    5_000,
-                    FloatRect {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 40.0,
-                        h: 12.0,
-                    },
-                );
-                pane.opening = false;
-                pane.terminal_active = true;
-                pane.set_custom_title(if i == 0 { "TOP-PANE" } else { "BOTTOM-PANE" });
-                workspace.panes.push(pane);
-            }
-            workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
-            workspace.focused_pane = Some(10);
-            state.current_mut().focused_pane = Some(10);
+        // Border lifts the lower title onto the shared seam; Inset keeps it on its own interior
+        // row, which nothing else can claim. Both must survive the focused upper pane drawing last.
+        for titlebar in [PaneTitlebarMode::Border, PaneTitlebarMode::Inset] {
+            merged_stack_keeps_both_titles(titlebar);
         }
-        backend.render();
-        let lines = backend.capture_frame().to_fixed_grid_lines();
-        assert!(
-            lines.iter().any(|line| line.contains("TOP-PANE")),
-            "top title missing: {lines:?}"
-        );
-        assert!(
-            lines.iter().any(|line| line.contains("󰖲  BOTTOM-PANE")),
-            "bottom title wiped or its icon gap collapsed by focused upper border: {lines:?}"
-        );
     });
+}
+
+fn merged_stack_keeps_both_titles(titlebar: PaneTitlebarMode) {
+    let mut backend = TestBackend::new(AppRoot::default());
+    backend.set_viewport(Rect {
+        x: 0,
+        y: 0,
+        w: 40,
+        h: 12,
+    });
+    {
+        let state = backend.state_mut();
+        state.config.animations.enabled = false;
+        state.config.pane.show_workbar = false;
+        state.config.pane.show_titles = true;
+        state.config.pane.titlebar = titlebar;
+        state.config.pane.border_mode = PaneBorderMode::Merged;
+        state.config.pane.highlight_focused_border = true;
+        let workspace = &mut state.current_mut().workspaces[0];
+        workspace.start_axis = SplitAxis::Vertical;
+        workspace.panes.clear();
+        workspace.tile_tree = None;
+        let ids = [10u32, 11u32];
+        for (i, id) in ids.iter().enumerate() {
+            let mut pane = Pane::new(
+                *id,
+                5_000,
+                FloatRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 40.0,
+                    h: 12.0,
+                },
+            );
+            pane.opening = false;
+            pane.terminal_active = true;
+            pane.set_custom_title(if i == 0 { "TOP-PANE" } else { "BOTTOM-PANE" });
+            workspace.panes.push(pane);
+        }
+        workspace.tile_tree = build_dwindle_tree(&ids, workspace.start_axis, &[]);
+        workspace.focused_pane = Some(10);
+        state.current_mut().focused_pane = Some(10);
+    }
+    backend.render();
+    let lines = backend.capture_frame().to_fixed_grid_lines();
+    assert!(
+        lines.iter().any(|line| line.contains("TOP-PANE")),
+        "{titlebar:?} top title missing: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("󰖲  BOTTOM-PANE")),
+        "{titlebar:?} bottom title wiped or its icon gap collapsed by focused upper border: {lines:?}"
+    );
 }
 
 #[test]

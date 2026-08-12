@@ -246,19 +246,19 @@ fn title_parts(
         focused,
         ctx.state.config.pane.highlight_focused_background,
     );
-    let title_fg_background = if titlebar == PaneTitlebarMode::Border {
-        frame_bg_target
-    } else {
+    let title_fg_background = if titlebar.fills_strip() {
         title_bar_bg_target
+    } else {
+        frame_bg_target
     };
-    let title_fg_default = if titlebar == PaneTitlebarMode::Border {
+    let title_fg_default = if titlebar.fills_strip() {
+        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
+    } else {
         crate::ops::theme::pane_border_title_foreground(
             theme,
             titlebar_focused,
             title_fg_background,
         )
-    } else {
-        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
     };
     let title_bar_fg = app.chrome_color(ctx, id, "title-fg", title_fg_default);
     let title_bg = pane_title_bg(app, ctx, id, titlebar_focused);
@@ -282,6 +282,61 @@ fn title_parts(
             .bg(title_bg)
             .contrast_policy(ContrastPolicy::Off),
         text_style,
+    }
+}
+
+/// The filled title strip shared by the integrated, inset, and divider layouts: `Padded` is a flush
+/// band with blank side padding, while the cap styles paint the titlebar color as end caps over
+/// `cap_bg` so the row reads as a pill.
+fn filled_title_row(
+    fill_style: Style,
+    caps: Option<(&'static str, &'static str)>,
+    title_bg: Paint,
+    cap_bg: Paint,
+    title_text: Element,
+    badge_text: Option<Element>,
+) -> Element {
+    match caps {
+        None => {
+            let mut row = HStack::new()
+                .style(fill_style)
+                .padding((0, 1))
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .child(title_text);
+            if let Some(badge_text) = badge_text {
+                row = row.child(badge_text);
+            }
+            row.into()
+        }
+        Some((left, right)) => {
+            let cap_style = Style::new()
+                .fg(title_bg)
+                .bg(cap_bg)
+                .contrast_policy(ContrastPolicy::Off);
+            let cap = |glyph: &'static str| {
+                Text::new(glyph)
+                    .style(cap_style)
+                    .width(Length::Px(1))
+                    .height(Length::Px(1))
+            };
+            // No horizontal padding here: the caps themselves stand in for the side padding.
+            let mut middle = HStack::new()
+                .style(fill_style)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .child(title_text);
+            if let Some(badge_text) = badge_text {
+                middle = middle.child(badge_text);
+            }
+            HStack::new()
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .child(cap(left))
+                .child(middle)
+                .child(cap(right))
+                .into()
+        }
     }
 }
 
@@ -344,59 +399,14 @@ pub(crate) fn divider_title_element(
                     .height(Length::Px(1))
                     .into()
             });
-            let title_style = ctx.state.config.pane.title_style;
-            let caps = title_style.glyphs();
-            let title_row: Element = match caps {
-                None => {
-                    let mut row = HStack::new()
-                        .style(title_bar_fill_style)
-                        .padding((0, 1))
-                        .width(Length::Flex(1))
-                        .height(Length::Px(1))
-                        .child(title_text);
-                    if let Some(badge_text) = badge_text {
-                        row = row.child(badge_text);
-                    }
-                    row.into()
-                }
-                Some((left, right)) => {
-                    let mut middle = HStack::new()
-                        .style(title_bar_fill_style)
-                        .width(Length::Flex(1))
-                        .height(Length::Px(1))
-                        .child(title_text);
-                    if let Some(badge_text) = badge_text {
-                        middle = middle.child(badge_text);
-                    }
-                    HStack::new()
-                        .width(Length::Flex(1))
-                        .height(Length::Px(1))
-                        .child(
-                            Text::new(left)
-                                .style(
-                                    Style::new()
-                                        .fg(title_bar_bg)
-                                        .bg(frame_bg)
-                                        .contrast_policy(ContrastPolicy::Off),
-                                )
-                                .width(Length::Px(1))
-                                .height(Length::Px(1)),
-                        )
-                        .child(middle)
-                        .child(
-                            Text::new(right)
-                                .style(
-                                    Style::new()
-                                        .fg(title_bar_bg)
-                                        .bg(frame_bg)
-                                        .contrast_policy(ContrastPolicy::Off),
-                                )
-                                .width(Length::Px(1))
-                                .height(Length::Px(1)),
-                        )
-                        .into()
-                }
-            };
+            let title_row = filled_title_row(
+                title_bar_fill_style,
+                ctx.state.config.pane.title_style.glyphs(),
+                title_bar_bg,
+                frame_bg,
+                title_text,
+                badge_text,
+            );
             Some(
                 MouseRegion::new()
                     .capture_click(true)
@@ -405,7 +415,8 @@ pub(crate) fn divider_title_element(
                     .into(),
             )
         }
-        PaneTitlebarMode::Bar => None,
+        // Both keep their title inside the pane's own Frame, so a divider carries no label for them.
+        PaneTitlebarMode::Bar | PaneTitlebarMode::Inset => None,
     }
 }
 
@@ -529,7 +540,7 @@ pub(crate) fn seam_title_element(
                     .into(),
             })
         }
-        PaneTitlebarMode::Bar => None,
+        PaneTitlebarMode::Bar | PaneTitlebarMode::Inset => None,
     }
 }
 
@@ -656,6 +667,10 @@ pub(crate) fn pane_element(
     };
     let titlebar = ctx.state.config.pane.titlebar;
     let show_titles = ctx.state.config.pane.show_titles;
+    // The inset title is the frame's first interior row, so the frame gives up its own padding to
+    // it and the configured padding is re-applied to the terminal below. That keeps the title
+    // locked under the top border, at the column `border` would have put it in.
+    let inset_title = show_titles && titlebar == PaneTitlebarMode::Inset;
     let titlebar_focused = focused && ctx.state.config.pane.highlight_focused_titlebar;
     let title_bar_bg_target = if titlebar_focused {
         theme.border_active
@@ -665,19 +680,19 @@ pub(crate) fn pane_element(
     let title_bar_bg = pane_title_bg(app, ctx, pane.id, titlebar_focused);
     // The *target* background, not the one mid-fade: this picks a contrasting foreground, and
     // deriving it from a moving colour would make the foreground wobble through the fade.
-    let title_fg_background = if titlebar == PaneTitlebarMode::Border {
-        frame_bg_target
-    } else {
+    let title_fg_background = if titlebar.fills_strip() {
         title_bar_bg_target
+    } else {
+        frame_bg_target
     };
-    let title_fg_default = if titlebar == PaneTitlebarMode::Border {
+    let title_fg_default = if titlebar.fills_strip() {
+        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
+    } else {
         crate::ops::theme::pane_border_title_foreground(
             theme,
             titlebar_focused,
             title_fg_background,
         )
-    } else {
-        crate::ops::theme::pane_title_foreground(theme, titlebar_focused, title_fg_background)
     };
     let title_bar_fg = app.chrome_color(ctx, pane.id, "title-fg", title_fg_default);
     let title_bar_fill_style = Style::new()
@@ -905,9 +920,14 @@ pub(crate) fn pane_element(
         } else {
             BorderMergeMode::Replace
         })
-        .padding(ctx.state.config.pane.padding)
+        .padding(if inset_title {
+            (0, 0, 0, 0)
+        } else {
+            ctx.state.config.pane.padding
+        })
         .style(frame_style)
         .focus_style(Style::default());
+    let mut inset_title_row: Option<Element> = None;
     if show_titles {
         match titlebar {
             PaneTitlebarMode::Border if !merge.title_outside_frame() => {
@@ -939,20 +959,9 @@ pub(crate) fn pane_element(
                         .into()
                 });
                 let title_style = ctx.state.config.pane.title_style;
-                let caps = title_style.glyphs();
-                let title_row: Element = match caps {
-                    None => {
-                        let mut row = HStack::new()
-                            .style(title_bar_fill_style)
-                            .padding((0, 1))
-                            .width(Length::Flex(1))
-                            .height(Length::Px(1))
-                            .child(title_text);
-                        if let Some(badge_text) = badge_text {
-                            row = row.child(badge_text);
-                        }
-                        row.into()
-                    }
+                let title_row: Element = match title_style.glyphs() {
+                    // The frame's own top-edge decoration draws the half-block caps as its corner
+                    // cells, so the header only pads past the left one.
                     Some(_) if title_style == CapStyle::Half && show_border => {
                         let mut row = HStack::new()
                             .style(title_bar_fill_style)
@@ -965,45 +974,16 @@ pub(crate) fn pane_element(
                         }
                         row.into()
                     }
-                    Some((left, right)) => {
-                        let mut middle = HStack::new()
-                            .style(title_bar_fill_style)
-                            .width(Length::Flex(1))
-                            .height(Length::Px(1))
-                            .child(title_text);
-                        if let Some(badge_text) = badge_text {
-                            middle = middle.child(badge_text);
-                        }
-                        // With a frame, keep its corner glyphs visible by placing caps immediately
-                        // inside them. Without one, the caps become the header's own outer cells.
-                        HStack::new()
-                            .width(Length::Flex(1))
-                            .height(Length::Px(1))
-                            .child(
-                                Text::new(left)
-                                    .style(
-                                        Style::new()
-                                            .fg(title_bar_bg)
-                                            .bg(frame_bg)
-                                            .contrast_policy(ContrastPolicy::Off),
-                                    )
-                                    .width(Length::Px(1))
-                                    .height(Length::Px(1)),
-                            )
-                            .child(middle)
-                            .child(
-                                Text::new(right)
-                                    .style(
-                                        Style::new()
-                                            .fg(title_bar_bg)
-                                            .bg(frame_bg)
-                                            .contrast_policy(ContrastPolicy::Off),
-                                    )
-                                    .width(Length::Px(1))
-                                    .height(Length::Px(1)),
-                            )
-                            .into()
-                    }
+                    // With a frame, keep its corner glyphs visible by placing caps immediately
+                    // inside them. Without one, the caps become the header's own outer cells.
+                    caps => filled_title_row(
+                        title_bar_fill_style,
+                        caps,
+                        title_bar_bg,
+                        frame_bg,
+                        title_text,
+                        badge_text,
+                    ),
                 };
                 let header: Element = MouseRegion::new()
                     .capture_click(true)
@@ -1022,12 +1002,65 @@ pub(crate) fn pane_element(
                     };
                 }
             }
+            // A row of the frame's interior rather than a header, so the title is never on the
+            // border row and never shares one with a neighbour: no merge, divider, or seam case.
+            // The row paints no background of its own - the frame's shows through, which is what
+            // makes this the quiet layout - so the one cell of left padding is what lines the icon
+            // up with where `border` puts it, just a row lower.
+            PaneTitlebarMode::Inset => {
+                let title_text: Element = Text::new(format!(
+                    "{icon}  {}",
+                    title.as_ref().expect("visible titlebar has a title")
+                ))
+                .style(border_title_text_style)
+                .overflow(Overflow::Ellipsis)
+                .width(Length::Flex(1))
+                .height(Length::Px(1))
+                .into();
+                let mut title_row = HStack::new()
+                    .padding((0, 1))
+                    .width(Length::Flex(1))
+                    .height(Length::Px(1))
+                    .child(title_text);
+                if let Some(badge) = badge {
+                    title_row = title_row.child(
+                        Text::new(format!("· {badge}"))
+                            .style(border_title_text_style)
+                            .height(Length::Px(1)),
+                    );
+                }
+                inset_title_row = Some(
+                    MouseRegion::new()
+                        .capture_click(true)
+                        .on_mouse_down(ctx.link().callback(move |_| Msg::FocusPane(id)))
+                        .child(title_row)
+                        .into(),
+                );
+            }
             PaneTitlebarMode::Bar => {}
             // Title rides the divider above this pane - see `view::divider_title_element`.
             PaneTitlebarMode::Border | PaneTitlebarMode::Integrated => {}
         }
     }
-    let body: Element = body.child(terminal).into();
+    let content: Element = match inset_title_row {
+        Some(title_row) => VStack::new()
+            .align(Align::Stretch)
+            .width(Length::Flex(1))
+            .height(Length::Flex(1))
+            .child(title_row)
+            .child(
+                // Unstyled, so the frame's own background shows through the padding it gave up.
+                VStack::new()
+                    .align(Align::Stretch)
+                    .padding(ctx.state.config.pane.padding)
+                    .width(Length::Flex(1))
+                    .height(Length::Flex(1))
+                    .child(terminal),
+            )
+            .into(),
+        None => terminal,
+    };
+    let body: Element = body.child(content).into();
     let body = body.key(pane_body_key(id));
     window_stack = window_stack.child(body);
 
@@ -1277,7 +1310,7 @@ pub(crate) fn tiled_resize_strips(
 
     let gap = ctx.state.tile_gap();
     let title_row =
-        ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_title_row();
+        ctx.state.config.pane.show_titles && ctx.state.config.pane.titlebar.takes_outer_row();
     let (vertical_strips, horizontal_strips) =
         resize_strip_hitboxes(&tiled, gap, master, title_row);
     // Junction segment lookup compares the drag origin against canvas-space starts, so shift by

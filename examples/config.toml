@@ -67,8 +67,9 @@
 #workbar_at_bottom = false
 #show_titles = true
 # Title layout: "bar" is a separate full-width row, "border" embeds the title in the top
-# frame, "integrated" fills the top frame row as a compact strip. The latter two give back
-# the terminal row that "bar" costs.
+# frame, "integrated" fills the top frame row as a compact strip, "inset" writes the title on
+# the first row inside the frame, beneath an unbroken top border, with no fill behind it.
+# "border" and "integrated" give back the terminal row that "bar" and "inset" cost.
 #titlebar = "bar"
 # separate = one frame per pane, merged = shared junctions between neighbors,
 # none = no frames, dividers = lines along internal splits only.
@@ -82,7 +83,7 @@
 # sides; arrays are [vertical, horizontal] or [top, right, bottom, left]. Each side is
 # clamped to 8, and every cell costs usable terminal space.
 #padding = 0
-# End caps for bar/integrated titlebars: padded, half (block caps), round or arrow
+# End caps for the filled bar/integrated titlebars: padded, half (block caps), round or arrow
 # (powerline caps, which need a Nerd Font).
 #title_style = "padded"
 # End caps for workbar badges - the title chip and the PREFIX/RESIZE/COPY chips.

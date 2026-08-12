@@ -399,7 +399,8 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                                 .label(label)
                                 .label_alignment(Align::Stretch)
                                 .label_padding(0),
-                            crate::state::PaneTitlebarMode::Bar => line,
+                            crate::state::PaneTitlebarMode::Bar
+                            | crate::state::PaneTitlebarMode::Inset => line,
                         };
                     }
                     line.into()

@@ -167,6 +167,7 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "bar titlebar",
             "border titlebar",
             "integrated titlebar",
+            "inset titlebar",
         ]),
         ToggleWorkbar => alias_list(&["show workbar", "toggle workbar"]),
         ToggleWorkbarGap => {

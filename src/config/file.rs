@@ -690,7 +690,7 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
         match PaneTitlebarMode::parse(titlebar) {
             Some(mode) => config.pane.titlebar = mode,
             None => warnings.push(format!(
-                "Ignored unknown pane.titlebar \"{titlebar}\" (expected one of: bar, border, integrated)"
+                "Ignored unknown pane.titlebar \"{titlebar}\" (expected one of: bar, border, integrated, inset)"
             )),
         }
     }

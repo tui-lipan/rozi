@@ -2,7 +2,7 @@ use tui_lipan::prelude::TextInput;
 
 use crate::config::Config;
 
-use super::{PaneBorderMode, PaneTitlebarMode};
+use super::PaneBorderMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsAction {
@@ -64,8 +64,8 @@ impl SettingsAction {
             Self::CycleTitlebar | Self::CycleTitleStyle if !pane.show_titles => {
                 Some("Needs titlebar")
             }
-            Self::CycleTitleStyle if pane.titlebar == PaneTitlebarMode::Border => {
-                Some("Needs bar or integrated titlebar")
+            Self::CycleTitleStyle if !pane.titlebar.fills_strip() => {
+                Some("Unsupported in this layout")
             }
             Self::ToggleHighlightFocusedBorder | Self::CycleAlertBorder
                 if pane.border_mode == PaneBorderMode::None =>

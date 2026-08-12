@@ -1,19 +1,21 @@
 use tui_lipan::prelude::{BorderStyle, CapStyle, Theme};
 
-/// Structural presentation of a visible pane title. `Bar` is the existing separate title row;
-/// the compact variants reuse the frame's top border row. Visibility is controlled independently
-/// by `pane.show_titles`, so toggling it never loses the selected layout.
+/// Structural presentation of a visible pane title. `Bar` is the existing separate title row above
+/// the frame; `Border` and `Integrated` reuse the frame's top border row; `Inset` writes the title
+/// inside the frame, on the first interior row beneath the top border. Visibility is controlled
+/// independently by `pane.show_titles`, so toggling it never loses the selected layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaneTitlebarMode {
     Bar,
     Border,
     Integrated,
+    Inset,
 }
 
 impl PaneTitlebarMode {
     /// Cycle order for `Action::CycleTitlebar`.
     pub fn all() -> &'static [PaneTitlebarMode] {
-        &[Self::Bar, Self::Border, Self::Integrated]
+        &[Self::Bar, Self::Border, Self::Integrated, Self::Inset]
     }
 
     /// Config token and persisted value.
@@ -22,6 +24,7 @@ impl PaneTitlebarMode {
             Self::Bar => "bar",
             Self::Border => "border",
             Self::Integrated => "integrated",
+            Self::Inset => "inset",
         }
     }
 
@@ -30,6 +33,7 @@ impl PaneTitlebarMode {
             Self::Bar => "Bar",
             Self::Border => "Border",
             Self::Integrated => "Integrated",
+            Self::Inset => "Inset",
         }
     }
 
@@ -43,6 +47,7 @@ impl PaneTitlebarMode {
             "bar" | "titlebar" => Some(Self::Bar),
             "border" | "frame" => Some(Self::Border),
             "integrated" | "compact" => Some(Self::Integrated),
+            "inset" | "inside" | "inner" => Some(Self::Inset),
             _ => None,
         }
     }
@@ -55,9 +60,19 @@ impl PaneTitlebarMode {
         step_ring(Self::all(), self, true)
     }
 
-    /// Only the separate bar consumes a row in addition to the frame border.
-    pub fn takes_title_row(self) -> bool {
+    /// Whether the layout adds a chrome row *outside* the frame, which is what tile geometry has to
+    /// account for: the row cannot overlap a merged neighbour's border, and it widens the drag
+    /// handle on a stacked boundary. Only the separate bar does. `Inset` also spends a row on its
+    /// title, but that row is interior, so the frame's own top border still merges as usual.
+    pub fn takes_outer_row(self) -> bool {
         self == Self::Bar
+    }
+
+    /// Whether the title is a strip filled with the titlebar background. `Border` and `Inset` draw
+    /// plain text over the pane instead, so they take their foreground from the frame background
+    /// rather than the titlebar color, and have no end caps for `pane.title_style` to shape.
+    pub fn fills_strip(self) -> bool {
+        matches!(self, Self::Bar | Self::Integrated)
     }
 }
 

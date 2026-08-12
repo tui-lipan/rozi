@@ -1547,11 +1547,22 @@ mod tests {
             PaneTitlebarMode::parse("compact"),
             Some(PaneTitlebarMode::Integrated)
         );
+        assert_eq!(
+            PaneTitlebarMode::parse("inside"),
+            Some(PaneTitlebarMode::Inset)
+        );
         assert_eq!(PaneTitlebarMode::parse("off"), None);
         assert_eq!(PaneTitlebarMode::parse("nonsense"), None);
-        assert!(PaneTitlebarMode::Bar.takes_title_row());
-        assert!(!PaneTitlebarMode::Integrated.takes_title_row());
-        assert_eq!(PaneTitlebarMode::Integrated.next(), PaneTitlebarMode::Bar);
+        assert!(PaneTitlebarMode::Bar.takes_outer_row());
+        assert!(!PaneTitlebarMode::Integrated.takes_outer_row());
+        // The inset strip lives inside the frame, so it never displaces the top border row.
+        assert!(!PaneTitlebarMode::Inset.takes_outer_row());
+        assert!(PaneTitlebarMode::Bar.fills_strip());
+        // Both draw plain text over the pane, so neither has a strip for `title_style` to cap.
+        assert!(!PaneTitlebarMode::Border.fills_strip());
+        assert!(!PaneTitlebarMode::Inset.fills_strip());
+        assert_eq!(PaneTitlebarMode::Integrated.next(), PaneTitlebarMode::Inset);
+        assert_eq!(PaneTitlebarMode::Inset.next(), PaneTitlebarMode::Bar);
     }
 
     #[test]

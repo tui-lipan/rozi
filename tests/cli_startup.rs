@@ -23,7 +23,7 @@ mod unix {
     }
 
     fn command(root: &std::path::Path) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_hyprmux"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rozi"));
         command
             .env("HOME", root)
             .env("XDG_CONFIG_HOME", root.join("config"))

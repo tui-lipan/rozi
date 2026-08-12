@@ -1,8 +1,8 @@
 //! Render-level regression coverage for pane alert colors across border modes.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneBorderMode, SplitAxis};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneBorderMode, SplitAxis};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{Color, FloatRect, Rect};
 
@@ -47,7 +47,7 @@ fn backend(mode: PaneBorderMode) -> TestBackend<AppRoot> {
 fn block_second(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
-        .reported_status = Some(hyprmux::session::protocol::PaneStatus {
+        .reported_status = Some(rozi::session::protocol::PaneStatus {
         value: "blocked".into(),
         reason: None,
         set_at: 0,
@@ -57,9 +57,9 @@ fn block_second(backend: &mut TestBackend<AppRoot>) {
 fn detect_second_as_blocked(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
-        .detected_agent = Some(hyprmux::session::protocol::DetectedAgent {
-        kind: hyprmux::session::protocol::AgentKind::Codex,
-        state: hyprmux::session::protocol::DetectedAgentState::Blocked,
+        .detected_agent = Some(rozi::session::protocol::DetectedAgent {
+        kind: rozi::session::protocol::AgentKind::Codex,
+        state: rozi::session::protocol::DetectedAgentState::Blocked,
     });
 }
 
@@ -75,7 +75,7 @@ fn on_large_stack(test: impl FnOnce() + Send + 'static) {
 #[test]
 fn alerts_color_frames_and_dividers_but_never_none_mode() {
     on_large_stack(|| {
-        hyprmux::test_support::isolate_user_dirs();
+        rozi::test_support::isolate_user_dirs();
         for mode in [
             PaneBorderMode::Separate,
             PaneBorderMode::Merged,
@@ -112,7 +112,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
 
         let mut backend = backend(PaneBorderMode::Separate);
         backend.state_mut().theme.status.error = Color::rgb(255, 0, 1);
-        backend.state_mut().config.pane.alert_border = hyprmux::state::AlertMode::Off;
+        backend.state_mut().config.pane.alert_border = rozi::state::AlertMode::Off;
         block_second(&mut backend);
         backend.render();
         assert!(
@@ -129,7 +129,7 @@ fn alerts_color_frames_and_dividers_but_never_none_mode() {
 #[test]
 fn focusing_finished_alert_clears_it_and_focus_keeps_the_active_border() {
     on_large_stack(|| {
-        hyprmux::test_support::isolate_user_dirs();
+        rozi::test_support::isolate_user_dirs();
         let mut backend = backend(PaneBorderMode::Separate);
         {
             let state = backend.state_mut();
@@ -149,7 +149,7 @@ fn focusing_finished_alert_clears_it_and_focus_keeps_the_active_border() {
 
         // The update chokepoint acknowledges a finished pane as soon as it is focused.
         backend
-            .dispatch(hyprmux::Msg::FocusPane(11))
+            .dispatch(rozi::Msg::FocusPane(11))
             .expect("focus update succeeds");
         backend.render();
         assert!(

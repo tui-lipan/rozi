@@ -324,7 +324,7 @@ under Code Style.
   scripts), and a running hyprmux live-reloads its config file, so an unisolated test lands in the
   UI the developer is working in. Unit tests are isolated automatically - `PlatformEnv::from_process`
   resolves into a per-process scratch root under `cfg(test)`. An integration test that builds a
-  `AppRoot` must call `hyprmux::test_support::isolate_user_dirs()` first, from whatever helper
+  `AppRoot` must call `rozi::test_support::isolate_user_dirs()` first, from whatever helper
   constructs its `TestBackend`. Never mutate `HOME`/`XDG_*`/`APPDATA`/`HYPRMUX_CONFIG` to redirect a
   test: `std::env::set_var` is unsound beside parallel tests, and isolation now outranks it anyway.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and

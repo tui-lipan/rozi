@@ -19,16 +19,16 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use hyprmux::config::{RemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
-use hyprmux::session::client::SessionClient;
-use hyprmux::session::protocol::{FILE_TREE_PROTOCOL, ServerMessage};
-use hyprmux::session::remote::{connect_remote, parse_remote_target};
+use rozi::config::{RemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
+use rozi::session::client::SessionClient;
+use rozi::session::protocol::{FILE_TREE_PROTOCOL, ServerMessage};
+use rozi::session::remote::{connect_remote, parse_remote_target};
 
 use common::unique_session_name;
 
 /// Whether `ssh localhost` completes without any prompt. Anything else means "not set up here".
 fn localhost_ssh_available() -> bool {
-    if !hyprmux::platform::command::program_exists("ssh") {
+    if !rozi::platform::command::program_exists("ssh") {
         return false;
     }
     std::process::Command::new("ssh")
@@ -54,7 +54,7 @@ fn pinned_config() -> RemoteConfig {
     hosts.insert(
         "localhost".to_string(),
         RemoteHostConfig {
-            binary_path: Some(env!("CARGO_BIN_EXE_hyprmux").to_string()),
+            binary_path: Some(env!("CARGO_BIN_EXE_rozi").to_string()),
             ..RemoteHostConfig::default()
         },
     );
@@ -69,7 +69,7 @@ fn pinned_config() -> RemoteConfig {
 
 /// Best-effort teardown so a real session server is not left running on the developer's machine.
 fn kill_session(name: &str) {
-    let _ = std::process::Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+    let _ = std::process::Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["kill-session", name])
         .output();
 }
@@ -170,7 +170,7 @@ fn remote_serve_proxies_a_session_over_pipes() {
     let runtime_base = common::private_temp_dir();
 
     let spawn_proxy = || {
-        Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+        Command::new(env!("CARGO_BIN_EXE_rozi"))
             .args(["--remote-serve", &session])
             .env("XDG_RUNTIME_DIR", &runtime_base)
             .stdin(Stdio::piped())
@@ -182,14 +182,14 @@ fn remote_serve_proxies_a_session_over_pipes() {
 
     // First proxy: nothing is listening for this name, so it must autostart the server.
     let mut first =
-        hyprmux::platform::ipc::connection_from_child(spawn_proxy()).expect("wrap proxy stdio");
+        rozi::platform::ipc::connection_from_child(spawn_proxy()).expect("wrap proxy stdio");
     first
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("set read timeout");
     // A closed stream here means the proxy child died before writing anything, and its stderr is
     // owned by the connection wrapper, so report what can actually be checked from here: the
     // runtime path the child had to fit a socket into.
-    let preamble = hyprmux::session::remote::read_preamble(&mut first).unwrap_or_else(|error| {
+    let preamble = rozi::session::remote::read_preamble(&mut first).unwrap_or_else(|error| {
         panic!(
             "read preamble: {error}\n  runtime base: {} ({} bytes before /hyprmux/<session>.sock; \
              sun_path caps at 104 on macOS, 108 on Linux)",
@@ -225,13 +225,13 @@ fn remote_serve_proxies_a_session_over_pipes() {
 
     // A second proxy to the same name finds the server already up. This flag is what `create_only`
     // keys off remotely, replacing the local child-pid identity check.
-    let mut second = hyprmux::platform::ipc::connection_from_child(spawn_proxy())
-        .expect("wrap second proxy stdio");
+    let mut second =
+        rozi::platform::ipc::connection_from_child(spawn_proxy()).expect("wrap second proxy stdio");
     second
         .set_read_timeout(Some(Duration::from_secs(20)))
         .expect("set read timeout");
     let second_preamble =
-        hyprmux::session::remote::read_preamble(&mut second).expect("read second preamble");
+        rozi::session::remote::read_preamble(&mut second).expect("read second preamble");
     assert!(
         !second_preamble.server_started,
         "an already-running session must not report server_started"
@@ -242,7 +242,7 @@ fn remote_serve_proxies_a_session_over_pipes() {
     drop(second);
 
     // Tear the server down inside the private runtime dir rather than the user's real one.
-    let _ = Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+    let _ = Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["kill-session", &session])
         .env("XDG_RUNTIME_DIR", &runtime_base)
         .output();
@@ -301,7 +301,7 @@ fn attaches_to_a_configured_real_remote() {
         return;
     };
 
-    let config = hyprmux::config::load_config().config.remote;
+    let config = rozi::config::load_config().config.remote;
     assert!(
         config.hosts.contains_key(&alias),
         "alias `{alias}` is not in the config named by HYPRMUX_CONFIG"
@@ -414,5 +414,5 @@ fn attaches_to_a_configured_real_remote() {
     drop(reattached_client);
     std::thread::sleep(Duration::from_millis(300));
 
-    let _ = hyprmux::session::remote::kill_remote_session(&target, &session, &config);
+    let _ = rozi::session::remote::kill_remote_session(&target, &session, &config);
 }

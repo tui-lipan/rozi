@@ -5,13 +5,13 @@
 //! the two things the list has to get right once it has focus: stepping over non-selectable section
 //! headers, and Enter resolving to the same action a click would have run.
 
-use hyprmux::config::{
+use rozi::config::{
     SidebarLauncherEntry, SidebarTab, SidebarTabId, SidebarTreeConfig, SidebarTreeView,
     UserCommandAction,
 };
-use hyprmux::input::Action;
-use hyprmux::state::Pane;
-use hyprmux::{AppRoot, Msg};
+use rozi::input::Action;
+use rozi::state::Pane;
+use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{Color, KeyCode, KeyEvent, KeyMods, Rect};
@@ -60,9 +60,9 @@ fn modified_key(code: KeyCode, mods: KeyMods) -> KeyEvent {
 
 /// Every backend in this binary is built here: reordering tabs and toggling the split persist
 /// `[sidebar]`, so the config has to resolve out of a scratch root rather than the developer's own
-/// (`hyprmux::test_support`).
+/// (`rozi::test_support`).
 fn sidebar_backend() -> TestBackend<AppRoot> {
-    hyprmux::test_support::isolate_user_dirs();
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
@@ -519,12 +519,12 @@ fn ctrl_vertical_navigation_moves_keyboard_focus_between_sidebar_panels() {
             {
                 let state = backend.state_mut();
                 state.sidebar.panels = vec![
-                    hyprmux::state::SidebarPanelState {
+                    rozi::state::SidebarPanelState {
                         tabs: vec![SidebarTabId::new("panes")],
                         active_tab: Some(SidebarTabId::new("panes")),
                         ..Default::default()
                     },
-                    hyprmux::state::SidebarPanelState {
+                    rozi::state::SidebarPanelState {
                         tabs: vec![SidebarTabId::new("agents")],
                         active_tab: Some(SidebarTabId::new("agents")),
                         ..Default::default()
@@ -1031,8 +1031,8 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
 /// hyprmux would live-reload.
 #[test]
 fn sidebar_preferences_persist_inside_the_test_scratch_root() {
-    let root = hyprmux::test_support::isolate_user_dirs();
-    let path = hyprmux::config::config_path();
+    let root = rozi::test_support::isolate_user_dirs();
+    let path = rozi::config::config_path();
     assert!(
         path.starts_with(root),
         "config writes escaped the scratch root: {}",

@@ -10,10 +10,10 @@
 
 mod common;
 
-use hyprmux::pane::TerminalPane;
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
-use hyprmux::session::server::ServerSettings;
+use rozi::pane::TerminalPane;
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
+use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{attach_client, read_until, spawn_listener};
@@ -61,7 +61,7 @@ fn server_and_clients_enforce_independent_scrollback_limits() {
     );
 }
 
-fn populate_history(endpoint: &hyprmux::platform::ipc::IpcEndpoint, session: &str) {
+fn populate_history(endpoint: &rozi::platform::ipc::IpcEndpoint, session: &str) {
     let (mut client, _) = attach_client(endpoint, session, "producer");
     let (shell, command_shell) = resolve_launch_argv(None, None, &ShellEnv::from_process());
     client.write_control(&ClientMessage::SpawnPane {
@@ -93,7 +93,7 @@ fn populate_history(endpoint: &hyprmux::platform::ipc::IpcEndpoint, session: &st
 }
 
 fn attach_replay(
-    endpoint: &hyprmux::platform::ipc::IpcEndpoint,
+    endpoint: &rozi::platform::ipc::IpcEndpoint,
     session: &str,
     label: &str,
     client_limit: usize,

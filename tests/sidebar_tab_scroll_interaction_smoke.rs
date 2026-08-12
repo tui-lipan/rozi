@@ -1,6 +1,6 @@
-use hyprmux::config::{SidebarTab, SidebarTabId};
-use hyprmux::state::{SidebarCommandOutput, SidebarCommandRow};
-use hyprmux::{AppRoot, Msg as HyprmuxMsg};
+use rozi::config::{SidebarTab, SidebarTabId};
+use rozi::state::{SidebarCommandOutput, SidebarCommandRow};
+use rozi::{AppRoot, Msg};
 use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::*;
 use tui_lipan::{Rect, TestBackend};
@@ -159,7 +159,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
             assert!(!backend.capture_frame().to_fixed_grid().contains("file-row"));
 
             backend
-                .dispatch(HyprmuxMsg::SidebarTabSelected { panel: 0, index: 1 })
+                .dispatch(Msg::SidebarTabSelected { panel: 0, index: 1 })
                 .expect("select command tab");
 
             assert!(backend.capture_frame().to_fixed_grid().contains("file-row"));
@@ -248,18 +248,18 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
                 let state = backend.state_mut();
                 state.config.sidebar.tabs = vec![SidebarTab::Agents];
                 state.sidebar.panels = vec![
-                    hyprmux::state::SidebarPanelState {
+                    rozi::state::SidebarPanelState {
                         tabs: vec![SidebarTabId::new("agents")],
                         active_tab: Some(SidebarTabId::new("agents")),
                         ..Default::default()
                     },
-                    hyprmux::state::SidebarPanelState::default(),
+                    rozi::state::SidebarPanelState::default(),
                 ];
                 assert!(state.sidebar.transfer_tab(0, 1, 0, 0));
             }
 
             backend
-                .dispatch(HyprmuxMsg::SidebarTabSelected { panel: 1, index: 0 })
+                .dispatch(Msg::SidebarTabSelected { panel: 1, index: 0 })
                 .expect("destination change follows transfer");
             assert_eq!(
                 backend.state().sidebar.active_tab(),

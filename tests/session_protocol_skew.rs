@@ -7,9 +7,9 @@ use std::io::pipe;
 use std::sync::mpsc;
 use std::thread;
 
-use hyprmux::platform::ipc::{IpcConnection, PipedConnection};
-use hyprmux::session::client::SessionClient;
-use hyprmux::session::protocol::{
+use rozi::platform::ipc::{IpcConnection, PipedConnection};
+use rozi::session::client::SessionClient;
+use rozi::session::protocol::{
     self, ClientMessage, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
     negotiate_protocol,
 };

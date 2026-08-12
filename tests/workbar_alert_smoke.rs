@@ -3,8 +3,8 @@
 //! that actually did: a `tab_hover_style` with an absolute background replaces the alert instead of
 //! layering over it, and nothing but a rendered frame catches it.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{AlertMode, Pane};
+use rozi::AppRoot;
+use rozi::state::{AlertMode, Pane};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{Color, FloatRect, KeyMods, Rect};
@@ -28,7 +28,7 @@ fn live_pane(id: u32) -> Pane {
 /// Workspace 1 active and quiet, workspace 2 blocked. `Static` rather than `Pulse` so the colour
 /// rests at its peak and the assertions do not depend on which half of a breathe was captured.
 fn backend() -> TestBackend<AppRoot> {
-    hyprmux::test_support::isolate_user_dirs();
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
@@ -45,7 +45,7 @@ fn backend() -> TestBackend<AppRoot> {
     state.current_mut().focused_pane = Some(10);
 
     let mut blocked = live_pane(11);
-    blocked.terminal.reported_status = Some(hyprmux::session::protocol::PaneStatus {
+    blocked.terminal.reported_status = Some(rozi::session::protocol::PaneStatus {
         value: "blocked".into(),
         reason: None,
         set_at: 0,
@@ -80,7 +80,7 @@ fn the_two_paints_color_different_channels_on_screen() {
         let quiet_bg = row_backgrounds(&mut quiet_backend());
 
         let mut text = backend();
-        text.state_mut().config.workbar.alert.paint = hyprmux::state::AlertPaint::Text;
+        text.state_mut().config.workbar.alert.paint = rozi::state::AlertPaint::Text;
         assert_eq!(
             row_backgrounds(&mut text),
             quiet_bg,

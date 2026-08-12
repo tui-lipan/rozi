@@ -8,9 +8,9 @@
 //! - Reusing pane id 1 collides with the pane `State::new` seeds, whose stale per-pane transition
 //!   entries keep the reused pane off its target rect.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneId};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneId};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
@@ -112,7 +112,7 @@ fn scrollback_search_fixture_pins_dimensions_corpus_and_matches() {
         bench_support::SEARCH_LINES
     );
 
-    let mut pane = hyprmux::pane::TerminalPane::new(bench_support::SEARCH_SCROLLBACK);
+    let mut pane = rozi::pane::TerminalPane::new(bench_support::SEARCH_SCROLLBACK);
     pane.apply_server_resize(bench_support::SEARCH_COLS, bench_support::SEARCH_ROWS);
     pane.process_server_output(&corpus);
     assert_eq!(

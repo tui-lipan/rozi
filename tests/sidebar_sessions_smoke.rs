@@ -1,11 +1,11 @@
 //! Sessions sidebar hierarchy, color, and host action presentation.
 
-use hyprmux::AppRoot;
-use hyprmux::config::{RemoteHostConfig, SidebarTab, SidebarTabId};
-use hyprmux::session::CachedHostSession;
-use hyprmux::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
-use hyprmux::session::remote::RemoteTarget;
-use hyprmux::state::HostProbe;
+use rozi::AppRoot;
+use rozi::config::{RemoteHostConfig, SidebarTab, SidebarTabId};
+use rozi::session::CachedHostSession;
+use rozi::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
+use rozi::session::remote::RemoteTarget;
+use rozi::state::HostProbe;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};

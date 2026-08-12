@@ -1,6 +1,6 @@
-use hyprmux::AppRoot;
-use hyprmux::config::{SidebarPosition, SidebarTab, SidebarTabId};
-use hyprmux::state::SidebarPanelState;
+use rozi::AppRoot;
+use rozi::config::{SidebarPosition, SidebarTab, SidebarTabId};
+use rozi::state::SidebarPanelState;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};
@@ -16,9 +16,9 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
 
 /// Every backend in this binary is built here: committing a splitter drag or toggling the split
 /// persists `[sidebar]`, so the config has to resolve out of a scratch root rather than the
-/// developer's own (`hyprmux::test_support`).
+/// developer's own (`rozi::test_support`).
 fn sidebar_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
-    hyprmux::test_support::isolate_user_dirs();
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
     backend
@@ -425,8 +425,8 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
 /// hyprmux would live-reload.
 #[test]
 fn sidebar_preferences_persist_inside_the_test_scratch_root() {
-    let root = hyprmux::test_support::isolate_user_dirs();
-    let path = hyprmux::config::config_path();
+    let root = rozi::test_support::isolate_user_dirs();
+    let path = rozi::config::config_path();
     assert!(
         path.starts_with(root),
         "config writes escaped the scratch root: {}",

@@ -18,9 +18,9 @@
 mod support;
 
 use criterion::{BenchmarkId, Criterion};
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneId};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneId};
+use rozi::tiling::build_dwindle_tree;
 use std::hint::black_box;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
@@ -122,7 +122,7 @@ fn app_render(c: &mut Criterion) {
 /// A mux renders on every batch of terminal output, so this is the cost of having the sidebar open
 /// at all — measured per tab against the same frame with it hidden.
 fn sidebar_render(c: &mut Criterion) {
-    use hyprmux::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
+    use rozi::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
 
     let corpus = support::sgr_heavy();
     let filled: Vec<u8> = corpus.iter().copied().take(64 * 1024).collect();
@@ -158,11 +158,10 @@ fn sidebar_render(c: &mut Criterion) {
                 state.sidebar.tree_repo = Some(env!("CARGO_MANIFEST_DIR").to_string());
                 // Agent rows only exist for panes the server detected an agent in.
                 for pane in &mut state.current_mut().workspaces[0].panes {
-                    pane.terminal.detected_agent =
-                        Some(hyprmux::session::protocol::DetectedAgent {
-                            kind: hyprmux::session::protocol::AgentKind::Claude,
-                            state: hyprmux::session::protocol::DetectedAgentState::Working,
-                        });
+                    pane.terminal.detected_agent = Some(rozi::session::protocol::DetectedAgent {
+                        kind: rozi::session::protocol::AgentKind::Claude,
+                        state: rozi::session::protocol::DetectedAgentState::Working,
+                    });
                 }
             }
             // Warm the tree's background directory load before timing.
@@ -205,7 +204,7 @@ fn message_overhead(c: &mut Criterion) {
             };
             let epoch = backend.state().runtime_epoch;
             b.iter(|| {
-                let _ = backend.dispatch(hyprmux::Msg::SessionOutput {
+                let _ = backend.dispatch(rozi::Msg::SessionOutput {
                     epoch,
                     pane_id,
                     generation,

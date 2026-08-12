@@ -1,8 +1,8 @@
 //! The hover-revealed ✕ on Panes and Sessions rows.
 
-use hyprmux::AppRoot;
-use hyprmux::config::{SidebarTab, SidebarTabId};
-use hyprmux::state::SidebarClose;
+use rozi::AppRoot;
+use rozi::config::{SidebarTab, SidebarTabId};
+use rozi::state::SidebarClose;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};
@@ -30,7 +30,7 @@ fn settle(backend: &mut TestBackend<AppRoot>) {
 
 /// Render the Panes tab after `setup` has adjusted state, returning the sidebar's columns.
 fn panes_sidebar_lines(
-    setup: impl FnOnce(&mut hyprmux::state::State) + Send + 'static,
+    setup: impl FnOnce(&mut rozi::state::State) + Send + 'static,
 ) -> Vec<String> {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)

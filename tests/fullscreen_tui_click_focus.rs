@@ -4,9 +4,9 @@
 //! it; with `focus_on_hover` disabled there is otherwise no path that moves focus there at all, so
 //! the pane becomes unfocusable by mouse.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneId};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneId};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::{FloatRect, MouseEvent, Rect};

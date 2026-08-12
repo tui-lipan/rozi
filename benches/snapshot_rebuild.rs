@@ -1,7 +1,7 @@
 mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use hyprmux::pane::TerminalPane;
+use rozi::pane::TerminalPane;
 use std::hint::black_box;
 
 fn snapshot_rebuild(c: &mut Criterion) {

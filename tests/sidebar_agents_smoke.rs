@@ -1,7 +1,7 @@
-use hyprmux::config::SidebarTab;
-use hyprmux::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
-use hyprmux::state::{Pane, PaneId};
-use hyprmux::{AppRoot, Msg};
+use rozi::config::SidebarTab;
+use rozi::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
+use rozi::state::{Pane, PaneId};
+use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
@@ -46,8 +46,8 @@ fn slot(
     status: &str,
     reason: Option<&str>,
     active: bool,
-) -> hyprmux::session::protocol::AgentSlot {
-    hyprmux::session::protocol::AgentSlot {
+) -> rozi::session::protocol::AgentSlot {
+    rozi::session::protocol::AgentSlot {
         id: id.to_string(),
         title: title.to_string(),
         status: status.to_string(),
@@ -65,7 +65,7 @@ fn slot(
 
 /// Give the Agents tab the whole sidebar: these assertions are about grouping and row order, so
 /// the default two-panel split would only halve the rows they can see.
-fn agents_fill_the_sidebar(state: &mut hyprmux::state::State) {
+fn agents_fill_the_sidebar(state: &mut rozi::state::State) {
     state.sidebar_visible = true;
     state.config.sidebar.tabs = vec![SidebarTab::Agents];
     state.config.sidebar.split = false;

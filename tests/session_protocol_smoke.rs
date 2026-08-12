@@ -7,11 +7,11 @@ mod common;
 
 use std::process::{Command, Stdio};
 
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use hyprmux::shared_layout::{SHARED_LAYOUT_VERSION, SharedLayout};
+use rozi::shared_layout::{SHARED_LAYOUT_VERSION, SharedLayout};
 use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{
@@ -28,7 +28,7 @@ fn real_server_replays_pane_backlog_and_layout_after_reattach() {
     let session = unique_session_name();
     let runtime_base = private_temp_dir();
     let endpoint = subprocess_endpoint(&runtime_base, &session);
-    let child = Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+    let child = Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["--server", &session])
         .env("XDG_RUNTIME_DIR", &runtime_base)
         .stdin(Stdio::null())

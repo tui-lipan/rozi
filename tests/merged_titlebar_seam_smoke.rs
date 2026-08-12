@@ -4,9 +4,9 @@
 //! used to be painted over by its neighbor's border. The title is lifted into its own strip layer
 //! above every tile; these tests pin that it survives and still looks like an in-frame titlebar.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneBorderMode, PaneBorderStyle, PaneId, PaneTitlebarMode, SplitAxis};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneBorderMode, PaneBorderStyle, PaneId, PaneTitlebarMode, SplitAxis};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 use tui_lipan::{CapturedFrame, TestBackend};
 

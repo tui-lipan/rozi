@@ -1,14 +1,14 @@
 //! Alert controls live only in Alerts, where the four alert channels are configured together.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{AlertMode, PaneBorderMode};
+use rozi::AppRoot;
+use rozi::state::{AlertMode, PaneBorderMode};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 
 /// Isolated per `AGENTS.md`: building a `AppRoot` otherwise resolves the developer's own config
 /// and state directories.
 fn alerts_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
-    hyprmux::test_support::isolate_user_dirs();
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
     backend.state_mut().show_alerts = true;

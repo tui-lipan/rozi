@@ -1,9 +1,9 @@
 mod common;
 
-use hyprmux::session::protocol::{
+use rozi::session::protocol::{
     ClientMessage, Frame, MAX_FRAME_SIZE, PROTOCOL_VERSION, ServerMessage,
 };
-use hyprmux::session::server::ServerSettings;
+use rozi::session::server::ServerSettings;
 
 use common::{TestConnection, attach_client, read_until, spawn_listener};
 

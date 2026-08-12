@@ -6,10 +6,10 @@
 
 mod common;
 
-use hyprmux::session::protocol::{
+use rozi::session::protocol::{
     ClientMessage, FILE_TREE_PROTOCOL, Frame, ServerMessage, WireChangeState,
 };
-use hyprmux::session::server::ServerSettings;
+use rozi::session::server::ServerSettings;
 
 use common::{attach_client, private_temp_dir, spawn_listener};
 
@@ -17,10 +17,7 @@ use common::{attach_client, private_temp_dir, spawn_listener};
 fn list_directory(
     client: &mut common::TestConnection,
     path: &str,
-) -> (
-    Vec<hyprmux::session::protocol::WireDirEntry>,
-    Option<String>,
-) {
+) -> (Vec<rozi::session::protocol::WireDirEntry>, Option<String>) {
     client.write_control(&ClientMessage::ListDirectory {
         path: path.to_string(),
         show_hidden: true,
@@ -125,7 +122,7 @@ fn unreadable_directory_reports_an_error_instead_of_dropping_the_connection() {
 #[test]
 fn change_scan_reports_repository_state_from_the_server_host() {
     let root = private_temp_dir();
-    if !hyprmux::platform::command::program_exists("git") {
+    if !rozi::platform::command::program_exists("git") {
         eprintln!("skipping: git not available");
         return;
     }

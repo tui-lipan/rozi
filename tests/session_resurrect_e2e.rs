@@ -19,12 +19,12 @@ use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use hyprmux::pane::TerminalPane;
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{
+use rozi::pane::TerminalPane;
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{
     ClientMessage, Frame, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage, WirePalette,
 };
-use hyprmux::shared_layout::{
+use rozi::shared_layout::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
     SharedWorkspace,
 };
@@ -227,7 +227,7 @@ fn spawn_server(
     config_base: &std::path::Path,
     config_path: &std::path::Path,
 ) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_hyprmux"))
+    Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["--server", session])
         .env("HYPRMUX_CONFIG", config_path)
         .env("XDG_RUNTIME_DIR", runtime_base)
@@ -287,7 +287,7 @@ fn pane_layout() -> SharedLayout {
                 floating: false,
                 fullscreen: false,
                 rect: None,
-                scrollable_width: hyprmux::state::DEFAULT_SCROLLABLE_WIDTH,
+                scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
             }],
         }],
     }

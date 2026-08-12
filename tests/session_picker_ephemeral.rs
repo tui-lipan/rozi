@@ -1,9 +1,9 @@
 //! The session picker's route to this client's scratch (ephemeral) session. The key always works;
 //! the footer only spends a pill on it when the list cannot point the way itself.
 
-use hyprmux::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
-use hyprmux::state::SessionPickerState;
-use hyprmux::{AppRoot, Msg};
+use rozi::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
+use rozi::state::SessionPickerState;
+use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::*;
 
@@ -51,7 +51,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            *state.current_mut() = hyprmux::state::Attachment::new();
+            *state.current_mut() = rozi::state::Attachment::new();
             state.show_session_picker = true;
             state.session_picker = Some(SessionPickerState::new(Vec::new()));
         }
@@ -82,7 +82,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
                 .pending_session_attach
                 .as_ref()
                 .map(|pending| pending.name.as_str()),
-            Some(hyprmux::state::ephemeral_session_name().as_str())
+            Some(rozi::state::ephemeral_session_name().as_str())
         );
     });
 }
@@ -94,7 +94,7 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            *state.current_mut() = hyprmux::state::Attachment::new();
+            *state.current_mut() = rozi::state::Attachment::new();
             state.show_session_picker = true;
             let mut picker = SessionPickerState::new(vec![session_row("dev")]);
             picker.input.set_text("zzz".to_string());
@@ -116,7 +116,7 @@ fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            *state.current_mut() = hyprmux::state::Attachment::new();
+            *state.current_mut() = rozi::state::Attachment::new();
             state.show_session_picker = true;
             state.session_picker = Some(SessionPickerState::new(vec![session_row("dev")]));
         }
@@ -140,7 +140,7 @@ fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
-            state.current_mut().session_name = Some(hyprmux::state::ephemeral_session_name());
+            state.current_mut().session_name = Some(rozi::state::ephemeral_session_name());
             state.current_mut().session_attached = true;
             // Startup queued its own attach; this client is meant to be settled on the session.
             state.current_mut().pending_session_attach = None;
@@ -180,8 +180,8 @@ fn a_parked_scratch_session_also_drops_the_hint() {
             state.current_mut().session_name = Some("dev".into());
             state.current_mut().session_attached = true;
             state.current_mut().pending_session_attach = None;
-            let mut parked = hyprmux::state::Attachment::new();
-            parked.session_name = Some(hyprmux::state::ephemeral_session_name());
+            let mut parked = rozi::state::Attachment::new();
+            parked.session_name = Some(rozi::state::ephemeral_session_name());
             parked.session_attached = true;
             state.background.insert(7, parked);
             state.show_session_picker = true;

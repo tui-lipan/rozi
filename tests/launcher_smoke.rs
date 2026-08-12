@@ -1,10 +1,10 @@
 //! The sessionless client: what it draws, and that it stays sessionless until asked otherwise.
 
-use hyprmux::AppRoot;
-use hyprmux::Msg;
-use hyprmux::config::{UserCommand, UserCommandAction};
-use hyprmux::input::Action;
-use hyprmux::state::{Attachment, PendingSessionAction};
+use rozi::AppRoot;
+use rozi::Msg;
+use rozi::config::{UserCommand, UserCommandAction};
+use rozi::input::Action;
+use rozi::state::{Attachment, PendingSessionAction};
 use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tui_lipan::TestBackend;

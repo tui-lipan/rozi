@@ -1258,26 +1258,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyprmux"
-version = "0.2.0"
-dependencies = [
- "chrono",
- "criterion",
- "libc",
- "notify 6.1.1",
- "regex-lite",
- "relswap",
- "semver",
- "serde",
- "serde_json",
- "toml",
- "tui-lipan",
- "unicode-segmentation",
- "unicode-width",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2770,6 +2750,26 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rozi"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "libc",
+ "notify 6.1.1",
+ "regex-lite",
+ "relswap",
+ "semver",
+ "serde",
+ "serde_json",
+ "toml",
+ "tui-lipan",
+ "unicode-segmentation",
+ "unicode-width",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "rustc-hash"

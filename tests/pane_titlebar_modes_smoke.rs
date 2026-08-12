@@ -1,9 +1,9 @@
 //! Pins the visible pane titlebar layouts and their independent visibility switch against a real
 //! `AppRoot` render. Only `Bar` may add a row before the frame.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneId, PaneTitlebarMode};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneId, PaneTitlebarMode};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 
@@ -39,7 +39,7 @@ fn render_capture(
         state.config.pane.titlebar = mode;
         state.config.pane.title_style = title_style;
         state.config.pane.highlight_focused_titlebar = highlight_focused_titlebar;
-        state.config.pane.border_style = hyprmux::state::PaneBorderStyle::Rounded;
+        state.config.pane.border_style = rozi::state::PaneBorderStyle::Rounded;
         state.current_mut().workspaces[0].panes.clear();
         state.current_mut().workspaces[0].tile_tree = None;
         let mut pane = Pane::new(

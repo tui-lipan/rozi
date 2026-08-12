@@ -1,10 +1,10 @@
 mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
-use hyprmux::benchmark_advance_search_scan;
-use hyprmux::config::Config;
-use hyprmux::pane::TerminalPane;
-use hyprmux::state::{ScrollbackSearchScan, ScrollbackSearchState, State};
+use rozi::benchmark_advance_search_scan;
+use rozi::config::Config;
+use rozi::pane::TerminalPane;
+use rozi::state::{ScrollbackSearchScan, ScrollbackSearchState, State};
 use std::cell::RefCell;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use tui_lipan::prelude::Theme;
 struct FullSliceFixture {
     state: RefCell<State>,
     epoch: u64,
-    seed_matches: Vec<hyprmux::state::ScrollbackMatch>,
+    seed_matches: Vec<rozi::state::ScrollbackMatch>,
     seed_items: Arc<[tui_lipan::prelude::SearchItem<usize>]>,
     seed_scan: ScrollbackSearchScan,
 }

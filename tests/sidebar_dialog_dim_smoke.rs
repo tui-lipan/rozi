@@ -1,5 +1,5 @@
-use hyprmux::AppRoot;
-use hyprmux::config::{SidebarPosition, SidebarTab};
+use rozi::AppRoot;
+use rozi::config::{SidebarPosition, SidebarTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 use tui_lipan::style::Color;

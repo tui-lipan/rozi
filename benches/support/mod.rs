@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use hyprmux::layout_tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
-use hyprmux::session::protocol::{
+use rozi::layout_tree_ser::{SerializedLayoutKind, SerializedSplitAxis, SerializedTree};
+use rozi::session::protocol::{
     ClientInfo, PROTOCOL_VERSION, PaneCommandPhase, PaneCwdSource, PaneMeta, PaneRuntimeState,
     ServerMessage,
 };
-use hyprmux::shared_layout::{
+use rozi::shared_layout::{
     FracRect, SHARED_LAYOUT_VERSION, SharedLayout, SharedPane, SharedWorkspace,
 };
 use tui_lipan::prelude::TerminalScreen;
@@ -221,7 +221,7 @@ fn large_layout() -> SharedLayout {
                                 w: 0.7,
                                 h: 0.75,
                             }),
-                            scrollable_width: hyprmux::state::DEFAULT_SCROLLABLE_WIDTH,
+                            scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
                         }
                     })
                     .collect();

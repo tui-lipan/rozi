@@ -13,8 +13,8 @@
 //! never builds any of it.
 #![cfg(feature = "ui-snapshot")]
 
-use hyprmux::AppRoot;
-use hyprmux::state::{AlertMode, Pane};
+use rozi::AppRoot;
+use rozi::state::{AlertMode, Pane};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{FloatRect, KeyMods, Rect};
@@ -38,7 +38,7 @@ fn live_pane(id: u32) -> Pane {
 /// Workspace 1 active and quiet, 2 blocked, 3 finished-unseen: one tab per marker plus an unmarked
 /// neighbour, which is what makes "is this subtle enough" answerable at a glance.
 fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<AppRoot> {
-    hyprmux::test_support::isolate_user_dirs();
+    rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
@@ -58,7 +58,7 @@ fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<AppRoot> {
     state.current_mut().focused_pane = Some(10);
 
     let mut blocked = live_pane(11);
-    blocked.terminal.reported_status = Some(hyprmux::session::protocol::PaneStatus {
+    blocked.terminal.reported_status = Some(rozi::session::protocol::PaneStatus {
         value: "blocked".into(),
         reason: None,
         set_at: 0,

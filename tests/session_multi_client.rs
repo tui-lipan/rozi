@@ -2,12 +2,12 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{
     ClientMessage, ControllerChangeReason, Frame, ServerMessage, WirePalette,
 };
-use hyprmux::session::server::ServerSettings;
-use hyprmux::shared_layout::{
+use rozi::session::server::ServerSettings;
+use rozi::shared_layout::{
     SHARED_LAYOUT_VERSION, SharedLayout, SharedLayoutKind, SharedPane, SharedSplitAxis, SharedTree,
     SharedWorkspace,
 };
@@ -402,7 +402,7 @@ fn pane_layout() -> SharedLayout {
                 floating: false,
                 fullscreen: false,
                 rect: None,
-                scrollable_width: hyprmux::state::DEFAULT_SCROLLABLE_WIDTH,
+                scrollable_width: rozi::state::DEFAULT_SCROLLABLE_WIDTH,
             }],
         }],
     }

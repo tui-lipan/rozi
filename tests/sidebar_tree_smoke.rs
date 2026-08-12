@@ -1,6 +1,6 @@
-use hyprmux::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
-use hyprmux::input::Action;
-use hyprmux::{AppRoot, Msg};
+use rozi::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
+use rozi::input::Action;
+use rozi::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
@@ -244,7 +244,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
                     for id in 100..(100 + panes as u32) {
                         state.current_mut().workspaces[0]
                             .panes
-                            .push(hyprmux::state::Pane::new(id, 100, rect));
+                            .push(rozi::state::Pane::new(id, 100, rect));
                     }
                 }
                 for _ in 0..40 {

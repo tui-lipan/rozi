@@ -2,11 +2,11 @@
 mod bench_support;
 
 use criterion::{BenchmarkId, Criterion, SamplingMode, Throughput};
-use hyprmux::platform::ipc::EndpointRegistry;
-use hyprmux::runtime_metrics::ServerRuntimeMetrics;
-use hyprmux::session::client::SessionClient;
-use hyprmux::session::protocol::{Frame, ServerMessage};
-use hyprmux::session::server::{ServerSettings, SessionServer};
+use rozi::platform::ipc::EndpointRegistry;
+use rozi::runtime_metrics::ServerRuntimeMetrics;
+use rozi::session::client::SessionClient;
+use rozi::session::protocol::{Frame, ServerMessage};
+use rozi::session::server::{ServerSettings, SessionServer};
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::io::{self, BufRead, Write};
@@ -71,7 +71,7 @@ enum SnapshotDrainEvent {
 struct ServerOwner {
     child: Option<Child>,
     session: String,
-    endpoint: hyprmux::platform::ipc::IpcEndpoint,
+    endpoint: rozi::platform::ipc::IpcEndpoint,
     root: PathBuf,
 }
 
@@ -90,7 +90,7 @@ impl ServerOwner {
             endpoint,
             root,
         };
-        hyprmux::platform::fs_security::ensure_private_dir(&owner.root)
+        rozi::platform::fs_security::ensure_private_dir(&owner.root)
             .expect("create private benchmark runtime");
         let executable = std::env::current_exe().expect("locate benchmark executable");
         owner.child = Some(
@@ -128,7 +128,7 @@ impl ServerOwner {
             }
         }
         if !wait_for_child(&mut child, SHUTDOWN_TIMEOUT) {
-            hyprmux::platform::server_lifecycle::terminate_server(child.id());
+            rozi::platform::server_lifecycle::terminate_server(child.id());
         }
         if !wait_for_child(&mut child, SHUTDOWN_TIMEOUT) {
             let _ = child.kill();
@@ -932,10 +932,10 @@ fn run_server(
     resurrect: bool,
     scrollback: usize,
 ) -> io::Result<()> {
-    if let Err(error) = hyprmux::platform::server_lifecycle::contain_children() {
+    if let Err(error) = rozi::platform::server_lifecycle::contain_children() {
         eprintln!("server fairness containment unavailable: {error}");
     }
-    if let Err(error) = hyprmux::platform::server_lifecycle::install_shutdown_handler() {
+    if let Err(error) = rozi::platform::server_lifecycle::install_shutdown_handler() {
         eprintln!("server fairness shutdown handler unavailable: {error}");
     }
     let endpoint = EndpointRegistry::session_endpoint(&root, &session);

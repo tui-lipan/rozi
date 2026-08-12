@@ -1,7 +1,7 @@
 mod support;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use hyprmux::session::protocol::{
+use rozi::session::protocol::{
     Frame, FrameDecoder, ServerMessage, write_control_frame, write_pane_output_frame,
 };
 use std::hint::black_box;

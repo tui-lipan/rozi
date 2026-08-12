@@ -1,6 +1,6 @@
-use hyprmux::AppRoot;
-use hyprmux::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
-use hyprmux::state::{SidebarCommandOutput, SidebarCommandRow};
+use rozi::AppRoot;
+use rozi::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
+use rozi::state::{SidebarCommandOutput, SidebarCommandRow};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 

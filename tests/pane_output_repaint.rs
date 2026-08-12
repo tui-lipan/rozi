@@ -5,9 +5,9 @@
 //! `Update::paint()`: one agent streaming into one pane must not re-run `view()` and layout for every
 //! other pane, workbar segment and sidebar row in the window on every chunk.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{Pane, PaneId};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{Pane, PaneId};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect, UpdateLevel};
 
@@ -51,8 +51,8 @@ fn backend() -> TestBackend<AppRoot> {
     backend
 }
 
-fn output(bytes: &str) -> hyprmux::Msg {
-    hyprmux::Msg::SessionOutput {
+fn output(bytes: &str) -> rozi::Msg {
+    rozi::Msg::SessionOutput {
         epoch: 0,
         pane_id: PANE,
         generation: 0,

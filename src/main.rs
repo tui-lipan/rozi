@@ -1,3 +1,3 @@
 fn main() -> tui_lipan::Result<()> {
-    hyprmux::app::run()
+    rozi::app::run()
 }

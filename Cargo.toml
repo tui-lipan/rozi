@@ -1,5 +1,5 @@
 [package]
-name = "hyprmux"
+name = "rozi"
 version = "0.2.0"
 edition = "2024"
 # Set by the dependency tree, not by this crate's own source: terminal-images reaches
@@ -39,8 +39,8 @@ ui-snapshot = ["tui-lipan/ui-snapshot-png"]
 
 
 [[bin]]
-name = "hyprmux-launcher"
-path = "src/bin/hyprmux-launcher.rs"
+name = "rozi-launcher"
+path = "src/bin/rozi-launcher.rs"
 
 [dev-dependencies]
 criterion = "0.8.2"

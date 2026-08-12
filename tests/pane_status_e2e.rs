@@ -6,9 +6,9 @@
 
 mod common;
 
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
-use hyprmux::session::server::ServerSettings;
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{ClientMessage, Frame, ServerMessage, WirePalette};
+use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{attach_client, read_until, spawn_listener};

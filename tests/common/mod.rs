@@ -8,14 +8,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hyprmux::platform::ipc::{IpcConnection, IpcEndpoint};
-use hyprmux::session::protocol::{
+use rozi::platform::ipc::{IpcConnection, IpcEndpoint};
+use rozi::session::protocol::{
     ClientMessage, Frame, FrameDecoder, MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION, ServerMessage,
     write_control_frame, write_pane_input_frame,
 };
-use hyprmux::session::server::{
-    ServerSettings, SessionServer, bind_session_socket, session_endpoint,
-};
+use rozi::session::server::{ServerSettings, SessionServer, bind_session_socket, session_endpoint};
 
 /// Deadline for every wait in this harness.
 ///
@@ -373,7 +371,7 @@ pub(crate) fn private_temp_dir() -> PathBuf {
         std::process::id(),
         NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
     ));
-    hyprmux::platform::fs_security::ensure_private_dir(&path).expect("create private runtime base");
+    rozi::platform::fs_security::ensure_private_dir(&path).expect("create private runtime base");
     path
 }
 
@@ -389,7 +387,7 @@ pub(crate) fn subprocess_endpoint(runtime_base: &std::path::Path, session: &str)
     if cfg!(windows) {
         session_endpoint(session).expect("resolve subprocess session endpoint")
     } else {
-        hyprmux::platform::ipc::EndpointRegistry::session_endpoint(
+        rozi::platform::ipc::EndpointRegistry::session_endpoint(
             &runtime_base.join("hyprmux"),
             session,
         )

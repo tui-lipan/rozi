@@ -1,8 +1,8 @@
 mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use hyprmux::pane::TerminalPane;
-use hyprmux::session::protocol::{Frame, FrameDecoder, ServerMessage, write_pane_output_frame};
+use rozi::pane::TerminalPane;
+use rozi::session::protocol::{Frame, FrameDecoder, ServerMessage, write_pane_output_frame};
 use std::hint::black_box;
 use std::io::{Cursor, Read};
 

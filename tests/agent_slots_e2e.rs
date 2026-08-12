@@ -5,11 +5,11 @@
 
 mod common;
 
-use hyprmux::platform::command::{ShellEnv, resolve_launch_argv};
-use hyprmux::session::protocol::{
+use rozi::platform::command::{ShellEnv, resolve_launch_argv};
+use rozi::session::protocol::{
     AgentSlot, ClientMessage, Frame, PaneRuntimeState, ServerMessage, WirePalette,
 };
-use hyprmux::session::server::ServerSettings;
+use rozi::session::server::ServerSettings;
 use tui_lipan::prelude::TerminalColorPalette;
 
 use common::{attach_client, read_until, spawn_listener};

@@ -1,8 +1,8 @@
 //! Pins borderless headers, internal Divider rendering, and the config-only special-pane frame.
 
-use hyprmux::AppRoot;
-use hyprmux::state::{MoveSession, Pane, PaneBorderMode, PaneTitlebarMode, SplitAxis};
-use hyprmux::tiling::build_dwindle_tree;
+use rozi::AppRoot;
+use rozi::state::{MoveSession, Pane, PaneBorderMode, PaneTitlebarMode, SplitAxis};
+use rozi::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 

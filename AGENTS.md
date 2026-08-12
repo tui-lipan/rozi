@@ -345,14 +345,19 @@ S=/tmp/rozi-snap && mkdir -p $S/config/rozi
 printf '[session]\nstartup = "ephemeral"\n' > $S/config/rozi/config.toml
 env XDG_CONFIG_HOME=$S/config XDG_STATE_HOME=$S/state XDG_CACHE_HOME=$S/cache \
     XDG_RUNTIME_DIR=$S/run ROZI_CONFIG=$S/config/rozi/config.toml \
-    TUI_LIPAN_SNAPSHOT=$S/out.png TUI_LIPAN_SNAPSHOT_VIEWPORT=120x30 \
-    TUI_LIPAN_SNAPSHOT_FRAMES=8 TUI_LIPAN_SNAPSHOT_KEYS="ctrl+a" ./target/debug/rozi
+    TUI_LIPAN_SNAPSHOT=$S/out.png TUI_LIPAN_SNAPSHOT_VIEWPORTS=80x24,120x30 \
+    TUI_LIPAN_SNAPSHOT_FRAMES=8 TUI_LIPAN_SNAPSHOT_KEYS="ctrl+a" \
+    TUI_LIPAN_SNAPSHOT_ADVANCE_MS=400 ./target/debug/rozi
 ```
 
+  Keep `$S` short. The control socket is a Unix socket, so a long scratch path exceeds `SUN_LEN`
+  and the session comes up without one, which shows as a `Control socket unavailable` toast across
+  the capture.
+
   Run the built binary, not `cargo snap`: redirecting `XDG_*` also redirects mise's trust store and
-  the wrapper refuses to start. Headless capture renders frames back to back with no wall clock, so
-  anything gated on elapsed time never becomes due - the which-key strip needs
-  `which_key_delay = "instant"` in that scratch config to appear at all.
+  the wrapper refuses to start. `TUI_LIPAN_SNAPSHOT_ADVANCE_MS` settles anything gated on elapsed
+  time - without it the frames render back to back with no wall clock and the which-key strip never
+  passes its reveal delay.
 - Benchmarks are local performance evidence, not timing tests: `cargo check --all-targets` compiles
   them, while `cargo bench` runs them on a stable, idle machine. Keep corpora deterministic and
   generated; never add captured terminal output. See `docs/benchmarks.md`.

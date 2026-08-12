@@ -228,7 +228,7 @@ mod tests {
             validate_remote_executable_token(token).expect(token);
         }
         for token in [
-            "hypr mux",
+            "ro zi",
             "hyprmux\t--help",
             "hyprmux\n--help",
             "hyprmux;touch /tmp/pwned",

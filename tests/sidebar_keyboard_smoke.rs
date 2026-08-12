@@ -294,7 +294,7 @@ fn clicking_tree_outside_pointer_focused_explorer_returns_to_pane() {
             assert!(
                 backend
                     .focused_key()
-                    .is_some_and(|key| key.as_ref().starts_with("hyprmux-terminal-"))
+                    .is_some_and(|key| key.as_ref().starts_with("rozi-terminal-"))
             );
         })
         .expect("spawn outside-click explorer thread")

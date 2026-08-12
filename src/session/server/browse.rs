@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn listing_sorts_directories_first_and_honors_show_hidden() {
-        let dir = std::env::temp_dir().join(format!("hyprmux-browse-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-browse-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("zeta")).unwrap();
         std::fs::write(dir.join("alpha.txt"), b"x").unwrap();

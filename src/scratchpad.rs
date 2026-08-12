@@ -53,7 +53,7 @@ pub(crate) fn scratch_progress(app: &AppRoot, ctx: &Context<AppRoot>) -> f32 {
         0.0
     };
     ctx.transition::<f32>(
-        "hyprmux-scratch-progress",
+        "rozi-scratch-progress",
         target,
         app.scratch_transition_config(ctx),
     )
@@ -248,7 +248,7 @@ pub(crate) fn scratch_backdrop(
         )
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into();
-    Some((bounds, region.key("hyprmux-scratch-scrim")))
+    Some((bounds, region.key("rozi-scratch-scrim")))
 }
 
 /// Opacity multiplier for a layer sitting under a focused layer (the scratchpad, or a modal
@@ -346,7 +346,7 @@ pub(crate) fn scratch_resize_strip(
         .on_drag_end(ctx.link().callback(|_| crate::Msg::EndScratchResize))
         .child(Text::new("").width(Length::Flex(1)).height(Length::Flex(1)))
         .into();
-    Some((strip, region.key("hyprmux-scratch-resize-strip")))
+    Some((strip, region.key("rozi-scratch-resize-strip")))
 }
 
 #[cfg(test)]

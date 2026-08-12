@@ -19,7 +19,7 @@ pub(super) fn sidebar(ctx: &Context<AppRoot>) -> Element {
             .fg(theme.surface.element.elevate_by(0.15))
             .bg(theme.surface.element);
         Splitter::horizontal()
-            .split_id("hyprmux-sidebar-panels")
+            .split_id("rozi-sidebar-panels")
             .weights(vec![
                 ctx.state.config.sidebar.split_ratio,
                 1.0 - ctx.state.config.sidebar.split_ratio,
@@ -83,7 +83,7 @@ fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
         .tabs(tabs.iter().map(|tab| DraggableTab::new(tab.label())))
         .active(active)
         .bar_id(bar_id)
-        .drag_group("hyprmux-sidebar-tabs")
+        .drag_group("rozi-sidebar-tabs")
         .reorder_mode(DragReorderMode::Live)
         .border(false)
         .divider(' ')
@@ -167,11 +167,11 @@ fn panel_tabs(state: &crate::state::State, panel: usize) -> Vec<&SidebarTab> {
 }
 
 fn panel_bar_id(panel: usize) -> String {
-    format!("hyprmux-sidebar-panel-{panel}")
+    format!("rozi-sidebar-panel-{panel}")
 }
 
 pub(crate) fn panel_from_bar_id(id: &str) -> Option<usize> {
-    id.strip_prefix("hyprmux-sidebar-panel-")?.parse().ok()
+    id.strip_prefix("rozi-sidebar-panel-")?.parse().ok()
 }
 
 /// A body with nothing to list. Stays focusable so `focus-sidebar` still has a target here.

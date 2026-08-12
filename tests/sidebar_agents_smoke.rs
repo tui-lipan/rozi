@@ -257,7 +257,7 @@ fn agents_tab_heads_projects_with_their_branch() {
             // What grouping on the root gave up comes back per row.
             assert!(sidebar.iter().any(|line| line.contains("src/view · 1")));
             // A worktree is a separate group, and the branch is what tells the two apart.
-            let worktree = line_index("hyprmux-wt");
+            let worktree = line_index("rozi-wt");
             // Too long for half the header, so it keeps the tail — the end of a branch name is
             // what distinguishes it from its neighbours.
             assert!(sidebar[worktree].contains("…/agent-branches"));

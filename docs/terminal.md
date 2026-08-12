@@ -278,7 +278,7 @@ that is the only lossless form and the only one that replays. Two things are add
 
 - **Each run opens with a header line** naming the session, pane id and generation, pane size, and
   start time, so a file appended to across several logging runs stays self-describing.
-- **hyprmux's own `OSC 133 ; C ; hyprmux_exe=` parameter is stripped**, leaving the bare
+- **hyprmux's own `OSC 133 ; C ; rozi_exe=` parameter is stripped**, leaving the bare
   `OSC 133 ; C` marker that any shell integration writes. That parameter is how
   [shell integration](configuration.md#shell_integration) reports the foreground program to
   hyprmux; it is not the pane's output and does not belong in a log of it. Every other escape

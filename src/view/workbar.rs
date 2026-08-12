@@ -697,13 +697,13 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                     Style::new()
                         .fg(app.chrome_paint(
                             ctx,
-                            format!("hyprmux-workspace-tab-{idx}-fg"),
+                            format!("rozi-workspace-tab-{idx}-fg"),
                             fg_target,
                             transition,
                         ))
                         .bg(app.chrome_paint(
                             ctx,
-                            format!("hyprmux-workspace-tab-{idx}"),
+                            format!("rozi-workspace-tab-{idx}"),
                             target,
                             transition,
                         ))

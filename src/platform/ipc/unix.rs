@@ -244,7 +244,7 @@ mod tests {
 
     fn temp_endpoint(name: &str) -> IpcEndpoint {
         IpcEndpoint::at_path(std::env::temp_dir().join(format!(
-            "hyprmux-ipc-unix-test-{name}-{}.sock",
+            "rozi-ipc-unix-test-{name}-{}.sock",
             std::process::id()
         )))
     }

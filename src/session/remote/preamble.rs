@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
 
-pub const PREAMBLE_MAGIC: &str = "hyprmux-remote-serve";
+pub const PREAMBLE_MAGIC: &str = "rozi-remote-serve";
 /// Newest preamble version this build emits and understands.
 pub const PREAMBLE_VERSION: u32 = 1;
 /// Oldest preamble version this build can still read. The preamble is the *first* compatibility
@@ -28,7 +28,7 @@ pub struct RemotePreamble {
     #[serde(default)]
     pub platform: String,
     #[serde(default)]
-    pub hyprmux_version: String,
+    pub rozi_version: String,
     #[serde(default)]
     pub protocol_max: u32,
     #[serde(default)]
@@ -45,7 +45,7 @@ impl RemotePreamble {
             version: PREAMBLE_VERSION,
             preamble_min: MIN_SUPPORTED_PREAMBLE,
             platform: std::env::consts::OS.to_string(),
-            hyprmux_version: env!("CARGO_PKG_VERSION").to_string(),
+            rozi_version: env!("CARGO_PKG_VERSION").to_string(),
             protocol_max: PROTOCOL_VERSION,
             protocol_min: MIN_SUPPORTED_PROTOCOL,
             server_started,
@@ -230,7 +230,7 @@ mod tests {
             "magic": PREAMBLE_MAGIC,
             "version": PREAMBLE_VERSION,
             "platform": "linux",
-            "hyprmux_version": "0.1.0",
+            "rozi_version": "0.1.0",
             "protocol_max": crate::session::protocol::PROTOCOL_VERSION,
             "protocol_min": crate::session::protocol::MIN_SUPPORTED_PROTOCOL,
             "server_started": false,

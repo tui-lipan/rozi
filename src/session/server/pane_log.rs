@@ -4,7 +4,7 @@
 //! the only lossless form and the only one that can be replayed. Two things are shaped anyway.
 //!
 //! **hyprmux's own instrumentation is removed.** The shell-integration scripts emit
-//! `OSC 133 ; C ; hyprmux_exe=<basename>` to report the foreground program. That parameter is a
+//! `OSC 133 ; C ; rozi_exe=<basename>` to report the foreground program. That parameter is a
 //! private hyprmux extension rather than the pane's output, and someone who asked to log `eza`
 //! should not find hyprmux's protocol interleaved with it. Only the parameter is dropped; what
 //! remains is the bare `OSC 133 ; C` that every other terminal's shell integration writes, so the
@@ -19,7 +19,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// hyprmux's private command-start marker, emitted by `assets/shell-integration/*`.
-const EXE_MARKER: &[u8] = b"\x1b]133;C;hyprmux_exe=";
+const EXE_MARKER: &[u8] = b"\x1b]133;C;rozi_exe=";
 /// What replaces it: the standard, parameterless OSC 133 command-start marker.
 const BARE_COMMAND_START: &[u8] = b"\x1b]133;C";
 /// How far past a matched [`EXE_MARKER`] the filter waits for a string terminator before concluding
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn exe_payload_is_replaced_by_the_standard_bare_marker() {
         assert_eq!(
-            filtered(&[b"before\x1b]133;C;hyprmux_exe=eza\x1b\\after"]),
+            filtered(&[b"before\x1b]133;C;rozi_exe=eza\x1b\\after"]),
             b"before\x1b]133;C\x1b\\after"
         );
     }
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn bel_terminated_markers_keep_their_own_terminator() {
         assert_eq!(
-            filtered(&[b"\x1b]133;C;hyprmux_exe=ls\x07rest"]),
+            filtered(&[b"\x1b]133;C;rozi_exe=ls\x07rest"]),
             b"\x1b]133;C\x07rest"
         );
     }
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn a_marker_split_across_pty_reads_is_still_stripped() {
         // Every split point, since the kernel picks it, not us.
-        let whole: &[u8] = b"a\x1b]133;C;hyprmux_exe=cargo\x1b\\b";
+        let whole: &[u8] = b"a\x1b]133;C;rozi_exe=cargo\x1b\\b";
         for split in 0..whole.len() {
             let (head, tail) = whole.split_at(split);
             assert_eq!(
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn an_unterminated_marker_is_emitted_verbatim_once_it_outgrows_the_cap() {
-        let mut stream = b"\x1b]133;C;hyprmux_exe=".to_vec();
+        let mut stream = b"\x1b]133;C;rozi_exe=".to_vec();
         stream.extend(std::iter::repeat_n(b'x', MAX_MARKER_TAIL + 1));
         assert_eq!(filtered(&[&stream]), stream);
     }
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn header_is_written_and_the_limit_stops_logging_before_it_is_exceeded() {
-        let dir = std::env::temp_dir().join(format!("hyprmux-pane-log-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-pane-log-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("limit.log");
         let _ = std::fs::remove_file(&path);
@@ -340,8 +340,7 @@ mod tests {
 
     #[test]
     fn reopening_separates_runs_with_a_blank_line() {
-        let dir =
-            std::env::temp_dir().join(format!("hyprmux-pane-log-reopen-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-pane-log-reopen-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("reopen.log");
         let _ = std::fs::remove_file(&path);

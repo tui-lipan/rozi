@@ -41,7 +41,7 @@ pub(crate) struct BuiltinCommand {
     palette: bool,
 }
 
-pub(crate) const FORWARD_PREFIX_COMMAND_ID: &str = "hyprmux.forward-prefix";
+pub(crate) const FORWARD_PREFIX_COMMAND_ID: &str = "rozi.forward-prefix";
 const PASTE_DIRECT_SHORTCUT: &str = "ctrl-v";
 
 pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[

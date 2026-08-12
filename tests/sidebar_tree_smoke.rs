@@ -12,7 +12,7 @@ struct Repo(std::path::PathBuf);
 impl Repo {
     fn new(name: &str) -> Option<Self> {
         let path =
-            std::env::temp_dir().join(format!("hyprmux-tree-smoke-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("rozi-tree-smoke-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(path.join("src")).expect("repo dirs");
 

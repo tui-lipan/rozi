@@ -21,7 +21,7 @@ use common::{
 
 const PANE_ID: u32 = 41;
 const PANE_GENERATION: u64 = 1;
-const OUTPUT_MARKER: &[u8] = b"hyprmux-session-smoke-output";
+const OUTPUT_MARKER: &[u8] = b"rozi-session-smoke-output";
 
 #[test]
 fn real_server_replays_pane_backlog_and_layout_after_reattach() {

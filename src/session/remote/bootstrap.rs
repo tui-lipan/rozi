@@ -351,7 +351,7 @@ fn detect_remote_family(
 ) -> Result<RemoteFamily, String> {
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
-    command.arg("echo").arg("hyprmux_family=%OS%");
+    command.arg("echo").arg("rozi_family=%OS%");
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -372,7 +372,7 @@ fn detect_remote_family(
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if stdout.contains("hyprmux_family=Windows_NT") {
+    if stdout.contains("rozi_family=Windows_NT") {
         Ok(RemoteFamily::Windows)
     } else {
         Ok(RemoteFamily::Posix)
@@ -787,15 +787,15 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
         format!("https://github.com/{RELEASE_REPO}/releases/download/v{version}")
     });
     let archive_name = if triple.contains("windows") {
-        format!("hyprmux-{version}-{triple}.zip")
+        format!("rozi-{version}-{triple}.zip")
     } else {
-        format!("hyprmux-{version}-{triple}.tar.gz")
+        format!("rozi-{version}-{triple}.tar.gz")
     };
     let archive_url = format!("{base}/{archive_name}");
     let sha_url = format!("{archive_url}.sha256");
 
     let tmp = std::env::temp_dir().join(format!(
-        "hyprmux-remote-install-{}-{}",
+        "rozi-remote-install-{}-{}",
         std::process::id(),
         triple
     ));
@@ -819,7 +819,7 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
 /// Extract `archive_path` into `tmp` and return the path to the contained binary.
 ///
 /// The release archives (see `.github/workflows/release.yml`) wrap the binary in a versioned
-/// directory: `hyprmux-<version>-<triple>/hyprmux`. Extract everything, then locate the binary by
+/// directory: `rozi-<version>-<triple>/hyprmux`. Extract everything, then locate the binary by
 /// name — extracting a bare top-level member would always miss it.
 fn extract_release_binary(
     archive_path: &Path,
@@ -1233,7 +1233,7 @@ protocol_max=1
 
     #[test]
     fn override_check_blocks_only_a_confirmed_mismatch() {
-        let dir = std::env::temp_dir().join(format!("hyprmux-override-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-override-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -1350,14 +1350,14 @@ protocol_max=1
     }
 
     /// The release archives nest the binary in a versioned directory
-    /// (`hyprmux-<version>-<triple>/hyprmux`, per `.github/workflows/release.yml`). Build a fixture
+    /// (`rozi-<version>-<triple>/hyprmux`, per `.github/workflows/release.yml`). Build a fixture
     /// with exactly that layout and prove the extract-then-locate path finds it — the earlier
     /// single-member extraction could never reach into the directory, so `--remote` install always
     /// failed with "release archive did not contain hyprmux".
     #[test]
     fn extract_locates_binary_nested_in_versioned_directory() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-extract-fixture-{}-{}",
+            "rozi-extract-fixture-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1366,7 +1366,7 @@ protocol_max=1
         ));
         let _ = std::fs::remove_dir_all(&root);
         // Mirror release.yml: dist/<name>/{hyprmux,README...} tarred as `<name>`.
-        let name = "hyprmux-9.9.9-x86_64-unknown-linux-gnu";
+        let name = "rozi-9.9.9-x86_64-unknown-linux-gnu";
         let staging = root.join("dist");
         let pkg = staging.join(name);
         std::fs::create_dir_all(&pkg).unwrap();

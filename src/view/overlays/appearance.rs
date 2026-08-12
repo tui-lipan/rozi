@@ -195,7 +195,7 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
         .child(action_palette_frame(palette))
         .into();
     let dim_progress = ctx.transition::<f32>(
-        "hyprmux-appearance-padding-dim",
+        "rozi-appearance-padding-dim",
         if ctx.state.pane_padding_editor.is_some() {
             1.0
         } else {

@@ -406,14 +406,14 @@ mod tests {
 
     #[cfg(unix)]
     fn temp_base(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("hyprmux-test-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!("rozi-test-{name}-{}", std::process::id()))
     }
 
     #[test]
     #[cfg(unix)]
     fn runtime_dir_uses_per_user_temp_fallback_without_xdg() {
         let expected = std::env::temp_dir().join(format!(
-            "hyprmux-{}",
+            "rozi-{}",
             crate::platform::fs_security::current_uid()
         ));
         assert_eq!(

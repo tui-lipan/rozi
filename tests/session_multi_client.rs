@@ -181,7 +181,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         )
     });
 
-    let first_marker = b"hyprmux-interleaved-before";
+    let first_marker = b"rozi-interleaved-before";
     controller.write_pane_input(
         PANE_ID,
         PANE_GENERATION,
@@ -206,7 +206,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         b"echo hyprmux-interleaved-after\r",
     );
 
-    let second_marker = b"hyprmux-interleaved-after";
+    let second_marker = b"rozi-interleaved-after";
     let mut second_output = Vec::new();
     let mut committed = false;
     read_until(&mut follower, |frame| {

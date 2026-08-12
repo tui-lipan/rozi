@@ -37,7 +37,7 @@ use common::{
 
 const PANE_ID: u32 = 81;
 const PANE_GENERATION: u64 = 1;
-const REPLAY_MARKER: &[u8] = b"hyprmux-resurrect-replay-marker";
+const REPLAY_MARKER: &[u8] = b"rozi-resurrect-replay-marker";
 
 #[test]
 fn subprocess_restart_restores_layout_and_pane_replay() {
@@ -206,7 +206,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
         }
         replay
             .capture_scrollback_text(None)
-            .contains("hyprmux-resurrect-replay-marker")
+            .contains("rozi-resurrect-replay-marker")
     });
     assert!(replay.total_scrollback_rows() <= 3);
     assert!(

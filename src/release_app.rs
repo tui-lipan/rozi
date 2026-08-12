@@ -11,7 +11,7 @@ pub const ROZI: App = App {
     repository_url: "https://github.com/Razuer/hyprmux/",
     trust_anchor: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/release-keys.json")),
     activation: ActivationStrategy::WindowsLauncher {
-        launcher_name: "hyprmux-launcher.exe",
+        launcher_name: "rozi-launcher.exe",
         protocol: 1,
     },
     // `relswap` requires the probe output to contain the version being activated, which during an

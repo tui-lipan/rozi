@@ -1,7 +1,7 @@
 # hyprmux shell integration for fish (cross-platform plan Phase 8).
 #
 # Emits OSC 7 (cwd), OSC 133 A/B/C/D (command lifecycle), and a hyprmux-namespaced OSC 133
-# `hyprmux_exe=` parameter carrying only the executable basename - never a full command line - so
+# `rozi_exe=` parameter carrying only the executable basename - never a full command line - so
 # hyprmux's smart-focus and pane-runtime-state tracking work without polling `/proc`. Installed by
 # hyprmux as a vendor `conf.d` file discovered via `XDG_DATA_DIRS`; never edits the user's real
 # fish config. Fish supports multiple independent handlers per event (unlike bash/zsh's single
@@ -72,7 +72,7 @@ function __hyprmux_osc133_c --on-event fish_preexec
     set -l exe (string split -m1 ' ' -- $cmdline)[1]
     set -l exe (path basename -- $exe 2>/dev/null; or basename -- $exe)
     if test -n "$exe"
-        printf '\e]133;C;hyprmux_exe=%s\e\\' (__hyprmux_urlencode $exe)
+        printf '\e]133;C;rozi_exe=%s\e\\' (__hyprmux_urlencode $exe)
     else
         printf '\e]133;C\e\\'
     end

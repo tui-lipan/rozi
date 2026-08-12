@@ -44,7 +44,7 @@ survives the SSH link dropping.
 What the client does for a Windows remote:
 
 - **Shell family detection.** The probe first runs one fixed, shell-agnostic command
-  (`echo hyprmux_family=%OS%`, which only `cmd.exe` expands to `Windows_NT`), then dispatches a
+  (`echo rozi_family=%OS%`, which only `cmd.exe` expands to `Windows_NT`), then dispatches a
   POSIX (`sh -s`) or PowerShell probe accordingly. Probe output is still parsed by fixed keys and
   never treated as argv.
 - **Platform detection.** `MINGW*`/`MSYS*`/`CYGWIN*` `uname -s` output is matched by family prefix,

@@ -1,7 +1,7 @@
 # hyprmux shell integration for PowerShell (cross-platform plan Phase 8).
 #
 # Emits OSC 7 and OSC 9;9 (cwd), OSC 133 A/B/C/D (command lifecycle), and a hyprmux-namespaced
-# OSC 133 `hyprmux_exe=` parameter carrying only the executable basename - never a full command
+# OSC 133 `rozi_exe=` parameter carrying only the executable basename - never a full command
 # line - so hyprmux's smart focus and pane-runtime-state tracking work without process inspection
 # (which is deliberately unsupported on Windows).
 #
@@ -119,7 +119,7 @@ if (Get-Module -Name PSReadLine) {
 
         $Global:__hyprmuxRanCommand = $true
         if ($exe) {
-            __hyprmux_emit "]133;C;hyprmux_exe=$(__hyprmux_urlencode $exe)"
+            __hyprmux_emit "]133;C;rozi_exe=$(__hyprmux_urlencode $exe)"
         }
         else {
             __hyprmux_emit ']133;C'

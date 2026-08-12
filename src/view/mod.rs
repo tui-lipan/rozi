@@ -110,7 +110,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         || ctx.state.collaboration.is_some()
         || ctx.state.follow_prompt.is_some();
     let dialog_dim_progress = ctx.transition::<f32>(
-        "hyprmux-dialog-dim",
+        "rozi-dialog-dim",
         if dialog_open { 1.0 } else { 0.0 },
         app.scratch_transition_config(ctx),
     );
@@ -214,11 +214,8 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             canvas_rect_to_root(canvas_target_rect, top_offset)
         };
         let config = app.transition_config_for(ctx, pane, viewport_changed);
-        let animated_rect = ctx.transition(
-            format!("hyprmux-pane-rect-{}", pane.id),
-            target_rect,
-            config,
-        );
+        let animated_rect =
+            ctx.transition(format!("rozi-pane-rect-{}", pane.id), target_rect, config);
 
         let render_rect = animated_rect;
         // With merged borders, a bar title must keep its left edge off a neighbor's right border,
@@ -446,7 +443,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     // Keep the dimming wrapper mounted so the keyed workspace Canvas remains under the same
     // parent while panes are removed and retained for their automatic exit animation.
     let workspace_host_key = format!(
-        "hyprmux-workspace-canvas-{}-{}-{}",
+        "rozi-workspace-canvas-{}-{}-{}",
         ctx.state.runtime_epoch,
         ctx.state.current().active_workspace,
         ctx.state.pane_canvas_epoch
@@ -505,7 +502,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 popup_canvas.child_at(canvas_rect_to_root(rect, top_offset).to_rect(), element);
         }
         let popup_host: Element =
-            popup_canvas.key(format!("hyprmux-popup-host-{}", ctx.state.runtime_epoch));
+            popup_canvas.key(format!("rozi-popup-host-{}", ctx.state.runtime_epoch));
         root = root.child(popup_host);
     }
 
@@ -583,7 +580,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
             .blend_toward(theme.surface.backdrop, 1.0 - sidebar_dim);
         let divider_style = Style::new().fg(divider_bg.elevate_by(0.15)).bg(divider_bg);
         let mut splitter = Splitter::vertical()
-            .split_id("hyprmux-sidebar-shell")
+            .split_id("rozi-sidebar-shell")
             .weights_nonce(ctx.state.sidebar.outer_splitter_nonce(
                 viewport.w,
                 sidebar_width,

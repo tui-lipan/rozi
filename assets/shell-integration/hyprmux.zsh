@@ -1,7 +1,7 @@
 # hyprmux shell integration for zsh (cross-platform plan Phase 8).
 #
 # Emits OSC 7 (cwd), OSC 133 A/B/C/D (command lifecycle), and a hyprmux-namespaced OSC 133
-# `hyprmux_exe=` parameter carrying only the executable basename - never a full command line - so
+# `rozi_exe=` parameter carrying only the executable basename - never a full command line - so
 # hyprmux's smart-focus and pane-runtime-state tracking work without polling `/proc`. Installed by
 # hyprmux via a `ZDOTDIR` shim directory (see the generated `.zshrc` alongside this file); never
 # edits the user's real `ZDOTDIR`/`~/.zshrc`. Uses `add-zsh-hook` so it composes with any other
@@ -70,7 +70,7 @@ __hyprmux_preexec() {
     exe="${exe:t}"
     __hyprmux_have_last_command=1
     if [[ -n "$exe" ]]; then
-        printf '\e]133;C;hyprmux_exe=%s\e\\' "$(__hyprmux_urlencode "$exe")"
+        printf '\e]133;C;rozi_exe=%s\e\\' "$(__hyprmux_urlencode "$exe")"
     else
         printf '\e]133;C\e\\'
     fi

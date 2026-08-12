@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn list_profiles_reads_sorted_toml_stems() {
         let profiles =
-            std::env::temp_dir().join(format!("hyprmux-profiles-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("rozi-profiles-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&profiles);
         std::fs::create_dir_all(&profiles).expect("profiles dir");
         std::fs::write(profiles.join("beta.toml"), "version = 1\n").expect("beta");
@@ -721,10 +721,8 @@ mod tests {
 
     #[test]
     fn delete_profile_file_treats_missing_as_success() {
-        let path = std::env::temp_dir().join(format!(
-            "hyprmux-missing-profile-{}.toml",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("rozi-missing-profile-{}.toml", std::process::id()));
         delete_profile_file(&path).expect("missing profile delete succeeds");
     }
 

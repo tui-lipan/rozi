@@ -978,7 +978,7 @@ mod tests {
     #[cfg(windows)]
     fn windows_duplex_transport_delivers_pong_while_reader_polls() {
         let endpoint = IpcEndpoint::at_path(
-            std::env::temp_dir().join(format!("hyprmux-client-duplex-{}.sock", std::process::id())),
+            std::env::temp_dir().join(format!("rozi-client-duplex-{}.sock", std::process::id())),
         );
         endpoint.remove_stale();
         let listener = endpoint.bind().unwrap().into_listener();

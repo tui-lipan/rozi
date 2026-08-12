@@ -1213,7 +1213,7 @@ mod tests {
                     .any(|widget| widget
                         .key
                         .as_ref()
-                        .is_some_and(|key| key.as_ref() == "hyprmux-pane-1-0")),
+                        .is_some_and(|key| key.as_ref() == "rozi-pane-1-0")),
                 "the closing pane still renders while it scales down"
             );
 
@@ -1532,7 +1532,7 @@ mod tests {
                     .any(|widget| widget
                         .key
                         .as_ref()
-                        .is_some_and(|key| { key.as_ref() == "hyprmux-pane-4294967295-0" })),
+                        .is_some_and(|key| { key.as_ref() == "rozi-pane-4294967295-0" })),
                 "the closing popup still renders while it scales down"
             );
 
@@ -1586,7 +1586,7 @@ mod tests {
                 widget
                     .key
                     .as_ref()
-                    .is_none_or(|key| key.as_ref() != "hyprmux-pane-1-0")
+                    .is_none_or(|key| key.as_ref() != "rozi-pane-1-0")
             }));
         });
     }
@@ -1622,13 +1622,13 @@ mod tests {
                 widget
                     .key
                     .as_ref()
-                    .is_some_and(|key| key.as_ref() == "hyprmux-pane-2-0")
+                    .is_some_and(|key| key.as_ref() == "rozi-pane-2-0")
             }));
             assert!(snapshot.widgets.iter().all(|widget| {
                 widget
                     .key
                     .as_ref()
-                    .is_none_or(|key| key.as_ref() != "hyprmux-pane-1-0")
+                    .is_none_or(|key| key.as_ref() != "rozi-pane-1-0")
             }));
         });
     }
@@ -1905,7 +1905,7 @@ mod close_animation {
             .find(|w| {
                 w.key
                     .as_ref()
-                    .is_some_and(|k| k.as_ref() == "hyprmux-pane-1-0")
+                    .is_some_and(|k| k.as_ref() == "rozi-pane-1-0")
             })
             .map(|w| (w.rect.x, w.rect.y, w.rect.w, w.rect.h))
     }

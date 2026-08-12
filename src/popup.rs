@@ -173,7 +173,7 @@ pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatR
         pane.floating_rect
     };
     let rect = ctx.transition(
-        format!("hyprmux-pane-rect-{}", pane.id),
+        format!("rozi-pane-rect-{}", pane.id),
         target,
         app.transition_config_for(ctx, pane, false),
     );
@@ -202,7 +202,7 @@ pub(crate) fn backdrop(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     Some((
         ctx.state
             .canvas_bounds_from_terminal_viewport(ctx.viewport()),
-        region.key("hyprmux-popup-scrim"),
+        region.key("rozi-popup-scrim"),
     ))
 }
 

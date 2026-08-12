@@ -101,7 +101,7 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
         preamble.protocol_max >= FILE_TREE_PROTOCOL,
         "remote is this same binary, so it must advertise our protocol range"
     );
-    assert_eq!(preamble.hyprmux_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(preamble.rozi_version, env!("CARGO_PKG_VERSION"));
 
     // A real attach over the pipe: the session protocol does not know it is not a local socket.
     let (tx, _rx) = mpsc::channel();
@@ -206,7 +206,7 @@ fn remote_serve_proxies_a_session_over_pipes() {
         preamble.server_started,
         "proxy must report starting the server for a brand-new session"
     );
-    assert_eq!(preamble.hyprmux_version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(preamble.rozi_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(preamble.platform, std::env::consts::OS);
 
     // The session protocol runs over the pipe exactly as it would over a socket.
@@ -319,7 +319,7 @@ fn attaches_to_a_configured_real_remote() {
     eprintln!(
         "remote: platform={} version={} protocol={}-{} server_started={}",
         preamble.platform,
-        preamble.hyprmux_version,
+        preamble.rozi_version,
         preamble.protocol_min,
         preamble.protocol_max,
         preamble.server_started

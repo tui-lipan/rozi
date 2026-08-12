@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn list_session_endpoints_decodes_names_and_ignores_unrelated_files() {
         let dir = std::env::temp_dir().join(format!(
-            "hyprmux-endpoint-registry-test-{}",
+            "rozi-endpoint-registry-test-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn list_session_endpoints_on_missing_dir_returns_empty_not_an_error() {
         let dir = std::env::temp_dir().join(format!(
-            "hyprmux-endpoint-registry-missing-{}",
+            "rozi-endpoint-registry-missing-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

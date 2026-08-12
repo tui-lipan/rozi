@@ -1,7 +1,7 @@
 # hyprmux shell integration for bash (cross-platform plan Phase 8).
 #
 # Emits OSC 7 (cwd), OSC 133 A/B/C/D (command lifecycle), and a hyprmux-namespaced OSC 133
-# `hyprmux_exe=` parameter carrying only the executable basename - never a full command line - so
+# `rozi_exe=` parameter carrying only the executable basename - never a full command line - so
 # hyprmux's smart-focus and pane-runtime-state tracking work without polling `/proc`. Installed by
 # hyprmux itself via `bash --rcfile <generated wrapper>`; never edits `~/.bashrc` or any other
 # dotfile. Safe to source more than once (idempotent) and a no-op in a non-interactive shell.
@@ -56,7 +56,7 @@ __hyprmux_osc133_c() {
     exe="${cmdline%% *}"
     exe="${exe##*/}"
     if [ -n "$exe" ]; then
-        printf '\e]133;C;hyprmux_exe=%s\e\\' "$(__hyprmux_urlencode "$exe")"
+        printf '\e]133;C;rozi_exe=%s\e\\' "$(__hyprmux_urlencode "$exe")"
     else
         printf '\e]133;C\e\\'
     fi
@@ -93,7 +93,7 @@ __hyprmux_arm() {
 # firing after `__hyprmux_arm` armed the prompt is a genuinely typed command; matching
 # `$BASH_COMMAND` against `$PROMPT_COMMAND` instead (the previous guard) misses hooks held in the
 # bash >= 5.1 `PROMPT_COMMAND` *array* and every command inside a hook's function body, which left
-# stray `C;hyprmux_exe=<hook>` reports after each prompt.
+# stray `C;rozi_exe=<hook>` reports after each prompt.
 __hyprmux_preexec() {
     [ -n "${COMP_LINE:-}" ] && return
     [ -z "${__hyprmux_at_prompt:-}" ] && return

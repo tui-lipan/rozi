@@ -551,7 +551,7 @@ impl AppRoot {
     ) -> Paint {
         self.chrome_paint(
             ctx,
-            format!("hyprmux-pane-chrome-{pane}-{slot}"),
+            format!("rozi-pane-chrome-{pane}-{slot}"),
             target,
             config,
         )

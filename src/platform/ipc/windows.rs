@@ -720,7 +720,7 @@ mod tests {
     /// Endpoints are registry entries under a private directory, so each test needs its own to avoid
     /// colliding on the derived pipe name when the suite runs in parallel.
     fn temp_endpoint(name: &str) -> IpcEndpoint {
-        let dir = std::env::temp_dir().join(format!("hyprmux-ipc-win-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-ipc-win-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         IpcEndpoint::at_path(dir.join(format!("{name}-{}.sock", std::process::id())))
     }

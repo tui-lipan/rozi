@@ -783,7 +783,7 @@ mod tests {
 
     fn temp_profile_path() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "hyprmux-profile-ops-{}-{}.toml",
+            "rozi-profile-ops-{}-{}.toml",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

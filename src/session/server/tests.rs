@@ -1421,7 +1421,7 @@ fn attach_reports_layout_and_panes() {
 
 #[test]
 fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
-    let root = std::env::temp_dir().join(format!("hyprmux-log-test-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("rozi-log-test-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let mut server = SessionServer::new_named_with_settings(
         "dev",
@@ -1468,12 +1468,12 @@ fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// hyprmux injects its own OSC 133 `hyprmux_exe=` marker through shell integration; a user's log is
+/// hyprmux injects its own OSC 133 `rozi_exe=` marker through shell integration; a user's log is
 /// their program's output, not hyprmux's protocol. The standard bare marker is what other
 /// terminals' integrations emit, so it stays.
 #[test]
 fn pane_logging_strips_hyprmux_own_shell_integration_marker() {
-    let root = std::env::temp_dir().join(format!("hyprmux-log-marker-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("rozi-log-marker-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let mut server = SessionServer::new_named_with_settings(
         "dev",
@@ -1495,7 +1495,7 @@ fn pane_logging_strips_hyprmux_own_shell_integration_marker() {
         1,
         2,
         TerminalPtyEvent::Output(
-            b"\x1b]133;A\x1b\\\x1b]133;C;hyprmux_exe=eza\x1b\\out"
+            b"\x1b]133;A\x1b\\\x1b]133;C;rozi_exe=eza\x1b\\out"
                 .to_vec()
                 .into(),
         ),
@@ -1511,7 +1511,7 @@ fn pane_logging_strips_hyprmux_own_shell_integration_marker() {
 fn ephemeral_session_logs_are_discarded_at_shutdown_and_named_ones_are_kept() {
     for (session, survives) in [("eph-4242", false), ("dev", true)] {
         let root =
-            std::env::temp_dir().join(format!("hyprmux-log-reap-{}-{session}", std::process::id()));
+            std::env::temp_dir().join(format!("rozi-log-reap-{}-{session}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let mut server = SessionServer::new_named_with_settings(
             session,
@@ -1587,7 +1587,7 @@ fn semantic_runtime_change_is_queued_after_its_raw_output() {
 
 #[test]
 fn snapshot_round_trip_skips_exited_panes_and_refreshes_generations() {
-    let root = std::env::temp_dir().join(format!("hyprmux-resurrect-test-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("rozi-resurrect-test-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let settings = ServerSettings {
         resurrect: true,

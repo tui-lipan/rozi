@@ -10,10 +10,8 @@ mod unix {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "hyprmux-cli-{label}-{}-{nonce}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("rozi-cli-{label}-{}-{nonce}", std::process::id()));
         for dir in ["config", "state", "data", "runtime"] {
             let path = root.join(dir);
             fs::create_dir_all(&path).unwrap();

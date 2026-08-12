@@ -380,7 +380,7 @@ fn workspace_profile_from_state(
 /// The command a pane is running *right now*, if it is worth replaying on restore.
 ///
 /// `foreground_program` keeps reporting the last executed command's executable while the shell
-/// sits idle at a prompt (OSC 133 `hyprmux_exe=` is only replaced by the next command), so a pane
+/// sits idle at a prompt (OSC 133 `rozi_exe=` is only replaced by the next command), so a pane
 /// where the user merely changed directories would otherwise capture stale prompt machinery like
 /// `__zoxide_hook` and replay it as a pane command. Only trust it while shell integration reports
 /// a command mid-flight (`Executing`), or when there is no integration at all (`Unknown`) and the
@@ -810,7 +810,7 @@ mod tests {
         assert!(matches!(intent, crate::state::AttachIntent::Plain));
 
         let mut config = Config::default();
-        config.profile.default = Some("hyprmux-no-such-profile-xyzzy".to_string());
+        config.profile.default = Some("rozi-no-such-profile-xyzzy".to_string());
         let (attachment, intent) = default_session_seed(&config);
         assert_eq!(attachment.workspaces[0].panes.len(), 1);
         assert!(
@@ -1187,7 +1187,7 @@ mod tests {
     #[test]
     fn save_profile_creates_parent_directory_and_file() {
         let root =
-            std::env::temp_dir().join(format!("hyprmux-save-profile-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("rozi-save-profile-test-{}", std::process::id()));
         let path = root.join("nested").join("project.toml");
 
         let result = save_profile(&path, &Profile::default());
@@ -1204,7 +1204,7 @@ mod tests {
         let _guard = cwd_lock().lock().expect("cwd lock");
         let original_cwd = std::env::current_dir().expect("current dir");
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-save-profile-bare-relative-test-{}",
+            "rozi-save-profile-bare-relative-test-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&root).expect("temporary profile directory created");

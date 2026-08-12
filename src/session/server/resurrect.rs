@@ -69,7 +69,7 @@ impl SnapshotWorker {
         let (jobs, job_rx) = mpsc::channel::<SnapshotJob>();
         let (done_tx, done) = mpsc::channel::<SnapshotOutcome>();
         let handle = std::thread::Builder::new()
-            .name("hyprmux-snapshot".to_string())
+            .name("rozi-snapshot".to_string())
             .spawn(move || {
                 for job in job_rx {
                     let generation = job.generation;
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn snapshot_metrics_record_complete_success_and_failure_attempts() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-metrics-{}-{:?}",
+            "rozi-snapshot-metrics-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn unchanged_panes_reuse_their_replay_and_changed_panes_do_not() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-reuse-{}-{:?}",
+            "rozi-snapshot-reuse-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn reuse_chains_across_generations_and_outlives_the_directory_it_came_from() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-chain-{}-{:?}",
+            "rozi-snapshot-chain-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn a_missing_reuse_source_falls_back_to_export_in_the_same_attempt() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-missing-{}-{:?}",
+            "rozi-snapshot-missing-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn a_failed_snapshot_forces_a_full_export_next_time() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-reuse-heal-{}-{:?}",
+            "rozi-snapshot-reuse-heal-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn changes_during_a_write_are_not_marked_snapshotted() {
         let root = std::env::temp_dir().join(format!(
-            "hyprmux-snapshot-generation-{}-{:?}",
+            "rozi-snapshot-generation-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

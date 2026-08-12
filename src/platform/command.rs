@@ -437,7 +437,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(
-            "hyprmux-command-test-executable-{}",
+            "rozi-command-test-executable-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -495,10 +495,8 @@ mod tests {
 
     #[test]
     fn lookup_program_expands_pathext_and_prefers_an_exact_name() {
-        let dir = std::env::temp_dir().join(format!(
-            "hyprmux-command-test-pathext-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("rozi-command-test-pathext-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("tool.CMD"), b"").unwrap();
@@ -532,7 +530,7 @@ mod tests {
     #[test]
     fn windows_interactive_shell_prefers_pwsh_then_powershell_then_comspec_then_cmd() {
         let dir = std::env::temp_dir().join(format!(
-            "hyprmux-command-test-windows-shell-{}",
+            "rozi-command-test-windows-shell-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);

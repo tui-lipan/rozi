@@ -184,7 +184,7 @@ mod imp {
         let _ = INSTALLED.set(());
 
         std::thread::Builder::new()
-            .name("hyprmux-hangup".to_string())
+            .name("rozi-hangup".to_string())
             .spawn(move || {
                 let mut byte = [0u8; 1];
                 loop {

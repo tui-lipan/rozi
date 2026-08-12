@@ -1,4 +1,4 @@
-//! Local client: spawn `ssh … hyprmux --remote-serve` and return a Piped connection.
+//! Local client: spawn `ssh … rozi --remote-serve` and return a Piped connection.
 
 use std::io::{self, Read};
 use std::process::{ChildStderr, Stdio};
@@ -140,7 +140,7 @@ pub fn connect_remote(
     Ok((conn, preamble))
 }
 
-/// Kill a named session on the remote host via `hyprmux kill-session` over ssh.
+/// Kill a named session on the remote host via `rozi kill-session` over ssh.
 pub fn kill_remote_session(
     target: &RemoteTarget,
     session: &str,
@@ -156,9 +156,9 @@ pub fn kill_remote_session(
         .clone()
         .or_else(|| {
             // Prefer a previously ensured path when present on PATH remotely.
-            Some("hyprmux".to_string())
+            Some("rozi".to_string())
         })
-        .unwrap_or_else(|| "hyprmux".to_string());
+        .unwrap_or_else(|| "rozi".to_string());
     validate_remote_executable_token(&remote_bin)?;
     let mut command = ssh_base_command(&resolved, config);
     append_ssh_destination(&mut command, &resolved);
@@ -221,7 +221,7 @@ mod tests {
         config.hosts.insert(
             "workbox".to_string(),
             crate::config::RemoteHostConfig {
-                binary_path: Some("hyprmux;touch".to_string()),
+                binary_path: Some("rozi;touch".to_string()),
                 ..crate::config::RemoteHostConfig::default()
             },
         );

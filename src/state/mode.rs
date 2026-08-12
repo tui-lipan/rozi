@@ -18,7 +18,7 @@ pub struct HintModeState {
     pub offset: usize,
 }
 
-/// Application state around tui-lipan's copy-mode navigation and hyprmux's search integration.
+/// Application state around tui-lipan's copy-mode navigation and rozi's search integration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CopyModeState {
     pub target: PaneId,

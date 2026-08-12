@@ -37,7 +37,7 @@ pub(crate) struct ControlCli {
     request: control::ControlRequest,
 }
 
-/// `hyprmux agent-slots`: the stdio bridge a program uses to publish the agents running inside its
+/// `rozi agent-slots`: the stdio bridge a program uses to publish the agents running inside its
 /// own pane.
 ///
 /// This exists so a publisher needs no IPC code of its own. On Windows `ROZI_SOCKET` names a
@@ -586,16 +586,16 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
         .collect();
     match live.as_slice() {
         [path] => Ok(path.clone()),
-        [] => Err(
-            "no live hyprmux control socket found (set ROZI_SOCKET or pass --socket)".to_string(),
-        ),
-        _ => Err("multiple live hyprmux sockets found; pass --socket PATH".to_string()),
+        [] => {
+            Err("no live rozi control socket found (set ROZI_SOCKET or pass --socket)".to_string())
+        }
+        _ => Err("multiple live rozi sockets found; pass --socket PATH".to_string()),
     }
 }
 
 /// Bridge stdin/stdout to an `agent-slots` control stream for the calling pane.
 ///
-/// Runs until either side closes: hyprmux withdraws the pane's slots on EOF, so a publisher that
+/// Runs until either side closes: rozi withdraws the pane's slots on EOF, so a publisher that
 /// exits or crashes cleans up by construction and never has to say so.
 pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
     let path = match discover_socket(command.socket) {
@@ -609,7 +609,7 @@ pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
         .ok()
         .and_then(|value| value.parse::<crate::state::PaneId>().ok())
     else {
-        eprintln!("agent-slots must run inside a hyprmux pane (ROZI_PANE is unset)");
+        eprintln!("agent-slots must run inside a rozi pane (ROZI_PANE is unset)");
         std::process::exit(2);
     };
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
@@ -684,7 +684,7 @@ pub(crate) fn run_control_cli(command: ControlCli) -> Result<()> {
     let mut line = String::new();
     BufReader::new(stream).read_line(&mut line)?;
     if line.trim().is_empty() {
-        eprintln!("empty response from hyprmux");
+        eprintln!("empty response from rozi");
         std::process::exit(2);
     }
     println!("{}", line.trim_end());
@@ -727,12 +727,9 @@ pub(crate) fn run_install_cli() -> std::result::Result<(), String> {
         .install()
         .map_err(|error| format!("installation failed: {error}"))?;
     if result.changed {
-        println!("Installed hyprmux v{}", result.version);
+        println!("Installed rozi v{}", result.version);
     } else {
-        println!(
-            "hyprmux v{} is already installed and verified",
-            result.version
-        );
+        println!("rozi v{} is already installed and verified", result.version);
     }
     println!("Command  {}", installation.command_path().display());
     Ok(())
@@ -772,16 +769,16 @@ pub(crate) fn run_update_cli(command: UpdateCommand) -> std::result::Result<(), 
                 .update()
                 .map_err(|error| format!("update failed: {error}"))?;
             if result.changed {
-                println!("Updated hyprmux to v{}", result.version);
+                println!("Updated rozi to v{}", result.version);
             } else {
-                println!("hyprmux v{} is up to date", result.version);
+                println!("rozi v{} is up to date", result.version);
             }
         }
         UpdateCommand::Rollback => {
             let result = installation
                 .rollback()
                 .map_err(|error| format!("rollback failed: {error}"))?;
-            println!("Rolled back hyprmux to v{}", result.version);
+            println!("Rolled back rozi to v{}", result.version);
         }
     }
     Ok(())
@@ -871,36 +868,36 @@ pub(crate) fn print_help() {
     let endpoint_help = endpoint_help();
     println!(
         "\
-hyprmux - Hyprland-style tiling terminal multiplexer
+rozi - Hyprland-style tiling terminal multiplexer
 
 USAGE:
-    hyprmux --skill
-    hyprmux [TARGET] [--read-only]
-    hyprmux install
-    hyprmux update [--check|--rollback]
-    hyprmux attach <NAME> [--read-only]
-    hyprmux new <NAME> [--profile <RECIPE>]
-    hyprmux [--socket PATH] list|list-panes
-    hyprmux [--socket PATH] metrics
-    hyprmux [--socket PATH] focus <PANE_ID>
-    hyprmux [--socket PATH] send-text <TEXT>
-    hyprmux [--socket PATH] status <VALUE> [--reason <TEXT>]
-    hyprmux [--socket PATH] status --clear
-    hyprmux [--socket PATH] agent-slots
-    hyprmux [--socket PATH] split [COMMAND] [--focus]
-    hyprmux [--socket PATH] run-action <ACTION_ID>
-    hyprmux [--socket PATH] capture-pane [--target <PANE_ID>]
+    rozi --skill
+    rozi [TARGET] [--read-only]
+    rozi install
+    rozi update [--check|--rollback]
+    rozi attach <NAME> [--read-only]
+    rozi new <NAME> [--profile <RECIPE>]
+    rozi [--socket PATH] list|list-panes
+    rozi [--socket PATH] metrics
+    rozi [--socket PATH] focus <PANE_ID>
+    rozi [--socket PATH] send-text <TEXT>
+    rozi [--socket PATH] status <VALUE> [--reason <TEXT>]
+    rozi [--socket PATH] status --clear
+    rozi [--socket PATH] agent-slots
+    rozi [--socket PATH] split [COMMAND] [--focus]
+    rozi [--socket PATH] run-action <ACTION_ID>
+    rozi [--socket PATH] capture-pane [--target <PANE_ID>]
                             [--scrollback <N|full>] [--last-output]
-    hyprmux [--socket PATH] send-keys [-l|--literal] [--] <KEY|TEXT>...
-    hyprmux [--socket PATH] switch-workspace <1-9>
-    hyprmux [--socket PATH] move-to-workspace <1-9>
-    hyprmux --session <NAME> [--read-only]
-    hyprmux --remote <HOST|ssh://URL> [TARGET] [--read-only]
-    hyprmux --pick
-    hyprmux list-sessions [--format text|json] [--remote <HOST>]
-    hyprmux kill-session <NAME> [--remote <HOST>]
-    hyprmux --server <NAME>
-    hyprmux --session <NAME> --server
+    rozi [--socket PATH] send-keys [-l|--literal] [--] <KEY|TEXT>...
+    rozi [--socket PATH] switch-workspace <1-9>
+    rozi [--socket PATH] move-to-workspace <1-9>
+    rozi --session <NAME> [--read-only]
+    rozi --remote <HOST|ssh://URL> [TARGET] [--read-only]
+    rozi --pick
+    rozi list-sessions [--format text|json] [--remote <HOST>]
+    rozi kill-session <NAME> [--remote <HOST>]
+    rozi --server <NAME>
+    rozi --session <NAME> --server
 
 OPTIONS:
     -h, --help            Print help
@@ -927,7 +924,7 @@ Leave the running app with prefix d (detach) or a configured quit binding."
 fn endpoint_help() -> String {
     let runtime_dir = crate::control::runtime_dir()
         .map(|dir| dir.display().to_string())
-        .unwrap_or_else(|_| "the hyprmux runtime directory".to_string());
+        .unwrap_or_else(|_| "the rozi runtime directory".to_string());
     if cfg!(windows) {
         format!(
             "Control endpoints live in {runtime_dir}. Each entry stands for a named pipe\n\
@@ -936,7 +933,7 @@ fn endpoint_help() -> String {
         )
     } else {
         format!(
-            "Control sockets live in {runtime_dir} (one per running hyprmux, named by pid).\n\
+            "Control sockets live in {runtime_dir} (one per running rozi, named by pid).\n\
              With no --socket, ROZI_SOCKET is used, then the only live socket found there."
         )
     }
@@ -985,14 +982,14 @@ mod tests {
         assert!(parse_cli_args(vec!["target".into(), "--skill".into()]).is_err());
 
         for section in [
-            "---\nname: hyprmux",
+            "---\nname: rozi",
             "ROZI=1",
             "ROZI_SOCKET",
             "ROZI_PANE",
             "--socket PATH",
-            "hyprmux --help",
-            "hyprmux list-panes",
-            "hyprmux split [COMMAND]",
+            "rozi --help",
+            "rozi list-panes",
+            "rozi split [COMMAND]",
             "send-text",
             "send-keys",
             "capture-pane",
@@ -1000,8 +997,8 @@ mod tests {
             "pty_ready:true",
             "does **not** move focus",
             "queued as type-ahead",
-            "hyprmux list-sessions",
-            "hyprmux kill-session <NAME>",
+            "rozi list-sessions",
+            "rozi kill-session <NAME>",
             "read-only",
             "Input lock",
         ] {
@@ -1061,7 +1058,7 @@ mod tests {
     fn cli_control_socket_flag_is_preserved() {
         let parsed = parse_cli_args(vec![
             "--socket".into(),
-            "/tmp/hyprmux.sock".into(),
+            "/tmp/rozi.sock".into(),
             "send-text".into(),
             "hi".into(),
         ])
@@ -1071,7 +1068,7 @@ mod tests {
         };
         assert_eq!(
             control.socket.as_deref(),
-            Some(std::path::Path::new("/tmp/hyprmux.sock"))
+            Some(std::path::Path::new("/tmp/rozi.sock"))
         );
         assert!(matches!(
             control.request.command,

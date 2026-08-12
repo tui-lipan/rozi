@@ -122,7 +122,7 @@ pub enum ControlCommand {
     },
     /// Publish the logical agents running inside the calling pane, and receive activations for
     /// them. Unlike every other command this connection stays open in both directions; closing it
-    /// withdraws the pane's slots. Reached through `hyprmux agent-slots`.
+    /// withdraws the pane's slots. Reached through `rozi agent-slots`.
     AgentSlots,
     Subscribe {
         #[serde(default)]
@@ -240,14 +240,14 @@ pub fn run_listener(listener: IpcListener, link: CommandLink<Msg>, event_hub: Ev
             }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(err) => {
-                eprintln!("hyprmux: control endpoint accept failed: {err}");
+                eprintln!("rozi: control endpoint accept failed: {err}");
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
     }
 }
 
-/// How many unread activations a publisher may accumulate before hyprmux stops keeping them.
+/// How many unread activations a publisher may accumulate before rozi stops keeping them.
 ///
 /// Activations are user clicks, so this is generous relative to how fast anyone can produce them;
 /// a publisher that has stopped reading is wedged rather than busy.
@@ -256,7 +256,7 @@ const AGENT_SLOT_ACTIVATION_BACKLOG: usize = 32;
 /// Serve one pane's `agent-slots` stream until its publisher goes away.
 ///
 /// The only bidirectional command: after the acknowledgement, the publisher writes one slot list
-/// per line and hyprmux writes one activation per line back. Both directions run for the life of
+/// per line and rozi writes one activation per line back. Both directions run for the life of
 /// the connection, so a writer thread carries activations while this thread reads.
 fn run_agent_slot_stream(mut stream: IpcConnection, link: CommandLink<Msg>, pane_id: PaneId) {
     let Ok(reader_stream) = stream.try_clone() else {
@@ -426,7 +426,7 @@ mod tests {
     #[cfg(unix)]
     fn runtime_dir_rejects_unsafe_existing_directory_without_chmod() {
         let base = temp_base("unsafe");
-        let dir = base.join("hyprmux");
+        let dir = base.join("rozi");
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&dir).unwrap();
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
@@ -605,7 +605,7 @@ mod tests {
     #[cfg(unix)]
     fn runtime_dir_rejects_symlink() {
         let base = temp_base("symlink");
-        let dir = base.join("hyprmux");
+        let dir = base.join("rozi");
         let target = temp_base("symlink-target");
         let _ = fs::remove_dir_all(&base);
         let _ = fs::remove_dir_all(&target);

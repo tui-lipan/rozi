@@ -209,7 +209,7 @@ pub(crate) fn spawn_state_panes_on_session(
             next_generation = next_generation.saturating_add(1);
             pane.pty_generation = generation;
             pane.terminal.bind_server_backend(pane.id, generation);
-            // The initial pane's launch cwd is the *local* directory hyprmux was started in
+            // The initial pane's launch cwd is the *local* directory rozi was started in
             // (`config.cwd`), which is meaningless on a remote server: it would be sent as a spawn cwd
             // the server cannot use, and — because remote panes get no OSC 7 cwd report — displayed as
             // the pane's location indefinitely. Drop it so the pane shows/uses the server's own cwd.

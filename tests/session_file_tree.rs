@@ -107,7 +107,7 @@ fn unreadable_directory_reports_an_error_instead_of_dropping_the_connection() {
     let guard = spawn_listener(ServerSettings::default());
     let (mut client, _) = attach_client(guard.endpoint(), guard.session(), "tree");
 
-    let (entries, error) = list_directory(&mut client, "/definitely/not/here/hyprmux");
+    let (entries, error) = list_directory(&mut client, "/definitely/not/here/rozi");
     assert!(entries.is_empty());
     assert!(error.is_some(), "missing directory must report an error");
 

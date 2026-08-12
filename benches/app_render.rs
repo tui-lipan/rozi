@@ -197,7 +197,7 @@ fn message_overhead(c: &mut Criterion) {
                 if cwd == "deep" {
                     // A realistic reported directory: the sync compares this on every message.
                     state.current_mut().workspaces[0].panes[0].terminal.cwd =
-                        Some("/home/user/work/projects/hyprmux/src/view/sidebar".to_string());
+                        Some("/home/user/work/projects/rozi/src/view/sidebar".to_string());
                 }
                 let pane = &state.current().workspaces[0].panes[0];
                 (pane.id, pane.pty_generation)

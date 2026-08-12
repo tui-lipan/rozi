@@ -65,7 +65,7 @@ pub(crate) fn should_promote_session(state: &crate::state::State) -> bool {
 /// Capture the current session's layout as a profile.
 ///
 /// Capturing a temporary session also names it after the profile, so the runtime and its recipe end
-/// up sharing one durable identity: `hyprmux <name>` then resumes the live session while it exists
+/// up sharing one durable identity: `rozi <name>` then resumes the live session while it exists
 /// and rebuilds from the profile once it is gone. That is simply what capture *means* here, so
 /// there is no second commit to opt out of it - a session captured under a name it should not keep
 /// can be killed afterwards.

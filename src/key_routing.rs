@@ -7,7 +7,7 @@ use crate::ops::resize_move::resize_focused_in_direction;
 use crate::state::{Direction, Mode, PaneId, State};
 use crate::view;
 
-/// Route a key that reached hyprmux's own handling: app command chords (leader/modifier) are
+/// Route a key that reached rozi's own handling: app command chords (leader/modifier) are
 /// resolved natively by tui-lipan before this runs (see `App::key_dispatch_policy` /
 /// `terminal_key_policy` in `main.rs`), so by the time a key gets here it is either a
 /// `Resize`/`Copy` mode key or plain PTY input.
@@ -69,10 +69,10 @@ fn launcher_start_key(state: &State, key: KeyEvent) -> bool {
     key.is(KeyCode::Enter) && state.is_launcher() && crate::commands::commands_active(state)
 }
 
-/// Keys hyprmux claims while the sidebar body has focus.
+/// Keys rozi claims while the sidebar body has focus.
 ///
 /// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
-/// composed row lists have no widget behind them, so hyprmux owns their cursor too. Page movement
+/// composed row lists have no widget behind them, so rozi owns their cursor too. Page movement
 /// uses the active row list's measured viewport size, with a small fallback before its first layout.
 fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Update> {
     use crate::update::sidebar;

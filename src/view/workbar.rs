@@ -18,7 +18,7 @@ pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         .style(Style::new().bg(panel_bg));
 
     // Track the background color of the elements landing on each outer edge so the whole-workbar
-    // end caps can adopt it: a leading/trailing badge (the `hyprmux` title chip, session chip, or
+    // end caps can adopt it: a leading/trailing badge (the `rozi` title chip, session chip, or
     // a mode chip) rounds off in its own color, while a plain segment leaves the cap panel-colored.
     let mut left_cap_color: Option<Color> = None;
     let mut right_cap_color = panel_bg;
@@ -455,7 +455,7 @@ fn workbar_badge(
 /// when there is nothing to show).
 fn segment_label(ctx: &Context<AppRoot>, segment: &WorkbarSegment) -> Option<String> {
     match segment {
-        WorkbarSegment::Title => Some(" hyprmux ".to_string()),
+        WorkbarSegment::Title => Some(" rozi ".to_string()),
         WorkbarSegment::Location => location_label(&ctx.state),
         WorkbarSegment::Session => {
             let name = attached_session_name(ctx)?;
@@ -685,7 +685,7 @@ fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
                 // the foreground against whatever the background holds mid-fade, so the label snaps
                 // to white and then to black as the tint crosses the readability threshold. Naming
                 // both endpoints ourselves turns that flip into a fade, and matches how every other
-                // piece of hyprmux chrome already picks its own readable colours.
+                // piece of rozi chrome already picks its own readable colours.
                 let (fg_target, target) =
                     crate::ops::theme::tab_alert_colors(theme, role, paint, pulse, phase);
                 let transition = if pulse && state.alert_pulse_armed {

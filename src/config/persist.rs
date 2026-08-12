@@ -320,7 +320,7 @@ fn consume_toml_value<'a>(first_line: &str, lines: &mut std::iter::Peekable<std:
         assignment.push_str(line);
     }
 
-    // Older hyprmux builds replaced only the first line of a multiline array, producing a complete
+    // Older rozi builds replaced only the first line of a multiline array, producing a complete
     // inline assignment followed by the orphaned old array rows. Recognize that tail as an array
     // body and consume it too, allowing the next preference write to repair affected configs.
     let starts_orphaned_array = lines.peek().is_some_and(|line| {

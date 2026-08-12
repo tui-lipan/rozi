@@ -384,7 +384,7 @@ impl SessionServer {
         code: i32,
     ) -> Option<ServerOutbound> {
         // Dim, bracketed, and prefixed so it cannot be mistaken for output of the command itself.
-        let banner = format!("\r\n\x1b[2m[hyprmux] command exited with status {code}\x1b[0m\r\n");
+        let banner = format!("\r\n\x1b[2m[rozi] command exited with status {code}\x1b[0m\r\n");
         let bytes = banner.into_bytes();
 
         let pane = self.panes.get_mut(&id)?;
@@ -558,7 +558,7 @@ impl SessionServer {
     ///
     /// An `eph-*` session is disposable by definition, so the logs it wrote are too - and unlike a
     /// named session there is no later attach that could want them. Without this they accumulate
-    /// one orphaned directory per hyprmux run, forever, holding whatever those panes printed.
+    /// one orphaned directory per rozi run, forever, holding whatever those panes printed.
     /// Named sessions are left alone: their logs are the point.
     pub(super) fn discard_ephemeral_logs(&mut self) {
         if !crate::state::is_ephemeral_session_name(&self.session_name) {
@@ -574,7 +574,7 @@ impl SessionServer {
         if let Err(error) = fs::remove_dir_all(&dir)
             && error.kind() != io::ErrorKind::NotFound
         {
-            eprintln!("hyprmux: could not remove session log directory: {error}");
+            eprintln!("rozi: could not remove session log directory: {error}");
         }
     }
 }
@@ -661,8 +661,8 @@ mod tests {
         // A local launch path a different-OS server cannot use (e.g. a Linux path on Windows) must
         // not be passed through; it falls back to a directory that exists on the server.
         let resolved =
-            effective_spawn_cwd(Some("/no/such/path/hyprmux-should-not-exist")).expect("fallback");
+            effective_spawn_cwd(Some("/no/such/path/rozi-should-not-exist")).expect("fallback");
         assert!(std::path::Path::new(&resolved).is_dir());
-        assert_ne!(resolved, "/no/such/path/hyprmux-should-not-exist");
+        assert_ne!(resolved, "/no/such/path/rozi-should-not-exist");
     }
 }

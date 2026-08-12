@@ -677,7 +677,7 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
         // A version skew (an older server still running an earlier wire protocol) is the common
         // cause here; give the user something actionable instead of a debug dump.
         let detail = if code == "protocol-mismatch" {
-            format!("runs an incompatible hyprmux version ({message}); kill it and start a new one")
+            format!("runs an incompatible rozi version ({message}); kill it and start a new one")
         } else {
             message.clone()
         };
@@ -705,7 +705,7 @@ fn validate_attached(attached: &ServerMessage) -> io::Result<u32> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
-                "runs an incompatible hyprmux version (negotiated protocol {effective}; client supports {MIN_SUPPORTED_PROTOCOL}-{PROTOCOL_VERSION}); kill it and start a new one"
+                "runs an incompatible rozi version (negotiated protocol {effective}; client supports {MIN_SUPPORTED_PROTOCOL}-{PROTOCOL_VERSION}); kill it and start a new one"
             ),
         ));
     }
@@ -852,7 +852,7 @@ mod tests {
         })
         .expect_err("attach must fail");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("incompatible hyprmux version"));
+        assert!(error.to_string().contains("incompatible rozi version"));
         assert!(validate_attached(&attached_message()).is_ok());
         assert!(validate_attached(&ServerMessage::Ping { seq: 1 }).is_err());
     }

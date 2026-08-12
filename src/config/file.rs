@@ -446,7 +446,7 @@ pub(super) struct AnimationFileConfig {
 }
 
 /// The config text most recently read or written by this process. Lets the live-reload
-/// watcher distinguish external edits from hyprmux's own persistence writes (theme selection,
+/// watcher distinguish external edits from rozi's own persistence writes (theme selection,
 /// appearance toggles, default profile) and skip event bursts that left the content unchanged.
 static LAST_SEEN_CONFIG: Mutex<Option<String>> = Mutex::new(None);
 
@@ -454,7 +454,7 @@ pub(super) fn note_config_text(text: Option<String>) {
     *LAST_SEEN_CONFIG.lock().unwrap() = text;
 }
 
-/// True when the on-disk config no longer matches the text hyprmux last read or wrote.
+/// True when the on-disk config no longer matches the text rozi last read or wrote.
 pub fn config_text_changed_on_disk() -> bool {
     let current = std::fs::read_to_string(config_path()).ok();
     *LAST_SEEN_CONFIG.lock().unwrap() != current

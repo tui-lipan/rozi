@@ -394,7 +394,7 @@ pub(super) fn header_with_note(
 }
 
 /// Shortens a value by dropping characters from the *front*, keeping the tail. For a path, the tail
-/// is the part that identifies it — clipping `~/Work/Projects/hyprmux` to `~/Work/Project…` throws
+/// is the part that identifies it — clipping `~/Work/Projects/rozi` to `~/Work/Project…` throws
 /// away the only word that distinguishes it from its neighbours.
 pub(super) fn truncate_start(value: &str, max_chars: usize) -> String {
     let value = value.trim();

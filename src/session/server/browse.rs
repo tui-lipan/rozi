@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn listing_reports_error_for_missing_directory() {
-        let (entries, error) = list_directory("/definitely/not/here/hyprmux", false);
+        let (entries, error) = list_directory("/definitely/not/here/rozi", false);
         assert!(entries.is_empty());
         assert!(error.is_some(), "missing directory must report an error");
     }

@@ -1,4 +1,4 @@
-//! Builds and registers hyprmux's `CommandEntry` set with tui-lipan's native command
+//! Builds and registers rozi's `CommandEntry` set with tui-lipan's native command
 //! registry/chord dispatch.
 //!
 //! Three families of commands are registered:
@@ -715,7 +715,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
 /// Workspace digit shifted symbols on a US layout (`shift-1` ==`!` etc.), used for the
 /// move-to-workspace/relocate-workspace second chord step. Kept as literal characters (not
 /// `shift-<digit>` binding syntax) because terminals report the shifted symbol itself, not a
-/// separate shift modifier bit on the base digit - the same convention the rest of hyprmux's
+/// separate shift modifier bit on the base digit - the same convention the rest of rozi's
 /// default bindings already rely on (e.g. `shift-7` display as `&`).
 const WORKSPACE_DIGITS: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const WORKSPACE_SHIFT_SYMBOLS: [&str; 9] = ["!", "@", "#", "$", "%", "^", "&", "*", "("];
@@ -938,9 +938,9 @@ pub(crate) fn is_palette_eligible(id: &str) -> bool {
     }
     // tui-lipan's runtime auto-registers framework commands under the `app.` id prefix
     // (`app.quit`, `app.focus-next`, `app.focus-prev`, `app.dismiss-overlay`,
-    // `app.toggle-devtools`). None of them belong in hyprmux's palette: quit/detach have
+    // `app.toggle-devtools`). None of them belong in rozi's palette: quit/detach have
     // dedicated commands, panes are terminal shells rather than app-focusable widgets,
-    // dismissing an overlay is just `Esc`, and DevTools is exposed as hyprmux's own
+    // dismissing an overlay is just `Esc`, and DevTools is exposed as rozi's own
     // `toggle-devtools` (prefix/mod+F12) instead of the framework's bare F12 binding.
     if id.starts_with("app.") {
         return false;

@@ -84,7 +84,7 @@ impl RemotePreamble {
         .map(|_| ())
         .map_err(|mismatch| {
             format!(
-                "remote hyprmux protocol is incompatible ({})",
+                "remote rozi protocol is incompatible ({})",
                 mismatch.message()
             )
         })

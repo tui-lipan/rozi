@@ -1477,7 +1477,7 @@ pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -
 /// Focus a slot's pane and ask its program to bring that slot on screen.
 ///
 /// The request travels back over the connection the publisher opened; a program that has since
-/// stopped listening still gets its pane focused, which is the part hyprmux can do alone.
+/// stopped listening still gets its pane focused, which is the part rozi can do alone.
 fn activate_pane_slot(
     ctx: &mut Context<AppRoot>,
     pane_id: crate::state::PaneId,
@@ -2625,10 +2625,10 @@ mod tests {
         on_test_thread(|| {
             let spawn = activate_launcher(
                 UserCommandAction::run("cargo build"),
-                Some("/home/x/work/hyprmux"),
+                Some("/home/x/work/rozi"),
             );
             assert_eq!(spawn.command.as_deref(), Some("cargo build"));
-            assert_eq!(spawn.cwd.as_deref(), Some("/home/x/work/hyprmux"));
+            assert_eq!(spawn.cwd.as_deref(), Some("/home/x/work/rozi"));
             assert!(spawn.keep_open);
         });
     }

@@ -56,8 +56,8 @@ fn bench_style_setup_renders_populated_tiled_panes() {
                     }
                     pane.terminal.title = Some("nvim src/main.rs".to_string());
                     pane.terminal.original_user = Some("benchmark".to_string());
-                    pane.terminal.cwd = Some("/workspace/hyprmux/src".to_string());
-                    pane.terminal.display_path = Some("hyprmux/src".to_string());
+                    pane.terminal.cwd = Some("/workspace/rozi/src".to_string());
+                    pane.terminal.display_path = Some("rozi/src".to_string());
                     state.current_mut().workspaces[0].panes.push(pane);
                     ids.push(id);
                 }
@@ -76,7 +76,7 @@ fn bench_style_setup_renders_populated_tiled_panes() {
             // Every pane is tiled and titled.
             let titles: usize = lines
                 .iter()
-                .map(|line| line.matches("󰖲  nvim src/main.rs · hyprmux/src").count())
+                .map(|line| line.matches("󰖲  nvim src/main.rs · rozi/src").count())
                 .sum();
             assert_eq!(titles, PANES, "expected one title bar per tiled pane");
 

@@ -1,6 +1,6 @@
 //! Mirrors the capped-workbar structure from `view::workbar::workbar_with_caps` (a full-width
 //! panel-colored row with a borderless `Frame` + `ZStack` overlay that paints an end cap over each
-//! outer cell) to pin the tui-lipan behavior hyprmux depends on: the caps must land on the bar's
+//! outer cell) to pin the tui-lipan behavior rozi depends on: the caps must land on the bar's
 //! two edge cells, without shifting the bar content, and each cap must take the color of the
 //! badge/segment sitting on that edge (drawn over the backdrop).
 
@@ -9,7 +9,7 @@ use tui_lipan::prelude::*;
 
 const PANEL: Color = Color::Rgb(40, 44, 60);
 const BACKDROP: Color = Color::Rgb(12, 12, 18);
-// Accent used by the leading `hyprmux`-style badge (mirrors `theme.border_active`).
+// Accent used by the leading `rozi`-style badge (mirrors `theme.border_active`).
 const ACCENT: Color = Color::Rgb(120, 200, 255);
 // Trailing powerline chip colors (mirror `status.warning` and `border_active`).
 const WARNING: Color = Color::Rgb(230, 180, 80);
@@ -37,7 +37,7 @@ impl Component for BarApp {
     }
 
     fn view(&self, _ctx: &Context<Self>) -> Element {
-        // A leading accent badge (`hyprmux`) then a plain panel-colored segment, so the left edge
+        // A leading accent badge (`rozi`) then a plain panel-colored segment, so the left edge
         // is a colored badge and the right edge is a plain bar cell.
         let row = HStack::new()
             .gap(1)
@@ -45,7 +45,7 @@ impl Component for BarApp {
             .height(Length::Px(1))
             .style(Style::new().bg(PANEL))
             .child(
-                Text::new(" hyprmux ")
+                Text::new(" rozi ")
                     .style(Style::new().fg(BACKDROP).bg(ACCENT))
                     .height(Length::Px(1)),
             )

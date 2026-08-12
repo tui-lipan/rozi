@@ -42,7 +42,7 @@ pub fn shutdown_requested() -> bool {
     SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
 }
 
-/// Spawn a background session server for `name` (`hyprmux --session <name> --server`), fully
+/// Spawn a background session server for `name` (`rozi --session <name> --server`), fully
 /// detached from this process's terminal so it outlives the client that started it.
 ///
 /// On Windows, OpenSSH runs each session inside a Job Object and kills the whole job when the SSH
@@ -422,7 +422,7 @@ pub fn terminate_server(pid: u32) {
     imp::terminate_server(pid);
 }
 
-/// Whether this host can run hyprmux at all, with a user-facing reason when it cannot
+/// Whether this host can run rozi at all, with a user-facing reason when it cannot
 /// (cross-platform plan Phase 10).
 ///
 /// The one real gate is Windows: every pane is a PTY, and on Windows that means ConPTY, which
@@ -432,7 +432,7 @@ pub fn terminate_server(pid: u32) {
 /// single pane the user opens.
 ///
 /// A modern VT-capable terminal host (Windows Terminal, or any conhost from that same build
-/// onwards) is implied by the same check: the console-VT support hyprmux's rendering needs shipped
+/// onwards) is implied by the same check: the console-VT support rozi's rendering needs shipped
 /// alongside ConPTY.
 pub fn check_host_supported() -> Result<(), String> {
     #[cfg(windows)]
@@ -455,8 +455,8 @@ pub fn check_host_supported() -> Result<(), String> {
         };
         if !has_conpty {
             return Err(
-                "hyprmux needs ConPTY, which requires Windows 10 version 1809 (build 17763) or \
-                 newer. Update Windows, or run hyprmux under WSL."
+                "rozi needs ConPTY, which requires Windows 10 version 1809 (build 17763) or \
+                 newer. Update Windows, or run rozi under WSL."
                     .to_string(),
             );
         }

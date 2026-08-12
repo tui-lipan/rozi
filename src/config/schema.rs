@@ -195,7 +195,7 @@ impl SessionStartup {
 pub struct SessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
     pub autosave: bool,
-    /// Override the session file location; defaults to `$XDG_STATE_HOME/hyprmux/session.toml`.
+    /// Override the session file location; defaults to `$XDG_STATE_HOME/rozi/session.toml`.
     pub path: Option<PathBuf>,
     /// Whether a bare launch opens the session picker (the default), attaches to an ephemeral
     /// session, or reopens the last named session.
@@ -480,7 +480,7 @@ impl SoundsConfig {
 
 /// Seamless-navigation policy for the `smart-focus-*` actions: the set of foreground programs
 /// that manage their own splits and should receive `Ctrl-h/j/k/l` themselves instead of having
-/// hyprmux move pane focus. Modeled on vim-tmux-navigator's `is_vim` check (see
+/// rozi move pane focus. Modeled on vim-tmux-navigator's `is_vim` check (see
 /// [docs/keybindings.md]); matching is case-insensitive against the pane's foreground process
 /// name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -585,12 +585,12 @@ impl Default for ScratchpadConfig {
     }
 }
 
-/// `[shell_integration] mode` (cross-platform plan Phase 8): whether hyprmux injects its
+/// `[shell_integration] mode` (cross-platform plan Phase 8): whether rozi injects its
 /// OSC 7/133 shell-integration scripts into resolved-interactive-shell spawns.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ShellIntegrationMode {
     /// Inject for a recognized shell (bash/zsh/fish today; PowerShell/cmd.exe stay documented
-    /// opt-in per the plan even once Milestone 2 lands), unless an existing hyprmux or
+    /// opt-in per the plan even once Milestone 2 lands), unless an existing rozi or
     /// terminal-native integration is already loaded.
     #[default]
     Auto,

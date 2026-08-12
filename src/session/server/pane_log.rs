@@ -3,10 +3,10 @@
 //! The stream stays deliberately raw - escape sequences, CR line endings and all - because that is
 //! the only lossless form and the only one that can be replayed. Two things are shaped anyway.
 //!
-//! **hyprmux's own instrumentation is removed.** The shell-integration scripts emit
+//! **rozi's own instrumentation is removed.** The shell-integration scripts emit
 //! `OSC 133 ; C ; rozi_exe=<basename>` to report the foreground program. That parameter is a
-//! private hyprmux extension rather than the pane's output, and someone who asked to log `eza`
-//! should not find hyprmux's protocol interleaved with it. Only the parameter is dropped; what
+//! private rozi extension rather than the pane's output, and someone who asked to log `eza`
+//! should not find rozi's protocol interleaved with it. Only the parameter is dropped; what
 //! remains is the bare `OSC 133 ; C` that every other terminal's shell integration writes, so the
 //! log stays a faithful recording of an instrumented shell rather than a doctored one.
 //!
@@ -18,7 +18,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// hyprmux's private command-start marker, emitted by `assets/shell-integration/*`.
+/// rozi's private command-start marker, emitted by `assets/shell-integration/*`.
 const EXE_MARKER: &[u8] = b"\x1b]133;C;rozi_exe=";
 /// What replaces it: the standard, parameterless OSC 133 command-start marker.
 const BARE_COMMAND_START: &[u8] = b"\x1b]133;C";
@@ -95,7 +95,7 @@ impl MarkerFilter {
         }
     }
 
-    /// Release anything still withheld. Only ever a partial hyprmux marker, but emitting it beats
+    /// Release anything still withheld. Only ever a partial rozi marker, but emitting it beats
     /// silently swallowing bytes that turned out not to be one.
     fn flush(&mut self, out: &mut Vec<u8>) {
         out.append(&mut self.carry);
@@ -164,7 +164,7 @@ impl LogHeader<'_> {
         // CRLF because the surrounding stream is raw terminal output: a bare LF would leave the
         // next line indented by the column the header ended on when the file is `cat`ed.
         format!(
-            "\r\n=== hyprmux log · session {session} · pane {pane_id}-{generation} · \
+            "\r\n=== rozi log · session {session} · pane {pane_id}-{generation} · \
              {cols}x{rows} · started {started} ===\r\n"
         )
     }
@@ -195,7 +195,7 @@ impl PaneLog {
         &self.path
     }
 
-    /// Append `bytes`, minus hyprmux's own markers. `Err` means logging must stop, and carries the
+    /// Append `bytes`, minus rozi's own markers. `Err` means logging must stop, and carries the
     /// reason to report.
     pub(super) fn write(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.scratch.clear();
@@ -215,7 +215,7 @@ impl PaneLog {
             // mid-escape-sequence, which is worse to read back than a clean early end.
             let limit = self.limit;
             self.filter.carry.clear();
-            let trailer = format!("\r\n=== hyprmux log stopped · size limit {limit} bytes ===\r\n");
+            let trailer = format!("\r\n=== rozi log stopped · size limit {limit} bytes ===\r\n");
             let _ = self.file.write_all(trailer.as_bytes());
             return Err(format!("pane log reached its {limit} byte limit"));
         }
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn standard_osc_133_markers_survive_untouched() {
-        // Only hyprmux's private parameter is ours to remove; A/B/D and a bare C are the open
+        // Only rozi's private parameter is ours to remove; A/B/D and a bare C are the open
         // standard other terminals emit too.
         let stream: &[u8] = b"\x1b]133;A\x1b\\\x1b]133;B\x1b\\\x1b]133;C\x1b\\\x1b]133;D;0\x1b\\";
         assert_eq!(filtered(&[stream]), stream);
@@ -322,7 +322,7 @@ mod tests {
         };
         let mut log = PaneLog::open(&path, 4096, &header).unwrap();
         let opening = std::fs::read_to_string(&path).unwrap();
-        assert!(opening.starts_with("=== hyprmux log · session dev · pane 1-2 · 80x24 · started "));
+        assert!(opening.starts_with("=== rozi log · session dev · pane 1-2 · 80x24 · started "));
         assert!(opening.ends_with("===\r\n"));
 
         log.write(b"kept").unwrap();
@@ -334,7 +334,7 @@ mod tests {
         assert!(written.contains("kept"));
         // None of the over-limit payload landed: the chunk is refused whole, never half-written.
         assert!(!written.contains("xxxx"));
-        assert!(written.ends_with("=== hyprmux log stopped · size limit 4096 bytes ===\r\n"));
+        assert!(written.ends_with("=== rozi log stopped · size limit 4096 bytes ===\r\n"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -360,8 +360,8 @@ mod tests {
             .write(b"second")
             .unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(written.matches("=== hyprmux log ·").count(), 2);
-        assert!(written.contains("first\r\n=== hyprmux log ·"));
+        assert_eq!(written.matches("=== rozi log ·").count(), 2);
+        assert!(written.contains("first\r\n=== rozi log ·"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

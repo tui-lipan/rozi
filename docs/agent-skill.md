@@ -1,14 +1,14 @@
 ---
-name: hyprmux
-description: "Control hyprmux, a Hyprland-style tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control hyprmux panes or sessions, or asks to use hyprmux. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
+name: rozi
+description: "Control rozi, a Hyprland-style tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control rozi panes or sessions, or asks to use rozi. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
 ---
 
-# Hyprmux
+# Rozi
 
-Hyprmux runs real terminal panes in a tiling UI and can keep named session servers alive across
-clients. Use this skill only for an explicit hyprmux request.
+Rozi runs real terminal panes in a tiling UI and can keep named session servers alive across
+clients. Use this skill only for an explicit rozi request.
 
-Before any pane-control command, verify that this agent is running in a hyprmux-managed pane with a
+Before any pane-control command, verify that this agent is running in a rozi-managed pane with a
 local UI endpoint:
 
 ```bash
@@ -23,21 +23,21 @@ arbitrary focused UI from outside a managed pane.
 The installed binary is the authority for syntax. Start with:
 
 ```bash
-hyprmux --help
+rozi --help
 ```
 
-Do not run bare `hyprmux` for discovery: it launches or attaches the TUI.
+Do not run bare `rozi` for discovery: it launches or attaches the TUI.
 
 ## Endpoint and caller context
 
-The control endpoint is private and belongs to the **local hyprmux UI process**. Control endpoint
+The control endpoint is private and belongs to the **local rozi UI process**. Control endpoint
 selection is `--socket PATH`, then `ROZI_SOCKET`, then the only live local endpoint found in the
 runtime directory. `ROZI_SOCKET` is the endpoint path, not a named-session server endpoint.
 
 Use the injected endpoint explicitly when needed:
 
 ```bash
-hyprmux --socket "$ROZI_SOCKET" list-panes
+rozi --socket "$ROZI_SOCKET" list-panes
 ```
 
 Every pane receives `ROZI_PANE=<numeric live pane id>`. The CLI copies that value into
@@ -60,25 +60,25 @@ JSON errors, while local discovery/connect failures are plain stderr. Pane ids a
 live ids from `list-panes` JSON and reuse those ids; do not predict ids from pane order or examples.
 
 ```bash
-hyprmux list-panes
-hyprmux focus <PANE_ID>
-hyprmux send-text 'cargo test
+rozi list-panes
+rozi focus <PANE_ID>
+rozi send-text 'cargo test
 '
-hyprmux send-keys C-c
-hyprmux send-keys 'echo hi' Enter
-hyprmux send-keys -l C-c
-hyprmux send-keys -- -n hello
-hyprmux split [COMMAND]
-hyprmux split [COMMAND] --focus  # also move focus to the new pane
-hyprmux new-pane [COMMAND]       # alias of split
-hyprmux capture-pane
-hyprmux capture-pane --target <PANE_ID>
-hyprmux capture-pane --scrollback 200
-hyprmux capture-pane --scrollback full
-hyprmux capture-pane --last-output
-hyprmux status <VALUE> [--reason <TEXT>]
-hyprmux status --clear
-hyprmux agent-slots
+rozi send-keys C-c
+rozi send-keys 'echo hi' Enter
+rozi send-keys -l C-c
+rozi send-keys -- -n hello
+rozi split [COMMAND]
+rozi split [COMMAND] --focus  # also move focus to the new pane
+rozi new-pane [COMMAND]       # alias of split
+rozi capture-pane
+rozi capture-pane --target <PANE_ID>
+rozi capture-pane --scrollback 200
+rozi capture-pane --scrollback full
+rozi capture-pane --last-output
+rozi status <VALUE> [--reason <TEXT>]
+rozi status --clear
+rozi agent-slots
 ```
 
 `send-keys` accepts tmux-style names such as `C-c`, `M-x`, `Enter`, `Escape`, `Space`, `Tab`,
@@ -89,7 +89,7 @@ hyprmux agent-slots
 `--scrollback full` captures all retained history, and `--last-output` captures the last shell
 integration command output. `status` reports a short pane status; `status --clear` removes it.
 `agent-slots` is for a program running several agents in one pane: it bridges stdin/stdout to
-hyprmux, publishing one JSON slot list per line and reading back `{"activate":"<id>"}` when a user
+rozi, publishing one JSON slot list per line and reading back `{"activate":"<id>"}` when a user
 clicks a row. It runs until closed, and closing withdraws the pane's slots. See
 `docs/control.md`.
 
@@ -109,7 +109,7 @@ exited or failed to spawn still fails with `PTY is not running`.
 
 Other current control commands are `metrics`, `run-action <ACTION_ID>`, `switch-workspace <1-9>`,
 and `move-to-workspace <1-9>`. `run-action` uses stable keybinding/command-palette action ids; use
-only an id listed by `hyprmux --help` or the command palette, never a guessed id.
+only an id listed by `rozi --help` or the command palette, never a guessed id.
 
 ## Controller, read-only, and input-lock limits
 
@@ -126,15 +126,15 @@ only an id listed by `hyprmux --help` or the command palette, never a guessed id
 Session lifecycle commands are separate from the local UI control endpoint:
 
 ```bash
-hyprmux list-sessions
-hyprmux list-sessions --format json
-hyprmux attach <NAME>
-hyprmux attach <NAME> --read-only
-hyprmux new <NAME>
-hyprmux new <NAME> --profile <RECIPE>
-hyprmux kill-session <NAME>
-hyprmux list-sessions --remote <HOST>
-hyprmux kill-session <NAME> --remote <HOST>
+rozi list-sessions
+rozi list-sessions --format json
+rozi attach <NAME>
+rozi attach <NAME> --read-only
+rozi new <NAME>
+rozi new <NAME> --profile <RECIPE>
+rozi kill-session <NAME>
+rozi list-sessions --remote <HOST>
+rozi kill-session <NAME> --remote <HOST>
 ```
 
 `attach` is attach-only; `new` explicitly creates a named session. `kill-session <NAME>` is the

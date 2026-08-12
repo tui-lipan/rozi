@@ -262,7 +262,7 @@ fn detected_agent_status(detected: &DetectedAgent) -> &'static str {
 /// One logical agent inside a pane that publishes several.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSlot {
-    /// Publisher-chosen identity, opaque to hyprmux and stable across updates.
+    /// Publisher-chosen identity, opaque to rozi and stable across updates.
     ///
     /// Never a position: tabs are reordered and closed, and an index-keyed run clock would hand
     /// one tab's elapsed time to whichever tab slid into its place.

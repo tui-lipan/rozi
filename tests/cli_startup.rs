@@ -38,7 +38,7 @@ mod unix {
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("No session or profile named `wok`."));
-        assert!(stderr.contains("Create it with: hyprmux new wok"));
+        assert!(stderr.contains("Create it with: rozi new wok"));
         let runtime_path = root.join("runtime/rozi");
         let runtime_entries = fs::read_dir(&runtime_path)
             .map(|entries| entries.count())
@@ -58,7 +58,7 @@ mod unix {
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("Session `work` is not running."));
-        assert!(stderr.contains("Start it with: hyprmux work"));
+        assert!(stderr.contains("Start it with: rozi work"));
         fs::remove_dir_all(root).unwrap();
     }
 

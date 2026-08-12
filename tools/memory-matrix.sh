@@ -274,9 +274,9 @@ pane_command() {
   if [[ $content == images ]]; then
     printf '%s' "python3 -c 'import base64,sys,time; w=384; h=256; marker=\"M\"+\"${marker_suffix}\"; raw=bytes((index * 17 + 23) % 251 for index in range(w * h * 3)); payload=base64.b64encode(raw).decode(); [sys.stdout.write(\"\\x1b_Ga=T,f=24,s=%d,v=%d,t=d,i=%d;%s\\x1b\\\\\\n\" % (w,h,image,payload)) for image in range(1,9)]; sys.stdout.write(marker+\"\\n\"); sys.stdout.flush(); time.sleep(3600)'"
   elif [[ $content == styled ]]; then
-    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmhyprmux-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
+    printf "i=0; while [ \$i -lt %s ]; do printf '\\033[3%%dmrozi-%%06d styled\\033[0m\\n' \$((\$i%%7+1)) \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   else
-    printf "i=0; while [ \$i -lt %s ]; do printf 'hyprmux-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
+    printf "i=0; while [ \$i -lt %s ]; do printf 'rozi-%%06d plain\\n' \$i; i=\$((\$i+1)); done; printf 'M%%s\\n' '%s'; while :; do sleep 3600; done" "$history" "$marker_suffix"
   fi
 }
 
@@ -578,7 +578,7 @@ for current in steady:
         })
 document = {"schema_version": 2, "sampling": {"settling_seconds": 2, "samples": 5, "interval_ms": 200, "statistic": "median"}, "scenarios": rows, "derived_per_pane": slopes}
 json_path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
-lines = ["# hyprmux memory matrix", "", "Values are median KiB from five samples after quiescence; application PSS and current RSS are the session server plus live probe-client processes. Active clients counts session attachments. VmHWM is deliberately not a cleanup metric.", "", "| Scenario | Active clients | Client PSS | Server PSS | Child PSS | App PSS | Current app RSS | Private | Anonymous | File PSS | Threads | Processes |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+lines = ["# rozi memory matrix", "", "Values are median KiB from five samples after quiescence; application PSS and current RSS are the session server plus live probe-client processes. Active clients counts session attachments. VmHWM is deliberately not a cleanup metric.", "", "| Scenario | Active clients | Client PSS | Server PSS | Child PSS | App PSS | Current app RSS | Private | Anonymous | File PSS | Threads | Processes |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
 for row in rows:
     groups = row["groups"]
     client, server, shell = (groups.get(name, {}) for name in ("client", "server", "shell"))

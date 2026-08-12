@@ -107,7 +107,7 @@ fn agents_tab_renders_project_groups() {
                     2,
                     AgentKind::OpenCode,
                     Some(("idle", None)),
-                    Some("/home/x/work/hyprmux"),
+                    Some("/home/x/work/rozi"),
                 );
                 finished.terminal.finished_unseen = true;
                 let mut done = agent_pane(
@@ -122,7 +122,7 @@ fn agents_tab_renders_project_groups() {
                         1,
                         AgentKind::Claude,
                         Some(("blocked", Some("needs approval"))),
-                        Some("/home/x/work/hyprmux"),
+                        Some("/home/x/work/rozi"),
                     ),
                     finished,
                     agent_pane(
@@ -156,12 +156,12 @@ fn agents_tab_renders_project_groups() {
             // Alphabetical group order with the unknown-cwd group last; each project header
             // precedes its agent rows.
             let api = line_index("api");
-            let hyprmux_group = line_index("hyprmux");
+            let rozi_group = line_index("rozi");
             let tools = line_index("tools");
             let elsewhere = line_index("elsewhere");
-            assert!(api < hyprmux_group && hyprmux_group < tools && tools < elsewhere);
+            assert!(api < rozi_group && rozi_group < tools && tools < elsewhere);
             assert!(api < line_index("Codex"));
-            assert!(hyprmux_group < line_index("Claude Code"));
+            assert!(rozi_group < line_index("Claude Code"));
             assert!(elsewhere < line_index("Aider"));
             // The detail line spends its width on what the agent is doing and how long it has been
             // at it, not on repeating a status the glyph column already carries.
@@ -204,16 +204,16 @@ fn agents_tab_heads_projects_with_their_branch() {
                         1,
                         AgentKind::Claude,
                         Some(("working", Some("wiring the sidebar"))),
-                        "/home/x/hyprmux",
-                        "/home/x/hyprmux",
+                        "/home/x/rozi",
+                        "/home/x/rozi",
                         "master",
                     ),
                     agent_pane_in_project(
                         2,
                         AgentKind::Codex,
                         Some(("idle", None)),
-                        "/home/x/hyprmux/src/view",
-                        "/home/x/hyprmux",
+                        "/home/x/rozi/src/view",
+                        "/home/x/rozi",
                         "master",
                     ),
                     // A second checkout of the same repository: its own directory, its own branch.
@@ -221,8 +221,8 @@ fn agents_tab_heads_projects_with_their_branch() {
                         3,
                         AgentKind::OpenCode,
                         Some(("blocked", Some("needs approval"))),
-                        "/home/x/hyprmux-wt",
-                        "/home/x/hyprmux-wt",
+                        "/home/x/rozi-wt",
+                        "/home/x/rozi-wt",
                         "feat/agent-branches",
                     ),
                 ];
@@ -240,20 +240,17 @@ fn agents_tab_heads_projects_with_their_branch() {
                     .unwrap_or_else(|| panic!("sidebar shows {needle:?}\n{}", sidebar.join("\n")))
             };
 
-            // One project, not one per directory: the nested agent is under the `hyprmux` header.
-            let hyprmux = line_index("hyprmux ");
-            assert!(hyprmux < line_index("Claude Code"));
-            assert!(hyprmux < line_index("Codex"));
+            // One project, not one per directory: the nested agent is under the `rozi` header.
+            let rozi = line_index("rozi ");
+            assert!(rozi < line_index("Claude Code"));
+            assert!(rozi < line_index("Codex"));
             // The branch heads its own group, right-aligned on the header line. `31` drops the
             // panel border the 32-column capture includes.
             let content = |line: &str| line.chars().take(31).collect::<String>();
             let right_edge = |line: &str| content(line).trim_end().chars().count();
-            assert!(content(&sidebar[hyprmux]).trim_end().ends_with("master"));
+            assert!(content(&sidebar[rozi]).trim_end().ends_with("master"));
             // It shares the badge column with the rows below it, so the two read as one rail.
-            assert_eq!(
-                right_edge(&sidebar[hyprmux]),
-                right_edge(&sidebar[hyprmux + 1])
-            );
+            assert_eq!(right_edge(&sidebar[rozi]), right_edge(&sidebar[rozi + 1]));
             // What grouping on the root gave up comes back per row.
             assert!(sidebar.iter().any(|line| line.contains("src/view · 1")));
             // A worktree is a separate group, and the branch is what tells the two apart.
@@ -320,7 +317,7 @@ fn published_slots_render_one_numbered_row_each() {
                 let state = backend.state_mut();
                 agents_fill_the_sidebar(state);
                 let mut publisher =
-                    agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/hyprmux"));
+                    agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/rozi"));
                 publisher.terminal.slots = vec![
                     slot("ses_a", "audit the widget layer", "working", None, true),
                     slot(

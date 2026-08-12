@@ -1,4 +1,4 @@
-00400000-00401000 r--p 00000000 00:01 1 /tmp/hyprmux
+00400000-00401000 r--p 00000000 00:01 1 /tmp/rozi
 Rss:                   6 kB
 Pss:                   4 kB
 Private_Clean:         2 kB

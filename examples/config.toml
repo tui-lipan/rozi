@@ -1,6 +1,6 @@
-# hyprmux reference configuration
+# rozi reference configuration
 #
-# Every setting hyprmux understands, commented out at its default value. Nothing here
+# Every setting rozi understands, commented out at its default value. Nothing here
 # needs to be copied: an absent config file and this file with everything still commented
 # behave identically. Uncomment only the lines you want to change.
 #
@@ -24,7 +24,7 @@
 #   command_shell = ["cmd.exe", "/D", "/S", "/C"]
 #command_shell = ["/bin/sh", "-c"]
 
-# Working directory for new panes. Defaults to the directory hyprmux was launched from.
+# Working directory for new panes. Defaults to the directory rozi was launched from.
 #cwd = "~/code"
 
 # Scrollback lines retained per pane. Applies to terminal screens created after the change,
@@ -196,7 +196,7 @@
 # Let a writable follower take the layout-control lease immediately with request-control.
 # Set false when sharing with another person, so a request waits to be granted.
 #allow_takeover = true
-# Autosave file location. Defaults under $XDG_STATE_HOME/hyprmux.
+# Autosave file location. Defaults under $XDG_STATE_HOME/rozi.
 #path = "~/.local/state/rozi/session.toml"
 
 [remote]
@@ -208,7 +208,7 @@
 #server_alive_interval_secs = 15
 #server_alive_count_max = 3
 # "prompt", "always", or "never": whether an interactive run may copy a compatible binary
-# to ~/.local/bin/hyprmux on the remote when none is found. Non-interactive runs never
+# to ~/.local/bin/rozi on the remote when none is found. Non-interactive runs never
 # mutate the remote.
 #install = "prompt"
 # Pass ssh BatchMode=yes, refusing every interactive prompt. Set false to allow password
@@ -278,7 +278,7 @@
 
 [logging]
 # Files written by toggle-pane-logging. Session directories are mode 0700, logs 0600.
-# Defaults under $XDG_STATE_HOME/hyprmux/logs.
+# Defaults under $XDG_STATE_HOME/rozi/logs.
 #dir = "~/.local/state/rozi/logs"
 # Ceiling for one pane log file; 0 disables the cap. A chunk that would cross it is
 # refused whole, so a log never ends mid-escape-sequence.
@@ -293,8 +293,8 @@
 #identity_file = "~/.ssh/id_ed25519"
 # Extra arguments spliced into the ssh command line.
 #ssh_args = ["-o", "ProxyJump=bastion"]
-# Absolute path to hyprmux on the remote; set it to skip the probe and install steps.
-#binary_path = "/usr/local/bin/hyprmux"
+# Absolute path to rozi on the remote; set it to skip the probe and install steps.
+#binary_path = "/usr/local/bin/rozi"
 
 # Placement rules for command-carrying pane spawns, including control new-pane and
 # [keys] run. First match wins. Plain shell panes, profile restore, scratchpads, and
@@ -332,7 +332,7 @@
 # UUIDs.
 #pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
 
-# Client-side commands run on hyprmux events, launched asynchronously through
+# Client-side commands run on rozi events, launched asynchronously through
 # command_shell. Hooks receive ROZI_EVENT, event fields, and ROZI_SOCKET. Events:
 # pane-spawned, pane-exited, pane-status-changed, bell, focus-changed, workspace-switched,
 # session-attached, session-detached, session-renamed, session-created,

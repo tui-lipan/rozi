@@ -11,7 +11,7 @@ pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme
     Theme::from_host_colors(colors)
 }
 
-/// The host terminal's probed default background, if hyprmux queried it at startup. Carried on the
+/// The host terminal's probed default background, if rozi queried it at startup. Carried on the
 /// derived `system_theme` as a [`HostTerminalColors`] extension so it stays available regardless of
 /// which theme is active.
 pub(crate) fn host_background(state: &State) -> Option<Color> {
@@ -22,7 +22,7 @@ pub(crate) fn host_background(state: &State) -> Option<Color> {
         .map(|colors| colors.bg)
 }
 
-/// Set hyprmux's subdued caret default while leaving explicit theme `[caret]` colors intact.
+/// Set rozi's subdued caret default while leaving explicit theme `[caret]` colors intact.
 pub(crate) fn apply_default_caret_palette(theme: Theme) -> Theme {
     let accent_color = theme
         .role(ThemeRole::Accent)

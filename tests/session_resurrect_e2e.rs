@@ -107,7 +107,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_control(&ClientMessage::SetSessionOrigin {
         profile: "work".into(),
     });
-    client.write_pane_input(PANE_ID, PANE_GENERATION, b"i=0; while [ $i -lt 40 ]; do printf 'resurrect-line-%03d\\n' $i; i=$((i+1)); done; printf 'hyprmux-resurrect-%s\\n' 'replay-marker'\r");
+    client.write_pane_input(PANE_ID, PANE_GENERATION, b"i=0; while [ $i -lt 40 ]; do printf 'resurrect-line-%03d\\n' $i; i=$((i+1)); done; printf 'rozi-resurrect-%s\\n' 'replay-marker'\r");
     let mut live_output = Vec::new();
     read_until(&mut client, |frame| {
         if let Frame::PaneBytes { bytes, .. } = frame {
@@ -130,7 +130,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     client.write_control(&ClientMessage::Detach);
     drop(client);
 
-    let snapshot = state_base.join("hyprmux").join("sessions").join(&session);
+    let snapshot = state_base.join("rozi").join("sessions").join(&session);
     wait_for_snapshot(&snapshot);
     let snapshot_replay = fs::read(snapshot.join("panes").join(format!("{PANE_ID}.replay")))
         .expect("read replay snapshot");

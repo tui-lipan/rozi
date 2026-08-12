@@ -1093,8 +1093,8 @@ mod tests {
         assert_eq!(groups[2].rows[0].pane_id, 3);
     }
 
-    /// The point of grouping on the project root: an agent launched in `hyprmux/src` belongs to
-    /// `hyprmux`, not to a project called `src`. What it lost — where in the project it sits — comes
+    /// The point of grouping on the project root: an agent launched in `rozi/src` belongs to
+    /// `rozi`, not to a project called `src`. What it lost — where in the project it sits — comes
     /// back on the row as the subpath.
     #[test]
     fn agents_below_the_project_root_join_the_project_not_a_directory() {
@@ -1103,22 +1103,22 @@ mod tests {
             pane_in_project(
                 1,
                 Some("idle"),
-                "/home/x/hyprmux",
-                "/home/x/hyprmux",
+                "/home/x/rozi",
+                "/home/x/rozi",
                 Some("master"),
             ),
             pane_in_project(
                 2,
                 Some("working"),
-                "/home/x/hyprmux/src/view",
-                "/home/x/hyprmux",
+                "/home/x/rozi/src/view",
+                "/home/x/rozi",
                 Some("master"),
             ),
         ];
 
         let groups = agent_groups(&state);
         assert_eq!(groups.len(), 1, "one project, one group");
-        assert_eq!(groups[0].project.as_deref(), Some("hyprmux"));
+        assert_eq!(groups[0].project.as_deref(), Some("rozi"));
         assert_eq!(groups[0].branch.as_deref(), Some("master"));
         // Status order still decides the rows: the nested one is working, so it leads.
         assert_eq!(

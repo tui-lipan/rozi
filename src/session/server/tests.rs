@@ -1468,11 +1468,11 @@ fn pane_logging_writes_raw_bytes_under_a_header_and_is_reported_on_attach() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// hyprmux injects its own OSC 133 `rozi_exe=` marker through shell integration; a user's log is
-/// their program's output, not hyprmux's protocol. The standard bare marker is what other
+/// rozi injects its own OSC 133 `rozi_exe=` marker through shell integration; a user's log is
+/// their program's output, not rozi's protocol. The standard bare marker is what other
 /// terminals' integrations emit, so it stays.
 #[test]
-fn pane_logging_strips_hyprmux_own_shell_integration_marker() {
+fn pane_logging_strips_rozi_own_shell_integration_marker() {
     let root = std::env::temp_dir().join(format!("rozi-log-marker-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     let mut server = SessionServer::new_named_with_settings(

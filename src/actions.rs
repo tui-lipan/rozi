@@ -151,8 +151,8 @@ pub(crate) fn execute_user_command_action_with_env(
 
 /// vim-tmux-navigator-style directional focus: if the focused pane runs a split-aware program
 /// (see `[navigation] editors`), forward the matching `Ctrl-h/j/k/l` so that program moves its
-/// own split; otherwise move hyprmux pane focus. The forwarded program is expected to hand focus
-/// back at its split edge via the control socket (`hyprmux run-action focus-<dir>`), which yields
+/// own split; otherwise move rozi pane focus. The forwarded program is expected to hand focus
+/// back at its split edge via the control socket (`rozi run-action focus-<dir>`), which yields
 /// the seamless "one keymap crosses both" behavior.
 fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
     if let Some(id) = ctx.state.current().focused_pane

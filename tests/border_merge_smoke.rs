@@ -1,6 +1,6 @@
 //! Mirrors the merged-border pane structure from `view::pane_element` (an unstyled VStack
 //! wrapping a title row + bordered Frame, wrapped in Animated, placed overlapping on a
-//! Canvas) to pin the tui-lipan behavior hyprmux depends on: adjacent pane borders sharing
+//! Canvas) to pin the tui-lipan behavior rozi depends on: adjacent pane borders sharing
 //! a seam cell must fuse into junction glyphs (`┬ ├ ┤ ┴`) regardless of draw order.
 
 use tui_lipan::TestBackend;

@@ -352,7 +352,7 @@ pub(crate) fn connect_when_ready(endpoint: &IpcEndpoint, child: &mut Child) -> T
 /// Base directory for a test's runtime state, kept short enough to hold a Unix socket.
 ///
 /// `sockaddr_un.sun_path` is 104 bytes on macOS (108 on Linux), and this base has a whole runtime
-/// layout appended to it before a socket name lands at the end: `<base>/hyprmux/<session>.sock`.
+/// layout appended to it before a socket name lands at the end: `<base>/rozi/<session>.sock`.
 /// macOS's per-user `TMPDIR` is `/var/folders/<2>/<30ish>/T/` on its own, which leaves too little
 /// room, so prefer the short system temp directory there. `/private/tmp` rather than `/tmp`
 /// because the latter is a symlink and [`ensure_private_dir`] rejects those by design.
@@ -387,10 +387,7 @@ pub(crate) fn subprocess_endpoint(runtime_base: &std::path::Path, session: &str)
     if cfg!(windows) {
         session_endpoint(session).expect("resolve subprocess session endpoint")
     } else {
-        rozi::platform::ipc::EndpointRegistry::session_endpoint(
-            &runtime_base.join("hyprmux"),
-            session,
-        )
+        rozi::platform::ipc::EndpointRegistry::session_endpoint(&runtime_base.join("rozi"), session)
     }
 }
 

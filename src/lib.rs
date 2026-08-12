@@ -1,4 +1,4 @@
-//! Internal library surface shared by the hyprmux binary, integration tests, and benchmarks.
+//! Internal library surface shared by the rozi binary, integration tests, and benchmarks.
 //!
 //! This is not a stable public API.
 

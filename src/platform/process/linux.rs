@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_hint_prefers_hyprmux_and_accepts_herdr() {
+    fn agent_hint_prefers_rozi_and_accepts_herdr() {
         assert_eq!(
             parse_agent_hint(b"HERDR_AGENT=claude\0ROZI_AGENT=codex\0"),
             Some("codex".into())

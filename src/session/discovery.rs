@@ -228,7 +228,7 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
         || says("is not recognized")
         || says("no such file or directory")
     {
-        "No hyprmux on host"
+        "No rozi on host"
     } else {
         "Connection failed"
     }
@@ -252,7 +252,7 @@ fn discover_remote_sessions(
     let remote_bin = resolved
         .binary_path
         .clone()
-        .unwrap_or_else(|| "hyprmux".to_string());
+        .unwrap_or_else(|| "rozi".to_string());
     crate::session::remote::validate_remote_executable_token(&remote_bin)
         .map_err(std::io::Error::other)?;
     // `ssh_base_command` applies `ConnectTimeout`: an unreachable configured host must fail fast
@@ -412,16 +412,16 @@ mod tests {
             reason(&remote("Host key verification failed.")),
             "Host key not trusted"
         );
-        // The host answered; the remote shell could not run hyprmux.
+        // The host answered; the remote shell could not run rozi.
         assert_eq!(
-            reason(&remote("bash: line 1: hyprmux: command not found")),
-            "No hyprmux on host"
+            reason(&remote("bash: line 1: rozi: command not found")),
+            "No rozi on host"
         );
         assert_eq!(
             reason(&remote(
-                "'hyprmux' is not recognized as an internal or external command"
+                "'rozi' is not recognized as an internal or external command"
             )),
-            "No hyprmux on host"
+            "No rozi on host"
         );
         assert_eq!(
             reason("ssh was not found on PATH"),
@@ -439,7 +439,7 @@ mod tests {
         // match has to win so the two do not collapse onto one phrase.
         assert_eq!(
             reason(&remote(
-                "Permission denied (publickey).\nbash: hyprmux: No such file or directory"
+                "Permission denied (publickey).\nbash: rozi: No such file or directory"
             )),
             "SSH login rejected"
         );

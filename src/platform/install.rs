@@ -1,4 +1,4 @@
-//! Thin hyprmux adapters over `relswap::install`.
+//! Thin rozi adapters over `relswap::install`.
 //!
 //! Path policy (`PlatformEnv` / XDG) stays here; the durable activation engine lives in `relswap`.
 

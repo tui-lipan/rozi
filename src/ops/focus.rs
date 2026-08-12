@@ -1225,7 +1225,7 @@ pub(crate) fn request_current_pane_focus(ctx: &mut Context<AppRoot>) {
 /// Every "give focus to something that is not the sidebar" goes through here.
 ///
 /// The sidebar body lives in a `FocusScope::Exclude` subtree, and an excluded subtree is invisible
-/// to `has_focus_within_key` — so hyprmux cannot ask the framework whether the sidebar still holds
+/// to `has_focus_within_key` — so rozi cannot ask the framework whether the sidebar still holds
 /// the keyboard. `sidebar.focused` is therefore app-owned intent, and this is the one place that
 /// has to retract it.
 fn focus_key(ctx: &mut Context<AppRoot>, key: impl Into<tui_lipan::Key>) {

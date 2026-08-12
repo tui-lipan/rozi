@@ -29,7 +29,7 @@ pub(super) fn tree_tab(
             .as_ref()
             .is_some_and(|client| !client.supports_file_tree())
     {
-        return super::placeholder(ctx, "Remote hyprmux is too old to browse files");
+        return super::placeholder(ctx, "Remote rozi is too old to browse files");
     }
 
     let changed_only = view == SidebarTreeView::Changes;
@@ -62,7 +62,7 @@ pub(super) fn tree_tab(
             FileTreeChangeView::AllFiles
         })
         .show_diff_stats(config.diff_stats)
-        // Text markers (`M`, `A`, `?`) rather than the widget's default Nerd Font glyphs: hyprmux
+        // Text markers (`M`, `A`, `?`) rather than the widget's default Nerd Font glyphs: rozi
         // cannot assume the user's terminal font has them, and the rest of the sidebar is text.
         .git_icon_style(GitIconStyle::Text)
         .git_refresh_token(ctx.state.sidebar.git_refresh_token)

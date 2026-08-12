@@ -34,7 +34,7 @@
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
 //! - [`notifications`] - desktop notifications (Phase 10).
 //! - [`sound`] - best-effort alert cue playback.
-//! - [`install`] - thin hyprmux path/policy adapter over the `relswap` signed-release engine.
+//! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
 //!
 //! Every Windows code path in here type-checks under `cargo check --target x86_64-pc-windows-gnu`
 //! and is exercised by Windows CI, but was **written without a Windows host in the authoring

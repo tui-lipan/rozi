@@ -156,8 +156,8 @@ fn attaches_to_a_real_session_over_ssh_to_localhost() {
 
 /// The proxy half of `--remote`, without needing an sshd.
 ///
-/// `ssh <host> -- hyprmux --remote-serve <NAME>` is just "run this with piped stdio", so spawning
-/// `--remote-serve` directly exercises everything hyprmux owns: autostart, the preamble and its
+/// `ssh <host> -- rozi --remote-serve <NAME>` is just "run this with piped stdio", so spawning
+/// `--remote-serve` directly exercises everything rozi owns: autostart, the preamble and its
 /// `server_started` flag, the piped transport, and a real attach over pipes. Only ssh itself is
 /// absent — which is what [`attaches_to_a_real_session_over_ssh_to_localhost`] covers when a
 /// machine has sshd. Unlike that test, this one runs everywhere, and `XDG_RUNTIME_DIR` keeps the
@@ -191,7 +191,7 @@ fn remote_serve_proxies_a_session_over_pipes() {
     // runtime path the child had to fit a socket into.
     let preamble = rozi::session::remote::read_preamble(&mut first).unwrap_or_else(|error| {
         panic!(
-            "read preamble: {error}\n  runtime base: {} ({} bytes before /hyprmux/<session>.sock; \
+            "read preamble: {error}\n  runtime base: {} ({} bytes before /rozi/<session>.sock; \
              sun_path caps at 104 on macOS, 108 on Linux)",
             runtime_base.display(),
             runtime_base.as_os_str().len()
@@ -269,7 +269,7 @@ fn refuses_to_install_on_the_host_when_the_policy_forbids_it() {
     let target = parse_remote_target("ssh://localhost").expect("parse target");
     let session = unique_session_name();
 
-    // Whether this succeeds depends on whether a real hyprmux happens to be installed on this
+    // Whether this succeeds depends on whether a real rozi happens to be installed on this
     // machine's PATH. Either outcome is fine — what must never happen is an install.
     match connect_remote(&target, &session, &config) {
         Ok((stream, _)) => {

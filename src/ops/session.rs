@@ -1313,7 +1313,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
     // A fresh ephemeral is a session with no recipe named for it, so it seeds from
-    // `[profile] default` exactly as the launch that started hyprmux did.
+    // `[profile] default` exactly as the launch that started rozi did.
     let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
     install_fresh_attachment(ctx, attachment);
     ctx.state.current_mut().pending_session_attach = Some(crate::state::PendingSessionAttach {

@@ -62,7 +62,7 @@ impl Component for BarApp {
             .height(Length::Px(1))
             .style(Style::new().bg(PANEL))
             .child(
-                Text::new(" hyprmux ")
+                Text::new(" rozi ")
                     .style(Style::new().fg(BACKDROP).bg(ACCENT))
                     .height(Length::Px(1)),
             )
@@ -123,7 +123,7 @@ fn run(passthrough: bool) -> (bool, Option<usize>) {
     });
     backend.render();
 
-    // " hyprmux " is cols 0..=8, gap at col 9, tabs " 1 "/" 2 "/" 3 " from col 10, so tab "2" is
+    // " rozi " is cols 0..=8, gap at col 9, tabs " 1 "/" 2 "/" 3 " from col 10, so tab "2" is
     // near col 14.
     let tab2_x = 14;
     backend

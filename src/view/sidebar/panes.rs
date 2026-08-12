@@ -102,7 +102,7 @@ fn pane_identity(pane: &crate::state::Pane) -> String {
 
 /// The pane's working directory: the one the server reports live, else the directory it was
 /// launched in, else whatever a shell prompt put in the title. The last two matter on a host where
-/// hyprmux cannot inspect the process for a live cwd — without them such a pane would know nothing
+/// rozi cannot inspect the process for a live cwd — without them such a pane would know nothing
 /// about itself.
 fn pane_cwd(pane: &crate::state::Pane) -> Option<String> {
     let usable = |value: Option<&str>| {
@@ -142,10 +142,10 @@ fn location_budget(width: u16) -> usize {
 /// Shells conventionally set the title to `user@host:cwd`, or to a bare `cwd`. Neither is an
 /// identity: the `user@host` half is the same on every row, and the path is what the location line
 /// already says — so as a title it clips away the leaf and tells you nothing. Recognizing it also
-/// recovers a working directory on a host where hyprmux cannot inspect the process for one.
+/// recovers a working directory on a host where rozi cannot inspect the process for one.
 ///
 /// Matched by shape and deliberately narrow: the remainder must be a bare path and nothing else, so
-/// a real title that merely mentions one (`nvim ~/Work/hyprmux/src/main.rs`) is left alone.
+/// a real title that merely mentions one (`nvim ~/Work/rozi/src/main.rs`) is left alone.
 fn prompt_echo_path(title: &str) -> Option<&str> {
     crate::pane::shell_title_parts(title).map(|(_, cwd)| cwd)
 }
@@ -219,14 +219,14 @@ mod tests {
     fn a_shell_prompt_title_is_recognized_by_shape_and_yields_its_path() {
         // The two conventional spellings, with and without the `user@host:` half.
         assert_eq!(
-            prompt_echo_path("razuer@razuer:~/Work/Projects/hyprmux"),
-            Some("~/Work/Projects/hyprmux")
+            prompt_echo_path("razuer@razuer:~/Work/Projects/rozi"),
+            Some("~/Work/Projects/rozi")
         );
         assert_eq!(prompt_echo_path("/home/you/repo"), Some("/home/you/repo"));
         assert_eq!(prompt_echo_path("~"), Some("~"));
 
         // A title a program chose is left alone, even when it names a path.
-        assert_eq!(prompt_echo_path("nvim ~/Work/hyprmux/src/main.rs"), None);
+        assert_eq!(prompt_echo_path("nvim ~/Work/rozi/src/main.rs"), None);
         assert_eq!(prompt_echo_path("cargo test"), None);
         // A colon that is not a `user@host` separator must not be eaten.
         assert_eq!(prompt_echo_path("make: *** [all] Error 1"), None);
@@ -238,10 +238,10 @@ mod tests {
         // A prompt echo is not an identity: the directory leaf is what differs between panes.
         assert_eq!(
             pane_identity(&pane(
-                Some("razuer@razuer:~/Work/Projects/hyprmux"),
-                Some("/home/razuer/Work/Projects/hyprmux")
+                Some("razuer@razuer:~/Work/Projects/rozi"),
+                Some("/home/razuer/Work/Projects/rozi")
             )),
-            "hyprmux"
+            "rozi"
         );
         // A title a program set describes the pane better than its directory does.
         assert_eq!(

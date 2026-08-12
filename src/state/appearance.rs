@@ -345,7 +345,7 @@ impl PaneBorderStyle {
 
 const BADGE_CAP_STYLES: &[CapStyle] = &[CapStyle::Padded, CapStyle::Round, CapStyle::Arrow];
 
-/// Parse hyprmux's historical cap-style aliases into tui-lipan's shared cap primitive.
+/// Parse rozi's historical cap-style aliases into tui-lipan's shared cap primitive.
 pub(crate) fn parse_cap_style(value: &str) -> Option<CapStyle> {
     match value
         .trim()

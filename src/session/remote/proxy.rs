@@ -60,7 +60,7 @@ pub fn run_remote_serve(name: &str) -> io::Result<()> {
                     thread::sleep(Duration::from_millis(2));
                 }
                 Err(err) => {
-                    eprintln!("hyprmux --remote-serve: socket read failed: {err}");
+                    eprintln!("rozi --remote-serve: socket read failed: {err}");
                     std::process::exit(1);
                 }
             }

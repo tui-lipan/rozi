@@ -27,7 +27,7 @@ pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
             continue;
         }
         // tui-lipan registers its own `app.*` commands even when their bindings are disabled.
-        // Hyprmux owns these behaviors, so only show its corresponding commands here.
+        // Rozi owns these behaviors, so only show its corresponding commands here.
         if entry.id.as_str().starts_with("app.") {
             continue;
         }

@@ -1,10 +1,10 @@
 //! Scratch user directories for test processes.
 //!
-//! Test binaries run inside a developer's real environment, and hyprmux persists preferences as a
+//! Test binaries run inside a developer's real environment, and rozi persists preferences as a
 //! side effect of ordinary actions: toggling the sidebar writes `[sidebar]` through
 //! [`crate::config::persist`], and leaving a session writes `session.toml` through
 //! [`crate::profiles`]. Without isolation those writes land on the developer's own
-//! `~/.config/rozi/config.toml` - and a running hyprmux watches that file, so the test's state
+//! `~/.config/rozi/config.toml` - and a running rozi watches that file, so the test's state
 //! is live-reloaded into the UI the developer is working in.
 //!
 //! Isolation redirects every directory [`crate::platform::paths`] resolves - config, state, cache,

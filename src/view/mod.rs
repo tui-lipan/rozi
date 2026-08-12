@@ -834,7 +834,7 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
 
     let palette = SearchPalette::<T>::new()
         .height(height)
-        // Every hyprmux palette is a type-to-filter picker: the query input owns focus and the
+        // Every rozi palette is a type-to-filter picker: the query input owns focus and the
         // input's key interceptor drives list navigation, so a focusable list only adds a second
         // tab stop that focus can get stuck on (and that reopening restores to). It is also
         // invisible - `list_unfocused_selection_style` below deliberately matches

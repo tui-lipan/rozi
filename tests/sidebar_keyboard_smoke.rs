@@ -1028,7 +1028,7 @@ fn hover_lifts_away_from_the_surface_on_light_and_dark_themes() {
 
 /// The invariant `sidebar_backend` exists to hold: a sidebar action persists `[sidebar]`, and a
 /// test process must never be able to write that into the developer's live config, which a running
-/// hyprmux would live-reload.
+/// rozi would live-reload.
 #[test]
 fn sidebar_preferences_persist_inside_the_test_scratch_root() {
     let root = rozi::test_support::isolate_user_dirs();

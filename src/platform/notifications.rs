@@ -12,7 +12,7 @@
 //!
 //! Best-effort throughout: a host without the relevant tool simply shows no notification. That is
 //! deliberately silent rather than a toast saying "could not toast" - the user asked for a desktop
-//! notification, not for hyprmux to talk about itself - and it is why nothing here returns a result.
+//! notification, not for rozi to talk about itself - and it is why nothing here returns a result.
 //!
 //! Every one of these launches an external program, so the notification body is data, never code:
 //! it is passed as a distinct `Command::arg` on Unix and, on Windows (where the body has to cross
@@ -62,7 +62,7 @@ fn show(summary: &str, body: &str) -> std::io::Result<()> {
         $nodes.Item(0).AppendChild($template.CreateTextNode($env:ROZI_NOTIFY_SUMMARY)) | Out-Null;\
         $nodes.Item(1).AppendChild($template.CreateTextNode($env:ROZI_NOTIFY_BODY)) | Out-Null;\
         $toast = [Windows.UI.Notifications.ToastNotification]::new($template);\
-        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('hyprmux').Show($toast);";
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('rozi').Show($toast);";
 
     let program = super::command::lookup_program("powershell.exe")
         .or_else(|| super::command::lookup_program("pwsh.exe"))

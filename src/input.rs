@@ -11,7 +11,7 @@ pub enum Action {
     FocusNoWrap(Direction),
     /// Move focus in `Direction`, unless the focused pane runs a split-aware program (see
     /// `[navigation] editors`), in which case forward the matching `Ctrl-h/j/k/l` to it. Lets a
-    /// single `Ctrl-h/j/k/l` binding navigate hyprmux panes and vim/neovim splits seamlessly
+    /// single `Ctrl-h/j/k/l` binding navigate rozi panes and vim/neovim splits seamlessly
     /// (vim-tmux-navigator style).
     SmartFocus(Direction),
     FocusNextBlockedPane,

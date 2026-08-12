@@ -193,21 +193,20 @@ fn attach_session_client_with_profile(
                             link.send(Msg::SessionAttachFailed {
                                 epoch,
                                 message: format!(
-                                    "Could not start server for `{name}`: unable to locate hyprmux executable: {exe_err}"
+                                    "Could not start server for `{name}`: unable to locate rozi executable: {exe_err}"
                                 ),
                             });
                             return;
                         }
                     };
                     // An updated/rebuilt binary unlinks the one this client runs from; on Linux
-                    // `current_exe` then points at `hyprmux (deleted)`, which cannot be spawned.
+                    // `current_exe` then points at `rozi (deleted)`, which cannot be spawned.
                     // Name the real cause instead of surfacing a raw ENOENT.
                     if !exe.exists() {
                         link.send(Msg::SessionAttachFailed {
                             epoch,
-                            message:
-                                "hyprmux was updated on disk\nRestart it to start new sessions"
-                                    .to_string(),
+                            message: "rozi was updated on disk\nRestart it to start new sessions"
+                                .to_string(),
                         });
                         return;
                     }

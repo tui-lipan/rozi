@@ -220,21 +220,21 @@ mod tests {
     #[test]
     fn validates_remote_executable_tokens_without_rejecting_normal_paths() {
         for token in [
-            "hyprmux",
-            "/usr/local/bin/hyprmux",
-            "C:/Users/me/hyprmux.exe",
-            r"C:\Users\me\hyprmux.exe",
+            "rozi",
+            "/usr/local/bin/rozi",
+            "C:/Users/me/rozi.exe",
+            r"C:\Users\me\rozi.exe",
         ] {
             validate_remote_executable_token(token).expect(token);
         }
         for token in [
             "ro zi",
-            "hyprmux\t--help",
-            "hyprmux\n--help",
-            "hyprmux;touch /tmp/pwned",
-            "hyprmux$(id)",
-            "hyprmux`id`",
-            "hyprmux|cat",
+            "rozi\t--help",
+            "rozi\n--help",
+            "rozi;touch /tmp/pwned",
+            "rozi$(id)",
+            "rozi`id`",
+            "rozi|cat",
             r"C:\Users\me\",
             "",
         ] {

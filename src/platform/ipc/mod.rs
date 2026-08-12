@@ -64,7 +64,7 @@ pub use windows::{BoundEndpoint, IpcConnection, IpcEndpoint, IpcListener};
 
 /// Wrap a spawned child's stdin/stdout as an [`IpcConnection`].
 ///
-/// Used by remote SSH attach: the child is `ssh … hyprmux --remote-serve`, and the resulting
+/// Used by remote SSH attach: the child is `ssh … rozi --remote-serve`, and the resulting
 /// connection speaks the normal session protocol over the pipe. [`IpcConnection::peer_pid`] is
 /// `None`, so shutdown fallbacks must not call `terminate_server` on it.
 pub fn connection_from_child(mut child: Child) -> io::Result<IpcConnection> {
@@ -92,7 +92,7 @@ pub fn connection_from_child(mut child: Child) -> io::Result<IpcConnection> {
 pub struct EndpointRegistry;
 
 impl EndpointRegistry {
-    /// This process's own control endpoint (one per running hyprmux client, named by pid).
+    /// This process's own control endpoint (one per running rozi client, named by pid).
     pub fn control_endpoint(runtime_dir: &Path, pid: u32) -> IpcEndpoint {
         IpcEndpoint::at_path(runtime_dir.join(format!("control-{pid}.sock")))
     }
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn control_and_session_endpoints_use_the_expected_naming_convention() {
-        let dir = Path::new("/run/hyprmux");
+        let dir = Path::new("/run/rozi");
         assert_eq!(
             EndpointRegistry::control_endpoint(dir, 1234).path(),
             Path::new("/run/rozi/control-1234.sock")

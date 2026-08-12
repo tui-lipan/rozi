@@ -9,7 +9,7 @@ use crate::{AppRoot, Msg};
 
 /// Watches the config file's directory and requests a live reload when `config.toml` changes
 /// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
-/// that save via write-to-temp + rename; hyprmux's own persistence writes are filtered out in
+/// that save via write-to-temp + rename; rozi's own persistence writes are filtered out in
 /// the `Msg::ConfigFileChanged` handler by comparing against the last text this process read
 /// or wrote. Fire-and-forget for the life of the app.
 pub(crate) fn spawn_config_watcher(link: &CommandLink<Msg>) {
@@ -75,7 +75,7 @@ fn event_touches_config(event: &notify::Event, target: &std::path::Path) -> bool
 }
 
 /// Handles a config-watcher wakeup: reloads only when the file content actually differs from
-/// what hyprmux last read or wrote, so self-persistence and no-op saves stay silent.
+/// what rozi last read or wrote, so self-persistence and no-op saves stay silent.
 pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
     if !crate::config::config_text_changed_on_disk() {
         return Update::none();

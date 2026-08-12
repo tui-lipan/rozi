@@ -733,8 +733,8 @@ mod tests {
     #[test]
     fn shell_title_parser_is_narrow_and_preserves_the_user_and_cwd() {
         assert_eq!(
-            shell_title_parts("razuer@host:~/Work/Projects/hyprmux"),
-            Some((Some("razuer"), "~/Work/Projects/hyprmux"))
+            shell_title_parts("razuer@host:~/Work/Projects/rozi"),
+            Some((Some("razuer"), "~/Work/Projects/rozi"))
         );
         assert_eq!(shell_title_parts("/etc/nginx"), Some((None, "/etc/nginx")));
         assert_eq!(shell_title_parts("nvim ~/src/main.rs"), None);

@@ -1,7 +1,7 @@
 //! Remote SSH session attach (`--remote`).
 //!
 //! The local client speaks the normal session protocol over a pipe to
-//! `ssh … hyprmux --remote-serve <NAME>`, which proxies to the remote host's local session
+//! `ssh … rozi --remote-serve <NAME>`, which proxies to the remote host's local session
 //! endpoint. The session server itself is unchanged.
 
 mod bootstrap;

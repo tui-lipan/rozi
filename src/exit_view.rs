@@ -24,7 +24,7 @@ pub(crate) fn exit_summary(attachment: &Attachment) -> Option<String> {
     let has_remote_state = attachment.remote_host.is_some() || attachment.remote_target.is_some();
     if !has_remote_state {
         return Some(format!(
-            "Detached from {name}\nReattach: hyprmux attach {name}"
+            "Detached from {name}\nReattach: rozi attach {name}"
         ));
     }
 
@@ -39,7 +39,7 @@ pub(crate) fn exit_summary(attachment: &Attachment) -> Option<String> {
     }
     let identity = remote_identity(attachment, &remote_target);
     Some(format!(
-        "Detached from {name}@{identity}\nReattach: hyprmux --remote {remote_target} attach {name}"
+        "Detached from {name}@{identity}\nReattach: rozi --remote {remote_target} attach {name}"
     ))
 }
 
@@ -150,7 +150,7 @@ mod tests {
 
         assert_eq!(
             exit_summary(&attachment).as_deref(),
-            Some("Detached from dev\nReattach: hyprmux attach dev")
+            Some("Detached from dev\nReattach: rozi attach dev")
         );
     }
 
@@ -161,7 +161,7 @@ mod tests {
 
         assert_eq!(
             exit_summary(&attachment).as_deref(),
-            Some("Detached from dev@workbox\nReattach: hyprmux --remote workbox attach dev")
+            Some("Detached from dev@workbox\nReattach: rozi --remote workbox attach dev")
         );
     }
 
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(
             exit_summary(&attachment).as_deref(),
             Some(
-                "Detached from dev@alice@example.com:2222\nReattach: hyprmux --remote ssh://alice@example.com:2222 attach dev"
+                "Detached from dev@alice@example.com:2222\nReattach: rozi --remote ssh://alice@example.com:2222 attach dev"
             )
         );
     }

@@ -360,10 +360,7 @@ pub(crate) fn maybe_notify_pane_exit(config: &crate::config::Config, id: PaneId,
     if !should_notify_pane_exit(config, code) {
         return;
     }
-    crate::platform::notifications::notify(
-        "hyprmux",
-        &format!("Pane {id} exited with code {code}"),
-    );
+    crate::platform::notifications::notify("rozi", &format!("Pane {id} exited with code {code}"));
 }
 
 fn should_notify_pane_exit(config: &crate::config::Config, code: i32) -> bool {
@@ -424,7 +421,7 @@ pub(crate) fn maybe_notify_pane_status(
             )
         },
     );
-    crate::platform::notifications::notify("hyprmux", &body);
+    crate::platform::notifications::notify("rozi", &body);
 }
 
 fn should_notify_pane_status(

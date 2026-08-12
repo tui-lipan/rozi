@@ -273,7 +273,7 @@ impl Component for AppRoot {
                     // Not fatal: without it, an exiting terminal kills the client outright, which
                     // loses the detach-time layout mirror but leaves a named session's server (and
                     // its PTYs) running exactly as before.
-                    eprintln!("hyprmux: could not watch for terminal hangup: {err}");
+                    eprintln!("rozi: could not watch for terminal hangup: {err}");
                 }
             }
             if let Some(listener) = control_listener {
@@ -640,7 +640,7 @@ pub fn run() -> Result<()> {
         Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Run `hyprmux --help` for usage.");
+            eprintln!("Run `rozi --help` for usage.");
             std::process::exit(1);
         }
     };
@@ -648,7 +648,7 @@ pub fn run() -> Result<()> {
     // Reconcile a managed pointer before any command can observe or start the application. This is
     // local-only and makes updater recovery precede ConPTY checks, endpoints, sessions, and the TUI.
     if let Err(message) = cli::recover_managed_installation() {
-        eprintln!("hyprmux: {message}");
+        eprintln!("rozi: {message}");
         std::process::exit(1);
     }
 
@@ -667,14 +667,14 @@ pub fn run() -> Result<()> {
         }
         cli::ParsedCli::Install => {
             if let Err(message) = cli::run_install_cli() {
-                eprintln!("hyprmux: {message}");
+                eprintln!("rozi: {message}");
                 std::process::exit(1);
             }
             return Ok(());
         }
         cli::ParsedCli::Update(command) => {
             if let Err(message) = cli::run_update_cli(command) {
-                eprintln!("hyprmux: {message}");
+                eprintln!("rozi: {message}");
                 std::process::exit(1);
             }
             return Ok(());
@@ -685,7 +685,7 @@ pub fn run() -> Result<()> {
     // Every runtime/session command still receives the platform support check; only the updater,
     // help, version, and agent-skill paths above intentionally run before it.
     if let Err(reason) = platform::server_lifecycle::check_host_supported() {
-        eprintln!("hyprmux: {reason}");
+        eprintln!("rozi: {reason}");
         std::process::exit(1);
     }
 
@@ -778,7 +778,7 @@ pub fn run() -> Result<()> {
                 if !running {
                     let hint = canonical_path
                         .exists()
-                        .then(|| format!("\nStart it with: hyprmux {name}"));
+                        .then(|| format!("\nStart it with: rozi {name}"));
                     startup_fatal(format!(
                         "Session `{name}` is not running.{}",
                         hint.unwrap_or_default()
@@ -789,7 +789,7 @@ pub fn run() -> Result<()> {
             cli::SessionCommand::New => {
                 if running {
                     startup_fatal(format!(
-                        "Session `{name}` is already running.\nAttach with: hyprmux attach {name}"
+                        "Session `{name}` is already running.\nAttach with: rozi attach {name}"
                     ));
                 }
                 startup_autostart = true;
@@ -815,7 +815,7 @@ pub fn run() -> Result<()> {
                     startup_autostart = true;
                 } else {
                     startup_fatal(format!(
-                        "No session or profile named `{name}`.\nCreate it with: hyprmux new {name}"
+                        "No session or profile named `{name}`.\nCreate it with: rozi new {name}"
                     ));
                 }
             }
@@ -902,7 +902,7 @@ pub fn run() -> Result<()> {
     };
 
     let app = App::new()
-        .title("hyprmux")
+        .title("rozi")
         .theme(theme.clone())
         .terminal_bg(terminal_bg)
         .toast_placement(ToastPlacement::BottomEnd)
@@ -914,7 +914,7 @@ pub fn run() -> Result<()> {
         // focused widgets/terminal passthrough so they win regardless of what has focus.
         .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
         .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
-        // Ctrl-q is unbound: hyprmux's own `quit`/`detach` commands own client lifecycle exits.
+        // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 
     let remote = match cli.remote.as_deref() {
@@ -949,7 +949,7 @@ pub fn run() -> Result<()> {
         if let Err(err) =
             crate::session::remote::ensure_remote_binary(target, &config.remote, interactive)
         {
-            eprintln!("hyprmux: {err}");
+            eprintln!("rozi: {err}");
             std::process::exit(1);
         }
     }
@@ -1440,7 +1440,7 @@ mod tests {
                     line: 1,
                     start_col: 8,
                     end_col: 14,
-                    text: std::sync::Arc::from("hyprmux master • prompt"),
+                    text: std::sync::Arc::from("rozi master • prompt"),
                     pane: 1,
                 });
                 search.rebuild_items();
@@ -1473,10 +1473,10 @@ mod tests {
 
                 let row = lines
                     .iter()
-                    .position(|line| line.contains("hyprmux master"))
+                    .position(|line| line.contains("rozi master"))
                     .expect("matching result row") as u16;
                 let matched = lines[row as usize].find("master").expect("match column") as u16;
-                let plain = lines[row as usize].find("hyprmux").expect("plain column") as u16;
+                let plain = lines[row as usize].find("rozi").expect("plain column") as u16;
                 assert_ne!(
                     frame.cell(matched, row).fg,
                     frame.cell(plain, row).fg,

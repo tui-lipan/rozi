@@ -74,7 +74,7 @@ impl PlatformEnv {
     ///
     /// Unit tests are isolated unconditionally; integration tests opt in through
     /// [`crate::test_support::isolate_user_dirs`]. Either way no test can write to the directories
-    /// a developer's own hyprmux reads.
+    /// a developer's own rozi reads.
     pub fn from_process() -> Self {
         if cfg!(test) {
             return crate::test_support::isolated_env();

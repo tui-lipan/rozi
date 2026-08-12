@@ -1,7 +1,7 @@
-# Example reusable launch profile for hyprmux.
+# Example reusable launch profile for rozi.
 # Copy to ~/.config/rozi/profiles/dev.toml, then:
-#   hyprmux dev                         # canonical session "dev"
-#   hyprmux new review --profile dev    # independent session "review"
+#   rozi dev                         # canonical session "dev"
+#   rozi new review --profile dev    # independent session "review"
 #
 # Each pane starts your interactive shell in its cwd and types its command at the first
 # prompt, so quitting lazygit or nvim returns that pane to the shell.

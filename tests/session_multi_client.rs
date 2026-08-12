@@ -182,11 +182,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
     });
 
     let first_marker = b"rozi-interleaved-before";
-    controller.write_pane_input(
-        PANE_ID,
-        PANE_GENERATION,
-        b"echo hyprmux-interleaved-before\r",
-    );
+    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"echo rozi-interleaved-before\r");
     let mut first_output = Vec::new();
     read_until(&mut follower, |frame| {
         if let Frame::PaneBytes { bytes, .. } = frame {
@@ -200,11 +196,7 @@ fn follower_decodes_interleaved_pane_output_and_layout_frames_coherently() {
         base_rev: 0,
         layout: layout.clone(),
     });
-    controller.write_pane_input(
-        PANE_ID,
-        PANE_GENERATION,
-        b"echo hyprmux-interleaved-after\r",
-    );
+    controller.write_pane_input(PANE_ID, PANE_GENERATION, b"echo rozi-interleaved-after\r");
 
     let second_marker = b"rozi-interleaved-after";
     let mut second_output = Vec::new();

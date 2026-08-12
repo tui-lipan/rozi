@@ -422,7 +422,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
 
 /// The invariant `sidebar_backend` exists to hold: a sidebar action persists `[sidebar]`, and a
 /// test process must never be able to write that into the developer's live config, which a running
-/// hyprmux would live-reload.
+/// rozi would live-reload.
 #[test]
 fn sidebar_preferences_persist_inside_the_test_scratch_root() {
     let root = rozi::test_support::isolate_user_dirs();

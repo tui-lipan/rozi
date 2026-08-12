@@ -74,7 +74,7 @@ fn persist_session_to_disk(state: &State) {
     };
     let profile = profile_from_state(state);
     if let Err(err) = save_profile(&path, &profile) {
-        eprintln!("hyprmux: session autosave failed: {err}");
+        eprintln!("rozi: session autosave failed: {err}");
     }
 }
 
@@ -654,7 +654,7 @@ mod tests {
             .expect("initial pane");
         first.set_custom_title("editor");
         first.identity.profile_name = Some("profile-editor".to_string());
-        first.identity.cwd = Some("/tmp/hyprmux-profile-test".to_string());
+        first.identity.cwd = Some("/tmp/rozi-profile-test".to_string());
         first.identity.command = Some("nvim src/main.rs".to_string());
         first.fullscreen = true;
         state.current_mut().workspaces[0].split_ratios[0] = 0.63;
@@ -687,7 +687,7 @@ mod tests {
         assert_eq!(workspace.panes[0].title.as_deref(), Some("editor"));
         assert_eq!(
             workspace.panes[0].cwd.as_deref(),
-            Some(std::path::Path::new("/tmp/hyprmux-profile-test"))
+            Some(std::path::Path::new("/tmp/rozi-profile-test"))
         );
         assert_eq!(
             workspace.panes[0].command.as_deref(),
@@ -820,7 +820,7 @@ mod tests {
     }
 
     /// `[profile] default` has to seed *every* session opened without a recipe, not only the launch
-    /// that started hyprmux - creating a session later used to silently start blank.
+    /// that started rozi - creating a session later used to silently start blank.
     #[test]
     fn default_seed_restores_the_configured_profile_and_records_its_origin() {
         // Resolved rather than chosen: `default_session_seed` looks the profile up by name under
@@ -941,7 +941,7 @@ mod tests {
                         id: 0,
                         name: Some("editor".to_string()),
                         title: Some("editor".to_string()),
-                        cwd: Some(PathBuf::from("/tmp/hyprmux-profile-test")),
+                        cwd: Some(PathBuf::from("/tmp/rozi-profile-test")),
                         command: Some("nvim src/main.rs".to_string()),
                         floating: false,
                         fullscreen: true,
@@ -957,7 +957,7 @@ mod tests {
                         id: 1,
                         name: Some("shell".to_string()),
                         title: Some("shell".to_string()),
-                        cwd: Some(PathBuf::from("/tmp/hyprmux-profile-test")),
+                        cwd: Some(PathBuf::from("/tmp/rozi-profile-test")),
                         command: Some("bash -l".to_string()),
                         floating: false,
                         fullscreen: false,
@@ -1292,7 +1292,7 @@ scrollable_width = 9.0
                         id: 0,
                         name: Some("docs".to_string()),
                         title: Some("docs".to_string()),
-                        cwd: Some(PathBuf::from("/tmp/hyprmux-docs")),
+                        cwd: Some(PathBuf::from("/tmp/rozi-docs")),
                         command: Some("bash".to_string()),
                         floating: false,
                         fullscreen: false,
@@ -1311,7 +1311,7 @@ scrollable_width = 9.0
                         PaneProfile {
                             id: 0,
                             name: Some("editor".to_string()),
-                            cwd: Some(PathBuf::from("/tmp/hyprmux-editor")),
+                            cwd: Some(PathBuf::from("/tmp/rozi-editor")),
                             command: Some("nvim src/main.rs".to_string()),
                             floating: false,
                             fullscreen: true,
@@ -1367,7 +1367,7 @@ scrollable_width = 9.0
                 .identity
                 .cwd
                 .as_deref(),
-            Some("/tmp/hyprmux-editor")
+            Some("/tmp/rozi-editor")
         );
         assert_eq!(
             state.current().workspaces[1].panes[0]

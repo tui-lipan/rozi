@@ -42,7 +42,7 @@ fn settle(backend: &mut TestBackend<AppRoot>) {
 /// Two tiled panes with the focused one covering the workspace.
 fn backend_with_fullscreen() -> TestBackend<AppRoot> {
     // `Action::Spawn` writes the shell-integration scripts, which belong in a scratch cache rather
-    // than the one a developer's running hyprmux injects from (`rozi::test_support`).
+    // than the one a developer's running rozi injects from (`rozi::test_support`).
     rozi::test_support::isolate_user_dirs();
     let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {

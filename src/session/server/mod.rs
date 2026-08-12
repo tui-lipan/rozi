@@ -491,10 +491,10 @@ impl SessionServer {
                 }
             }
             if let Err(err) = self.drain_snapshot_results() {
-                eprintln!("hyprmux: session snapshot failed: {err}");
+                eprintln!("rozi: session snapshot failed: {err}");
             }
             if let Err(err) = self.maybe_snapshot() {
-                eprintln!("hyprmux: session snapshot failed: {err}");
+                eprintln!("rozi: session snapshot failed: {err}");
             }
             let iteration_elapsed = iteration_started.elapsed();
             self.credit_server_stall(iteration_elapsed);
@@ -523,7 +523,7 @@ impl SessionServer {
         if self.forget_snapshot
             && let Err(err) = self.delete_snapshot()
         {
-            eprintln!("hyprmux: could not delete session snapshot: {err}");
+            eprintln!("rozi: could not delete session snapshot: {err}");
         }
         for pane in self.panes.values() {
             if let Some(pty) = &pane.pty {
@@ -751,16 +751,16 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
     // signal / console control event onto the same graceful teardown the protocol `Shutdown`
     // message takes (cross-platform plan Phase 5b).
     if let Err(err) = crate::platform::server_lifecycle::contain_children() {
-        eprintln!("hyprmux: could not contain server child processes: {err}");
+        eprintln!("rozi: could not contain server child processes: {err}");
     }
     if let Err(err) = crate::platform::server_lifecycle::install_shutdown_handler() {
-        eprintln!("hyprmux: could not install server shutdown handler: {err}");
+        eprintln!("rozi: could not install server shutdown handler: {err}");
     }
 
     let (listener, endpoint) = bind_session_socket(name)?;
     let loaded = crate::config::load_config();
     for warning in loaded.warnings {
-        eprintln!("hyprmux: {warning}");
+        eprintln!("rozi: {warning}");
     }
     let (shell, command_shell) = crate::platform::command::resolve_launch_argv(
         loaded.config.shell.as_deref(),
@@ -786,7 +786,7 @@ pub fn run_named_session_mode(name: &str, fresh: bool) -> io::Result<()> {
     } else if server.settings.resurrect
         && let Err(err) = server.restore()
     {
-        eprintln!("hyprmux: could not restore session {name:?}: {err}");
+        eprintln!("rozi: could not restore session {name:?}: {err}");
     }
     let result = server.run_listener(listener);
     // A rename replaces the endpoint, so retire the current one rather than the original. Claim the

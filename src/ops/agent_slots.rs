@@ -53,7 +53,7 @@ pub(crate) fn stream_closed(ctx: &mut Context<AppRoot>, pane_id: PaneId) -> Upda
 
 /// Ask a pane's publisher to bring one of its slots on screen.
 ///
-/// Best-effort by design: hyprmux cannot move another program's view itself, and a publisher that
+/// Best-effort by design: rozi cannot move another program's view itself, and a publisher that
 /// has stopped reading is indistinguishable from one that is slow. The pane is focused either way,
 /// so the click is never a no-op.
 pub(crate) fn request_activation(state: &mut crate::state::State, pane_id: PaneId, slot_id: &str) {

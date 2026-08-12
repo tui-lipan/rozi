@@ -194,11 +194,11 @@ mod tests {
     #[test]
     fn titlebar_uses_cwd_without_the_original_user_or_host() {
         let mut pane = pane();
-        pane.terminal.title = Some("razuer@workstation:~/Work/Projects/hyprmux".to_string());
+        pane.terminal.title = Some("razuer@workstation:~/Work/Projects/rozi".to_string());
         pane.terminal.original_user = Some("razuer".to_string());
-        pane.terminal.cwd = Some("/home/razuer/Work/Projects/hyprmux".to_string());
+        pane.terminal.cwd = Some("/home/razuer/Work/Projects/rozi".to_string());
 
-        assert_eq!(pane.titlebar_title(false), "~/Work/Projects/hyprmux");
+        assert_eq!(pane.titlebar_title(false), "~/Work/Projects/rozi");
     }
 
     #[test]
@@ -215,30 +215,30 @@ mod tests {
     fn titlebar_qualifies_a_custom_name_with_the_project_path() {
         let mut pane = pane();
         pane.set_custom_title("logs");
-        pane.terminal.title = Some("razuer@workstation:/work/hyprmux/services/api".to_string());
+        pane.terminal.title = Some("razuer@workstation:/work/rozi/services/api".to_string());
         pane.terminal.original_user = Some("razuer".to_string());
-        pane.terminal.cwd = Some("/work/hyprmux/services/api".to_string());
-        pane.terminal.display_path = Some("hyprmux/services/api".to_string());
+        pane.terminal.cwd = Some("/work/rozi/services/api".to_string());
+        pane.terminal.display_path = Some("rozi/services/api".to_string());
 
-        assert_eq!(pane.titlebar_title(false), "logs · hyprmux/services/api");
+        assert_eq!(pane.titlebar_title(false), "logs · rozi/services/api");
     }
 
     #[test]
     fn titlebar_qualifies_an_application_title_with_the_project_path() {
         let mut pane = pane();
         pane.terminal.title = Some("nvim src/main.rs".to_string());
-        pane.terminal.cwd = Some("/work/hyprmux/src".to_string());
-        pane.terminal.display_path = Some("hyprmux/src".to_string());
+        pane.terminal.cwd = Some("/work/rozi/src".to_string());
+        pane.terminal.display_path = Some("rozi/src".to_string());
 
-        assert_eq!(pane.titlebar_title(false), "nvim src/main.rs · hyprmux/src");
+        assert_eq!(pane.titlebar_title(false), "nvim src/main.rs · rozi/src");
     }
 
     #[test]
     fn titlebar_uses_structured_cwd_without_a_terminal_title() {
         let mut pane = pane();
-        pane.terminal.cwd = Some("/work/hyprmux".to_string());
+        pane.terminal.cwd = Some("/work/rozi".to_string());
 
-        assert_eq!(pane.titlebar_title(false), "/work/hyprmux");
+        assert_eq!(pane.titlebar_title(false), "/work/rozi");
     }
 
     #[test]

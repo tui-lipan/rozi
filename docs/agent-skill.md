@@ -1,6 +1,6 @@
 ---
 name: hyprmux
-description: "Control hyprmux, a Hyprland-style tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control hyprmux panes or sessions, or asks to use hyprmux. Pane control requires HYPRMUX=1 and a non-empty HYPRMUX_SOCKET."
+description: "Control hyprmux, a Hyprland-style tiling terminal multiplexer for coding agents. Use only when the user explicitly asks to control hyprmux panes or sessions, or asks to use hyprmux. Pane control requires ROZI=1 and a non-empty ROZI_SOCKET."
 ---
 
 # Hyprmux
@@ -12,7 +12,7 @@ Before any pane-control command, verify that this agent is running in a hyprmux-
 local UI endpoint:
 
 ```bash
-test "${HYPRMUX:-}" = 1 && test -n "${HYPRMUX_SOCKET:-}"
+test "${ROZI:-}" = 1 && test -n "${ROZI_SOCKET:-}"
 ```
 
 If the check fails, say that pane control is unavailable and stop. Do not inspect or control an
@@ -31,26 +31,26 @@ Do not run bare `hyprmux` for discovery: it launches or attaches the TUI.
 ## Endpoint and caller context
 
 The control endpoint is private and belongs to the **local hyprmux UI process**. Control endpoint
-selection is `--socket PATH`, then `HYPRMUX_SOCKET`, then the only live local endpoint found in the
-runtime directory. `HYPRMUX_SOCKET` is the endpoint path, not a named-session server endpoint.
+selection is `--socket PATH`, then `ROZI_SOCKET`, then the only live local endpoint found in the
+runtime directory. `ROZI_SOCKET` is the endpoint path, not a named-session server endpoint.
 
 Use the injected endpoint explicitly when needed:
 
 ```bash
-hyprmux --socket "$HYPRMUX_SOCKET" list-panes
+hyprmux --socket "$ROZI_SOCKET" list-panes
 ```
 
-Every pane receives `HYPRMUX_PANE=<numeric live pane id>`. The CLI copies that value into
+Every pane receives `ROZI_PANE=<numeric live pane id>`. The CLI copies that value into
 `source_pane` when a command supports source targeting. An omitted target normally means the source
 pane, otherwise the UI-focused pane. `focus` requires a numeric id and `capture-pane` accepts
 `--target`; the CLI forms of `send-text`, `send-keys`, `split`, and `status` act on the injected
 source pane and do not accept a pane-id argument.
 
 `--remote` is **not** a control-socket option. When the UI is attached with `--remote`, its
-`HYPRMUX_SOCKET` is still the local UI endpoint and controls the session shown by that UI. Do not
+`ROZI_SOCKET` is still the local UI endpoint and controls the session shown by that UI. Do not
 try to point `--socket` at an SSH transport or remote server endpoint. Remote session discovery and
 server shutdown use the separate `list-sessions --remote` and `kill-session --remote` helpers below.
-Processes inside a remote pane intentionally do not receive that local `HYPRMUX_SOCKET`, so the
+Processes inside a remote pane intentionally do not receive that local `ROZI_SOCKET`, so the
 initial pane-control check fails there rather than exposing the local UI endpoint remotely.
 
 ## Inspect and control panes
@@ -147,7 +147,7 @@ transport.
 ## Safety rules
 
 - Mutate or kill only panes and sessions that the user explicitly requested or this agent created.
-- Prefer `HYPRMUX_PANE` or ids read from fresh JSON; never infer a live id from a row position.
+- Prefer `ROZI_PANE` or ids read from fresh JSON; never infer a live id from a row position.
 - Avoid stealing focus with `focus`, `--focus`, or a layout command when the task does not require
   it.
 - Read `pty_ready` from the split response instead of assuming either answer.

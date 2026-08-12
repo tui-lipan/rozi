@@ -53,7 +53,7 @@ JSONL="$OUTPUT_DIR/scenarios.jsonl"
 
 echo "Building release binary..." >&2
 cargo build --release
-BIN="$REPO/target/release/hyprmux"
+BIN="/target/release/rozi"
 
 ROOT=
 SERVER_PID=
@@ -239,7 +239,7 @@ start_client() {
   WRAPPER_PIDS+=("$wrapper")
   while ((SECONDS < deadline)); do
     shopt -s nullglob
-    after=("$XDG_RUNTIME_DIR"/hyprmux/control-*.sock)
+    after=("$XDG_RUNTIME_DIR"/rozi/control-*.sock)
     shopt -u nullglob
     for socket in "${after[@]}"; do
       if [[ ! " ${CONTROL_SOCKETS[*]:-} " =~ " $socket " ]]; then
@@ -414,13 +414,13 @@ run_scenario() {
   local label="${cols}x${rows}-p${panes}-h${history}-${content}-c${clients}-${state}"
   echo "Measuring $label" >&2
   cleanup_scenario
-  ROOT=$(mktemp -d "${TMPDIR:-/tmp}/hyprmux-memory.XXXXXX")
+  ROOT=$(mktemp -d "${TMPDIR:-/tmp}/rozi-memory.XXXXXX")
   chmod 700 "$ROOT"
   mkdir -p "$ROOT"/{home,config,state,cache,runtime,work}
   export HOME="$ROOT/home" XDG_CONFIG_HOME="$ROOT/config" XDG_STATE_HOME="$ROOT/state"
   export XDG_CACHE_HOME="$ROOT/cache" XDG_RUNTIME_DIR="$ROOT/runtime"
-  export HYPRMUX_CONFIG="$ROOT/config/hyprmux.toml" TERM=xterm-256color LANG=C LC_ALL=C SHELL=/bin/sh
-  cat >"$HYPRMUX_CONFIG" <<EOF
+  export ROZI_CONFIG="$ROOT/config/config.toml" TERM=xterm-256color LANG=C LC_ALL=C SHELL=/bin/sh
+  cat >"$ROZI_CONFIG" <<EOF
 shell = ["/bin/sh"]
 command_shell = ["/bin/sh", "-c"]
 cwd = "$ROOT/work"
@@ -442,7 +442,7 @@ EOF
   SESSION="memory-$RANDOM-$$"
   "$BIN" --session "$SESSION" --fresh-server >"$ROOT/server.log" 2>&1 &
   SERVER_PID=$!
-  wait_for_glob "$XDG_RUNTIME_DIR/hyprmux/session-*.sock" >/dev/null
+  wait_for_glob "$XDG_RUNTIME_DIR/rozi/session-*.sock" >/dev/null
   local client
   for ((client=0; client<clients; client++)); do start_client "$rows" "$cols"; done
   ACTIVE_CLIENTS=$clients
@@ -487,7 +487,7 @@ EOF
     for control in "${CONTROL_SOCKETS[@]}"; do wait_for_replay "$control"; done
     ACTIVE_CLIENTS=$clients
   elif [[ $state == killed ]]; then
-    local session_endpoint="$XDG_RUNTIME_DIR/hyprmux/session-$SESSION.sock"
+    local session_endpoint="$XDG_RUNTIME_DIR/rozi/session-$SESSION.sock"
     capture_pty_descendants
     "$BIN" --socket "$control" run-action kill-session >/dev/null
     wait_for_absent "$session_endpoint"

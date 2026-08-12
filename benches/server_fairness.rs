@@ -25,9 +25,9 @@ const PANE_ID: u32 = 1;
 const SNAPSHOT_PANE_ID: u32 = 1;
 const SATURATION_PANES: u32 = 2;
 const GENERATION: u64 = 1;
-const READY: &[u8] = b"__HYPRMUX_FAIRNESS_READY__";
-const ACK_PREFIX: &[u8] = b"__HYPRMUX_ACK_";
-const SNAPSHOT_READY_PREFIX: &[u8] = b"__HYPRMUX_SNAPSHOT_READY_";
+const READY: &[u8] = b"__ROZI_FAIRNESS_READY__";
+const ACK_PREFIX: &[u8] = b"__ROZI_ACK_";
+const SNAPSHOT_READY_PREFIX: &[u8] = b"__ROZI_SNAPSHOT_READY_";
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 const SNAPSHOT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -850,7 +850,7 @@ fn run_helper(pace_millis: u64) -> io::Result<()> {
     }
     loop {
         while let Ok(line) = ack_rx.try_recv() {
-            stdout.write_all(format!("\r\n__HYPRMUX_ACK_{line}__\r\n").as_bytes())?;
+            stdout.write_all(format!("\r\n__ROZI_ACK_{line}__\r\n").as_bytes())?;
         }
         stdout.write_all(&chunk)?;
         if pace_millis > 0 {
@@ -866,7 +866,7 @@ fn run_snapshot_helper(pane_id: u32, history_rows: usize) -> io::Result<()> {
         pane_id,
         history_rows,
     ))?;
-    stdout.write_all(format!("\x1b]2;__HYPRMUX_SNAPSHOT_READY_{pane_id:08x}__\x07").as_bytes())?;
+    stdout.write_all(format!("\x1b]2;__ROZI_SNAPSHOT_READY_{pane_id:08x}__\x07").as_bytes())?;
     stdout.flush()?;
 
     for line in io::stdin().lock().lines() {

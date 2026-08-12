@@ -529,13 +529,13 @@ mod tests {
         // The supported way to scope a command to the clicked file: the path is referenced through
         // the environment, so nothing is spliced into the command line and it is accepted.
         let (config, warnings) = parse(
-            r#"tabs = [{ name = "git", label = "", on_click = { run = "lazygit -f \"$HYPRMUX_FILE\"" } }]"#,
+            r#"tabs = [{ name = "git", label = "", on_click = { run = "lazygit -f \"$ROZI_FILE\"" } }]"#,
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(
             tree(&config, "git").on_click,
             Some(super::super::schema::UserCommandAction::run(
-                "lazygit -f \"$HYPRMUX_FILE\""
+                "lazygit -f \"$ROZI_FILE\""
             ))
         );
     }

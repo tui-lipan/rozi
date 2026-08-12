@@ -13,13 +13,13 @@
 # The sibling `hyprmux.bash` script implements the identical protocol and was exercised against a
 # real bash; treat this file as unverified-by-execution until a fish host runs it.
 
-if set -q HYPRMUX_SHELL_INTEGRATION_LOADED
+if set -q ROZI_SHELL_INTEGRATION_LOADED
     return 0
 end
 if not status is-interactive
     return 0
 end
-set -gx HYPRMUX_SHELL_INTEGRATION_LOADED 1
+set -gx ROZI_SHELL_INTEGRATION_LOADED 1
 
 # Percent-encode everything outside the URI-unreserved set, matching the framework's decoder.
 function __hyprmux_urlencode

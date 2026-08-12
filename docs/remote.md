@@ -153,7 +153,7 @@ Before connect, hyprmux probes the remote for a compatible `hyprmux` binary (one
 
 When the local and remote platforms match, install copies `current_exe()`. When they differ, hyprmux
 downloads the matching GitHub release asset for this version, verifies its `.sha256`, then uploads
-that binary. Override the download base with `HYPRMUX_RELEASE_BASE_URL` for mirrors/tests.
+that binary. Override the download base with `ROZI_RELEASE_BASE_URL` for mirrors/tests.
 
 Checksums are computed in-process rather than via `sha256sum`/`shasum`, so verification works
 identically on every client platform and can never be skipped because a tool is missing.
@@ -161,7 +161,7 @@ identically on every client platform and can never be skipped because a tool is 
 Overrides:
 
 - `[remote.hosts.<alias>] binary_path` — use that path; skip probe/install.
-- `HYPRMUX_REMOTE_BINARY=/path/to/hyprmux` — stream that local file onto the remote (same install
+- `ROZI_REMOTE_BINARY=/path/to/hyprmux` — stream that local file onto the remote (same install
   location), regardless of platform match — you are responsible for architecture fit.
 - `[remote] default_host` — used when `--remote` is passed without a host argument; also supplies
   shared `identity_file` / `ssh_args` / `binary_path` defaults for other aliases.
@@ -211,7 +211,7 @@ Notes:
 - Pane `cwd` reports are **server-relative**. New splits and popups still inherit them so the remote
   server can spawn correctly; local filesystem helpers (for example opening a path on this machine)
   skip those paths while `--remote` is attached.
-- Hooks receive `HYPRMUX_REMOTE_HOST` when attached remotely. See [Hooks](hooks.md).
+- Hooks receive `ROZI_REMOTE_HOST` when attached remotely. See [Hooks](hooks.md).
 - The sidebar **Files** / **Git** tabs browse the **remote** filesystem. The client asks the session
   server to read each directory (`ListDirectory`) and to scan the repository for changes
   (`ListChanges`), then renders the replies locally, so expansion, icons, search, and theming stay
@@ -242,5 +242,5 @@ Notes:
 - [Sessions](sessions.md) — attach/detach, ephemeral vs named, multi-client.
 - [Configuration](configuration.md#remote) — `[remote]` keys.
 - [Control](control.md) — local control socket vs remote list/kill CLI.
-- [Hooks](hooks.md) — `HYPRMUX_REMOTE_HOST`.
+- [Hooks](hooks.md) — `ROZI_REMOTE_HOST`.
 - [Sidebar](sidebar.md) — file tree behavior under `--remote`.

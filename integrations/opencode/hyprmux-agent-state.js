@@ -1,7 +1,7 @@
 import net from "node:net"
 
-const socket = process.env.HYPRMUX_SOCKET
-const pane = Number.parseInt(process.env.HYPRMUX_PANE ?? "", 10)
+const socket = process.env.ROZI_SOCKET
+const pane = Number.parseInt(process.env.ROZI_PANE ?? "", 10)
 
 function publish(status, reason) {
   if (!socket || !Number.isSafeInteger(pane)) return Promise.resolve()

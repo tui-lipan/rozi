@@ -14,7 +14,7 @@ no config at all.
 
 `hyprmux` resolves the config path in this order:
 
-1. `$HYPRMUX_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
+1. `$ROZI_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
 2. `$XDG_CONFIG_HOME/hyprmux/hyprmux.toml`, else `~/.config/hyprmux/hyprmux.toml` — on Windows,
    `%APPDATA%\hyprmux\hyprmux.toml`.
 
@@ -731,22 +731,22 @@ nothing executes until you press Enter.
 A `run` action opens the command in a new pane and `popup` opens it in a centered floating pane, so
 a row click can launch a full-screen TUI. The activated path is **not** substituted into those
 commands — a repository can contain a file named `; rm -rf ~`, and a command line assembled from a
-filename would execute it. Instead the path arrives as the `HYPRMUX_FILE` environment variable, so
-the command references it as `"$HYPRMUX_FILE"`: a quoted expansion is one word, never re-parsed for
+filename would execute it. Instead the path arrives as the `ROZI_FILE` environment variable, so
+the command references it as `"$ROZI_FILE"`: a quoted expansion is one word, never re-parsed for
 command syntax.
 
 ```toml
 # lazygit scoped to the clicked file
-{ name = "git", label = "", on_click = { run = "lazygit -f \"$HYPRMUX_FILE\"" } }
+{ name = "git", label = "", on_click = { run = "lazygit -f \"$ROZI_FILE\"" } }
 
 # the file's diff in a floating popup, closing when the pager quits
-{ name = "git", label = "", on_click = { popup = "git diff -- \"$HYPRMUX_FILE\"", keep_open = false } }
+{ name = "git", label = "", on_click = { popup = "git diff -- \"$ROZI_FILE\"", keep_open = false } }
 
 # open the clicked file in an editor pane
-{ name = "files", label = "", on_click = { run = "$EDITOR \"$HYPRMUX_FILE\"" } }
+{ name = "files", label = "", on_click = { run = "$EDITOR \"$ROZI_FILE\"" } }
 ```
 
-Quote the expansion (`"$HYPRMUX_FILE"`, or `"%HYPRMUX_FILE%"` under `cmd.exe`) so paths containing
+Quote the expansion (`"$ROZI_FILE"`, or `"%ROZI_FILE%"` under `cmd.exe`) so paths containing
 spaces arrive as one argument. `send` is unaffected: it starts no process, and its `{path}`
 substitution is plain typed text — see [the sidebar security notes](sidebar.md#security) before
 adding a trailing newline to a `send` action.
@@ -1008,12 +1008,12 @@ run = "notify-send 'pane exited'"
 
 [[hooks]]
 event = "workspace-switched"
-run = "logger workspace=$HYPRMUX_WORKSPACE"
+run = "logger workspace=$ROZI_WORKSPACE"
 ```
 
 Multiple entries may target the same event; each command is launched asynchronously through
-`command_shell`. Hooks receive `HYPRMUX_EVENT`, event-specific `HYPRMUX_*` fields, and
-`HYPRMUX_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
+`command_shell`. Hooks receive `ROZI_EVENT`, event-specific `ROZI_*` fields, and
+`ROZI_SOCKET` when the client control endpoint is available. Unknown event ids and empty commands
 are warned and ignored.
 
 See [Hooks](hooks.md) for all 17 events and fields, the complete environment contract, command

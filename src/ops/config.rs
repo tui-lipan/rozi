@@ -7,7 +7,7 @@ use tui_lipan::prelude::*;
 use crate::state::{PaneIdentity, ThemePreset};
 use crate::{AppRoot, Msg};
 
-/// Watches the config file's directory and requests a live reload when `hyprmux.toml` changes
+/// Watches the config file's directory and requests a live reload when `config.toml` changes
 /// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
 /// that save via write-to-temp + rename; hyprmux's own persistence writes are filtered out in
 /// the `Msg::ConfigFileChanged` handler by comparing against the last text this process read
@@ -85,7 +85,7 @@ pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
     reload_config(ctx)
 }
 
-/// Re-reads `hyprmux.toml` and applies it live: config fields, keymap/user commands, theme
+/// Re-reads `config.toml` and applies it live: config fields, keymap/user commands, theme
 /// (including switching the theme file watcher), and pane chrome - the same result a restart
 /// would produce, without losing running panes/workspaces/session state.
 pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
@@ -168,7 +168,7 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     }
 }
 
-/// Opens `hyprmux.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
+/// Opens `config.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
 /// hand-editing the config doesn't require remembering or typing its path.
 pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     let editor = config_editor();
@@ -261,8 +261,8 @@ mod tests {
     #[test]
     fn quote_shell_arg_wraps_plain_paths() {
         assert_eq!(
-            quote_shell_arg("/home/me/.config/hyprmux.toml"),
-            "'/home/me/.config/hyprmux.toml'"
+            quote_shell_arg("/home/me/.config/config.toml"),
+            "'/home/me/.config/config.toml'"
         );
     }
 

@@ -27,9 +27,9 @@ normal config hot reload.
 
 ## Events and fields
 
-Every event sets `HYPRMUX_EVENT`. Event fields are also available as environment variables using
-an uppercase `HYPRMUX_` prefix, for example the `client_id` field becomes
-`HYPRMUX_CLIENT_ID`.
+Every event sets `ROZI_EVENT`. Event fields are also available as environment variables using
+an uppercase `ROZI_` prefix, for example the `client_id` field becomes
+`ROZI_CLIENT_ID`.
 
 | Event | When it fires | Fields |
 | --- | --- | --- |
@@ -60,13 +60,13 @@ Hook commands inherit the client process environment and receive these additiona
 
 | Variable | Value |
 | --- | --- |
-| `HYPRMUX_EVENT` | The event id from the table above. Always set. |
-| `HYPRMUX_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `hyprmux --socket`, not a raw named-pipe name. |
-| `HYPRMUX_REMOTE_HOST` | Set when the UI is attached via `--remote`; the resolved remote host string. Hooks still run on the **client** machine. |
-| `HYPRMUX_<FIELD>` | One variable for each field listed for the event. Field names are uppercased; underscores are retained. |
+| `ROZI_EVENT` | The event id from the table above. Always set. |
+| `ROZI_SOCKET` | The current UI control endpoint path. Set only when the client successfully created a control endpoint. On Windows this is the discovery-entry path accepted by `hyprmux --socket`, not a raw named-pipe name. |
+| `ROZI_REMOTE_HOST` | Set when the UI is attached via `--remote`; the resolved remote host string. Hooks still run on the **client** machine. |
+| `ROZI_<FIELD>` | One variable for each field listed for the event. Field names are uppercased; underscores are retained. |
 
 All injected values are strings. Optional event values are represented by an empty string rather
-than an omitted field. Test `HYPRMUX_SOCKET` before calling back into the UI because control endpoint
+than an omitted field. Test `ROZI_SOCKET` before calling back into the UI because control endpoint
 creation can fail without preventing hyprmux from starting.
 
 ## Multiple hooks and command lifecycle
@@ -101,11 +101,11 @@ Run two independent commands for the same event:
 ```toml
 [[hooks]]
 event = "pane-exited"
-run = "notify-send \"pane $HYPRMUX_PANE exited with $HYPRMUX_CODE\""
+run = "notify-send \"pane $ROZI_PANE exited with $ROZI_CODE\""
 
 [[hooks]]
 event = "pane-exited"
-run = '''printf '%s pane=%s code=%s\n' "$HYPRMUX_EVENT" "$HYPRMUX_PANE" "$HYPRMUX_CODE" >> "$HOME/.local/state/hyprmux-events.log"'''
+run = '''printf '%s pane=%s code=%s\n' "$ROZI_EVENT" "$ROZI_PANE" "$ROZI_CODE" >> "$HOME/.local/state/hyprmux-events.log"'''
 ```
 
 Use the injected endpoint to talk back to the client that emitted the event. This POSIX-shell
@@ -115,14 +115,14 @@ example switches to workspace 1 after a pane exits:
 [[hooks]]
 event = "pane-exited"
 run = '''
-if [ -n "$HYPRMUX_SOCKET" ]; then
-    hyprmux --socket "$HYPRMUX_SOCKET" switch-workspace 1
+if [ -n "$ROZI_SOCKET" ]; then
+    hyprmux --socket "$ROZI_SOCKET" switch-workspace 1
 fi
 '''
 ```
 
 The explicit `--socket` is optional because the CLI also discovers the endpoint from
-`HYPRMUX_SOCKET`, but spelling it out makes the callback target clear. Redirect any command output
+`ROZI_SOCKET`, but spelling it out makes the callback target clear. Redirect any command output
 inside the hook if it must be retained.
 
 ## Migrating from `[hooks]`
@@ -134,7 +134,7 @@ entry:
 # Old syntax: no longer supported
 [hooks]
 pane-exited = "notify-send 'pane exited'"
-workspace-switched = "logger workspace=$HYPRMUX_WORKSPACE"
+workspace-switched = "logger workspace=$ROZI_WORKSPACE"
 ```
 
 ```toml
@@ -145,7 +145,7 @@ run = "notify-send 'pane exited'"
 
 [[hooks]]
 event = "workspace-switched"
-run = "logger workspace=$HYPRMUX_WORKSPACE"
+run = "logger workspace=$ROZI_WORKSPACE"
 ```
 
 A config that still contains `[hooks]` fails to load and reports a migration warning pointing to

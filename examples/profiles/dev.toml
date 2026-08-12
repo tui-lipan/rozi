@@ -1,5 +1,5 @@
 # Example reusable launch profile for hyprmux.
-# Copy to ~/.config/hyprmux/profiles/dev.toml, then:
+# Copy to ~/.config/rozi/profiles/dev.toml, then:
 #   hyprmux dev                         # canonical session "dev"
 #   hyprmux new review --profile dev    # independent session "review"
 #

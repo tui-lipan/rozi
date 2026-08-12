@@ -92,7 +92,7 @@ about where a pane is, the program takes the second line instead so the row keep
 The **Agents** tab lists detected coding-agent processes from every workspace. The session server
 inspects the foreground process group and its arguments, so agents launched through Node, Python,
 shell, and package-manager wrappers are recognized without relying only on the executable name.
-`HYPRMUX_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
+`ROZI_AGENT` or `HERDR_AGENT` can provide an explicit agent-name hint for an unusual launcher.
 The built-in catalog includes Claude Code, OpenCode, Codex, Aider, Gemini CLI, Goose, Amp, and other
 common terminal agents; ordinary shells, editors, and other panes are excluded. Rows show the
 normalized agent name and how long its current run has lasted, over a detail line saying what the
@@ -248,7 +248,7 @@ OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, 
 Install the included plugin by linking or copying
 `integrations/opencode/hyprmux-agent-state.js` into `~/.config/opencode/plugins/`, then restart
 OpenCode inside hyprmux. The plugin has no package dependencies and does nothing outside hyprmux.
-It uses the injected `HYPRMUX_SOCKET` and `HYPRMUX_PANE` values to update only its own pane.
+It uses the injected `ROZI_SOCKET` and `ROZI_PANE` values to update only its own pane.
 
 This is the recommended setup for OpenCode. A pane is one terminal but OpenCode is many sessions —
 a parent, its subagents, anything else open — and only the plugin can see all of them; the screen
@@ -291,7 +291,7 @@ the line says *which kind* of offline, in the state it found rather than the ssh
 | `Unknown host name` | The name did not resolve. | DNS, `/etc/hosts`, or the `[remote.hosts]` alias. |
 | `SSH login rejected` | Reached `sshd`, it refused the login. | Keys, agent, or the username in the target. |
 | `Host key not trusted` | The host key is unknown or changed. | `known_hosts`. |
-| `No hyprmux on host` | Logged in, could not run `hyprmux`. | Install it there, or set `binary_path` / `HYPRMUX_REMOTE_BINARY`. |
+| `No hyprmux on host` | Logged in, could not run `hyprmux`. | Install it there, or set `binary_path` / `ROZI_REMOTE_BINARY`. |
 | `ssh not installed here` | No `ssh` on this machine's `PATH`. | This machine, not the remote one. |
 | `Connection failed` | Anything else. | Run `hyprmux --remote <HOST>` from a shell for the raw ssh output. |
 
@@ -410,9 +410,9 @@ rejected with a warning, and the default action appends no newline — the path 
 and nothing runs until the user submits it. File tree clicks also carry the config generation, so a
 click queued across a config reload cannot act on a replaced tab.
 
-A file tree `run`/`popup` action still receives the activated path, as the `HYPRMUX_FILE`
+A file tree `run`/`popup` action still receives the activated path, as the `ROZI_FILE`
 environment variable rather than as text spliced into the command. The command decides where the
-value goes by referencing `"$HYPRMUX_FILE"`, and a quoted parameter expansion is a single word that
+value goes by referencing `"$ROZI_FILE"`, and a quoted parameter expansion is a single word that
 the shell does not re-scan for operators — so a file named `; rm -rf ~` reaches the command as an
 argument instead of a second command. This is what makes launching a diff viewer or editor for the
 clicked file safe; see [Configuration](configuration.md#opening-a-diff-viewer-or-editor-from-a-row).

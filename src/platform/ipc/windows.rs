@@ -3,18 +3,18 @@
 //! # Endpoint identity
 //!
 //! An [`IpcEndpoint`] is still identified by a *path* on Windows, exactly as on Unix - but that path
-//! is a **registry entry** in the runtime directory (`%LOCALAPPDATA%\hyprmux\run\session-dev.sock`),
+//! is a **registry entry** in the runtime directory (`%LOCALAPPDATA%\rozi\run\session-dev.sock`),
 //! not the transport itself. The transport is a named pipe whose name is derived deterministically
 //! from the entry's file stem and the current user's SID:
 //!
 //! ```text
-//! %LOCALAPPDATA%\hyprmux\run\session-dev.sock   ->  \\.\pipe\hyprmux.<user-sid>.session-dev
-//! %LOCALAPPDATA%\hyprmux\run\control-4242.sock  ->  \\.\pipe\hyprmux.<user-sid>.control-4242
+//! %LOCALAPPDATA%\rozi\run\session-dev.sock   ->  \\.\pipe\rozi.<user-sid>.session-dev
+//! %LOCALAPPDATA%\rozi\run\control-4242.sock  ->  \\.\pipe\rozi.<user-sid>.control-4242
 //! ```
 //!
 //! Pipe names are flat - the `pipename` portion may not contain a backslash - which is why the
 //! components are dot-separated rather than nested. Keeping the *entry path* as the endpoint's
-//! identity is what lets `control.rs`, `cli.rs`, `session/discovery.rs`, `HYPRMUX_SOCKET`, and
+//! identity is what lets `control.rs`, `cli.rs`, `session/discovery.rs`, `ROZI_SOCKET`, and
 //! `--socket` stay byte-for-byte the same code on both platforms: enumeration is still a `read_dir`,
 //! retirement is still an unlink, and a stale entry is still just a file with nothing behind it.
 //!
@@ -98,7 +98,7 @@ impl IpcEndpoint {
         &self.path
     }
 
-    /// `\\.\pipe\hyprmux.<user-sid>.<entry-stem>`.
+    /// `\\.\pipe\rozi.<user-sid>.<entry-stem>`.
     ///
     /// Derived, never read from the registry entry: a planted or edited entry can therefore only
     /// make an endpoint *undiscoverable*, never redirect a connection to a pipe someone else owns.
@@ -109,7 +109,7 @@ impl IpcEndpoint {
             .and_then(|stem| stem.to_str())
             .unwrap_or("unnamed");
         format!(
-            r"\\.\pipe\hyprmux.{}.{}",
+            r"\\.\pipe\rozi.{}.{}",
             crate::platform::user::current_user_tag(),
             stem
         )

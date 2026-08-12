@@ -8,11 +8,11 @@
 //!
 //! | Purpose | Linux/macOS | Windows |
 //! |---|---|---|
-//! | Config  | `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux` | `%APPDATA%\hyprmux` |
-//! | State   | `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
-//! | Cache   | `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux` | `%LOCALAPPDATA%\hyprmux\cache` |
-//! | Data    | `$XDG_DATA_HOME/hyprmux`, else `~/.local/share/hyprmux` | `%LOCALAPPDATA%\hyprmux` |
-//! | Runtime | `$XDG_RUNTIME_DIR/hyprmux`, else a private per-uid temp dir | not yet implemented (Phase 5 named-pipe registry) |
+//! | Config  | `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi` | `%APPDATA%\rozi` |
+//! | State   | `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi` | `%LOCALAPPDATA%\rozi` |
+//! | Cache   | `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi` | `%LOCALAPPDATA%\rozi\cache` |
+//! | Data    | `$XDG_DATA_HOME/rozi`, else `~/.local/share/rozi` | `%LOCALAPPDATA%\rozi` |
+//! | Runtime | `$XDG_RUNTIME_DIR/rozi`, else a private per-uid temp dir | not yet implemented (Phase 5 named-pipe registry) |
 //!
 //! The Windows column is written per the plan and believed correct against documented API
 //! contracts, but is **unverified**: this environment has no Windows target to run it on. See
@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 use super::fs_security;
 
-const APP_DIR: &str = "hyprmux";
+const APP_DIR: &str = "rozi";
 
 /// Scratch directories installed by [`crate::test_support::isolate_user_dirs`], replacing the real
 /// environment for the rest of the process. Empty in production.
@@ -37,7 +37,7 @@ pub(crate) fn install_process_env_override(env: PlatformEnv) {
 }
 
 /// Whether this process resolves user directories into a test scratch root instead of the real
-/// environment. Callers that accept an *explicit* path override (`HYPRMUX_CONFIG`) must ignore it
+/// environment. Callers that accept an *explicit* path override (`ROZI_CONFIG`) must ignore it
 /// while this holds, so an isolated process has no way out of its scratch root.
 pub(crate) fn user_dirs_are_isolated() -> bool {
     cfg!(test) || PROCESS_ENV_OVERRIDE.get().is_some()
@@ -115,8 +115,8 @@ fn env_absolute_path(key: &str) -> Option<PathBuf> {
     env_path(key).filter(|path| path.is_absolute())
 }
 
-/// Base config directory: `$XDG_CONFIG_HOME/hyprmux`, else `~/.config/hyprmux`;
-/// `%APPDATA%\hyprmux` on Windows.
+/// Base config directory: `$XDG_CONFIG_HOME/rozi`, else `~/.config/rozi`;
+/// `%APPDATA%\rozi` on Windows.
 pub fn config_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
         && let Some(appdata) = &env.appdata
@@ -126,8 +126,8 @@ pub fn config_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_config_home.as_ref(), &env.home, ".config")
 }
 
-/// Base state directory: `$XDG_STATE_HOME/hyprmux`, else `~/.local/state/hyprmux`;
-/// `%LOCALAPPDATA%\hyprmux` on Windows.
+/// Base state directory: `$XDG_STATE_HOME/rozi`, else `~/.local/state/rozi`;
+/// `%LOCALAPPDATA%\rozi` on Windows.
 pub fn state_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
@@ -137,8 +137,8 @@ pub fn state_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_state_home.as_ref(), &env.home, ".local/state")
 }
 
-/// Base cache directory: `$XDG_CACHE_HOME/hyprmux`, else `~/.cache/hyprmux`;
-/// `%LOCALAPPDATA%\hyprmux\cache` on Windows.
+/// Base cache directory: `$XDG_CACHE_HOME/rozi`, else `~/.cache/rozi`;
+/// `%LOCALAPPDATA%\rozi\cache` on Windows.
 ///
 pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
@@ -149,8 +149,8 @@ pub fn cache_dir(env: &PlatformEnv) -> PathBuf {
     xdg_style_dir(env.xdg_cache_home.as_ref(), &env.home, ".cache")
 }
 
-/// Base data directory used by managed installations: `$XDG_DATA_HOME/hyprmux`, else
-/// `~/.local/share/hyprmux`; `%LOCALAPPDATA%\hyprmux` on Windows.
+/// Base data directory used by managed installations: `$XDG_DATA_HOME/rozi`, else
+/// `~/.local/share/rozi`; `%LOCALAPPDATA%\rozi` on Windows.
 pub fn data_dir(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows)
         && let Some(local_appdata) = &env.local_appdata
@@ -164,12 +164,12 @@ pub fn data_dir(env: &PlatformEnv) -> PathBuf {
 /// symlink into [`data_dir`]; Windows keeps a stable launcher beside the active-version selector.
 pub fn managed_command_path(env: &PlatformEnv) -> PathBuf {
     if cfg!(windows) {
-        data_dir(env).join("bin").join("hyprmux.exe")
+        data_dir(env).join("bin").join("rozi.exe")
     } else {
         env.home
             .as_ref()
-            .map(|home| home.join(".local/bin/hyprmux"))
-            .unwrap_or_else(|| PathBuf::from(".local/bin/hyprmux"))
+            .map(|home| home.join(".local/bin/rozi"))
+            .unwrap_or_else(|| PathBuf::from(".local/bin/rozi"))
     }
 }
 
@@ -193,9 +193,9 @@ fn xdg_style_dir(
 
 /// Runtime endpoint directory, created (if missing) and validated private to the current user.
 ///
-/// Unix/macOS: `$XDG_RUNTIME_DIR/hyprmux`, falling back to [`fallback_runtime_dir_path`] when
+/// Unix/macOS: `$XDG_RUNTIME_DIR/rozi`, falling back to [`fallback_runtime_dir_path`] when
 /// `XDG_RUNTIME_DIR` is unset. Windows has no equivalent yet: the plan calls for a
-/// `%LOCALAPPDATA%\hyprmux\run` discovery registry backing named-pipe endpoints (Phase 5), which
+/// `%LOCALAPPDATA%\rozi\run` discovery registry backing named-pipe endpoints (Phase 5), which
 /// is not implemented - this function is not meaningful on Windows today.
 pub fn runtime_dir(env: &PlatformEnv) -> io::Result<PathBuf> {
     let dir = match &env.xdg_runtime_dir {
@@ -385,7 +385,7 @@ pub fn discover_project_root(cwd: &str) -> Option<String> {
 }
 
 /// The path `cwd` occupies inside its project, relative to `root` — `src/view` for a pane in
-/// `~/Work/hyprmux/src/view`. Empty (`None`) at the project root itself.
+/// `~/Work/rozi/src/view`. Empty (`None`) at the project root itself.
 pub fn project_relative_path(root: &str, cwd: &str) -> Option<String> {
     let relative = std::path::Path::new(cwd)
         .strip_prefix(std::path::Path::new(root))
@@ -450,7 +450,7 @@ fn parse_head(head: &str) -> Option<String> {
 }
 
 /// Compact cwd label for pane chrome. Inside a Git project this keeps the project name plus the
-/// path relative to its root (`hyprmux/src/view`), which identifies both project and location. An
+/// path relative to its root (`rozi/src/view`), which identifies both project and location. An
 /// ordinary cwd falls back to its home-relative or absolute spelling.
 pub fn display_cwd(cwd: &str) -> String {
     let Some(root) = discover_project_root(cwd) else {
@@ -505,19 +505,13 @@ mod tests {
     #[test]
     fn project_relative_path_names_the_place_inside_the_project() {
         assert_eq!(
-            project_relative_path("/home/x/hyprmux", "/home/x/hyprmux/src/view").as_deref(),
+            project_relative_path("/home/x/rozi", "/home/x/rozi/src/view").as_deref(),
             Some("src/view")
         );
         // The root itself is not "somewhere inside" the project.
-        assert_eq!(
-            project_relative_path("/home/x/hyprmux", "/home/x/hyprmux"),
-            None
-        );
+        assert_eq!(project_relative_path("/home/x/rozi", "/home/x/rozi"), None);
         // A cwd outside the claimed root is not describable relative to it.
-        assert_eq!(
-            project_relative_path("/home/x/hyprmux", "/home/x/other"),
-            None
-        );
+        assert_eq!(project_relative_path("/home/x/rozi", "/home/x/other"), None);
     }
 
     #[test]
@@ -545,7 +539,7 @@ mod tests {
     /// file pointing elsewhere — the case a naive `<root>/.git/HEAD` join gets wrong.
     #[test]
     fn head_branch_reads_plain_repositories_and_worktree_pointers() {
-        let dir = std::env::temp_dir().join(format!("hyprmux-head-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-head-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let repo = dir.join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
@@ -634,16 +628,13 @@ mod tests {
             home: Some(PathBuf::from("/home/user")),
             ..PlatformEnv::default()
         };
-        assert_eq!(config_dir(&env), PathBuf::from("/custom/config/hyprmux"));
+        assert_eq!(config_dir(&env), PathBuf::from("/custom/config/rozi"));
     }
 
     #[test]
     fn config_dir_falls_back_to_home_dot_config() {
         let env = env_with_home("/home/user");
-        assert_eq!(
-            config_dir(&env),
-            PathBuf::from("/home/user/.config/hyprmux")
-        );
+        assert_eq!(config_dir(&env), PathBuf::from("/home/user/.config/rozi"));
     }
 
     #[test]
@@ -651,14 +642,14 @@ mod tests {
         let env = env_with_home("/home/user");
         assert_eq!(
             state_dir(&env),
-            PathBuf::from("/home/user/.local/state/hyprmux")
+            PathBuf::from("/home/user/.local/state/rozi")
         );
     }
 
     #[test]
     fn cache_dir_falls_back_to_home_dot_cache() {
         let env = env_with_home("/home/user");
-        assert_eq!(cache_dir(&env), PathBuf::from("/home/user/.cache/hyprmux"));
+        assert_eq!(cache_dir(&env), PathBuf::from("/home/user/.cache/rozi"));
     }
 
     #[cfg(not(windows))]
@@ -669,10 +660,10 @@ mod tests {
             home: Some(PathBuf::from("/home/user")),
             ..PlatformEnv::default()
         };
-        assert_eq!(data_dir(&env), PathBuf::from("/custom/data/hyprmux"));
+        assert_eq!(data_dir(&env), PathBuf::from("/custom/data/rozi"));
         assert_eq!(
             data_dir(&env_with_home("/home/user")),
-            PathBuf::from("/home/user/.local/share/hyprmux")
+            PathBuf::from("/home/user/.local/share/rozi")
         );
     }
 
@@ -685,7 +676,7 @@ mod tests {
         };
         assert_eq!(
             data_dir(&env),
-            PathBuf::from(r"C:\Users\user\AppData\Local\hyprmux")
+            PathBuf::from(r"C:\Users\user\AppData\Local\rozi")
         );
     }
 
@@ -702,12 +693,12 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(
                 managed_command_path(&env),
-                PathBuf::from(r"C:\Users\user\AppData\Local\hyprmux\bin\hyprmux.exe")
+                PathBuf::from(r"C:\Users\user\AppData\Local\rozi\bin\rozi.exe")
             );
         } else {
             assert_eq!(
                 managed_command_path(&env),
-                PathBuf::from("/home/user/.local/bin/hyprmux")
+                PathBuf::from("/home/user/.local/bin/rozi")
             );
         }
     }
@@ -723,24 +714,21 @@ mod tests {
             home: Some(PathBuf::from("/home/user")),
             ..PlatformEnv::default()
         };
-        assert_eq!(
-            config_dir(&env),
-            PathBuf::from("/home/user/.config/hyprmux")
-        );
+        assert_eq!(config_dir(&env), PathBuf::from("/home/user/.config/rozi"));
     }
 
     #[test]
     fn env_absolute_path_rejects_relative_values() {
         // Directly exercises the filter `PlatformEnv::from_process` relies on.
-        assert!(super::env_absolute_path("__HYPRMUX_TEST_NONEXISTENT_VAR__").is_none());
+        assert!(super::env_absolute_path("__ROZI_TEST_NONEXISTENT_VAR__").is_none());
     }
 
     #[test]
     fn no_home_and_no_xdg_falls_back_to_dotdir_relative_path() {
         let env = PlatformEnv::default();
-        assert_eq!(config_dir(&env), PathBuf::from(".config/hyprmux"));
-        assert_eq!(state_dir(&env), PathBuf::from(".local/state/hyprmux"));
-        assert_eq!(cache_dir(&env), PathBuf::from(".cache/hyprmux"));
+        assert_eq!(config_dir(&env), PathBuf::from(".config/rozi"));
+        assert_eq!(state_dir(&env), PathBuf::from(".local/state/rozi"));
+        assert_eq!(cache_dir(&env), PathBuf::from(".cache/rozi"));
     }
 
     #[test]
@@ -754,7 +742,7 @@ mod tests {
                 .file_name()
                 .unwrap()
                 .to_string_lossy()
-                .starts_with("hyprmux-")
+                .starts_with("rozi-")
         );
     }
 
@@ -823,7 +811,7 @@ mod tests {
     #[test]
     fn runtime_dir_creates_and_reuses_private_directory() {
         let base = std::env::temp_dir().join(format!(
-            "hyprmux-paths-test-{}-{}",
+            "rozi-paths-test-{}-{}",
             "reuse",
             std::process::id()
         ));
@@ -834,7 +822,7 @@ mod tests {
         };
 
         let first = runtime_dir(&env).expect("create");
-        assert_eq!(first, base.join("hyprmux"));
+        assert_eq!(first, base.join("rozi"));
         let second = runtime_dir(&env).expect("reuse");
         assert_eq!(second, first);
 

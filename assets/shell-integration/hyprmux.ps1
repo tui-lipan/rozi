@@ -14,7 +14,7 @@
 # Compatible with Windows PowerShell 5.1 (hence `[char]0x1b` rather than the `` `e `` escape, which
 # only exists in PowerShell 6+).
 
-if ($env:HYPRMUX_SHELL_INTEGRATION_LOADED) {
+if ($env:ROZI_SHELL_INTEGRATION_LOADED) {
     return
 }
 # Not an interactive session (`-Command`/`-File`, or a hyprmux `command_shell` runner): there is no
@@ -22,7 +22,7 @@ if ($env:HYPRMUX_SHELL_INTEGRATION_LOADED) {
 if (-not [Environment]::UserInteractive -or $null -eq $Host.UI.RawUI) {
     return
 }
-$env:HYPRMUX_SHELL_INTEGRATION_LOADED = "1"
+$env:ROZI_SHELL_INTEGRATION_LOADED = "1"
 
 $Global:__hyprmuxEsc = [char]0x1b
 

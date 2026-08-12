@@ -48,7 +48,7 @@ pub enum Msg {
     AgentTick,
     /// Advance the shared alert-border/workspace-marker breathe phase.
     AlertPulseTick,
-    /// The config watcher saw `hyprmux.toml` change on disk; reload it if the content differs.
+    /// The config watcher saw `config.toml` change on disk; reload it if the content differs.
     ConfigFileChanged,
     /// Run one scheduled `WorkbarSegment::Command` refresh for the current configuration epoch.
     WorkbarCommandPoll {

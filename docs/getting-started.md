@@ -77,7 +77,7 @@ layout and the layout/animation/input internals, see [AGENTS.md](../AGENTS.md).
 
 `hyprmux` runs with sensible defaults and no config file. To customize the shell, keybinding
 modifier, prefix, animations, theme, or to select a default launch profile, create a config file at
-`~/.config/hyprmux/hyprmux.toml` (or point `$HYPRMUX_CONFIG` at one). See
+`~/.config/hyprmux/hyprmux.toml` (or point `$ROZI_CONFIG` at one). See
 [Configuration](configuration.md) for the full reference.
 
 On startup, `hyprmux` raises a toast for any problem reading the config file, theme file, or

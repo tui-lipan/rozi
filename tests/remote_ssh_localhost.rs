@@ -288,23 +288,23 @@ fn refuses_to_install_on_the_host_when_the_policy_forbids_it() {
 
 /// Attach to an arbitrary real host, configured out-of-band.
 ///
-/// Point `HYPRMUX_CONFIG` at a `hyprmux.toml` holding a `[remote.hosts.<alias>]` entry and set
-/// `HYPRMUX_TEST_REMOTE_ALIAS` to that alias. Skipped when unset, so it costs nothing in CI while
+/// Point `ROZI_CONFIG` at a `config.toml` holding a `[remote.hosts.<alias>]` entry and set
+/// `ROZI_TEST_REMOTE_ALIAS` to that alias. Skipped when unset, so it costs nothing in CI while
 /// giving the manual "run it against a real box" pass a repeatable form — including hosts no gated
 /// localhost test can stand in for, such as a Windows session server.
 ///
 /// Pin `binary_path` in that config: this test asserts nothing is installed on the host.
 #[test]
 fn attaches_to_a_configured_real_remote() {
-    let Ok(alias) = std::env::var("HYPRMUX_TEST_REMOTE_ALIAS") else {
-        eprintln!("skipping: set HYPRMUX_CONFIG and HYPRMUX_TEST_REMOTE_ALIAS");
+    let Ok(alias) = std::env::var("ROZI_TEST_REMOTE_ALIAS") else {
+        eprintln!("skipping: set ROZI_CONFIG and ROZI_TEST_REMOTE_ALIAS");
         return;
     };
 
     let config = rozi::config::load_config().config.remote;
     assert!(
         config.hosts.contains_key(&alias),
-        "alias `{alias}` is not in the config named by HYPRMUX_CONFIG"
+        "alias `{alias}` is not in the config named by ROZI_CONFIG"
     );
     assert!(
         config.hosts[&alias].binary_path.is_some(),

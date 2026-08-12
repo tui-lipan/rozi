@@ -143,7 +143,7 @@ The pieces that make this work:
   vim/neovim, the key is forwarded so the editor moves its own split; otherwise hyprmux moves focus.
 - **editor → hyprmux:** when the editor is at its split edge it hands focus back by calling
   `hyprmux run-action focus-<dir>-no-wrap` over the [control socket](control.md) (every pane already
-  has `HYPRMUX`/`HYPRMUX_SOCKET`/`HYPRMUX_PANE` in its environment). The plugin can opt back into
+  has `ROZI`/`ROZI_SOCKET`/`ROZI_PANE` in its environment). The plugin can opt back into
   wrapping with `g:hyprmux_navigator_wrap = 1`.
 
 Detection uses the pane's foreground process (Linux `/proc`), so it is accurate regardless of

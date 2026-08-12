@@ -539,14 +539,12 @@ fn detect_pane_agent(
         .pty
         .as_ref()
         .and_then(|pty| inspector.foreground_job_in(pty, scan.get()));
-    let configured_hint = ["HYPRMUX_AGENT", "HERDR_AGENT"]
-        .into_iter()
-        .find_map(|key| {
-            pane.env
-                .iter()
-                .rev()
-                .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
-        });
+    let configured_hint = ["ROZI_AGENT", "HERDR_AGENT"].into_iter().find_map(|key| {
+        pane.env
+            .iter()
+            .rev()
+            .find_map(|(candidate, value)| (candidate == key).then(|| value.clone()))
+    });
     if let Some(hint) = configured_hint {
         if let Some(process) = foreground_job
             .as_mut()
@@ -916,7 +914,7 @@ mod tests {
     #[test]
     fn agent_detection_uses_configured_hint_and_is_preserved_between_polls() {
         let mut pane = make_pane();
-        pane.env.push(("HYPRMUX_AGENT".into(), "opencode".into()));
+        pane.env.push(("ROZI_AGENT".into(), "opencode".into()));
         pane.screen_mut().process_bytes(b"esc to interrupt");
 
         let detected = compute_runtime_state(

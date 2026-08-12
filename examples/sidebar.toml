@@ -1,6 +1,6 @@
 # Example: a two-panel sidebar with built-in, launcher, and command tabs.
 #
-# Copy this table into ~/.config/hyprmux/hyprmux.toml and adjust commands to
+# Copy this table into ~/.config/rozi/config.toml and adjust commands to
 # match the tools available in your shell.
 
 [sidebar]

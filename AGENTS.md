@@ -325,7 +325,7 @@ under Code Style.
   UI the developer is working in. Unit tests are isolated automatically - `PlatformEnv::from_process`
   resolves into a per-process scratch root under `cfg(test)`. An integration test that builds a
   `AppRoot` must call `rozi::test_support::isolate_user_dirs()` first, from whatever helper
-  constructs its `TestBackend`. Never mutate `HOME`/`XDG_*`/`APPDATA`/`HYPRMUX_CONFIG` to redirect a
+  constructs its `TestBackend`. Never mutate `HOME`/`XDG_*`/`APPDATA`/`ROZI_CONFIG` to redirect a
   test: `std::env::set_var` is unsound beside parallel tests, and isolation now outranks it anyway.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and
   terminal behavior when changing those areas.
@@ -386,7 +386,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 - Do not commit secrets, local socket paths, personal config, generated logs, or terminal captures
   that may contain credentials.
-- Runtime config comes from `$HYPRMUX_CONFIG` or `~/.config/hyprmux/hyprmux.toml`; treat user config
+- Runtime config comes from `$ROZI_CONFIG` or `~/.config/hyprmux/hyprmux.toml`; treat user config
   as local data, not repository state.
 - Control and session endpoints are per-user and per-run: Unix sockets on Linux/macOS, named pipes
   on Windows. Preserve the runtime-dir safety checks (Unix ownership/mode/symlink validation;
@@ -424,13 +424,13 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 
 ## Extensibility Hooks
 
-- `HYPRMUX_CONFIG` selects an alternate config file.
-- `HYPRMUX_SOCKET` points CLI control commands at a live UI control socket.
-- `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are injected into spawned panes;
+- `ROZI_CONFIG` selects an alternate config file.
+- `ROZI_SOCKET` points CLI control commands at a live UI control socket.
+- `ROZI=1`, `ROZI_PANE`, and `ROZI_SOCKET` are injected into spawned panes;
   `PaneIdentity::env` adds never-persisted per-spawn variables (the file tree passes the activated
-  path as `HYPRMUX_FILE` so a `run`/`popup` command never has a filename spliced into it).
+  path as `ROZI_FILE` so a `run`/`popup` command never has a filename spliced into it).
 - `[[hooks]]` runs client-side commands for the 16 `events::EventKind` variants and injects
-  `HYPRMUX_EVENT`, event fields, and `HYPRMUX_SOCKET` (plus `HYPRMUX_REMOTE_HOST` when attached via
+  `ROZI_EVENT`, event fields, and `ROZI_SOCKET` (plus `ROZI_REMOTE_HOST` when attached via
   `--remote`); see `docs/hooks.md`.
 - `[keys]` can rebind built-in actions or define user commands with `run` / `send` tables.
 - `[[rules]]` applies first-match command substring placement to interactive command-carrying pane
@@ -445,7 +445,7 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach
   <NAME>` is attach-only and `new <NAME> [--profile <RECIPE>]` explicitly creates a session.
 - `--remote <HOST|ssh://URL>` attaches over SSH via a remote-side `--remote-serve` stdio proxy; see
-  `docs/remote.md`. `HYPRMUX_REMOTE_BINARY` forces which local binary is installed on the remote.
+  `docs/remote.md`. `ROZI_REMOTE_BINARY` forces which local binary is installed on the remote.
 - Cargo feature flags are inherited from the current sibling-path `tui-lipan` dependency; this
   crate uses `terminal`, `terminal-images`, `terminal-serde`, `clipboard-images`, `theme-reload`,
   and `devtools`.

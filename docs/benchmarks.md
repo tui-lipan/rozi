@@ -231,7 +231,7 @@ cargo run --release -- stress --read-only
 In another shell, query the client-local and cached server resource sample without pausing the UI:
 
 ```bash
-HYPRMUX_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+ROZI_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
 ```
 
 The server section includes `age_ms` and `stale`; compare current bytes with high-water and capacity
@@ -277,7 +277,7 @@ t1=$(awk '{print $14+$15}' /proc/$SRV/stat)
 awk -v a=$t0 -v b=$t1 'BEGIN{printf "%.2f%%\n", (b-a)/6}'
 ```
 
-Add panes over the control socket (`HYPRMUX_SOCKET=… hyprmux new-pane`) and check the slope: a
+Add panes over the control socket (`ROZI_SOCKET=… hyprmux new-pane`) and check the slope: a
 cost that scales with pane count is per-pane polling, while a flat cost is the server's own loop.
 
 Measured at idle, server process:

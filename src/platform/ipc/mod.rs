@@ -10,7 +10,7 @@
 //! socket. On Windows it is a discovery-registry entry standing for a named pipe whose name is
 //! derived from it (see [`windows`]'s module doc comment for why, and for why nothing trusts the
 //! entry's contents). Keeping the identity the same shape on both is what lets `control.rs`,
-//! `cli.rs`, `session/discovery.rs`, `HYPRMUX_SOCKET`, and `--socket` remain one implementation:
+//! `cli.rs`, `session/discovery.rs`, `ROZI_SOCKET`, and `--socket` remain one implementation:
 //! enumeration is a `read_dir`, retirement is an unlink, and liveness is a connect attempt,
 //! everywhere.
 //!
@@ -82,7 +82,7 @@ pub fn connection_from_child(mut child: Child) -> io::Result<IpcConnection> {
 }
 
 /// Naming convention and enumeration for the two endpoint families this app uses: one per-process
-/// *control* endpoint (`--socket`/`HYPRMUX_SOCKET`-discoverable CLI control plane) and one
+/// *control* endpoint (`--socket`/`ROZI_SOCKET`-discoverable CLI control plane) and one
 /// per-name *session* endpoint (named/ephemeral session servers). Endpoint identity is always
 /// derived from a runtime directory plus a logical id, never constructed ad hoc at call sites.
 ///
@@ -129,7 +129,7 @@ impl EndpointRegistry {
     }
 
     /// Every control endpoint discoverable in `runtime_dir` that currently answers (used by
-    /// `cli.rs` to find the running UI's control socket when `--socket`/`HYPRMUX_SOCKET` are unset).
+    /// `cli.rs` to find the running UI's control socket when `--socket`/`ROZI_SOCKET` are unset).
     pub fn list_live_control_endpoints(runtime_dir: &Path) -> io::Result<Vec<IpcEndpoint>> {
         let entries = match std::fs::read_dir(runtime_dir) {
             Ok(entries) => entries,
@@ -164,11 +164,11 @@ mod tests {
         let dir = Path::new("/run/hyprmux");
         assert_eq!(
             EndpointRegistry::control_endpoint(dir, 1234).path(),
-            Path::new("/run/hyprmux/control-1234.sock")
+            Path::new("/run/rozi/control-1234.sock")
         );
         assert_eq!(
             EndpointRegistry::session_endpoint(dir, "dev").path(),
-            Path::new("/run/hyprmux/session-dev.sock")
+            Path::new("/run/rozi/session-dev.sock")
         );
     }
 

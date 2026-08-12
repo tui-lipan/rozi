@@ -44,6 +44,6 @@ attaches to it. A bare launch uses a disposable per-process ephemeral session; a
 - **Leave client** - `prefix q` or `prefix d` by default; named sessions keep running, while
   temporary sessions are closed or kept according to whether they contain work.
 - **Named sessions** - `hyprmux <name>` creates/connects to a persistent PTY server.
-- **Config file** - `$HYPRMUX_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
+- **Config file** - `$ROZI_CONFIG`, else `~/.config/hyprmux/hyprmux.toml`. See
   [Configuration](configuration.md).
 - **Architecture / internals** - see [AGENTS.md](../AGENTS.md) at the repo root.

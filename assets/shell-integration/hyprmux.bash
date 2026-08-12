@@ -6,10 +6,10 @@
 # hyprmux itself via `bash --rcfile <generated wrapper>`; never edits `~/.bashrc` or any other
 # dotfile. Safe to source more than once (idempotent) and a no-op in a non-interactive shell.
 
-if [ -n "${HYPRMUX_SHELL_INTEGRATION_LOADED:-}" ] || [ -z "${PS1:-}" ]; then
+if [ -n "${ROZI_SHELL_INTEGRATION_LOADED:-}" ] || [ -z "${PS1:-}" ]; then
     return 0 2>/dev/null || exit 0
 fi
-HYPRMUX_SHELL_INTEGRATION_LOADED=1
+ROZI_SHELL_INTEGRATION_LOADED=1
 
 # Percent-encode everything outside the URI-unreserved set, matching the framework's decoder.
 __hyprmux_urlencode() {

@@ -59,8 +59,8 @@ fn show(summary: &str, body: &str) -> std::io::Result<()> {
         [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null;\
         $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);\
         $nodes = $template.GetElementsByTagName('text');\
-        $nodes.Item(0).AppendChild($template.CreateTextNode($env:HYPRMUX_NOTIFY_SUMMARY)) | Out-Null;\
-        $nodes.Item(1).AppendChild($template.CreateTextNode($env:HYPRMUX_NOTIFY_BODY)) | Out-Null;\
+        $nodes.Item(0).AppendChild($template.CreateTextNode($env:ROZI_NOTIFY_SUMMARY)) | Out-Null;\
+        $nodes.Item(1).AppendChild($template.CreateTextNode($env:ROZI_NOTIFY_BODY)) | Out-Null;\
         $toast = [Windows.UI.Notifications.ToastNotification]::new($template);\
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('hyprmux').Show($toast);";
 
@@ -79,8 +79,8 @@ fn show(summary: &str, body: &str) -> std::io::Result<()> {
         .arg("-NonInteractive")
         .arg("-Command")
         .arg(SCRIPT)
-        .env("HYPRMUX_NOTIFY_SUMMARY", summary)
-        .env("HYPRMUX_NOTIFY_BODY", body)
+        .env("ROZI_NOTIFY_SUMMARY", summary)
+        .env("ROZI_NOTIFY_BODY", body)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

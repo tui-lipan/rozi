@@ -91,7 +91,7 @@ fn show(path: &Path, player: Option<&str>) -> std::io::Result<()> {
         let mut command = hidden_command(player);
         return command.arg(path).status().map(|_| ());
     }
-    const SCRIPT: &str = "(New-Object System.Media.SoundPlayer $env:HYPRMUX_SOUND_FILE).PlaySync()";
+    const SCRIPT: &str = "(New-Object System.Media.SoundPlayer $env:ROZI_SOUND_FILE).PlaySync()";
     let player = super::command::lookup_program("powershell.exe")
         .or_else(|| super::command::lookup_program("pwsh.exe"))
         .ok_or_else(|| {
@@ -106,7 +106,7 @@ fn show(path: &Path, player: Option<&str>) -> std::io::Result<()> {
         .arg("-NonInteractive")
         .arg("-Command")
         .arg(SCRIPT)
-        .env("HYPRMUX_SOUND_FILE", path);
+        .env("ROZI_SOUND_FILE", path);
     command.status().map(|_| ())
 }
 

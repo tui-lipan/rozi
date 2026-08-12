@@ -216,10 +216,10 @@ scrollback position, and theme are per client.
 `--remote-serve` stdio proxy.
 
 - **Bootstrap and install** — hyprmux can install or update its own binary on the remote host.
-  `HYPRMUX_REMOTE_BINARY` forces which local binary is shipped.
+  `ROZI_REMOTE_BINARY` forces which local binary is shipped.
 - **Configured hosts** — `[remote]` / `[[remote.host]]` entries appear directly in the session
   picker, with cached session lists for hosts that are currently unreachable.
-- **`HYPRMUX_REMOTE_HOST`** is injected into hooks while attached remotely.
+- **`ROZI_REMOTE_HOST`** is injected into hooks while attached remotely.
 - The workbar `location` badge shows the active remote (`󰒍 workbox`) or a count of retained remote
   attachments, colored by connection state.
 - `hyprmux list-sessions --remote <host>` and `hyprmux kill-session <name> --remote <host>` work
@@ -338,7 +338,7 @@ User-defined tabs:
 
 Activating a file runs the tab's `on_click`, which defaults to typing the path at the focused
 pane's prompt without a newline. A configured `run`/`popup` action receives the path as the
-`HYPRMUX_FILE` environment variable instead, so a filename is never spliced into a command string.
+`ROZI_FILE` environment variable instead, so a filename is never spliced into a command string.
 Tabs support keyboard navigation, drag-and-drop reordering, scrolling, and tree guides.
 
 See [Sidebar](sidebar.md).
@@ -390,7 +390,7 @@ See [Themes](themes.md).
 
 ## Configuration
 
-One TOML file: `$HYPRMUX_CONFIG` or `~/.config/hyprmux/hyprmux.toml`. It **live-reloads** on change.
+One TOML file: `$ROZI_CONFIG` or `~/.config/hyprmux/hyprmux.toml`. It **live-reloads** on change.
 
 Top-level tables:
 
@@ -449,13 +449,13 @@ Windows) with a JSON protocol and a CLI front end.
 `subscribe` is the push counterpart to `[[hooks]]`: instead of spawning a command per event, a
 long-lived client receives the event stream over the socket.
 
-`HYPRMUX_SOCKET` points the CLI at a live UI control socket.
+`ROZI_SOCKET` points the CLI at a live UI control socket.
 
-**Injected pane environment** — `HYPRMUX=1`, `HYPRMUX_PANE`, and `HYPRMUX_SOCKET` are set in every
+**Injected pane environment** — `ROZI=1`, `ROZI_PANE`, and `ROZI_SOCKET` are set in every
 spawned pane. `PaneIdentity::env` adds never-persisted per-spawn variables.
 
-**Hooks** — `[[hooks]]` runs client-side commands for 17 UI events, injecting `HYPRMUX_EVENT`, the
-event's fields, `HYPRMUX_SOCKET`, and `HYPRMUX_REMOTE_HOST` when remote:
+**Hooks** — `[[hooks]]` runs client-side commands for 17 UI events, injecting `ROZI_EVENT`, the
+event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:
 
 `pane-spawned`, `pane-exited`, `pane-status-changed`, `bell`, `focus-changed`, `workspace-switched`,
 `session-attached`, `session-detached`, `session-renamed`, `session-created`,

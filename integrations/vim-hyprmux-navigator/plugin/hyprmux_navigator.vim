@@ -16,7 +16,7 @@ endfunction
 
 function! s:HyprmuxFocus(action) abort
   let l:command = get(g:, 'hyprmux_navigator_command', 'hyprmux')
-  if empty($HYPRMUX_SOCKET) || !executable(l:command)
+  if empty($ROZI_SOCKET) || !executable(l:command)
     return
   endif
 
@@ -34,12 +34,12 @@ function! s:Check() abort
   let l:command = get(g:, 'hyprmux_navigator_command', 'hyprmux')
   echo 'command: ' . l:command
   echo 'executable: ' . executable(l:command)
-  echo 'HYPRMUX: ' . $HYPRMUX
-  echo 'HYPRMUX_PANE: ' . $HYPRMUX_PANE
-  echo 'HYPRMUX_SOCKET: ' . $HYPRMUX_SOCKET
+  echo 'ROZI: ' . $ROZI
+  echo 'ROZI_PANE: ' . $ROZI_PANE
+  echo 'ROZI_SOCKET: ' . $ROZI_SOCKET
   echo 'Ctrl-h: ' . maparg('<C-h>', 'n')
 
-  if empty($HYPRMUX_SOCKET) || !executable(l:command)
+  if empty($ROZI_SOCKET) || !executable(l:command)
     return
   endif
 
@@ -90,7 +90,7 @@ if !get(g:, 'hyprmux_navigator_no_mappings', 0)
   nnoremap <silent> <C-l> :<C-U>HyprmuxNavigateRight<CR>
   nnoremap <silent> <C-\> :<C-U>HyprmuxNavigatePrevious<CR>
 
-  if !empty($HYPRMUX)
+  if !empty($ROZI)
     tnoremap <silent> <C-h> <C-w>:HyprmuxNavigateLeft<CR>
     tnoremap <silent> <C-j> <C-w>:HyprmuxNavigateDown<CR>
     tnoremap <silent> <C-k> <C-w>:HyprmuxNavigateUp<CR>

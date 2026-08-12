@@ -105,9 +105,9 @@ argument to the payload: the extracted binary's package version is the version p
 payload exits. Unix PATH setup is left to the user; Windows `-AddToPath` appends
 `%LOCALAPPDATA%\hyprmux\bin` to the user PATH only after a successful install.
 
-`HYPRMUX_RELEASE_REPO` changes the GitHub repository used by the helper. `HYPRMUX_RELEASE_BASE_URL`
+`ROZI_RELEASE_REPO` changes the GitHub repository used by the helper. `ROZI_RELEASE_BASE_URL`
 can point at an HTTPS mirror with the same release-directory layout. When no version is supplied,
-`HYPRMUX_RELEASE_LATEST_URL` selects an HTTPS `.../releases/latest` redirect endpoint; both
+`ROZI_RELEASE_LATEST_URL` selects an HTTPS `.../releases/latest` redirect endpoint; both
 installers resolve its final URL and require a `v<version>` tag. These variables affect bootstrap
 downloads only; managed updates use the repository compiled into the installed binary.
 
@@ -206,7 +206,7 @@ After build/package jobs have produced final archives, generate and sign metadat
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
   manifest --name hyprmux --version 0.2.0 --artifacts-dir dist --output dist/hyprmux-release.json
 
-HYPRMUX_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64")" \
+ROZI_RELEASE_PRIVATE_KEY="$(tr -d '\n' < "$HOME/.config/hyprmux/release-keys/release-2026-a.private.b64")" \
 cargo run --manifest-path ../relswap/Cargo.toml --features release-tool --bin relswap -- \
   sign --name hyprmux --manifest dist/hyprmux-release.json \
        --output dist/hyprmux-release.signatures.json \
@@ -233,9 +233,9 @@ before it reads any signing secret and prints setup guidance.
 After committing that public document:
 
 1. Create a GitHub Actions environment named `release` and require maintainer approval as desired.
-2. Add the environment secret `HYPRMUX_RELEASE_PRIVATE_KEY` containing the base64 32-byte private
+2. Add the environment secret `ROZI_RELEASE_PRIVATE_KEY` containing the base64 32-byte private
    key value, not a repository file or checked-in secret.
-3. Optionally set the environment variable `HYPRMUX_RELEASE_KEY_ID`; otherwise the workflow uses
+3. Optionally set the environment variable `ROZI_RELEASE_KEY_ID`; otherwise the workflow uses
    `release-2026-a`.
 4. Keep the private value available only to the workflow's signing step. Build/test/package jobs,
    pull requests, and manual dispatches never receive it.

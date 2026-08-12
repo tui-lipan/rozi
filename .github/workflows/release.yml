@@ -223,12 +223,12 @@ jobs:
                   '0.0.0',
                   [Text.UTF8Encoding]::new($false)
               )
-              $oldSmokeEnv = $env:HYPRMUX_LAUNCHER_SMOKE
+              $oldSmokeEnv = $env:ROZI_LAUNCHER_SMOKE
               try {
-                  $env:HYPRMUX_LAUNCHER_SMOKE = 'forwarded-env'
+                  $env:ROZI_LAUNCHER_SMOKE = 'forwarded-env'
                   Push-Location $forwardCwd
                   try {
-                      $command = 'echo forwarded-argument & echo %HYPRMUX_LAUNCHER_SMOKE% & cd & exit 37'
+                      $command = 'echo forwarded-argument & echo %ROZI_LAUNCHER_SMOKE% & cd & exit 37'
                       $forwardOutput = (& $forwardLauncher '/d' '/c' $command 2>&1 | Out-String)
                       $forwardExitCode = $LASTEXITCODE
                   } finally {
@@ -236,9 +236,9 @@ jobs:
                   }
               } finally {
                   if ($null -eq $oldSmokeEnv) {
-                      Remove-Item Env:HYPRMUX_LAUNCHER_SMOKE -ErrorAction SilentlyContinue
+                      Remove-Item Env:ROZI_LAUNCHER_SMOKE -ErrorAction SilentlyContinue
                   } else {
-                      $env:HYPRMUX_LAUNCHER_SMOKE = $oldSmokeEnv
+                      $env:ROZI_LAUNCHER_SMOKE = $oldSmokeEnv
                   }
               }
               Write-Host "smoke: phase=forward-ran exit=$forwardExitCode"
@@ -423,18 +423,18 @@ jobs:
       # as an argument, so it stays named for this product.
       - name: Sign exact manifest bytes
         env:
-          RELSWAP_RELEASE_PRIVATE_KEY: ${{ secrets.HYPRMUX_RELEASE_PRIVATE_KEY }}
-          HYPRMUX_RELEASE_KEY_ID: ${{ vars.HYPRMUX_RELEASE_KEY_ID || 'release-2026-a' }}
+          RELSWAP_RELEASE_PRIVATE_KEY: ${{ secrets.ROZI_RELEASE_PRIVATE_KEY }}
+          ROZI_RELEASE_KEY_ID: ${{ vars.ROZI_RELEASE_KEY_ID || 'release-2026-a' }}
         shell: bash
         run: |
           set -euo pipefail
           test -n "$RELSWAP_RELEASE_PRIVATE_KEY"
-          test -n "$HYPRMUX_RELEASE_KEY_ID"
+          test -n "$ROZI_RELEASE_KEY_ID"
           release-tool/relswap sign \
             --name hyprmux \
             --manifest dist/hyprmux-release.json \
             --output dist/hyprmux-release.signatures.json \
-            --key-id "$HYPRMUX_RELEASE_KEY_ID"
+            --key-id "$ROZI_RELEASE_KEY_ID"
 
       - name: Verify signature and every final archive before publication
         shell: bash

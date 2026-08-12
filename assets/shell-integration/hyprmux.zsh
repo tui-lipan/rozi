@@ -13,9 +13,9 @@
 # exercised against a real bash; treat this file as unverified-by-execution until a zsh host runs
 # it (Milestone 1's macOS CI, once the workflow actually runs, is the first real exercise of it).
 
-[[ -n "$HYPRMUX_SHELL_INTEGRATION_LOADED" ]] && return 0
+[[ -n "$ROZI_SHELL_INTEGRATION_LOADED" ]] && return 0
 [[ -o interactive ]] || return 0
-HYPRMUX_SHELL_INTEGRATION_LOADED=1
+ROZI_SHELL_INTEGRATION_LOADED=1
 
 autoload -Uz add-zsh-hook
 

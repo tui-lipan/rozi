@@ -1014,9 +1014,9 @@ pub(super) fn tree_activate(
     action.map_or_else(Update::none, |action| {
         // `send` gets the path substituted as literal keystrokes. `run`/`popup` never do — a path
         // comes from the filesystem and must not compose a command line — so they receive it as
-        // `$HYPRMUX_FILE` instead, which a shell expands as one word inside quotes.
+        // `$ROZI_FILE` instead, which a shell expands as one word inside quotes.
         let with_path = substitute(&action, "{path}", &path);
-        let env = vec![("HYPRMUX_FILE".to_string(), path)];
+        let env = vec![("ROZI_FILE".to_string(), path)];
         crate::actions::execute_user_command_action_with_env(ctx, &with_path, env)
     })
 }
@@ -1797,7 +1797,7 @@ mod tests {
     }
 
     /// A `run` action opens a pane whose command is untouched, with the activated path handed over
-    /// as `HYPRMUX_FILE`. This is what lets a diff viewer be scoped to the clicked file without the
+    /// as `ROZI_FILE`. This is what lets a diff viewer be scoped to the clicked file without the
     /// filename ever entering the command line: a repository can contain a file named
     /// `; rm -rf ~`, and the spawned command string must not be able to carry it.
     #[test]
@@ -1806,7 +1806,7 @@ mod tests {
             let mut backend = settled_backend();
             let mut config =
                 crate::config::SidebarTreeConfig::for_view(crate::config::SidebarTreeView::Changes);
-            config.on_click = Some(UserCommandAction::run("git diff -- \"$HYPRMUX_FILE\""));
+            config.on_click = Some(UserCommandAction::run("git diff -- \"$ROZI_FILE\""));
             backend.state_mut().config.sidebar.tabs = vec![SidebarTab::Tree {
                 view: crate::config::SidebarTreeView::Changes,
                 config,
@@ -1833,10 +1833,7 @@ mod tests {
                 .cloned()
                 .expect("run action queues a pane spawn");
             // The command is exactly what the config said — the path is nowhere in it.
-            assert_eq!(
-                spawn.command.as_deref(),
-                Some("git diff -- \"$HYPRMUX_FILE\"")
-            );
+            assert_eq!(spawn.command.as_deref(), Some("git diff -- \"$ROZI_FILE\""));
             assert!(
                 !spawn.command.as_deref().unwrap().contains("rm -rf"),
                 "the filename never reaches the command line"
@@ -1846,8 +1843,8 @@ mod tests {
                 spawn
                     .env
                     .iter()
-                    .any(|(key, value)| key == "HYPRMUX_FILE" && value == hostile),
-                "the activated path is handed over as HYPRMUX_FILE: {:?}",
+                    .any(|(key, value)| key == "ROZI_FILE" && value == hostile),
+                "the activated path is handed over as ROZI_FILE: {:?}",
                 spawn.env
             );
         });

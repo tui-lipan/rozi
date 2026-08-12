@@ -5,7 +5,7 @@ set -euo pipefail
 # payload. It never edits a shell startup file.
 # Trust-boundary caveat: "Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised."
 
-readonly RELEASE_REPO="${HYPRMUX_RELEASE_REPO:-Razuer/hyprmux}"
+readonly RELEASE_REPO="${ROZI_RELEASE_REPO:-Razuer/hyprmux}"
 readonly DEFAULT_LATEST_URL="https://github.com/${RELEASE_REPO}/releases/latest"
 readonly MAX_ARCHIVE_BYTES=268435456
 readonly MAX_CHECKSUM_BYTES=1048576
@@ -30,7 +30,7 @@ Usage:
   install.sh [--version VERSION]
 
 The default version is the current GitHub release. --version selects an exact release archive.
-HYPRMUX_RELEASE_BASE_URL may point at an HTTPS release mirror, and HYPRMUX_RELEASE_LATEST_URL
+ROZI_RELEASE_BASE_URL may point at an HTTPS release mirror, and ROZI_RELEASE_LATEST_URL
 selects an HTTPS /releases/latest redirect endpoint whose final URL must contain a v-prefixed tag.
 
 After bootstrap verification, this script executes the extracted payload with \`install\`. The
@@ -82,7 +82,7 @@ download_file() {
 
 resolve_latest_version() {
   local latest_url location tag latest_path
-  latest_url="${HYPRMUX_RELEASE_LATEST_URL:-$DEFAULT_LATEST_URL}"
+  latest_url="${ROZI_RELEASE_LATEST_URL:-$DEFAULT_LATEST_URL}"
   [[ "$latest_url" == https://* ]] || fail "latest-release URL must use HTTPS"
   latest_path="${latest_url%%\?*}"
   latest_path="${latest_path%%\#*}"
@@ -299,7 +299,7 @@ main() {
   fi
   validate_version "$version"
   target="$(target_triple)"
-  base="${HYPRMUX_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
+  base="${ROZI_RELEASE_BASE_URL:-https://github.com/${RELEASE_REPO}/releases/download/v${version}}"
   install_version "$version" "$target" "$base"
 }
 

@@ -77,8 +77,8 @@ try_bin() {
     fi
   fi
 }
-if [ -n "${HYPRMUX_PROBE_BIN:-}" ]; then
-  try_bin "$HYPRMUX_PROBE_BIN"
+if [ -n "${ROZI_PROBE_BIN:-}" ]; then
+  try_bin "$ROZI_PROBE_BIN"
 fi
 try_bin hyprmux
 try_bin "$HOME/.local/bin/hyprmux"
@@ -117,7 +117,7 @@ function Try-Bin($bin) {
   $help = & $resolved --help 2>$null
   if ($help -match '--remote') { Write-Output 'speaks_remote=1' } else { Write-Output 'speaks_remote=0' }
 }
-if ($env:HYPRMUX_PROBE_BIN) { Try-Bin $env:HYPRMUX_PROBE_BIN }
+if ($env:ROZI_PROBE_BIN) { Try-Bin $env:ROZI_PROBE_BIN }
 Try-Bin 'hyprmux.exe'
 Try-Bin (Join-Path $env:USERPROFILE '.local\bin\hyprmux.exe')
 Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\hyprmux.exe')
@@ -459,12 +459,10 @@ pub fn ensure_remote_binary(
     config: &RemoteConfig,
     interactive: bool,
 ) -> Result<String, String> {
-    if let Ok(path) = std::env::var("HYPRMUX_REMOTE_BINARY") {
+    if let Ok(path) = std::env::var("ROZI_REMOTE_BINARY") {
         let local = Path::new(&path);
         if !local.is_file() {
-            return Err(format!(
-                "HYPRMUX_REMOTE_BINARY={path} is not a regular file"
-            ));
+            return Err(format!("ROZI_REMOTE_BINARY={path} is not a regular file"));
         }
         // The override used to upload blindly, leaving a wrong-arch binary to fail as an opaque
         // exec-format error on the remote. Now that the probe reports platform/machine, verify the
@@ -473,13 +471,7 @@ pub fn ensure_remote_binary(
         let report = probe_remote_report(target, config)?;
         verify_override_targets_remote(local, &report)?;
         let family = family_from_os(&normalize_os(&report.platform));
-        return install_bytes(
-            target,
-            config,
-            local,
-            "HYPRMUX_REMOTE_BINARY override",
-            family,
-        );
+        return install_bytes(target, config, local, "ROZI_REMOTE_BINARY override", family);
     }
 
     let report = probe_remote_report(target, config)?;
@@ -527,7 +519,7 @@ fn install_for_platforms(
 
     let triple = rustc_target(&remote_os, &remote_arch).ok_or_else(|| {
         format!(
-            "no release artifact mapping for remote platform {remote_os}/{remote_arch}; set binary_path or HYPRMUX_REMOTE_BINARY"
+            "no release artifact mapping for remote platform {remote_os}/{remote_arch}; set binary_path or ROZI_REMOTE_BINARY"
         )
     })?;
     let version = env!("CARGO_PKG_VERSION");
@@ -791,7 +783,7 @@ fn base64_standard(bytes: &[u8]) -> String {
 }
 
 fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, String> {
-    let base = std::env::var("HYPRMUX_RELEASE_BASE_URL").unwrap_or_else(|_| {
+    let base = std::env::var("ROZI_RELEASE_BASE_URL").unwrap_or_else(|_| {
         format!("https://github.com/{RELEASE_REPO}/releases/download/v{version}")
     });
     let archive_name = if triple.contains("windows") {
@@ -965,7 +957,7 @@ pub(crate) fn append_ssh_destination(command: &mut Command, resolved: &ResolvedR
     command.arg("--").arg(resolved.ssh_destination());
 }
 
-/// Fail if the `HYPRMUX_REMOTE_BINARY` override is a binary built for a different OS/arch than the
+/// Fail if the `ROZI_REMOTE_BINARY` override is a binary built for a different OS/arch than the
 /// remote host. Best-effort: an unrecognized executable format or an unknown remote platform is not
 /// treated as a mismatch, so this only blocks a confirmed wrong-target upload.
 fn verify_override_targets_remote(local: &Path, report: &ProbeReport) -> Result<(), String> {
@@ -979,7 +971,7 @@ fn verify_override_targets_remote(local: &Path, report: &ProbeReport) -> Result<
     };
     if bin_os != remote_os || bin_arch != remote_arch {
         return Err(format!(
-            "HYPRMUX_REMOTE_BINARY={} targets {bin_os}/{bin_arch}, but the remote host is {remote_os}/{remote_arch}; provide a binary built for the remote platform",
+            "ROZI_REMOTE_BINARY={} targets {bin_os}/{bin_arch}, but the remote host is {remote_os}/{remote_arch}; provide a binary built for the remote platform",
             local.display()
         ));
     }

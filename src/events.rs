@@ -183,16 +183,16 @@ fn run_hooks(state: &crate::state::State, event: &Event) {
 }
 
 fn hook_env(event: &Event, control_socket_path: Option<&std::path::Path>) -> Vec<(String, String)> {
-    let mut env = vec![("HYPRMUX_EVENT".to_string(), event.kind.id().to_string())];
+    let mut env = vec![("ROZI_EVENT".to_string(), event.kind.id().to_string())];
     if let Some(path) = control_socket_path {
-        env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
+        env.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }
-    env.extend(event.fields.iter().map(|(key, value)| {
-        (
-            format!("HYPRMUX_{}", key.to_ascii_uppercase()),
-            value.clone(),
-        )
-    }));
+    env.extend(
+        event
+            .fields
+            .iter()
+            .map(|(key, value)| (format!("ROZI_{}", key.to_ascii_uppercase()), value.clone())),
+    );
     env
 }
 
@@ -203,7 +203,7 @@ pub(crate) fn hook_env_for_state(
 ) -> Vec<(String, String)> {
     let mut env = hook_env(event, state.control_socket_path.as_deref());
     if let Some(host) = &state.current().remote_host {
-        env.push(("HYPRMUX_REMOTE_HOST".to_string(), host.clone()));
+        env.push(("ROZI_REMOTE_HOST".to_string(), host.clone()));
     }
     env
 }
@@ -260,11 +260,11 @@ mod tests {
                 EventKind::WorkspaceSwitched,
                 vec![("workspace", "2".into())],
             ),
-            Some(std::path::Path::new("/tmp/hyprmux.sock")),
+            Some(std::path::Path::new("/tmp/rozi.sock")),
         );
-        assert!(env.contains(&("HYPRMUX_EVENT".into(), "workspace-switched".into())));
-        assert!(env.contains(&("HYPRMUX_WORKSPACE".into(), "2".into())));
-        assert!(env.contains(&("HYPRMUX_SOCKET".into(), "/tmp/hyprmux.sock".into())));
+        assert!(env.contains(&("ROZI_EVENT".into(), "workspace-switched".into())));
+        assert!(env.contains(&("ROZI_WORKSPACE".into(), "2".into())));
+        assert!(env.contains(&("ROZI_SOCKET".into(), "/tmp/rozi.sock".into())));
     }
 
     #[cfg(unix)]
@@ -273,7 +273,7 @@ mod tests {
         use crate::config::{Config, HookConfig};
         use std::time::{Duration, Instant};
 
-        let dir = std::env::temp_dir().join(format!("hyprmux-hook-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("rozi-hook-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let first = dir.join("first");
@@ -283,11 +283,11 @@ mod tests {
             hooks: vec![
                 HookConfig {
                     event: EventKind::PaneExited,
-                    run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", first.display()),
+                    run: format!("printf '%s' \"$ROZI_SOCKET\" > '{}'", first.display()),
                 },
                 HookConfig {
                     event: EventKind::PaneExited,
-                    run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", second.display()),
+                    run: format!("printf '%s' \"$ROZI_SOCKET\" > '{}'", second.display()),
                 },
                 HookConfig {
                     event: EventKind::PaneSpawned,

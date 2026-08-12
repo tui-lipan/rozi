@@ -49,7 +49,7 @@ fn subprocess_restart_restores_layout_and_pane_replay() {
     fs::create_dir_all(&runtime_base).expect("create runtime base");
     fs::create_dir_all(&state_base).expect("create state base");
     fs::create_dir_all(&config_base).expect("create config base");
-    let config_path = config_base.join("hyprmux.toml");
+    let config_path = config_base.join("config.toml");
     fs::write(
         &config_path,
         "scrollback = 100\n\n[session]\nresurrect = true\n",
@@ -229,7 +229,7 @@ fn spawn_server(
 ) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_rozi"))
         .args(["--server", session])
-        .env("HYPRMUX_CONFIG", config_path)
+        .env("ROZI_CONFIG", config_path)
         .env("XDG_RUNTIME_DIR", runtime_base)
         .env("XDG_STATE_HOME", state_base)
         .env("XDG_CONFIG_HOME", config_base)

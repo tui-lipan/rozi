@@ -230,7 +230,7 @@ fn read_nul_records(path: &str) -> Vec<String> {
 
 fn parse_agent_hint(bytes: &[u8]) -> Option<String> {
     let records = bytes.split(|byte| *byte == 0);
-    for key in [b"HYPRMUX_AGENT=".as_slice(), b"HERDR_AGENT=".as_slice()] {
+    for key in [b"ROZI_AGENT=".as_slice(), b"HERDR_AGENT=".as_slice()] {
         for record in records.clone() {
             if let Some(value) = record.strip_prefix(key)
                 && !value.is_empty()
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn agent_hint_prefers_hyprmux_and_accepts_herdr() {
         assert_eq!(
-            parse_agent_hint(b"HERDR_AGENT=claude\0HYPRMUX_AGENT=codex\0"),
+            parse_agent_hint(b"HERDR_AGENT=claude\0ROZI_AGENT=codex\0"),
             Some("codex".into())
         );
         assert_eq!(

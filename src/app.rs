@@ -710,7 +710,7 @@ pub fn run() -> Result<()> {
 
     if let Some(path) = cli.config_path {
         unsafe {
-            std::env::set_var("HYPRMUX_CONFIG", path);
+            std::env::set_var("ROZI_CONFIG", path);
         }
     }
 

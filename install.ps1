@@ -11,7 +11,7 @@ Add-Type -AssemblyName System.IO.Compression
 
 # Trust-boundary caveat: "Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised."
 $script:ExitCode = 1
-$script:ReleaseRepo = if ($env:HYPRMUX_RELEASE_REPO) { $env:HYPRMUX_RELEASE_REPO } else { 'Razuer/hyprmux' }
+$script:ReleaseRepo = if ($env:ROZI_RELEASE_REPO) { $env:ROZI_RELEASE_REPO } else { 'Razuer/hyprmux' }
 $script:MaxArchiveBytes = [int64]268435456
 $script:MaxChecksumBytes = [int64]1048576
 $script:MaxZipMemberBytes = [int64]268435456
@@ -24,7 +24,7 @@ Usage:
   .\install.ps1 [-Version VERSION] [-AddToPath]
 
 The default version is the current GitHub release. -Version selects an exact release archive.
-HYPRMUX_RELEASE_BASE_URL may point at an HTTPS release mirror, and HYPRMUX_RELEASE_LATEST_URL
+ROZI_RELEASE_BASE_URL may point at an HTTPS release mirror, and ROZI_RELEASE_LATEST_URL
 selects an HTTPS /releases/latest redirect endpoint whose final URL must contain a v-prefixed tag.
 
 After bootstrap verification, this script executes the extracted payload with `install`. The
@@ -78,8 +78,8 @@ function Assert-LatestEndpoint([string]$Url) {
 }
 
 function Resolve-LatestVersion {
-    $current = if ($env:HYPRMUX_RELEASE_LATEST_URL) {
-        $env:HYPRMUX_RELEASE_LATEST_URL
+    $current = if ($env:ROZI_RELEASE_LATEST_URL) {
+        $env:ROZI_RELEASE_LATEST_URL
     } else {
         "https://github.com/$($script:ReleaseRepo)/releases/latest"
     }
@@ -130,8 +130,8 @@ function Get-Target {
 }
 
 function Get-ReleaseBase([string]$ResolvedVersion) {
-    $base = if ($env:HYPRMUX_RELEASE_BASE_URL) {
-        $env:HYPRMUX_RELEASE_BASE_URL
+    $base = if ($env:ROZI_RELEASE_BASE_URL) {
+        $env:ROZI_RELEASE_BASE_URL
     } else {
         "https://github.com/$($script:ReleaseRepo)/releases/download/v$ResolvedVersion"
     }

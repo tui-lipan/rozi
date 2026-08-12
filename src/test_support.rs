@@ -4,12 +4,12 @@
 //! side effect of ordinary actions: toggling the sidebar writes `[sidebar]` through
 //! [`crate::config::persist`], and leaving a session writes `session.toml` through
 //! [`crate::profiles`]. Without isolation those writes land on the developer's own
-//! `~/.config/hyprmux/hyprmux.toml` - and a running hyprmux watches that file, so the test's state
+//! `~/.config/rozi/config.toml` - and a running hyprmux watches that file, so the test's state
 //! is live-reloaded into the UI the developer is working in.
 //!
 //! Isolation redirects every directory [`crate::platform::paths`] resolves - config, state, cache,
 //! data, runtime - into a per-process scratch root, and makes that root inescapable: while it is
-//! installed, an ambient `HYPRMUX_CONFIG` is ignored too (see [`crate::config::config_path`]).
+//! installed, an ambient `ROZI_CONFIG` is ignored too (see [`crate::config::config_path`]).
 //!
 //! Unit tests get this for free - [`PlatformEnv::from_process`] isolates itself under `cfg(test)`.
 //! Integration tests link the non-test build of the library, so a test binary that builds a
@@ -28,7 +28,7 @@ use crate::platform::paths::PlatformEnv;
 fn scratch_root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!("hyprmux-test-home-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("rozi-test-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::create_dir_all(&root);
         root
@@ -40,7 +40,7 @@ fn scratch_root() -> &'static Path {
 ///
 /// The runtime directory is deliberately left alone. It holds per-run socket endpoints rather than
 /// anything a developer keeps, and a Unix socket path is capped at `SUN_LEN` (~108 bytes): a
-/// session endpoint that fits under `/run/user/<uid>/hyprmux` does not fit under a temp root.
+/// session endpoint that fits under `/run/user/<uid>/rozi` does not fit under a temp root.
 pub(crate) fn isolated_env() -> PlatformEnv {
     let root = scratch_root();
     PlatformEnv {
@@ -72,7 +72,7 @@ mod tests {
     /// The guarantee the whole module exists for: the two paths tests were found writing to both
     /// resolve inside the scratch root, so neither can reach a developer's live config again.
     ///
-    /// Also pins the precedence in [`crate::config::config_path`]: were an ambient `HYPRMUX_CONFIG`
+    /// Also pins the precedence in [`crate::config::config_path`]: were an ambient `ROZI_CONFIG`
     /// still able to outrank isolation, a developer with one exported would fail this.
     #[test]
     fn persistence_paths_resolve_inside_the_scratch_root() {

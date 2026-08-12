@@ -11,7 +11,7 @@ use tui_lipan::TestBackend;
 use tui_lipan::prelude::{KeyBinding, Rect};
 
 /// Serializes every test in this binary. `set_var` is only sound while no other thread reads the
-/// environment, and building a `AppRoot` reads it (`HYPRMUX_CONFIG`, `HOME`, ...), so the tests
+/// environment, and building a `AppRoot` reads it (`ROZI_CONFIG`, `HOME`, ...), so the tests
 /// that never touch `$EDITOR` still have to hold this.
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

@@ -916,13 +916,13 @@ pub(crate) fn pane_env(
     remote_attached: bool,
 ) -> Vec<(String, String)> {
     let mut env = vec![
-        ("HYPRMUX".to_string(), "1".to_string()),
-        ("HYPRMUX_PANE".to_string(), pane.id.to_string()),
+        ("ROZI".to_string(), "1".to_string()),
+        ("ROZI_PANE".to_string(), pane.id.to_string()),
     ];
     // Under `--remote`, the control socket lives on the client machine and must not be advertised
     // into remote PTYs (it may collide with an unrelated path on the remote host).
     if !remote_attached && let Some(path) = control_socket_path {
-        env.push(("HYPRMUX_SOCKET".to_string(), path.display().to_string()));
+        env.push(("ROZI_SOCKET".to_string(), path.display().to_string()));
     }
     // Per-spawn additions last so a caller-supplied value wins over the standard set.
     env.extend(pane.identity.env.iter().cloned());
@@ -1874,21 +1874,21 @@ mod tests {
     #[test]
     fn pane_env_skips_control_socket_when_remote_attached() {
         let pane = Pane::new(1, 100, FloatRect::default());
-        let path = std::path::Path::new("/tmp/hyprmux-control.sock");
+        let path = std::path::Path::new("/tmp/rozi-control.sock");
         let local = pane_env(Some(path), &pane, false);
         assert!(
             local
                 .iter()
-                .any(|(k, v)| k == "HYPRMUX_SOCKET" && v.contains("hyprmux-control")),
-            "local attach should inject HYPRMUX_SOCKET: {local:?}"
+                .any(|(k, v)| k == "ROZI_SOCKET" && v.contains("rozi-control")),
+            "local attach should inject ROZI_SOCKET: {local:?}"
         );
         let remote = pane_env(Some(path), &pane, true);
         assert!(
-            remote.iter().all(|(k, _)| k != "HYPRMUX_SOCKET"),
-            "remote attach must not inject client HYPRMUX_SOCKET: {remote:?}"
+            remote.iter().all(|(k, _)| k != "ROZI_SOCKET"),
+            "remote attach must not inject client ROZI_SOCKET: {remote:?}"
         );
-        assert!(remote.iter().any(|(k, _)| k == "HYPRMUX"));
-        assert!(remote.iter().any(|(k, _)| k == "HYPRMUX_PANE"));
+        assert!(remote.iter().any(|(k, _)| k == "ROZI"));
+        assert!(remote.iter().any(|(k, _)| k == "ROZI_PANE"));
     }
 }
 

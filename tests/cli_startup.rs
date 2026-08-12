@@ -41,7 +41,7 @@ mod unix {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("No session or profile named `wok`."));
         assert!(stderr.contains("Create it with: hyprmux new wok"));
-        let runtime_path = root.join("runtime/hyprmux");
+        let runtime_path = root.join("runtime/rozi");
         let runtime_entries = fs::read_dir(&runtime_path)
             .map(|entries| entries.count())
             .unwrap_or(0);
@@ -52,7 +52,7 @@ mod unix {
     #[test]
     fn attach_only_missing_session_suggests_canonical_profile() {
         let root = isolated_home("attach");
-        let profiles = root.join("config/hyprmux/profiles");
+        let profiles = root.join("config/rozi/profiles");
         fs::create_dir_all(&profiles).unwrap();
         fs::write(profiles.join("work.toml"), "version = 1\n").unwrap();
 
@@ -71,7 +71,7 @@ mod unix {
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("managed installation is not present"));
-        let runtime_entries = fs::read_dir(root.join("runtime/hyprmux"))
+        let runtime_entries = fs::read_dir(root.join("runtime/rozi"))
             .map(|entries| entries.count())
             .unwrap_or(0);
         assert_eq!(
@@ -79,7 +79,7 @@ mod unix {
             "update refusal must not create endpoints"
         );
         assert!(
-            !root.join("data/hyprmux").exists(),
+            !root.join("data/rozi").exists(),
             "unmanaged update must not create managed state"
         );
         fs::remove_dir_all(root).unwrap();

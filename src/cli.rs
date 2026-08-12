@@ -40,7 +40,7 @@ pub(crate) struct ControlCli {
 /// `hyprmux agent-slots`: the stdio bridge a program uses to publish the agents running inside its
 /// own pane.
 ///
-/// This exists so a publisher needs no IPC code of its own. On Windows `HYPRMUX_SOCKET` names a
+/// This exists so a publisher needs no IPC code of its own. On Windows `ROZI_SOCKET` names a
 /// discovery entry rather than the pipe itself, and the pipe name must be derived rather than read
 /// out of it, so a program cannot portably open the endpoint directly. Bridging through the binary
 /// that already owns endpoint discovery and its security checks keeps every publisher to plain
@@ -566,9 +566,7 @@ fn reject_trailing_control_args(
 fn control_request(command: control::ControlCommand) -> control::ControlRequest {
     control::ControlRequest {
         command,
-        source_pane: std::env::var("HYPRMUX_PANE")
-            .ok()
-            .and_then(|v| v.parse().ok()),
+        source_pane: std::env::var("ROZI_PANE").ok().and_then(|v| v.parse().ok()),
     }
 }
 
@@ -576,7 +574,7 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
     if let Some(path) = explicit {
         return Ok(path);
     }
-    if let Some(path) = std::env::var_os("HYPRMUX_SOCKET").map(PathBuf::from) {
+    if let Some(path) = std::env::var_os("ROZI_SOCKET").map(PathBuf::from) {
         return Ok(path);
     }
     let dir =
@@ -589,8 +587,7 @@ fn discover_socket(explicit: Option<PathBuf>) -> std::result::Result<PathBuf, St
     match live.as_slice() {
         [path] => Ok(path.clone()),
         [] => Err(
-            "no live hyprmux control socket found (set HYPRMUX_SOCKET or pass --socket)"
-                .to_string(),
+            "no live hyprmux control socket found (set ROZI_SOCKET or pass --socket)".to_string(),
         ),
         _ => Err("multiple live hyprmux sockets found; pass --socket PATH".to_string()),
     }
@@ -608,11 +605,11 @@ pub(crate) fn run_agent_slots_cli(command: AgentSlotsCli) -> Result<()> {
             std::process::exit(2);
         }
     };
-    let Some(source_pane) = std::env::var("HYPRMUX_PANE")
+    let Some(source_pane) = std::env::var("ROZI_PANE")
         .ok()
         .and_then(|value| value.parse::<crate::state::PaneId>().ok())
     else {
-        eprintln!("agent-slots must run inside a hyprmux pane (HYPRMUX_PANE is unset)");
+        eprintln!("agent-slots must run inside a hyprmux pane (ROZI_PANE is unset)");
         std::process::exit(2);
     };
     let mut stream = match IpcEndpoint::at_path(&path).connect() {
@@ -909,7 +906,7 @@ OPTIONS:
     -h, --help            Print help
     -V, --version         Print version
         --skill           Print agent control instructions
-        --config <PATH>   Use an alternate hyprmux.toml (sets HYPRMUX_CONFIG)
+        --config <PATH>   Use an alternate config.toml (sets ROZI_CONFIG)
         --socket <PATH>   Connect CLI control command to this endpoint
         --remote [HOST]   Attach via SSH (HOST alias or ssh:// URL; omit HOST to use [remote] default_host)
         --pick            Open the session picker at startup when a named session exists
@@ -924,7 +921,7 @@ Leave the running app with prefix d (detach) or a configured quit binding."
     );
 }
 
-/// The `--socket`/`HYPRMUX_SOCKET` explanation, which differs by platform: a Unix-domain socket
+/// The `--socket`/`ROZI_SOCKET` explanation, which differs by platform: a Unix-domain socket
 /// path on Linux/macOS, a named-pipe registry entry on Windows (see `platform::ipc::windows` for
 /// why the *entry*, not the pipe name, is what a user points at).
 fn endpoint_help() -> String {
@@ -934,13 +931,13 @@ fn endpoint_help() -> String {
     if cfg!(windows) {
         format!(
             "Control endpoints live in {runtime_dir}. Each entry stands for a named pipe\n\
-             (\\\\.\\pipe\\hyprmux.<user-sid>.control-<pid>); pass the entry, not the pipe name.\n\
-             With no --socket, HYPRMUX_SOCKET is used, then the only live endpoint found there."
+             (\\\\.\\pipe\\rozi.<user-sid>.control-<pid>); pass the entry, not the pipe name.\n\
+             With no --socket, ROZI_SOCKET is used, then the only live endpoint found there."
         )
     } else {
         format!(
             "Control sockets live in {runtime_dir} (one per running hyprmux, named by pid).\n\
-             With no --socket, HYPRMUX_SOCKET is used, then the only live socket found there."
+             With no --socket, ROZI_SOCKET is used, then the only live socket found there."
         )
     }
 }
@@ -989,9 +986,9 @@ mod tests {
 
         for section in [
             "---\nname: hyprmux",
-            "HYPRMUX=1",
-            "HYPRMUX_SOCKET",
-            "HYPRMUX_PANE",
+            "ROZI=1",
+            "ROZI_SOCKET",
+            "ROZI_PANE",
             "--socket PATH",
             "hyprmux --help",
             "hyprmux list-panes",

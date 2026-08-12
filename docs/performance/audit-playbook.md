@@ -319,7 +319,7 @@ cargo test congested_flood_has_the_same_transcript_as_the_producer
 Sample the live resource high-water marks through the running client's control endpoint:
 
 ```bash
-HYPRMUX_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
+ROZI_SOCKET=/path/to/control.sock target/release/hyprmux metrics | jq .
 ```
 
 The JSON response contains current/high-water/capacity values for client inbound/outbound queues,

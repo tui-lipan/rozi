@@ -40,7 +40,7 @@ pub fn save_profile(path: &Path, profile: &Profile) -> Result<(), String> {
 }
 
 /// Resolve the session-autosave file path: the configured override, else
-/// `$XDG_STATE_HOME/hyprmux/session.toml` (falling back to `~/.local/state/...`).
+/// `$XDG_STATE_HOME/rozi/session.toml` (falling back to `~/.local/state/...`).
 pub fn session_path(config: &crate::config::Config) -> Option<PathBuf> {
     if let Some(path) = &config.session.path {
         return Some(path.clone());

@@ -2,7 +2,7 @@
 
 When the UI starts, hyprmux binds a per-process control endpoint at `control-<pid>.sock` in its
 runtime directory. If binding fails, the UI still starts and shows a warning; panes only receive
-`HYPRMUX_SOCKET` when an endpoint is available.
+`ROZI_SOCKET` when an endpoint is available.
 
 ## Endpoints per platform
 
@@ -14,7 +14,7 @@ runtime directory. If binding fails, the UI still starts and shows a warning; pa
 
 On Windows the file in the runtime directory is a **discovery entry**, not the transport: it stands
 for a named pipe whose name is derived from the entry's own name and your SID. Point `--socket` and
-`HYPRMUX_SOCKET` at the entry, exactly as you would at a socket path on Unix — the same command
+`ROZI_SOCKET` at the entry, exactly as you would at a socket path on Unix — the same command
 line works on all three platforms. Nothing trusts the entry's contents; the pipe name is recomputed
 rather than read out of it, and every connection completes an authenticated handshake regardless.
 
@@ -25,13 +25,13 @@ cannot be squatted.
 
 Every spawned pane receives:
 
-- `HYPRMUX=1`
-- `HYPRMUX_PANE=<pane id>`
-- `HYPRMUX_SOCKET=<endpoint path>` when control is available
+- `ROZI=1`
+- `ROZI_PANE=<pane id>`
+- `ROZI_SOCKET=<endpoint path>` when control is available
 
 ## CLI
 
-Control commands do not mount the UI. Endpoint discovery order is `--socket PATH`, `HYPRMUX_SOCKET`,
+Control commands do not mount the UI. Endpoint discovery order is `--socket PATH`, `ROZI_SOCKET`,
 then exactly one live endpoint in the runtime directory.
 
 ```bash
@@ -158,7 +158,7 @@ reserved command words; use `hyprmux --session attach` or `hyprmux --session new
 literal names. See [Sessions](sessions.md) for profile resolution and attach/detach semantics.
 
 The per-run control socket always belongs to the **local UI process**. When you are attached with
-`--remote`, automation against that UI still uses the local `HYPRMUX_SOCKET` / `--socket` path.
+`--remote`, automation against that UI still uses the local `ROZI_SOCKET` / `--socket` path.
 `list-sessions --remote` and `kill-session --remote` are separate SSH helpers that talk to hyprmux
 on the remote host; they are not control-socket commands. See [Remote SSH sessions](remote.md).
 
@@ -172,7 +172,7 @@ open. `subscribe` then streams newline-delimited event objects until disconnecte
 Requests use a `cmd` field: `list-panes`, `metrics`, `focus`, `send-text`, `send-keys`, `new-pane`,
 `run-action`, `capture-pane`, `switch-workspace`, `move-to-workspace`, `set-status`, `popup`,
 `agent-slots`, or `subscribe`. A client may include `source_pane`; the CLI derives it from
-`HYPRMUX_PANE`.
+`ROZI_PANE`.
 
 Examples:
 
@@ -224,7 +224,7 @@ not emit this event.
 Event names and existing fields are stable; later versions may add events or fields. See
 [Hooks](hooks.md#events-and-fields) for the complete field table. Slow subscribers are bounded and
 disconnected rather than blocking the UI. Example:
-`printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$HYPRMUX_SOCKET | jq`.
+`printf '%s\n' '{"cmd":"subscribe"}' | socat - UNIX-CONNECT:$ROZI_SOCKET | jq`.
 
 ## Agent slots
 
@@ -268,7 +268,7 @@ if any slot is blocked, working if any is working, idle once all are.
 
 Activating a row focuses the pane and writes `{"activate":"<id>"}` back to you; bringing that slot
 on screen is your side of the exchange. Use `hyprmux agent-slots` rather than opening
-`HYPRMUX_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
+`ROZI_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
 be derived rather than read, so the bridge is what makes a publisher portable.
 
 `integrations/opencode/hyprmux-agent-state.js` is a worked example of the simpler `set-status` form.

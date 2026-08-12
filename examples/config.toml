@@ -8,8 +8,8 @@
 #   "# text"        prose, like this line
 #   "#key = value"  a setting, hash immediately followed by the key
 #
-# Copy to ~/.config/hyprmux/hyprmux.toml (%APPDATA%\hyprmux\hyprmux.toml on Windows), or
-# point $HYPRMUX_CONFIG at it. Saving applies live - no restart.
+# Copy to ~/.config/rozi/config.toml (%APPDATA%\rozi\config.toml on Windows), or
+# point $ROZI_CONFIG at it. Saving applies live - no restart.
 #
 # Full reference with the reasoning behind each default: docs/configuration.md
 
@@ -127,7 +127,7 @@
 
 [theme]
 # A built-in preset id, "system" for host-derived colors, or the stem of a file in
-# ~/.config/hyprmux/themes/. A custom file shadows a built-in of the same name.
+# ~/.config/rozi/themes/. A custom file shadows a built-in of the same name.
 #name = "lipan"
 
 [profile]
@@ -197,7 +197,7 @@
 # Set false when sharing with another person, so a request waits to be granted.
 #allow_takeover = true
 # Autosave file location. Defaults under $XDG_STATE_HOME/hyprmux.
-#path = "~/.local/state/hyprmux/session.toml"
+#path = "~/.local/state/rozi/session.toml"
 
 [remote]
 # SSH attach to a session server on another host. The client and this config stay local;
@@ -279,7 +279,7 @@
 [logging]
 # Files written by toggle-pane-logging. Session directories are mode 0700, logs 0600.
 # Defaults under $XDG_STATE_HOME/hyprmux/logs.
-#dir = "~/.local/state/hyprmux/logs"
+#dir = "~/.local/state/rozi/logs"
 # Ceiling for one pane log file; 0 disables the cap. A chunk that would cross it is
 # refused whole, so a log never ends mid-escape-sequence.
 #max_bytes = 67108864
@@ -333,7 +333,7 @@
 #pattern = '\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
 
 # Client-side commands run on hyprmux events, launched asynchronously through
-# command_shell. Hooks receive HYPRMUX_EVENT, event fields, and HYPRMUX_SOCKET. Events:
+# command_shell. Hooks receive ROZI_EVENT, event fields, and ROZI_SOCKET. Events:
 # pane-spawned, pane-exited, pane-status-changed, bell, focus-changed, workspace-switched,
 # session-attached, session-detached, session-renamed, session-created,
 # controller-changed, client-joined, client-left, profile-loaded, profile-applied,
@@ -344,7 +344,7 @@
 
 [[hooks]]
 #event = "workspace-switched"
-#run = "logger workspace=$HYPRMUX_WORKSPACE"
+#run = "logger workspace=$ROZI_WORKSPACE"
 
 # Rebind built-in actions, or define new commands. Three binding forms:
 #   "b"              bare key - replaces the default and follows the [input] scheme

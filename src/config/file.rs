@@ -852,17 +852,17 @@ fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<Ho
 
 pub fn config_path() -> PathBuf {
     // An isolated test process ignores the explicit override: it exists to keep every write inside
-    // a scratch root, and a `HYPRMUX_CONFIG` inherited from the developer's shell points out of it.
+    // a scratch root, and a `ROZI_CONFIG` inherited from the developer's shell points out of it.
     if !crate::platform::paths::user_dirs_are_isolated()
-        && let Ok(path) = std::env::var("HYPRMUX_CONFIG")
+        && let Ok(path) = std::env::var("ROZI_CONFIG")
     {
         return expand_path(path);
     }
-    config_home().join("hyprmux.toml")
+    config_home().join("config.toml")
 }
 
-/// The `hyprmux` config directory (already includes the `hyprmux` segment - callers should join
-/// filenames directly, e.g. `config_home().join("hyprmux.toml")`).
+/// The `rozi` config directory (already includes the `rozi` segment - callers should join
+/// filenames directly, e.g. `config_home().join("config.toml")`).
 ///
 /// Delegates to [`crate::platform::paths::config_dir`]; kept as a thin wrapper here (rather than
 /// switching every call site to the platform module directly) so `config_path()`/`profiles_dir()`/
@@ -981,7 +981,7 @@ mod file_tests {
         let mut warnings = Vec::new();
         let parsed = parse_file_config(
             "[hooks]\npane-exited = \"notify-send exited\"",
-            Path::new("hyprmux.toml"),
+            Path::new("config.toml"),
             &mut warnings,
         );
         assert!(parsed.is_none());
@@ -1182,9 +1182,9 @@ mod file_tests {
         assert_eq!(loaded.config.sounds.player.as_deref(), Some("play"));
     }
 
-    const REFERENCE_EXAMPLE: &str = include_str!("../../examples/hyprmux.toml");
+    const REFERENCE_EXAMPLE: &str = include_str!("../../examples/config.toml");
 
-    /// Strips the comment marker from `examples/hyprmux.toml` setting lines, which are written as
+    /// Strips the comment marker from `examples/config.toml` setting lines, which are written as
     /// a hash immediately followed by the key. Prose lines use a hash and a space, so alternative
     /// spellings mentioned in the surrounding text never become a second live copy of a key.
     fn activate_reference_example(text: &str) -> String {
@@ -1221,13 +1221,13 @@ mod file_tests {
         );
     }
 
-    /// Guards `examples/hyprmux.toml` against silent drift. Every struct in the file model denies
+    /// Guards `examples/config.toml` against silent drift. Every struct in the file model denies
     /// unknown fields, so a renamed or dropped key fails to parse here, and a renamed value token
     /// (a cap style, a layout name, a hook event) shows up as a warning.
     #[test]
     fn reference_example_is_a_valid_warning_free_config_once_uncommented() {
         let text = activate_reference_example(REFERENCE_EXAMPLE);
-        let loaded = load_config_from_text(&text, Path::new("examples/hyprmux.toml"));
+        let loaded = load_config_from_text(&text, Path::new("examples/config.toml"));
 
         assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
     }

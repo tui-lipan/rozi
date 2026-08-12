@@ -935,6 +935,14 @@ pub enum SidebarTab {
 }
 
 impl SidebarTab {
+    /// A file-tree tab at that view's own defaults.
+    pub fn tree(view: SidebarTreeView) -> Self {
+        Self::Tree {
+            view,
+            config: SidebarTreeConfig::for_view(view),
+        }
+    }
+
     pub fn id(&self) -> SidebarTabId {
         match self {
             Self::Agents => SidebarTabId::new("agents"),
@@ -978,15 +986,36 @@ pub struct SidebarConfig {
 
 impl Default for SidebarConfig {
     fn default() -> Self {
-        let tabs = vec![SidebarTab::Agents, SidebarTab::Panes, SidebarTab::Sessions];
+        // Two panels out of the box: the session's own state on top, the repository below. The
+        // trees cost nothing until their tab is the active one, so carrying them by default only
+        // spends sidebar rows, not work.
+        let tabs = vec![
+            SidebarTab::Agents,
+            SidebarTab::Panes,
+            SidebarTab::Sessions,
+            SidebarTab::tree(SidebarTreeView::Files),
+            SidebarTab::tree(SidebarTreeView::Changes),
+        ];
         Self {
             visible: false,
             width: 32,
             position: SidebarPosition::Left,
-            panels: vec![tabs.iter().map(SidebarTab::id).collect()],
+            panels: vec![
+                vec![
+                    SidebarTab::Agents.id(),
+                    SidebarTab::Panes.id(),
+                    SidebarTab::Sessions.id(),
+                ],
+                vec![
+                    SidebarTabId::new(SidebarTreeView::Files.id()),
+                    SidebarTabId::new(SidebarTreeView::Changes.id()),
+                ],
+            ],
             tabs,
-            split: false,
-            split_ratio: 0.5,
+            split: true,
+            // The bottom panel starts larger: a repository has far more rows to show than a
+            // session has agents and panes.
+            split_ratio: 0.4,
         }
     }
 }

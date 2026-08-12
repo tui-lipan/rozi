@@ -86,7 +86,11 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             {
                 let state = backend.state_mut();
                 state.sidebar_visible = true;
+                // The hierarchy needs every row on screen, so collapse the default split and give
+                // the Sessions tab the whole sidebar.
                 state.config.sidebar.tabs = vec![SidebarTab::Sessions];
+                state.config.sidebar.split = false;
+                state.sidebar.apply_configured_panels(&state.config.sidebar);
                 state.sidebar.panels[0].active_tab = Some(SidebarTabId::new("sessions"));
                 state
                     .config

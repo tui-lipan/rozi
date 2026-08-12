@@ -63,6 +63,16 @@ fn slot(
     }
 }
 
+/// Give the Agents tab the whole sidebar: these assertions are about grouping and row order, so
+/// the default two-panel split would only halve the rows they can see.
+fn agents_fill_the_sidebar(state: &mut hyprmux::state::State) {
+    state.sidebar_visible = true;
+    state.config.sidebar.tabs = vec![SidebarTab::Agents];
+    state.config.sidebar.split = false;
+    state.sidebar.apply_configured_panels(&state.config.sidebar);
+    state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+}
+
 /// The same pane, plus the Git project the session server resolved for its cwd.
 fn agent_pane_in_project(
     id: PaneId,
@@ -92,9 +102,7 @@ fn agents_tab_renders_project_groups() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents];
-                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+                agents_fill_the_sidebar(state);
                 let mut finished = agent_pane(
                     2,
                     AgentKind::OpenCode,
@@ -190,9 +198,7 @@ fn agents_tab_heads_projects_with_their_branch() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents];
-                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+                agents_fill_the_sidebar(state);
                 state.current_mut().workspaces[0].panes = vec![
                     agent_pane_in_project(
                         1,
@@ -312,9 +318,7 @@ fn published_slots_render_one_numbered_row_each() {
             });
             {
                 let state = backend.state_mut();
-                state.sidebar_visible = true;
-                state.config.sidebar.tabs = vec![SidebarTab::Agents];
-                state.sidebar.panels[0].active_tab = Some(SidebarTab::Agents.id());
+                agents_fill_the_sidebar(state);
                 let mut publisher =
                     agent_pane(1, AgentKind::OpenCode, None, Some("/home/x/work/hyprmux"));
                 publisher.terminal.slots = vec![

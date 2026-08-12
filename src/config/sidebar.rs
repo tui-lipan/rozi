@@ -99,10 +99,15 @@ pub(super) fn apply_sidebar_config(
             )),
         }
     }
+    let custom_tabs = raw.tabs.is_some();
     if let Some(tabs) = raw.tabs {
         sidebar.tabs = build_tabs(tabs, warnings);
     }
-    sidebar.panels = build_panels(&sidebar.tabs, requested_panels, warnings);
+    // A config that names neither list keeps the built-in placement, which is two panels;
+    // rebuilding it from `tabs` alone would flatten every default into one bar.
+    if custom_tabs || requested_panels.is_some() {
+        sidebar.panels = build_panels(&sidebar.tabs, requested_panels, warnings);
+    }
     sidebar.split = raw.split.unwrap_or(sidebar.panels.len() > 1);
     if sidebar.split && sidebar.panels.len() == 1 {
         sidebar.panels.push(Vec::new());
@@ -338,21 +343,47 @@ mod tests {
         assert!(!config.visible);
         assert_eq!(config.width, 32);
         assert_eq!(config.position, SidebarPosition::Left);
-        assert!(!config.split);
-        assert_eq!(config.split_ratio, 0.5);
+        assert!(config.split);
+        assert_eq!(config.split_ratio, 0.4);
         assert_eq!(
             config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>(),
             vec![
                 SidebarTabId::new("agents"),
                 SidebarTabId::new("panes"),
-                SidebarTabId::new("sessions")
+                SidebarTabId::new("sessions"),
+                SidebarTabId::new("files"),
+                SidebarTabId::new("git"),
             ]
         );
-        assert_eq!(config.panels.len(), 1);
         assert_eq!(
-            config.panels[0],
-            config.tabs.iter().map(SidebarTab::id).collect::<Vec<_>>()
+            config.panels,
+            vec![
+                vec![
+                    SidebarTabId::new("agents"),
+                    SidebarTabId::new("panes"),
+                    SidebarTabId::new("sessions"),
+                ],
+                vec![SidebarTabId::new("files"), SidebarTabId::new("git")],
+            ]
         );
+    }
+
+    #[test]
+    fn an_empty_table_keeps_the_two_panel_default_but_naming_tabs_replaces_it() {
+        let (config, warnings) = parse("");
+        assert!(warnings.is_empty());
+        assert_eq!(config.panels, SidebarConfig::default().panels);
+        assert!(config.split);
+
+        // Naming `tabs` without `panels` is a deliberate replacement of the whole catalog, so the
+        // built-in two-panel placement goes with it.
+        let (config, warnings) = parse(r#"tabs = ["panes", "files"]"#);
+        assert!(warnings.is_empty());
+        assert_eq!(
+            config.panels,
+            vec![vec![SidebarTabId::new("panes"), SidebarTabId::new("files")]]
+        );
+        assert!(!config.split);
     }
 
     #[test]

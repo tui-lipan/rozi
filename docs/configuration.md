@@ -656,10 +656,10 @@ session sizing behavior.
 | `visible` | `false` | Initial visibility. `toggle-sidebar` updates and persists this the same way `toggle-sidebar-split` writes `split`. |
 | `width` | `32` | Requested width in columns, clamped to `16..=80`. Drag the divider or use the focused-sidebar resize keys to update and persist it. On a narrow terminal the sidebar yields columns so the pane canvas keeps usable space. |
 | `position` | `left` | Dock side: `left` or `right`. |
-| `tabs` | `["agents", "panes", "sessions"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
-| `panels` | one panel containing every tab | Durable placement recipe: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. |
-| `split` | inferred from `panels` | Render two saved panel groups vertically. When omitted, it is true for two panel arrays and false for one. Turning it off displays all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
-| `split_ratio` | `0.5` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
+| `tabs` | `["agents", "panes", "sessions", "files", "git"]` | Catalog of available tab definitions. Built-in names are `agents`, `panes`, `sessions`, `files`, and `git`; each tab identity must be unique. |
+| `panels` | `[["agents", "panes", "sessions"], ["files", "git"]]` | Durable placement recipe: one or two ordered arrays of IDs from `tabs`. Missing configured tabs are appended to the first panel so they cannot become inaccessible. Naming `tabs` replaces the built-in catalog and its two-panel placement together, so those configs get one panel unless they also name `panels`. |
+| `split` | inferred from `panels`, so `true` by default | Render two saved panel groups vertically. When omitted, it is true for two panel arrays and false for one. Turning it off displays all tabs in one bar without changing `panels`; turning it back on restores the saved assignment. |
+| `split_ratio` | `0.4` | Fraction of split-sidebar height assigned to the top panel, clamped to `0.15..=0.85`. Dragging the panel divider updates and persists it. |
 
 The tab strips are draggable. Reordering within a panel or moving a tab between two panels updates
 only the ID placement in `panels`; custom tab definitions remain in `tabs` and are never rewritten.

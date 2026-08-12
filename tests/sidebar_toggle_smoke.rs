@@ -362,32 +362,35 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
+            // A row inside the top panel: the outer divider spans the whole sidebar, but the
+            // panel divider crosses it, so probing that row would find no vertical rule.
+            const ROW: u16 = 3;
             let mut backend = sidebar_backend(100, 20);
             backend.state_mut().sidebar_visible = true;
             backend.render();
             let initial = backend.capture_frame();
             let divider_bg = backend.state().theme.surface.element;
             let divider = (0..40)
-                .find(|x| initial.cell(*x, 8).symbol == "│")
+                .find(|x| initial.cell(*x, ROW).symbol == "│")
                 .expect("sidebar divider");
-            assert_eq!(initial.cell(divider, 8).bg, divider_bg);
-            let divider_fg = initial.cell(divider, 8).fg;
+            assert_eq!(initial.cell(divider, ROW).bg, divider_bg);
+            let divider_fg = initial.cell(divider, ROW).fg;
 
             backend
-                .send_mouse(mouse(divider, 8, MouseKind::Moved))
+                .send_mouse(mouse(divider, ROW, MouseKind::Moved))
                 .expect("hover sidebar splitter");
             let hovered = backend.capture_frame();
-            assert_eq!(hovered.cell(divider, 8).fg, divider_fg);
-            assert_eq!(hovered.cell(divider, 8).bg, divider_bg);
+            assert_eq!(hovered.cell(divider, ROW).fg, divider_fg);
+            assert_eq!(hovered.cell(divider, ROW).bg, divider_bg);
 
             assert!(
                 backend
-                    .send_mouse(mouse(divider, 8, MouseKind::Down(MouseButton::Left)))
+                    .send_mouse(mouse(divider, ROW, MouseKind::Down(MouseButton::Left)))
                     .expect("grab sidebar splitter")
             );
             assert!(
                 backend
-                    .send_mouse(mouse(divider + 8, 8, MouseKind::Drag(MouseButton::Left)))
+                    .send_mouse(mouse(divider + 8, ROW, MouseKind::Drag(MouseButton::Left)))
                     .expect("drag sidebar splitter")
             );
             backend.render();
@@ -397,7 +400,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
             assert_eq!(backend.state().content_viewport(backend.viewport()).w, 60);
             let frame = backend.capture_frame();
             let moved_divider =
-                (divider + 1..divider + 12).find(|x| frame.cell(*x, 8).symbol == "│");
+                (divider + 1..divider + 12).find(|x| frame.cell(*x, ROW).symbol == "│");
             assert_eq!(
                 moved_divider,
                 Some(divider + 8),
@@ -406,7 +409,7 @@ fn sidebar_splitter_moves_live_before_the_resize_is_committed() {
             );
 
             backend
-                .send_mouse(mouse(divider + 8, 8, MouseKind::Up(MouseButton::Left)))
+                .send_mouse(mouse(divider + 8, ROW, MouseKind::Up(MouseButton::Left)))
                 .expect("release sidebar splitter");
             backend.render();
             assert_eq!(backend.state().sidebar.width_preview, None);

@@ -135,13 +135,10 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
                         on_click: None,
                     },
                 ];
-                state.sidebar.panels[0].tabs = state
-                    .config
-                    .sidebar
-                    .tabs
-                    .iter()
-                    .map(SidebarTab::id)
-                    .collect();
+                // One panel holding exactly these two tabs, so nothing the default split would
+                // put in a second panel can render its own rows into the assertions below.
+                state.config.sidebar.split = false;
+                state.sidebar.apply_configured_panels(&state.config.sidebar);
                 state.sidebar.panels[0].active_tab = Some(SidebarTab::Panes.id());
                 state.sidebar.command_output.insert(
                     files.clone(),

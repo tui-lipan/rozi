@@ -491,8 +491,7 @@ fn s_toggles_sidebar_split_while_focused() {
                 .expect("focus sidebar");
             settle(&mut backend);
 
-            let _ = backend.send_key(key(KeyCode::Char('s')));
-            settle(&mut backend);
+            // The default sidebar is already split, so the first press collapses it.
             assert!(backend.state().config.sidebar.split);
             assert_eq!(backend.state().sidebar.panels.len(), 2);
 
@@ -500,6 +499,11 @@ fn s_toggles_sidebar_split_while_focused() {
             settle(&mut backend);
             assert!(!backend.state().config.sidebar.split);
             assert_eq!(backend.state().sidebar.panels.len(), 1);
+
+            let _ = backend.send_key(key(KeyCode::Char('s')));
+            settle(&mut backend);
+            assert!(backend.state().config.sidebar.split);
+            assert_eq!(backend.state().sidebar.panels.len(), 2);
         })
         .expect("spawn focused split thread")
         .join()

@@ -11,8 +11,14 @@ and mouse regions. It does not become part of the shared layout document.
 visible = false
 width = 32
 position = "left"
-tabs = ["agents", "panes", "sessions"]
+tabs = ["agents", "panes", "sessions", "files", "git"]
+panels = [["agents", "panes", "sessions"], ["files", "git"]]
+split = true
 ```
+
+That is the built-in shape, shown here spelled out: the session's own state on top, the repository
+below. Naming `tabs` without `panels` replaces the whole catalog *and* its placement, so a config
+that lists its own tabs gets one panel unless it also lists `panels`.
 
 `width` is clamped to 16-80 columns. The effective width may be smaller on narrow terminals: the
 sidebar yields space before the pane canvas is allowed to fall below its minimum, and always leaves
@@ -21,8 +27,8 @@ pane canvas, and PTYs live through the normal resize debounce; releasing it writ
 back to this key.
 
 `tabs` is the catalog of available tab definitions. `panels` is a separate placement recipe made
-only of those tabs' stable IDs, so persisting a drag never rewrites a custom tab definition. Enable
-the split to render the two saved panel groups vertically:
+only of those tabs' stable IDs, so persisting a drag never rewrites a custom tab definition. The
+split renders the two saved panel groups vertically:
 
 ```toml
 panels = [["agents"], ["panes", "sessions"]]

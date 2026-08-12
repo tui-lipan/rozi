@@ -2004,10 +2004,61 @@ mod close_animation {
                 !text.contains("exited (1)"),
                 "closing our own pane must not toast its exit: {text}"
             );
+            // The other half of the same noise: the marker would rewrite the titlebar while the
+            // pane is animating out from under it.
+            assert!(
+                !text.contains("[exited"),
+                "a closing pane must not wear its exit code: {text}"
+            );
             // `hold_on_exit` must not keep a pane the user explicitly closed.
             assert!(
                 backend.state().current().workspaces[0].panes[0].closing,
                 "the pane should still be closing, not held open"
+            );
+        });
+    }
+
+    /// The other side of the marker rule: a pane `hold_on_exit` keeps in the layout is staying, so
+    /// its exit code is the only thing saying why it is inert and respawnable.
+    #[test]
+    fn a_held_exited_pane_still_wears_its_exit_code() {
+        in_stack(|| {
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
+            backend.set_viewport(tui_lipan::prelude::Rect {
+                x: 0,
+                y: 0,
+                w: 80,
+                h: 24,
+            });
+            let generation = {
+                let state = backend.state_mut();
+                state.config.pane.hold_on_exit = true;
+                let pane = &mut state.current_mut().workspaces[0].panes[0];
+                pane.opening = false;
+                pane.terminal_active = true;
+                pane.pty_generation
+            };
+            backend.render();
+            let epoch = backend.state().runtime_epoch;
+
+            // The shell exits on its own - nobody closed this pane.
+            backend
+                .dispatch(crate::Msg::SessionExited {
+                    epoch,
+                    pane_id: 1,
+                    generation,
+                    code: 3,
+                })
+                .expect("exit frame");
+
+            assert!(
+                !backend.state().current().workspaces[0].panes[0].closing,
+                "hold_on_exit should keep the pane in the layout"
+            );
+            let text = backend.capture_frame().plain_text();
+            assert!(
+                text.contains("[exited 3]"),
+                "a held pane must say why it is inert: {text}"
             );
         });
     }

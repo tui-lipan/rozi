@@ -203,6 +203,26 @@ struct TitleParts {
     text_style: Style,
 }
 
+/// A pane's title plus the status markers the chrome appends to it.
+///
+/// A closing pane wears none. It exits by definition - that is what closing it does - so its code
+/// is not news, and appending a marker mid-close rewrites the title while the pane is shrinking
+/// away underneath it. The markers exist for panes that stay: `[pane] hold_on_exit` keeps a
+/// naturally exited pane in the layout to be respawned, and that one does need to say so.
+fn status_title(ctx: &Context<AppRoot>, pane: &Pane) -> String {
+    let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
+    if pane.closing {
+        return title;
+    }
+    if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
+        title.push_str(&format!(" [exited {code}]"));
+    }
+    if pane.logging {
+        title.push_str(" [log]");
+    }
+    title
+}
+
 fn title_parts(
     app: &AppRoot,
     ctx: &Context<AppRoot>,
@@ -228,13 +248,7 @@ fn title_parts(
     } else {
         None
     };
-    let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
-    if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
-        title.push_str(&format!(" [exited {code}]"));
-    }
-    if pane.logging {
-        title.push_str(" [log]");
-    }
+    let title = status_title(ctx, pane);
 
     let title_bar_bg_target = if titlebar_focused {
         theme.border_active
@@ -719,13 +733,7 @@ pub(crate) fn pane_element(
             .contrast_policy(ContrastPolicy::Off)
     };
     let title = show_titles.then(|| {
-        let mut title = pane.titlebar_title(ctx.state.current().remote_target.is_some());
-        if let ManagedTerminalStatus::Exited(code) = pane.terminal.status {
-            title.push_str(&format!(" [exited {code}]"));
-        }
-        if pane.logging {
-            title.push_str(" [log]");
-        }
+        let title = status_title(ctx, pane);
         match title_marker {
             Some(marker) => format!("{marker} · {title}"),
             None => title,

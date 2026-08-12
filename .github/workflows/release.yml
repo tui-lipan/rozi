@@ -18,10 +18,10 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - name: Check out hyprmux beside its path dependency
+      - name: Check out rozi beside its path dependency
         uses: actions/checkout@v4
         with:
-          path: hyprmux
+          path: rozi
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
@@ -33,11 +33,11 @@ jobs:
       # with a helper thread on a deadline and lost that race here. Benchmarks measure, they do not
       # decide whether a build ships.
       - name: Test
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo test --locked
       # Keep the compile coverage `--all-targets` was there for, without executing anything.
       - name: Check every target compiles
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo check --locked --all-targets
 
   package:
@@ -69,10 +69,10 @@ jobs:
             archive: zip
 
     steps:
-      - name: Check out hyprmux beside its path dependency
+      - name: Check out rozi beside its path dependency
         uses: actions/checkout@v4
         with:
-          path: hyprmux
+          path: rozi
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
@@ -84,7 +84,7 @@ jobs:
 
       - name: Resolve package version
         id: version
-        working-directory: hyprmux
+        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -98,39 +98,39 @@ jobs:
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Build payload
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Build Windows launcher
         if: matrix.archive == 'zip'
-        working-directory: hyprmux
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin hyprmux-launcher
+        working-directory: rozi
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin rozi-launcher
 
       - name: Smoke-test payload version
-        working-directory: hyprmux
+        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.target }}/release/hyprmux"
+          binary="target/${{ matrix.target }}/release/rozi"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then binary="$binary.exe"; fi
           "$binary" --version | grep -F "${{ steps.version.outputs.version }}"
           "$binary" --help >/dev/null
 
       - name: Package canonical archive
         id: package
-        working-directory: hyprmux
+        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          stem="hyprmux-${version}-${{ matrix.target }}"
+          stem="rozi-${version}-${{ matrix.target }}"
           mkdir -p "dist/${stem}"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            cp "target/${{ matrix.target }}/release/hyprmux.exe" "dist/${stem}/hyprmux.exe"
-            cp "target/${{ matrix.target }}/release/hyprmux-launcher.exe" \
-              "dist/${stem}/hyprmux-launcher.exe"
+            cp "target/${{ matrix.target }}/release/rozi.exe" "dist/${stem}/rozi.exe"
+            cp "target/${{ matrix.target }}/release/rozi-launcher.exe" \
+              "dist/${stem}/rozi-launcher.exe"
           else
-            cp "target/${{ matrix.target }}/release/hyprmux" "dist/${stem}/hyprmux"
+            cp "target/${{ matrix.target }}/release/rozi" "dist/${stem}/rozi"
           fi
           cp README.md LICENSE-APACHE LICENSE-MIT "dist/${stem}/"
           cp -R examples "dist/${stem}/examples"
@@ -142,21 +142,21 @@ jobs:
           rm -rf "dist/${stem}"
 
       - name: Smoke-test extracted final archive
-        working-directory: hyprmux
+        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          stem="hyprmux-${version}-${{ matrix.target }}"
+          stem="rozi-${version}-${{ matrix.target }}"
           mkdir -p dist/verify
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             7z x "dist/${stem}.zip" -odist/verify >/dev/null
-            "dist/verify/${stem}/hyprmux.exe" --version | grep -F "$version"
-            test -x "dist/verify/${stem}/hyprmux-launcher.exe" || \
-              test -f "dist/verify/${stem}/hyprmux-launcher.exe"
+            "dist/verify/${stem}/rozi.exe" --version | grep -F "$version"
+            test -x "dist/verify/${stem}/rozi-launcher.exe" || \
+              test -f "dist/verify/${stem}/rozi-launcher.exe"
           else
             tar -xzf "dist/${stem}.tar.gz" -C dist/verify
-            "dist/verify/${stem}/hyprmux" --version | grep -F "$version"
+            "dist/verify/${stem}/rozi" --version | grep -F "$version"
           fi
 
       # This step verifies that the launcher forwards a payload's exit code, and does so by running
@@ -167,13 +167,13 @@ jobs:
       # nothing here was known to work until it was traced.
       - name: Smoke-test Windows launcher-v1
         if: matrix.archive == 'zip'
-        working-directory: hyprmux
+        working-directory: rozi
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $version = '${{ steps.version.outputs.version }}'
-          $stem = "hyprmux-$version-${{ matrix.target }}"
-          $smokeRoot = Join-Path $env:RUNNER_TEMP ('hyprmux-launcher-smoke-' + [Guid]::NewGuid().ToString('N'))
+          $stem = "rozi-$version-${{ matrix.target }}"
+          $smokeRoot = Join-Path $env:RUNNER_TEMP ('rozi-launcher-smoke-' + [Guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $smokeRoot -Force | Out-Null
           Write-Host "smoke: version=$version stem=$stem cwd=$(Get-Location)"
           Write-Host "smoke: archive present=$(Test-Path -LiteralPath "dist/$stem.zip")"
@@ -184,8 +184,8 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw 'could not unpack the final Windows archive for smoke testing' }
               Write-Host "smoke: phase=unpacked"
               $packagedRoot = Join-Path $archiveRoot $stem
-              $packagedPayload = Join-Path $packagedRoot 'hyprmux.exe'
-              $packagedLauncher = Join-Path $packagedRoot 'hyprmux-launcher.exe'
+              $packagedPayload = Join-Path $packagedRoot 'rozi.exe'
+              $packagedLauncher = Join-Path $packagedRoot 'rozi-launcher.exe'
               if (-not (Test-Path -LiteralPath $packagedPayload -PathType Leaf)) { throw 'packaged payload is missing' }
               if (-not (Test-Path -LiteralPath $packagedLauncher -PathType Leaf)) { throw 'packaged launcher is missing' }
 
@@ -193,9 +193,9 @@ jobs:
               $managedBin = Join-Path $managedRoot 'bin'
               $managedVersion = Join-Path (Join-Path $managedRoot 'versions') $version
               New-Item -ItemType Directory -Path $managedBin, $managedVersion -Force | Out-Null
-              $launcher = Join-Path $managedBin 'hyprmux.exe'
+              $launcher = Join-Path $managedBin 'rozi.exe'
               Copy-Item -LiteralPath $packagedLauncher -Destination $launcher
-              Copy-Item -LiteralPath $packagedPayload -Destination (Join-Path $managedVersion 'hyprmux.exe')
+              Copy-Item -LiteralPath $packagedPayload -Destination (Join-Path $managedVersion 'rozi.exe')
               [IO.File]::WriteAllText(
                   (Join-Path $managedRoot 'active'),
                   $version,
@@ -204,7 +204,7 @@ jobs:
               Write-Host "smoke: phase=layout-built"
               $versionOutput = (& $launcher --version 2>&1 | Out-String)
               $versionLine = ($versionOutput -split "`r?`n", 2)[0]
-              if ($LASTEXITCODE -ne 0 -or $versionLine -cne "hyprmux $version") {
+              if ($LASTEXITCODE -ne 0 -or $versionLine -cne "rozi $version") {
                   throw "launcher-v1 did not execute the packaged payload: $versionOutput"
               }
 
@@ -214,9 +214,9 @@ jobs:
               $forwardVersion = Join-Path (Join-Path $forwardRoot 'versions') '0.0.0'
               $forwardCwd = Join-Path $forwardRoot 'cwd'
               New-Item -ItemType Directory -Path $forwardBin, $forwardVersion, $forwardCwd -Force | Out-Null
-              $forwardLauncher = Join-Path $forwardBin 'hyprmux.exe'
+              $forwardLauncher = Join-Path $forwardBin 'rozi.exe'
               Copy-Item -LiteralPath $packagedLauncher -Destination $forwardLauncher
-              $cmdPayload = Join-Path $forwardVersion 'hyprmux.exe'
+              $cmdPayload = Join-Path $forwardVersion 'rozi.exe'
               Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $cmdPayload
               [IO.File]::WriteAllText(
                   (Join-Path $forwardRoot 'active'),
@@ -277,8 +277,8 @@ jobs:
         with:
           name: archive-${{ matrix.target }}
           path: |
-            hyprmux/dist/*.tar.gz
-            hyprmux/dist/*.zip
+            rozi/dist/*.tar.gz
+            rozi/dist/*.zip
           if-no-files-found: error
           overwrite: false
           retention-days: 14
@@ -292,7 +292,7 @@ jobs:
       # failure would only appear on a client mid-update.
       - name: Build Linux release tool
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        working-directory: hyprmux
+        working-directory: rozi
         shell: bash
         run: |
           set -euo pipefail
@@ -365,11 +365,11 @@ jobs:
           }
           test -n "$(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print -quit)"
           for archive in \
-            "hyprmux-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "hyprmux-${version}-aarch64-unknown-linux-gnu.tar.gz" \
-            "hyprmux-${version}-x86_64-apple-darwin.tar.gz" \
-            "hyprmux-${version}-aarch64-apple-darwin.tar.gz" \
-            "hyprmux-${version}-x86_64-pc-windows-msvc.zip"; do
+            "rozi-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "rozi-${version}-aarch64-unknown-linux-gnu.tar.gz" \
+            "rozi-${version}-x86_64-apple-darwin.tar.gz" \
+            "rozi-${version}-aarch64-apple-darwin.tar.gz" \
+            "rozi-${version}-x86_64-pc-windows-msvc.zip"; do
             test -f "dist/$archive" || {
               echo "completed artifact is missing: $archive" >&2
               exit 1
@@ -388,15 +388,15 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           release-tool/relswap manifest \
-            --name hyprmux \
+            --name rozi \
             --version "$version" \
             --artifacts-dir dist \
-            --output dist/hyprmux-release.json
+            --output dist/rozi-release.json
           python3 - "$version" <<'PY'
           import json
           import sys
           from datetime import datetime
-          manifest = json.load(open("dist/hyprmux-release.json", encoding="utf-8"))
+          manifest = json.load(open("dist/rozi-release.json", encoding="utf-8"))
           assert set(manifest) == {"schema_version", "version", "published_at", "expires_at", "targets"}
           assert manifest["schema_version"] == 2
           assert manifest["version"] == sys.argv[1]
@@ -412,14 +412,14 @@ jobs:
           PY
           verify_dir="$(mktemp -d)"
           trap 'rm -rf "$verify_dir"' EXIT
-          linux_stem="hyprmux-${version}-x86_64-unknown-linux-gnu"
+          linux_stem="rozi-${version}-x86_64-unknown-linux-gnu"
           tar -xzf "dist/${linux_stem}.tar.gz" -C "$verify_dir"
-          "$verify_dir/${linux_stem}/hyprmux" --version | grep -F "$version"
+          "$verify_dir/${linux_stem}/rozi" --version | grep -F "$version"
 
       # The environment is protected, but the private value is deliberately scoped to this one
       # step. No Cargo command, compiler, or checkout runs after it becomes available.
       # RELSWAP_RELEASE_PRIVATE_KEY is the name the (product-neutral) release tool reads; the
-      # repository secret keeps its hyprmux-scoped name. The key id is hyprmux's own and is passed
+      # repository secret keeps its rozi-scoped name. The key id is rozi's own and is passed
       # as an argument, so it stays named for this product.
       - name: Sign exact manifest bytes
         env:
@@ -431,9 +431,9 @@ jobs:
           test -n "$RELSWAP_RELEASE_PRIVATE_KEY"
           test -n "$ROZI_RELEASE_KEY_ID"
           release-tool/relswap sign \
-            --name hyprmux \
-            --manifest dist/hyprmux-release.json \
-            --output dist/hyprmux-release.signatures.json \
+            --name rozi \
+            --manifest dist/rozi-release.json \
+            --output dist/rozi-release.signatures.json \
             --key-id "$ROZI_RELEASE_KEY_ID"
 
       - name: Verify signature and every final archive before publication
@@ -441,9 +441,9 @@ jobs:
         run: |
           set -euo pipefail
           release-tool/relswap verify \
-            --name hyprmux \
-            --manifest dist/hyprmux-release.json \
-            --signatures dist/hyprmux-release.signatures.json \
+            --name rozi \
+            --manifest dist/rozi-release.json \
+            --signatures dist/rozi-release.signatures.json \
             --keys release-keys.json \
             --artifacts-dir dist
 
@@ -452,8 +452,8 @@ jobs:
         with:
           name: verified-release-bundle
           path: |
-            dist/hyprmux-release.json
-            dist/hyprmux-release.signatures.json
+            dist/rozi-release.json
+            dist/rozi-release.signatures.json
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
@@ -484,8 +484,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           gh release create "v$version" \
             --repo "$GITHUB_REPOSITORY" \
-            dist/hyprmux-release.json \
-            dist/hyprmux-release.signatures.json \
+            dist/rozi-release.json \
+            dist/rozi-release.signatures.json \
             dist/*.tar.gz \
             dist/*.zip \
             dist/*.sha256 \

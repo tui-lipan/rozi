@@ -16,10 +16,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - name: Check out hyprmux beside path dependencies
+      - name: Check out rozi beside path dependencies
         uses: actions/checkout@v4
         with:
-          path: hyprmux
+          path: rozi
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
@@ -32,21 +32,21 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: hyprmux
+          workspaces: rozi
       - name: Check formatting
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo fmt --all -- --check
       - name: Check
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo check --locked --all-targets
       - name: Lint
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo test --locked
       - name: Release build
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo build --locked --release
 
   # The OpenCode plugin is the authoritative status source for a pane running OpenCode, and it
@@ -64,10 +64,10 @@ jobs:
     name: audit
     runs-on: ubuntu-latest
     steps:
-      - name: Check out hyprmux beside path dependencies
+      - name: Check out rozi beside path dependencies
         uses: actions/checkout@v4
         with:
-          path: hyprmux
+          path: rozi
       - name: Check out the sibling tui-lipan dependency
         uses: actions/checkout@v4
         with:
@@ -78,5 +78,5 @@ jobs:
       # all three platforms would report the same findings three times and pay for `cargo install`
       # three times over.
       - name: Audit dependencies
-        working-directory: hyprmux
+        working-directory: rozi
         run: cargo install cargo-audit --locked && cargo audit

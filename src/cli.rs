@@ -944,7 +944,7 @@ fn endpoint_help() -> String {
 
 pub(crate) fn print_version() {
     use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
-    println!("hyprmux {}", env!("CARGO_PKG_VERSION"));
+    println!("rozi {}", env!("CARGO_PKG_VERSION"));
     println!("protocol_min={MIN_SUPPORTED_PROTOCOL}");
     println!("protocol_max={PROTOCOL_VERSION}");
 }

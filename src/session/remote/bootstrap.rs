@@ -1,4 +1,4 @@
-//! Probe and optionally install hyprmux on a remote host before attach.
+//! Probe and optionally install rozi on a remote host before attach.
 
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,10 +13,10 @@ use super::{
 };
 
 const INSTALL_DIR: &str = ".local/bin";
-const INSTALL_NAME: &str = "hyprmux";
-const RELEASE_REPO: &str = "Razuer/hyprmux";
+const INSTALL_NAME: &str = "rozi";
+const RELEASE_REPO: &str = "tui-lipan/rozi";
 
-/// Result of probing a remote host for a usable hyprmux binary.
+/// Result of probing a remote host for a usable rozi binary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeResult {
     /// Compatible binary found at this remote path.
@@ -80,11 +80,11 @@ try_bin() {
 if [ -n "${ROZI_PROBE_BIN:-}" ]; then
   try_bin "$ROZI_PROBE_BIN"
 fi
-try_bin hyprmux
-try_bin "$HOME/.local/bin/hyprmux"
-try_bin "$HOME/.cargo/bin/hyprmux"
-try_bin /opt/homebrew/bin/hyprmux
-try_bin /usr/local/bin/hyprmux
+try_bin rozi
+try_bin "$HOME/.local/bin/rozi"
+try_bin "$HOME/.cargo/bin/rozi"
+try_bin /opt/homebrew/bin/rozi
+try_bin /usr/local/bin/rozi
 printf 'probe_done=1\n'
 "#;
 
@@ -118,9 +118,9 @@ function Try-Bin($bin) {
   if ($help -match '--remote') { Write-Output 'speaks_remote=1' } else { Write-Output 'speaks_remote=0' }
 }
 if ($env:ROZI_PROBE_BIN) { Try-Bin $env:ROZI_PROBE_BIN }
-Try-Bin 'hyprmux.exe'
-Try-Bin (Join-Path $env:USERPROFILE '.local\bin\hyprmux.exe')
-Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\hyprmux.exe')
+Try-Bin 'rozi.exe'
+Try-Bin (Join-Path $env:USERPROFILE '.local\bin\rozi.exe')
+Try-Bin (Join-Path $env:USERPROFILE '.cargo\bin\rozi.exe')
 Write-Output "probe_done=1"
 "#;
 
@@ -233,16 +233,16 @@ pub fn select_compatible(report: &ProbeReport) -> ProbeResult {
     }
     ProbeResult::Missing {
         detail: if report.candidates.is_empty() {
-            "no hyprmux binary found on the remote host".to_string()
+            "no rozi binary found on the remote host".to_string()
         } else if saw_without_range {
             // `saw_without_range` is only ever set inside a `speaks_remote` candidate, so it always
             // implies `saw_remote` — a `saw_without_range && !saw_remote` arm here would be dead.
-            "remote hyprmux found but does not advertise a protocol range (upgrade it, or set binary_path / install)"
+            "remote rozi found but does not advertise a protocol range (upgrade it, or set binary_path / install)"
                 .to_string()
         } else if saw_remote {
-            "remote hyprmux protocol range does not overlap this client".to_string()
+            "remote rozi protocol range does not overlap this client".to_string()
         } else {
-            "remote hyprmux binaries are too old for --remote (need a build that speaks --remote-serve)"
+            "remote rozi binaries are too old for --remote (need a build that speaks --remote-serve)"
                 .to_string()
         },
     }
@@ -259,7 +259,7 @@ pub fn decide_install(
         ProbeResult::Missing { detail } => match policy {
             RemoteInstallPolicy::Never => InstallDecision::Fail {
                 message: format!(
-                    "{detail}; set [remote] install = \"prompt\" or install hyprmux on the remote host"
+                    "{detail}; set [remote] install = \"prompt\" or install rozi on the remote host"
                 ),
             },
             RemoteInstallPolicy::Always if interactive => InstallDecision::Install,
@@ -278,7 +278,7 @@ pub fn prompt_install_confirmation(host: &str) -> io::Result<bool> {
     let mut stderr = io::stderr().lock();
     write!(
         stderr,
-        "hyprmux: no compatible binary on {host}. Install to ~/.local/bin/hyprmux? [y/N] "
+        "rozi: no compatible binary on {host}. Install to ~/.local/bin/rozi? [y/N] "
     )?;
     stderr.flush()?;
     let mut line = String::new();
@@ -485,7 +485,7 @@ pub fn ensure_remote_binary(
             let accepted = prompt_install_confirmation(&host).map_err(|err| err.to_string())?;
             if !accepted {
                 return Err(format!(
-                    "install declined for {host}; set binary_path, install a compatible hyprmux, or pass install = \"always\""
+                    "install declined for {host}; set binary_path, install a compatible rozi, or pass install = \"always\""
                 ));
             }
             install_for_platforms(target, config, &report)
@@ -513,7 +513,7 @@ fn install_for_platforms(
     let family = family_from_os(&remote_os);
     if local_os == remote_os && local_arch == remote_arch {
         let local = std::env::current_exe()
-            .map_err(|err| format!("cannot locate local hyprmux for install: {err}"))?;
+            .map_err(|err| format!("cannot locate local rozi for install: {err}"))?;
         return install_bytes(target, config, &local, "same-platform current_exe", family);
     }
 
@@ -543,8 +543,8 @@ fn family_from_os(os: &str) -> RemoteFamily {
 
 /// Stream `local` onto the remote and return the installed path.
 ///
-/// The POSIX path installs `$HOME/.local/bin/hyprmux` (`chmod 755`, atomic `mv`) by streaming the
-/// binary over ssh stdin. The Windows path installs `%USERPROFILE%\.local\bin\hyprmux.exe` via `scp`
+/// The POSIX path installs `$HOME/.local/bin/rozi` (`chmod 755`, atomic `mv`) by streaming the
+/// binary over ssh stdin. The Windows path installs `%USERPROFILE%\.local\bin\rozi.exe` via `scp`
 /// then a finalize step, because OpenSSH-on-Windows deadlocks a large command stdin. Either way the
 /// installed path is echoed back — `connect.rs` invokes `--remote-serve` with it verbatim, so the
 /// `.exe` suffix propagates.
@@ -583,7 +583,7 @@ fn install_bytes_posix(
         r#"set -e
 dir="$HOME/{INSTALL_DIR}"
 final="$dir/{INSTALL_NAME}"
-tmp="$dir/.hyprmux.install.$$"
+tmp="$dir/.rozi.install.$$"
 mkdir -p "$dir"
 if [ -e "$final" ] && [ ! -f "$final" ]; then
   printf 'refuse_non_regular=%s\n' "$final" >&2
@@ -640,7 +640,7 @@ printf 'installed=%s\n' "$final"
 
 /// Install onto a Windows remote in two steps: `scp` the binary to a temp file (the sftp subsystem
 /// has real flow control), then a small no-stdin `powershell -EncodedCommand` that moves it into
-/// `%USERPROFILE%\.local\bin\hyprmux.exe`.
+/// `%USERPROFILE%\.local\bin\rozi.exe`.
 ///
 /// Streaming the binary through a command's stdin — as the POSIX path does — deadlocks on
 /// OpenSSH-for-Windows once the data exceeds the channel's stdin buffer (a real ~11 MB binary hangs
@@ -655,7 +655,7 @@ fn install_bytes_windows(
     }
     // A relative scp destination lands in the remote user's home (%USERPROFILE%). Keep it unique per
     // local process so concurrent installs to one host cannot clobber each other mid-upload.
-    let temp_name = format!("hyprmux.install.{}.tmp", std::process::id());
+    let temp_name = format!("rozi.install.{}.tmp", std::process::id());
 
     let mut scp = scp_base_command(resolved, config);
     scp.arg(local);
@@ -680,7 +680,7 @@ fn install_bytes_windows(
         r#"$ErrorActionPreference = 'Stop'
 $dir = Join-Path $env:USERPROFILE '.local\bin'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$final = Join-Path $dir 'hyprmux.exe'
+$final = Join-Path $dir 'rozi.exe'
 if (Test-Path -LiteralPath $final -PathType Container) {{
   [Console]::Error.WriteLine("refuse_non_regular=$final")
   exit 1
@@ -809,9 +809,9 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
     verify_sha256(&archive_path, &sha_path)?;
 
     let bin_name = if triple.contains("windows") {
-        "hyprmux.exe"
+        "rozi.exe"
     } else {
-        "hyprmux"
+        "rozi"
     };
     extract_release_binary(&archive_path, &archive_name, &tmp, bin_name)
 }
@@ -819,7 +819,7 @@ fn download_release_binary(triple: &str, version: &str) -> Result<PathBuf, Strin
 /// Extract `archive_path` into `tmp` and return the path to the contained binary.
 ///
 /// The release archives (see `.github/workflows/release.yml`) wrap the binary in a versioned
-/// directory: `rozi-<version>-<triple>/hyprmux`. Extract everything, then locate the binary by
+/// directory: `rozi-<version>-<triple>/rozi`. Extract everything, then locate the binary by
 /// name — extracting a bare top-level member would always miss it.
 fn extract_release_binary(
     archive_path: &Path,
@@ -1100,13 +1100,13 @@ mod tests {
             "\
 platform=Linux
 machine=x86_64
-candidate=/home/u/.local/bin/hyprmux
-version_line=hyprmux 0.1.0 protocol_min=12 protocol_max=12
+candidate=/home/u/.local/bin/rozi
+version_line=rozi 0.1.0 protocol_min=12 protocol_max=12
 protocol_min=12
 protocol_max=12
 speaks_remote=1
-candidate=/usr/bin/hyprmux
-version_line=hyprmux 0.0.1
+candidate=/usr/bin/rozi
+version_line=rozi 0.0.1
 speaks_remote=0
 probe_done=1
 ",
@@ -1170,7 +1170,7 @@ protocol_max=1
     #[test]
     fn prompt_policy_asks_when_interactive_never_auto_installs() {
         let missing = ProbeResult::Missing {
-            detail: "no hyprmux".into(),
+            detail: "no rozi".into(),
         };
         assert!(matches!(
             decide_install(&missing, RemoteInstallPolicy::Prompt, false),
@@ -1238,7 +1238,7 @@ protocol_max=1
         std::fs::create_dir_all(&dir).unwrap();
 
         // A minimal ELF x86_64 header on disk.
-        let bin = dir.join("fake-hyprmux");
+        let bin = dir.join("fake-rozi");
         let mut elf = vec![0u8; 20];
         elf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
         elf[5] = 1;
@@ -1350,10 +1350,10 @@ protocol_max=1
     }
 
     /// The release archives nest the binary in a versioned directory
-    /// (`rozi-<version>-<triple>/hyprmux`, per `.github/workflows/release.yml`). Build a fixture
+    /// (`rozi-<version>-<triple>/rozi`, per `.github/workflows/release.yml`). Build a fixture
     /// with exactly that layout and prove the extract-then-locate path finds it — the earlier
     /// single-member extraction could never reach into the directory, so `--remote` install always
-    /// failed with "release archive did not contain hyprmux".
+    /// failed with "release archive did not contain rozi".
     #[test]
     fn extract_locates_binary_nested_in_versioned_directory() {
         let root = std::env::temp_dir().join(format!(
@@ -1365,12 +1365,12 @@ protocol_max=1
                 .as_nanos()
         ));
         let _ = std::fs::remove_dir_all(&root);
-        // Mirror release.yml: dist/<name>/{hyprmux,README...} tarred as `<name>`.
+        // Mirror release.yml: dist/<name>/{rozi,README...} tarred as `<name>`.
         let name = "rozi-9.9.9-x86_64-unknown-linux-gnu";
         let staging = root.join("dist");
         let pkg = staging.join(name);
         std::fs::create_dir_all(&pkg).unwrap();
-        std::fs::write(pkg.join("hyprmux"), b"#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(pkg.join("rozi"), b"#!/bin/sh\nexit 0\n").unwrap();
         std::fs::write(pkg.join("README.md"), b"readme").unwrap();
 
         let archive_name = format!("{name}.tar.gz");
@@ -1387,10 +1387,10 @@ protocol_max=1
 
         let out = root.join("extract");
         std::fs::create_dir_all(&out).unwrap();
-        let located = extract_release_binary(&archive_path, &archive_name, &out, "hyprmux")
+        let located = extract_release_binary(&archive_path, &archive_name, &out, "rozi")
             .expect("binary located in nested archive");
         assert!(located.is_file());
-        assert_eq!(located.file_name().unwrap(), "hyprmux");
+        assert_eq!(located.file_name().unwrap(), "rozi");
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1449,14 +1449,14 @@ protocol_max=1
         };
         let mut command = ssh_base_command(&resolved, &RemoteConfig::default());
         append_ssh_destination(&mut command, &resolved);
-        command.args(["/usr/local/bin/hyprmux", "--remote-serve", "dev"]);
+        command.args(["/usr/local/bin/rozi", "--remote-serve", "dev"]);
         let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         let marker = args.iter().position(|arg| arg == "--").expect("-- marker");
         assert_eq!(args[marker + 1], "me@workbox");
-        assert_eq!(args[marker + 2], "/usr/local/bin/hyprmux");
+        assert_eq!(args[marker + 2], "/usr/local/bin/rozi");
         assert_eq!(args[marker + 3], "--remote-serve");
         assert_eq!(args[marker + 4], "dev");
     }

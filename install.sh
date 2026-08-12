@@ -5,7 +5,7 @@ set -euo pipefail
 # payload. It never edits a shell startup file.
 # Trust-boundary caveat: "Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised."
 
-readonly RELEASE_REPO="${ROZI_RELEASE_REPO:-Razuer/hyprmux}"
+readonly RELEASE_REPO="${ROZI_RELEASE_REPO:-tui-lipan/rozi}"
 readonly DEFAULT_LATEST_URL="https://github.com/${RELEASE_REPO}/releases/latest"
 readonly MAX_ARCHIVE_BYTES=268435456
 readonly MAX_CHECKSUM_BYTES=1048576
@@ -14,12 +14,12 @@ readonly MAX_ARCHIVE_MEMBERS=10000
 readonly CAVEAT='Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised.'
 
 fail() {
-  printf 'hyprmux install: %s\n' "$1" >&2
+  printf 'rozi install: %s\n' "$1" >&2
   exit 1
 }
 
 usage_error() {
-  printf 'hyprmux install: %s\n' "$1" >&2
+  printf 'rozi install: %s\n' "$1" >&2
   printf 'Use --help for usage.\n' >&2
   exit 2
 }
@@ -38,9 +38,9 @@ installed CLI owns the managed versions, active pointer, launcher, rollback meta
 path; this script does not create any of those files or edit a shell startup file.
 
 Use the installed command for lifecycle operations:
-  hyprmux update --check
-  hyprmux update
-  hyprmux update --rollback
+  rozi update --check
+  rozi update
+  rozi update --rollback
 
 Trust-boundary caveat: "$CAVEAT"
 
@@ -161,7 +161,7 @@ validate_tar_members() {
     [[ "$listing_size" =~ ^[0-9]+$ && "$listing_size" -le "$MAX_LISTING_BYTES" ]] ||
       fail "archive listing exceeds its size limit: $listing"
   done
-  payload_member="$stem/hyprmux"
+  payload_member="$stem/rozi"
   member_count=0
   exec 3<"$types"
   while IFS= read -r member || [[ -n "$member" ]]; do
@@ -225,12 +225,12 @@ managed_cli() {
 install_version() {
   local version="$1" target="$2" base="$3"
   local archive_name stem archive checksum temp_extract payload payload_limit_kib
-  archive_name="hyprmux-${version}-${target}.tar.gz"
+  archive_name="rozi-${version}-${target}.tar.gz"
   stem="${archive_name%.tar.gz}"
   base="${base%/}"
   [[ "$base" == https://* ]] || fail 'release base URL must use HTTPS'
 
-  temp_extract="$(mktemp -d "${TMPDIR:-/tmp}/hyprmux-install.XXXXXX")"
+  temp_extract="$(mktemp -d "${TMPDIR:-/tmp}/rozi-install.XXXXXX")"
   trap 'rm -rf -- "${temp_extract:-}"' EXIT
   archive="$temp_extract/$archive_name"
   checksum="$archive.sha256"
@@ -246,9 +246,9 @@ install_version() {
   payload="$(mktemp "$temp_extract/payload.XXXXXX")" ||
     fail 'could not create a temporary payload file'
   payload_limit_kib=$((MAX_ARCHIVE_BYTES / 1024))
-  if ! (ulimit -f "$payload_limit_kib"; tar --no-recursion -xOzf "$archive" "$stem/hyprmux" >"$payload")
+  if ! (ulimit -f "$payload_limit_kib"; tar --no-recursion -xOzf "$archive" "$stem/rozi" >"$payload")
   then
-    fail "could not extract canonical payload within its size limit: $stem/hyprmux"
+    fail "could not extract canonical payload within its size limit: $stem/rozi"
   fi
   chmod 700 "$payload" || fail "could not mark temporary payload executable: $payload"
   [[ -f "$payload" && ! -L "$payload" && -x "$payload" ]] ||
@@ -260,11 +260,11 @@ install_version() {
   version_output="$("$payload" --version 2>&1)" ||
     fail "archive payload could not report its version"
   version_line="${version_output%%$'\n'*}"
-  [[ "$version_line" == "hyprmux $version" ]] ||
-    fail "archive payload version line is not exactly: hyprmux $version"
+  [[ "$version_line" == "rozi $version" ]] ||
+    fail "archive payload version line is not exactly: rozi $version"
 
   managed_cli "$payload"
-  printf 'installed hyprmux %s for %s through the extracted release payload\n' "$version" "$target"
+  printf 'installed rozi %s for %s through the extracted release payload\n' "$version" "$target"
   printf 'bootstrap caveat: %s\n' "$CAVEAT"
   trap - EXIT
   rm -rf "$temp_extract"

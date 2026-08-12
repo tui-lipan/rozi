@@ -11,7 +11,7 @@ Add-Type -AssemblyName System.IO.Compression
 
 # Trust-boundary caveat: "Downloading an archive and its checksum from the same HTTPS release location protects against corruption, but does not provide independent authenticity if the release account or release assets are compromised."
 $script:ExitCode = 1
-$script:ReleaseRepo = if ($env:ROZI_RELEASE_REPO) { $env:ROZI_RELEASE_REPO } else { 'Razuer/hyprmux' }
+$script:ReleaseRepo = if ($env:ROZI_RELEASE_REPO) { $env:ROZI_RELEASE_REPO } else { 'tui-lipan/rozi' }
 $script:MaxArchiveBytes = [int64]268435456
 $script:MaxChecksumBytes = [int64]1048576
 $script:MaxZipMemberBytes = [int64]268435456
@@ -33,9 +33,9 @@ path; this script does not create any of those files. User PATH is changed only 
 install when -AddToPath is passed.
 
 Use the installed command for lifecycle operations:
-  hyprmux update --check
-  hyprmux update
-  hyprmux update --rollback
+  rozi update --check
+  rozi update
+  rozi update --rollback
 
 Trust-boundary caveat: "$($script:Caveat)"
 
@@ -89,7 +89,7 @@ function Resolve-LatestVersion {
         $request = [Net.HttpWebRequest]::Create($current)
         $request.AllowAutoRedirect = $false
         $request.Method = 'GET'
-        $request.UserAgent = 'hyprmux-bootstrap'
+        $request.UserAgent = 'rozi-bootstrap'
         try {
             $response = $request.GetResponse()
         } catch {
@@ -146,7 +146,7 @@ function Download-HttpsFile([string]$Url, [string]$Destination, [int64]$MaxBytes
         $request = [Net.HttpWebRequest]::Create($current)
         $request.AllowAutoRedirect = $false
         $request.Method = 'GET'
-        $request.UserAgent = 'hyprmux-bootstrap'
+        $request.UserAgent = 'rozi-bootstrap'
         try {
             $response = $request.GetResponse()
         } catch {
@@ -327,8 +327,8 @@ function Inspect-And-ExtractZip(
 
         $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $normalizedNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        $payloadName = "$Stem/hyprmux.exe"
-        $launcherName = "$Stem/hyprmux-launcher.exe"
+        $payloadName = "$Stem/rozi.exe"
+        $launcherName = "$Stem/rozi-launcher.exe"
         $payloadEntry = $null
         $launcherEntry = $null
         [int64]$totalUncompressed = 0
@@ -396,7 +396,7 @@ function Add-ManagedBinToPath {
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Fail 'LOCALAPPDATA is unavailable; cannot add the managed command to PATH'
     }
-    $managedBin = Join-Path $env:LOCALAPPDATA 'hyprmux\bin'
+    $managedBin = Join-Path $env:LOCALAPPDATA 'rozi\bin'
     if (-not (Test-Path -LiteralPath $managedBin -PathType Container)) {
         Fail "managed command directory is missing after install: $managedBin"
     }
@@ -439,10 +439,10 @@ function Add-ManagedBinToPath {
 
 function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
     $target = Get-Target
-    $stem = "hyprmux-$ResolvedVersion-$target"
+    $stem = "rozi-$ResolvedVersion-$target"
     $archiveName = "$stem.zip"
     $base = Get-ReleaseBase $ResolvedVersion
-    $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('hyprmux-install-' + [Guid]::NewGuid().ToString('N'))
+    $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ('rozi-install-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     try {
         $archive = Join-Path $temporaryRoot $archiveName
@@ -463,13 +463,13 @@ function Install-Version([string]$ResolvedVersion, [bool]$AddPath) {
         Assert-Size $launcher $script:MaxZipMemberBytes 'archive launcher'
         $reportedVersion = (& $payload --version 2>&1 | Out-String)
         $versionLine = ($reportedVersion -split "`r?`n", 2)[0]
-        if ($LASTEXITCODE -ne 0 -or $versionLine -cne "hyprmux $ResolvedVersion") {
+        if ($LASTEXITCODE -ne 0 -or $versionLine -cne "rozi $ResolvedVersion") {
             Fail "archive payload version does not match requested release $ResolvedVersion"
         }
 
         Invoke-ManagedCli $payload
         if ($AddPath) { Add-ManagedBinToPath }
-        Write-Host "Installed hyprmux $ResolvedVersion for $target through the extracted release payload."
+        Write-Host "Installed rozi $ResolvedVersion for $target through the extracted release payload."
         Write-Host "Bootstrap caveat: $($script:Caveat)"
     } finally {
         if (Test-Path -LiteralPath $temporaryRoot) {
@@ -489,7 +489,7 @@ try {
     Install-Version $Version ([bool]$AddToPath)
     $script:ExitCode = 0
 } catch {
-    Write-Error ("hyprmux install: " + $_.Exception.Message)
+    Write-Error ("rozi install: " + $_.Exception.Message)
 }
 
 exit $script:ExitCode

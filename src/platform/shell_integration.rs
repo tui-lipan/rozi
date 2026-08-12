@@ -1,28 +1,28 @@
 //! Shell-integration injection (cross-platform plan Phase 8).
 //!
-//! Ships `assets/shell-integration/hyprmux.{bash,zsh,fish,ps1}` (embedded via `include_str!`, no
+//! Ships `assets/shell-integration/rozi.{bash,zsh,fish,ps1}` (embedded via `include_str!`, no
 //! install step required) and, when [`ShellIntegrationMode::Auto`] recognizes the resolved
 //! *interactive* shell (never the one-off `command_shell` runner - see the plan's "do not inject
 //! into noninteractive command-runner processes" rule), adjusts that pane's spawn argv/env so the
 //! child picks up the matching script automatically:
 //!
 //! - bash: appends `--rcfile <generated wrapper>`, which chains the user's real `~/.bashrc` (and
-//!   `/etc/bash.bashrc`) before sourcing `hyprmux.bash`. Skipped for a configured login shell
+//!   `/etc/bash.bashrc`) before sourcing `rozi.bash`. Skipped for a configured login shell
 //!   (`-l`/`--login`): bash ignores `--rcfile` for login shells entirely, and there is no
 //!   automatic non-dotfile-editing equivalent for that case, per the plan's call to "handle login
 //!   vs non-login shells explicitly" - this is that handling: recognized and skipped rather than
 //!   silently doing nothing while claiming to have injected.
 //! - zsh: sets `ZDOTDIR` to a generated shim directory and `ROZI_ORIG_ZDOTDIR` to the child's
 //!   real one (its inherited `$ZDOTDIR`, or `$HOME` if unset) so the shim's `.zshenv`/`.zshrc`
-//!   chain to the user's real files before sourcing `hyprmux.zsh`.
+//!   chain to the user's real files before sourcing `rozi.zsh`.
 //! - fish: prepends the install directory to `XDG_DATA_DIRS` so fish's own `vendor_conf.d`
-//!   auto-discovery picks up `hyprmux.fish` - no dotfile or wrapper needed.
-//! - PowerShell: appends `-NoExit -Command ". <hyprmux.ps1>"`. The plan assumed no clean
+//!   auto-discovery picks up `rozi.fish` - no dotfile or wrapper needed.
+//! - PowerShell: appends `-NoExit -Command ". <rozi.ps1>"`. The plan assumed no clean
 //!   non-dotfile injection point existed here and settled for env markers plus a documented
 //!   `$PROFILE` edit; there is one. PowerShell runs `$PROFILE` *before* `-Command`, so the script
 //!   sees the user's finished prompt and PSReadLine configuration and wraps them, and `-NoExit`
 //!   keeps the session interactive afterwards. (This is the same mechanism VS Code's own PowerShell
-//!   integration uses.) The `$PROFILE` route still works and is still documented, for shells hyprmux
+//!   integration uses.) The `$PROFILE` route still works and is still documented, for shells rozi
 //!   did not launch; the script is idempotent, so having both costs nothing.
 //! - cmd.exe: sets `PROMPT` to a variant carrying OSC 9;9 (cwd) and OSC 133 A/B (prompt boundaries)
 //!   markers around the user's `$P$G`. Command lifecycle (`C`/`D`, and therefore exit status and
@@ -41,10 +41,10 @@ use std::sync::OnceLock;
 use crate::config::ShellIntegrationMode;
 use crate::platform::command::ShellCommand;
 
-const BASH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.bash");
-const ZSH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.zsh");
-const FISH_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.fish");
-const POWERSHELL_SCRIPT: &str = include_str!("../../assets/shell-integration/hyprmux.ps1");
+const BASH_SCRIPT: &str = include_str!("../../assets/shell-integration/rozi.bash");
+const ZSH_SCRIPT: &str = include_str!("../../assets/shell-integration/rozi.zsh");
+const FISH_SCRIPT: &str = include_str!("../../assets/shell-integration/rozi.fish");
+const POWERSHELL_SCRIPT: &str = include_str!("../../assets/shell-integration/rozi.ps1");
 
 /// cmd.exe's prompt, instrumented. `$E` is ESC and `$P` the current directory (both cmd's own
 /// `PROMPT` escapes, so the value re-expands on every prompt with no hook needed); `$E\` is the
@@ -148,11 +148,11 @@ pub struct InjectionEnv {
     /// every directory listed here plus its own compiled-in defaults).
     pub xdg_data_dirs: Option<String>,
     /// Set when the spawning client already knows integration is active for this pane (currently
-    /// never set client-side; reserved so a future nested-hyprmux-nested-hyprmux nesting case, or
+    /// never set client-side; reserved so a future nested-rozi-nested-rozi nesting case, or
     /// a nested `command_shell` re-exec, has an explicit opt-out without needing to guess from
     /// argv). Scripts themselves already guard against a *sourced-twice* double-injection; this
     /// guards the rarer *wrapped-twice at the argv/env level* case (e.g. a pane whose `command`
-    /// itself invokes `hyprmux`).
+    /// itself invokes `rozi`).
     pub already_loaded: bool,
 }
 
@@ -201,7 +201,7 @@ fn inject_fish(
     (shell, vec![("XDG_DATA_DIRS".to_string(), dirs)])
 }
 
-/// PowerShell: dot-source `hyprmux.ps1` after the user's `$PROFILE` has run, and stay interactive.
+/// PowerShell: dot-source `rozi.ps1` after the user's `$PROFILE` has run, and stay interactive.
 ///
 /// Skipped when the configured shell already carries a `-Command`, `-File`, or `-EncodedCommand`
 /// argument: those say "run this and exit", so the pane is not the interactive session this is for,
@@ -221,7 +221,7 @@ fn inject_powershell(
     if already_directed {
         return (shell, Vec::new());
     }
-    let script = install_dir.join("hyprmux.ps1");
+    let script = install_dir.join("rozi.ps1");
     let command = format!(". {}", powershell_quote(&script.to_string_lossy()));
     let shell = shell.arg("-NoExit").arg("-Command").arg(command);
     (shell, Vec::new())
@@ -255,15 +255,15 @@ fn install_dir() -> Option<PathBuf> {
 
 fn install_assets(dir: &Path) -> std::io::Result<()> {
     crate::platform::fs_security::ensure_private_dir(dir)?;
-    write_if_changed(&dir.join("hyprmux.bash"), BASH_SCRIPT)?;
-    write_if_changed(&dir.join("hyprmux.zsh"), ZSH_SCRIPT)?;
-    write_if_changed(&dir.join("hyprmux.fish"), FISH_SCRIPT)?;
+    write_if_changed(&dir.join("rozi.bash"), BASH_SCRIPT)?;
+    write_if_changed(&dir.join("rozi.zsh"), ZSH_SCRIPT)?;
+    write_if_changed(&dir.join("rozi.fish"), FISH_SCRIPT)?;
 
-    let bash_target = shell_quote(&dir.join("hyprmux.bash").to_string_lossy());
+    let bash_target = shell_quote(&dir.join("rozi.bash").to_string_lossy());
     write_if_changed(
         &dir.join("bash-rcfile"),
         &format!(
-            "# Generated by hyprmux; regenerated on every launch, safe to delete.\n\
+            "# Generated by rozi; regenerated on every launch, safe to delete.\n\
              [ -f /etc/bash.bashrc ] && . /etc/bash.bashrc\n\
              [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"\n\
              . {bash_target}\n"
@@ -272,10 +272,10 @@ fn install_assets(dir: &Path) -> std::io::Result<()> {
 
     let zsh_shim = dir.join("zsh-zdotdir");
     crate::platform::fs_security::ensure_private_dir(&zsh_shim)?;
-    let zsh_target = shell_quote(&dir.join("hyprmux.zsh").to_string_lossy());
+    let zsh_target = shell_quote(&dir.join("rozi.zsh").to_string_lossy());
     write_if_changed(
         &zsh_shim.join(".zshenv"),
-        "# Generated by hyprmux; regenerated on every launch, safe to delete.\n\
+        "# Generated by rozi; regenerated on every launch, safe to delete.\n\
          if [ -n \"$ROZI_ORIG_ZDOTDIR\" ] && [ -f \"$ROZI_ORIG_ZDOTDIR/.zshenv\" ]; then\n\
          \t. \"$ROZI_ORIG_ZDOTDIR/.zshenv\"\n\
          elif [ -z \"$ROZI_ORIG_ZDOTDIR\" ] && [ -f \"$HOME/.zshenv\" ]; then\n\
@@ -285,7 +285,7 @@ fn install_assets(dir: &Path) -> std::io::Result<()> {
     write_if_changed(
         &zsh_shim.join(".zshrc"),
         &format!(
-            "# Generated by hyprmux; regenerated on every launch, safe to delete.\n\
+            "# Generated by rozi; regenerated on every launch, safe to delete.\n\
              if [ -n \"$ROZI_ORIG_ZDOTDIR\" ] && [ -f \"$ROZI_ORIG_ZDOTDIR/.zshrc\" ]; then\n\
              \t. \"$ROZI_ORIG_ZDOTDIR/.zshrc\"\n\
              elif [ -z \"$ROZI_ORIG_ZDOTDIR\" ] && [ -f \"$HOME/.zshrc\" ]; then\n\
@@ -297,19 +297,19 @@ fn install_assets(dir: &Path) -> std::io::Result<()> {
 
     let fish_vendor_conf_d = dir.join("fish-vendor").join("fish").join("vendor_conf.d");
     crate::platform::fs_security::ensure_private_dir(&fish_vendor_conf_d)?;
-    write_if_changed(&fish_vendor_conf_d.join("hyprmux.fish"), FISH_SCRIPT)?;
+    write_if_changed(&fish_vendor_conf_d.join("rozi.fish"), FISH_SCRIPT)?;
 
-    write_if_changed(&dir.join("hyprmux.ps1"), POWERSHELL_SCRIPT)?;
+    write_if_changed(&dir.join("rozi.ps1"), POWERSHELL_SCRIPT)?;
 
     // cmd's integration is a single `PROMPT` value, which [`inject_cmd`] hands the child directly.
-    // This file is that same value in runnable form, for a cmd session hyprmux did not launch (one
+    // This file is that same value in runnable form, for a cmd session rozi did not launch (one
     // reached through a `command =` pane, say). Generated rather than shipped as an asset so the
     // string cannot drift from the one actually injected.
     write_if_changed(
-        &dir.join("hyprmux.cmd"),
+        &dir.join("rozi.cmd"),
         &format!(
             "@echo off\r\n\
-             REM Generated by hyprmux; regenerated on every launch, safe to delete.\r\n\
+             REM Generated by rozi; regenerated on every launch, safe to delete.\r\n\
              REM Adds OSC 9;9 (cwd) and OSC 133 A/B (prompt boundary) markers to cmd's prompt.\r\n\
              REM Command lifecycle (exit status, foreground program) needs Clink; see docs/terminal.md.\r\n\
              set PROMPT={CMD_PROMPT}\r\n"
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(shell.args[1], "-NoExit");
         assert_eq!(shell.args[2], "-Command");
         assert!(shell.args[3].starts_with(". '"));
-        assert!(shell.args[3].ends_with("hyprmux.ps1'"));
+        assert!(shell.args[3].ends_with("rozi.ps1'"));
         assert!(extra_env.is_empty());
     }
 
@@ -517,34 +517,34 @@ mod tests {
         let dir = temp_dir("install");
         install_assets(&dir).expect("install");
         for relative in [
-            "hyprmux.bash",
-            "hyprmux.zsh",
-            "hyprmux.fish",
-            "hyprmux.ps1",
-            "hyprmux.cmd",
+            "rozi.bash",
+            "rozi.zsh",
+            "rozi.fish",
+            "rozi.ps1",
+            "rozi.cmd",
             "bash-rcfile",
             "zsh-zdotdir/.zshenv",
             "zsh-zdotdir/.zshrc",
-            "fish-vendor/fish/vendor_conf.d/hyprmux.fish",
+            "fish-vendor/fish/vendor_conf.d/rozi.fish",
         ] {
             assert!(dir.join(relative).is_file(), "missing {relative}");
         }
-        let bash_script_before = std::fs::read_to_string(dir.join("hyprmux.bash")).unwrap();
+        let bash_script_before = std::fs::read_to_string(dir.join("rozi.bash")).unwrap();
         // Re-running must not error and must reproduce identical content (write-if-changed).
         install_assets(&dir).expect("reinstall");
-        let bash_script_after = std::fs::read_to_string(dir.join("hyprmux.bash")).unwrap();
+        let bash_script_after = std::fs::read_to_string(dir.join("rozi.bash")).unwrap();
         assert_eq!(bash_script_before, bash_script_after);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn generated_bash_rcfile_chains_real_bashrc_then_the_hyprmux_script() {
+    fn generated_bash_rcfile_chains_real_bashrc_then_the_rozi_script() {
         let dir = temp_dir("rcfile-content");
         install_assets(&dir).expect("install");
         let rcfile = std::fs::read_to_string(dir.join("bash-rcfile")).unwrap();
         assert!(rcfile.contains(".bashrc"));
-        assert!(rcfile.contains("hyprmux.bash"));
+        assert!(rcfile.contains("rozi.bash"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -554,7 +554,7 @@ mod tests {
         install_assets(&dir).expect("install");
         let zshrc = std::fs::read_to_string(dir.join("zsh-zdotdir").join(".zshrc")).unwrap();
         assert!(zshrc.contains("ROZI_ORIG_ZDOTDIR"));
-        assert!(zshrc.contains("hyprmux.zsh"));
+        assert!(zshrc.contains("rozi.zsh"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

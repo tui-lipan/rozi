@@ -1,0 +1,14 @@
+:RoziNavigateDown	rozi-navigator.txt	/*:RoziNavigateDown*
+:RoziNavigateLeft	rozi-navigator.txt	/*:RoziNavigateLeft*
+:RoziNavigatePrevious	rozi-navigator.txt	/*:RoziNavigatePrevious*
+:RoziNavigateRight	rozi-navigator.txt	/*:RoziNavigateRight*
+:RoziNavigateUp	rozi-navigator.txt	/*:RoziNavigateUp*
+:RoziNavigatorCheck	rozi-navigator.txt	/*:RoziNavigatorCheck*
+g:rozi_navigator_command	rozi-navigator.txt	/*g:rozi_navigator_command*
+g:rozi_navigator_no_mappings	rozi-navigator.txt	/*g:rozi_navigator_no_mappings*
+g:rozi_navigator_save_on_switch	rozi-navigator.txt	/*g:rozi_navigator_save_on_switch*
+g:rozi_navigator_wrap	rozi-navigator.txt	/*g:rozi_navigator_wrap*
+rozi-navigator-commands	rozi-navigator.txt	/*rozi-navigator-commands*
+rozi-navigator-config	rozi-navigator.txt	/*rozi-navigator-config*
+rozi-navigator-contents	rozi-navigator.txt	/*rozi-navigator-contents*
+rozi-navigator.txt	rozi-navigator.txt	/*rozi-navigator.txt*

@@ -121,7 +121,7 @@ toggle. Focus survives layout changes.
 **Smart focus (vim-aware)** — `smart-focus-<dir>` moves hyprmux focus *unless* the focused pane
 runs a split-aware program listed in `[navigation] editors`, in which case it forwards the matching
 `Ctrl-h/j/k/l` to that program. One binding navigates both hyprmux panes and vim/neovim splits,
-vim-tmux-navigator style. A companion [Vim/Neovim plugin](../integrations/vim-hyprmux-navigator/)
+vim-tmux-navigator style. A companion [Vim/Neovim plugin](../integrations/vim-rozi-navigator/)
 handles the editor side.
 
 **Identity** — rename a pane (`Shift+N`); titles otherwise follow the program's OSC title. Pane identity
@@ -464,7 +464,7 @@ event's fields, `ROZI_SOCKET`, and `ROZI_REMOTE_HOST` when remote:
 
 **Runtime metrics** — `hyprmux metrics` exposes resource counters for monitoring.
 
-**Editor integration** — the [Vim/Neovim navigator](../integrations/vim-hyprmux-navigator/) plugin
+**Editor integration** — the [Vim/Neovim navigator](../integrations/vim-rozi-navigator/) plugin
 pairs with `smart-focus-<dir>`.
 
 See [Control socket](control.md) and [Hooks](hooks.md).

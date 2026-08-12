@@ -129,7 +129,7 @@ entered from.
 #### Seamless vim / neovim navigation
 
 hyprmux ships vim-aware focus actions and its own
-[`vim-hyprmux-navigator`](../integrations/vim-hyprmux-navigator/) plugin. Together they make a
+[`vim-rozi-navigator`](../integrations/vim-rozi-navigator/) plugin. Together they make a
 single `Ctrl-h/j/k/l` cross both hyprmux panes and editor splits. The hyprmux actions are **unbound
 by default**, so you opt in explicitly.
 
@@ -144,7 +144,7 @@ The pieces that make this work:
 - **editor → hyprmux:** when the editor is at its split edge it hands focus back by calling
   `hyprmux run-action focus-<dir>-no-wrap` over the [control socket](control.md) (every pane already
   has `ROZI`/`ROZI_SOCKET`/`ROZI_PANE` in its environment). The plugin can opt back into
-  wrapping with `g:hyprmux_navigator_wrap = 1`.
+  wrapping with `g:rozi_navigator_wrap = 1`.
 
 Detection uses the pane's foreground process (Linux `/proc`), so it is accurate regardless of
 shell/process depth and works for any program you list in `[navigation] editors`, not just vim.
@@ -163,14 +163,14 @@ Then install the bundled editor plugin. With lazy.nvim:
 
 ```lua
 {
-  dir = "/path/to/hyprmux/integrations/vim-hyprmux-navigator",
-  name = "vim-hyprmux-navigator",
+  dir = "/path/to/hyprmux/integrations/vim-rozi-navigator",
+  name = "vim-rozi-navigator",
 }
 ```
 
-The plugin provides `:HyprmuxNavigateLeft/Down/Up/Right/Previous`, normal and terminal-mode
+The plugin provides `:RoziNavigateLeft/Down/Up/Right/Previous`, normal and terminal-mode
 mappings, optional save-on-switch behavior, and no-op fallback outside hyprmux. See its
-[README](../integrations/vim-hyprmux-navigator/README.md) for Vim package installation and custom
+[README](../integrations/vim-rozi-navigator/README.md) for Vim package installation and custom
 mappings.
 
 ### Layout

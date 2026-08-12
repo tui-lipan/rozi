@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { AgentState, reduceAgentEvent } from "./hyprmux-agent-state.js"
+import { AgentState, reduceAgentEvent } from "./rozi-agent-state.js"
 
 const event = (type, properties) => ({ type, properties })
 const tracker = () => new AgentState()

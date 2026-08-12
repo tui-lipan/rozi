@@ -271,7 +271,7 @@ on screen is your side of the exchange. Use `hyprmux agent-slots` rather than op
 `ROZI_SOCKET` yourself — on Windows that variable names a discovery entry whose pipe name has to
 be derived rather than read, so the bridge is what makes a publisher portable.
 
-`integrations/opencode/hyprmux-agent-state.js` is a worked example of the simpler `set-status` form.
+`integrations/opencode/rozi-agent-state.js` is a worked example of the simpler `set-status` form.
 
 ## Pane logging
 

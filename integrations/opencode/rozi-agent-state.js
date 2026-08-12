@@ -27,7 +27,7 @@ function publish(status, reason) {
   })
 }
 
-export const HyprmuxAgentState = async () => {
+export const RoziAgentState = async () => {
   const state = new AgentState()
   await publish("idle")
 
@@ -50,7 +50,7 @@ const BLOCKED_REASON = { permission: "permission required", question: "answer re
 // A pane is one PTY but OpenCode is many sessions: a parent, its subagents, and anything else
 // open. Each reports its own lifecycle events, so deriving the pane's status from whichever event
 // arrived last made a subagent going idle publish `idle` for the whole pane while the parent was
-// still working - and because a reported status outranks hyprmux's own screen detection, that read
+// still working - and because a reported status outranks rozi's own screen detection, that read
 // as a finished run rather than as no information. The pane's status is an aggregate instead.
 export class AgentState {
   #requests = new Map()

@@ -171,7 +171,7 @@ setting commented out at its default, and [`examples/`](examples/) has ready-mad
 | [Project profiles](docs/project-profiles.md) | Profile files and pane identity |
 | [Control socket](docs/control.md) | Driving hyprmux from scripts |
 | [Hooks](docs/hooks.md) | Running commands when events happen |
-| [Vim/Neovim navigator](integrations/vim-hyprmux-navigator/) | One set of keys for editor splits and panes |
+| [Vim/Neovim navigator](integrations/vim-rozi-navigator/) | One set of keys for editor splits and panes |
 | [Benchmarks](docs/benchmarks.md) | Performance suites and profiling |
 
 Working on hyprmux itself? [AGENTS.md](AGENTS.md) has the architecture notes.

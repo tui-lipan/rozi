@@ -246,7 +246,7 @@ pulsing until you open it.
 
 OpenCode exposes lifecycle events that provide authoritative `working`, `idle`, and blocked states.
 Install the included plugin by linking or copying
-`integrations/opencode/hyprmux-agent-state.js` into `~/.config/opencode/plugins/`, then restart
+`integrations/opencode/rozi-agent-state.js` into `~/.config/opencode/plugins/`, then restart
 OpenCode inside hyprmux. The plugin has no package dependencies and does nothing outside hyprmux.
 It uses the injected `ROZI_SOCKET` and `ROZI_PANE` values to update only its own pane.
 

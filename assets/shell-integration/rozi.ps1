@@ -1,14 +1,14 @@
-# hyprmux shell integration for PowerShell (cross-platform plan Phase 8).
+# rozi shell integration for PowerShell (cross-platform plan Phase 8).
 #
-# Emits OSC 7 and OSC 9;9 (cwd), OSC 133 A/B/C/D (command lifecycle), and a hyprmux-namespaced
+# Emits OSC 7 and OSC 9;9 (cwd), OSC 133 A/B/C/D (command lifecycle), and a rozi-namespaced
 # OSC 133 `rozi_exe=` parameter carrying only the executable basename - never a full command
-# line - so hyprmux's smart focus and pane-runtime-state tracking work without process inspection
+# line - so rozi's smart focus and pane-runtime-state tracking work without process inspection
 # (which is deliberately unsupported on Windows).
 #
-# Loaded by hyprmux itself via `-NoExit -Command ". <this file>"`, which runs *after* the user's
+# Loaded by rozi itself via `-NoExit -Command ". <this file>"`, which runs *after* the user's
 # `$PROFILE`, so every prompt customization and PSReadLine setting is already in place and gets
 # wrapped rather than replaced. No dotfile and no registry key is ever modified. Also safe to
-# dot-source from `$PROFILE` by hand (see docs/terminal.md) for shells hyprmux did not launch;
+# dot-source from `$PROFILE` by hand (see docs/terminal.md) for shells rozi did not launch;
 # sourcing it twice is a no-op.
 #
 # Compatible with Windows PowerShell 5.1 (hence `[char]0x1b` rather than the `` `e `` escape, which
@@ -17,23 +17,23 @@
 if ($env:ROZI_SHELL_INTEGRATION_LOADED) {
     return
 }
-# Not an interactive session (`-Command`/`-File`, or a hyprmux `command_shell` runner): there is no
+# Not an interactive session (`-Command`/`-File`, or a rozi `command_shell` runner): there is no
 # prompt to instrument and no user to instrument it for.
 if (-not [Environment]::UserInteractive -or $null -eq $Host.UI.RawUI) {
     return
 }
 $env:ROZI_SHELL_INTEGRATION_LOADED = "1"
 
-$Global:__hyprmuxEsc = [char]0x1b
+$Global:__roziEsc = [char]0x1b
 
-function Global:__hyprmux_emit([string] $Body) {
+function Global:__rozi_emit([string] $Body) {
     # `Write-Host -NoNewline` writes straight to the host without disturbing the pipeline, which is
     # what a prompt function needs: returning the string would print it as prompt text.
-    Write-Host -NoNewline ($Global:__hyprmuxEsc + $Body + $Global:__hyprmuxEsc + '\')
+    Write-Host -NoNewline ($Global:__roziEsc + $Body + $Global:__roziEsc + '\')
 }
 
 # Percent-encode everything outside the URI-unreserved set, matching the framework's decoder.
-function Global:__hyprmux_urlencode([string] $Value, [string] $Keep = '') {
+function Global:__rozi_urlencode([string] $Value, [string] $Keep = '') {
     $builder = [System.Text.StringBuilder]::new()
     foreach ($byte in [System.Text.Encoding]::UTF8.GetBytes($Value)) {
         $char = [char] $byte
@@ -47,7 +47,7 @@ function Global:__hyprmux_urlencode([string] $Value, [string] $Keep = '') {
     return $builder.ToString()
 }
 
-function Global:__hyprmux_cwd() {
+function Global:__rozi_cwd() {
     # `$PWD` can point at a non-filesystem PowerShell drive (Registry::, Cert:, ...). Those have no
     # meaningful working directory for a pane to inherit, so report nothing rather than a path that
     # would fail `Command::current_dir`.
@@ -56,22 +56,22 @@ function Global:__hyprmux_cwd() {
     }
     $path = $PWD.ProviderPath
 
-    # OSC 9;9 carries the native path verbatim - the form Windows terminals and hyprmux's own
+    # OSC 9;9 carries the native path verbatim - the form Windows terminals and rozi's own
     # observer prefer, with no encoding to get wrong.
-    __hyprmux_emit "]9;9;$path"
+    __rozi_emit "]9;9;$path"
 
     # OSC 7 carries the same directory as a `file://` URI for parity with the Unix integrations.
     # A Windows drive path becomes an absolute URI path by prefixing a slash and flipping the
     # separators: `C:\Users\x` -> `file:///C:/Users/x`.
     $uriPath = '/' + ($path -replace '\\', '/')
-    $encoded = __hyprmux_urlencode $uriPath '/:'
-    __hyprmux_emit "]7;file://$encoded"
+    $encoded = __rozi_urlencode $uriPath '/:'
+    __rozi_emit "]7;file://$encoded"
 }
 
 # Wrap - never replace - the prompt the user's `$PROFILE` (or a prompt theme like oh-my-posh or
 # Starship) already installed. The original is captured once and invoked from inside the wrapper.
-if (-not $Global:__hyprmuxOriginalPrompt) {
-    $Global:__hyprmuxOriginalPrompt = $function:Prompt
+if (-not $Global:__roziOriginalPrompt) {
+    $Global:__roziOriginalPrompt = $function:Prompt
 }
 
 function Global:Prompt() {
@@ -81,32 +81,32 @@ function Global:Prompt() {
     $succeeded = $?
     $lastExit = $LASTEXITCODE
 
-    if ($Global:__hyprmuxRanCommand) {
+    if ($Global:__roziRanCommand) {
         $code = if ($succeeded) { 0 } elseif ($null -ne $lastExit) { $lastExit } else { 1 }
-        __hyprmux_emit "]133;D;$code"
-        $Global:__hyprmuxRanCommand = $false
+        __rozi_emit "]133;D;$code"
+        $Global:__roziRanCommand = $false
     }
-    __hyprmux_cwd
-    __hyprmux_emit ']2;PowerShell'
-    __hyprmux_emit ']133;A'
+    __rozi_cwd
+    __rozi_emit ']2;PowerShell'
+    __rozi_emit ']133;A'
 
-    $rendered = & $Global:__hyprmuxOriginalPrompt
+    $rendered = & $Global:__roziOriginalPrompt
 
     # `B` marks the end of the prompt and the start of the input area, so it must be the very last
     # thing emitted - hence appending it to the prompt string rather than writing it out here.
-    return "$rendered$($Global:__hyprmuxEsc)]133;B$($Global:__hyprmuxEsc)\"
+    return "$rendered$($Global:__roziEsc)]133;B$($Global:__roziEsc)\"
 }
 
 # `C` (a command is about to execute) has no hook of its own. PSReadLine routes every interactive
 # line through `PSConsoleHostReadLine`, so wrapping that gives us the accepted command line at
 # exactly the right moment: after the user pressed Enter, before the shell runs it.
 if (Get-Module -Name PSReadLine) {
-    if (-not $Global:__hyprmuxOriginalReadLine) {
-        $Global:__hyprmuxOriginalReadLine = $function:PSConsoleHostReadLine
+    if (-not $Global:__roziOriginalReadLine) {
+        $Global:__roziOriginalReadLine = $function:PSConsoleHostReadLine
     }
 
     function Global:PSConsoleHostReadLine() {
-        $line = & $Global:__hyprmuxOriginalReadLine
+        $line = & $Global:__roziOriginalReadLine
 
         # Only the executable's basename ever leaves this shell - never arguments, never the full
         # command line. Treat the terminal as an untrusted channel and the user's command line as
@@ -117,12 +117,12 @@ if (Get-Module -Name PSReadLine) {
             $exe = [System.IO.Path]::GetFileName($exe)
         }
 
-        $Global:__hyprmuxRanCommand = $true
+        $Global:__roziRanCommand = $true
         if ($exe) {
-            __hyprmux_emit "]133;C;rozi_exe=$(__hyprmux_urlencode $exe)"
+            __rozi_emit "]133;C;rozi_exe=$(__rozi_urlencode $exe)"
         }
         else {
-            __hyprmux_emit ']133;C'
+            __rozi_emit ']133;C'
         }
         return $line
     }

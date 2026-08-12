@@ -1,0 +1,57 @@
+*rozi-navigator.txt*  Seamless navigation between Vim splits and rozi panes
+
+==============================================================================
+CONTENTS                                           *rozi-navigator-contents*
+
+1. Commands........................................|rozi-navigator-commands|
+2. Configuration...................................|rozi-navigator-config|
+
+==============================================================================
+COMMANDS                                           *rozi-navigator-commands*
+
+                                                *:RoziNavigateLeft*
+:RoziNavigateLeft       Move to the split or rozi pane on the left.
+                                                *:RoziNavigateDown*
+:RoziNavigateDown       Move to the split or rozi pane below.
+                                                *:RoziNavigateUp*
+:RoziNavigateUp         Move to the split or rozi pane above.
+                                                *:RoziNavigateRight*
+:RoziNavigateRight      Move to the split or rozi pane on the right.
+                                                *:RoziNavigatePrevious*
+:RoziNavigatePrevious   Move to the previous split or rozi pane.
+                                                *:RoziNavigatorCheck*
+:RoziNavigatorCheck     Print diagnostics and test focus-left through the
+                           rozi control socket.
+
+The default normal-mode mappings are CTRL-H, CTRL-J, CTRL-K, CTRL-L, and
+CTRL-\. The four directional mappings also work from terminal mode.
+
+==============================================================================
+CONFIGURATION                                       *rozi-navigator-config*
+
+Set before the plugin loads:
+
+                                                *g:rozi_navigator_command*
+g:rozi_navigator_command
+        Path to the rozi executable. Defaults to "rozi" from PATH.
+
+                                                *g:rozi_navigator_no_mappings*
+g:rozi_navigator_no_mappings
+        Set to 1 to define commands without installing default mappings.
+
+                                                *g:rozi_navigator_save_on_switch*
+g:rozi_navigator_save_on_switch
+        0: do not save (default)
+        1: update the current buffer before leaving Vim
+        2: write all changed buffers before leaving Vim
+
+                                                *g:rozi_navigator_wrap*
+g:rozi_navigator_wrap
+        Set to 1 to wrap to another rozi pane when no pane exists in the
+        requested direction. The default is 0, which leaves focus unchanged
+        at the outer edge.
+
+The plugin invokes `rozi run-action` only when movement reaches an editor
+edge. It uses ROZI_SOCKET from the pane environment.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

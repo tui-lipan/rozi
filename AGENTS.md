@@ -440,6 +440,8 @@ archives on a `v*` tag, with checksums and extracted-binary smoke tests.
   and `[pane].workbar_powerline` toggles trailing-badge chaining.
 - `[theme].name` selects built-in, `system`, or custom themes from `~/.config/rozi/themes/`.
 - `[profile] default` selects a startup profile from `~/.config/rozi/profiles/`.
+- `[session] startup` picks what a bare launch does: `picker` (default), `ephemeral`, `last`, or
+  `profile` (the session named after `[profile] default`). One spelling per mode, no aliases.
 - `[session] autosave` enables local layout autosave/restore.
 - `[session] resurrect` snapshots named sessions so layout, commands, and scrollback survive a server restart.
 - `<NAME>` / `--session <NAME>` attaches or launches the canonical same-name profile; `attach

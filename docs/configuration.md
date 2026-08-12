@@ -171,7 +171,7 @@ load_profile = true            # confirm replacing a live ephemeral session from
 [session]
 autosave = true              # save the live layout on quit, restore it next launch (default: false)
 resurrect = true             # snapshot named sessions for restart after server loss (default: true)
-startup = "picker"           # "picker" (default), "ephemeral", or "last"
+startup = "picker"           # "picker" (default), "ephemeral", "last", or "profile"
 allow_takeover = true        # writable followers take layout control immediately (default: true;
                              # false makes a request wait for the controller to grant it)
 # path = "~/.local/state/rozi/session.toml"  # default location if omitted
@@ -427,7 +427,7 @@ active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. Also writable via **Ctrl+f** in **Profiles**. |
+| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. With `[session] startup = "profile"` it also names the session a bare launch opens. Also writable via **Ctrl+f** in **Profiles**. |
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
@@ -562,12 +562,20 @@ background session server and can be detached/reattached with live terminal stat
 | --- | --- | --- |
 | `autosave` | `false` | Write the layout on quit and restore it on startup. |
 | `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. |
-| `startup` | `"picker"` | `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted. |
+| `startup` | `"picker"` | What a bare launch does: `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted; `"profile"` opens the session named after `[profile] default`. Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place. |
 | `path` | `$XDG_STATE_HOME/rozi/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 | `allow_takeover` | `true` | Let any writable, active follower take the layout-control lease immediately with `request-control`. Set `false` to make a request wait for the controller to grant or decline it. The session server reads this when it starts; use `toggle-control-takeover` to change a running session. Read-only and parked clients can never take control. |
 
-An explicit target takes precedence over startup configuration. `startup = "last"` takes precedence
-over `[profile] default` and autosave; those remain ephemeral-layout seeders.
+An explicit target takes precedence over startup configuration. `startup = "last"` and `startup =
+"profile"` choose a *named session*, so they take precedence over `[profile] default` and autosave;
+those two remain ephemeral-layout seeders. `--remote` bypasses startup policy entirely — the remote
+host owns its sessions.
+
+`startup = "profile"` makes a bare launch behave exactly like `rozi <the default profile's name>`:
+it attaches to that session when it is running, and otherwise creates it from
+`profiles/<name>.toml` (or its resurrection snapshot). With no `[profile] default` set, a name that
+is not a usable session name, or nothing to open under that name, it warns and falls back to the
+`picker` path rather than attaching something else.
 
 With `startup = "picker"` (the default, also reachable with `--pick`), the picker is shown at launch
 **only when there is something to pick** - a running named session, a resurrection snapshot, or a

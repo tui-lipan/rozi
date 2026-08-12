@@ -555,7 +555,7 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
         match SessionStartup::parse(&startup) {
             Some(value) => config.session.startup = value,
             None => warnings.push(format!(
-                "Ignored unknown session.startup \"{startup}\" (expected `ephemeral`, `picker`, or `last`)"
+                "Ignored unknown session.startup \"{startup}\" (expected `picker`, `ephemeral`, `last`, or `profile`)"
             )),
         }
     }

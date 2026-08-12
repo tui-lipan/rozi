@@ -722,16 +722,31 @@ pub fn run() -> Result<()> {
     let mut startup_create_only = false;
     // The name the startup picker should land on when `last` could not reopen its session.
     let mut startup_picker_highlight = None;
-    if attach_session.is_none()
-        && !cli.pick
-        && loaded.config.session.startup == config::SessionStartup::Last
-    {
-        match resolve_last_session_target() {
-            LastSessionTarget::Reopen(name) => {
-                attach_session = Some(name);
-                startup_autostart = true;
+    // Startup policy chooses a session only for a bare local launch: `--pick` asks for the picker
+    // by hand, and under `--remote` the session lives on the far host, which local discovery,
+    // snapshots, and profiles do not describe.
+    if attach_session.is_none() && !cli.pick && cli.remote.is_none() {
+        match loaded.config.session.startup {
+            config::SessionStartup::Last => match resolve_last_session_target() {
+                LastSessionTarget::Reopen(name) => {
+                    attach_session = Some(name);
+                    startup_autostart = true;
+                }
+                LastSessionTarget::Pick(name) => startup_picker_highlight = name,
+            },
+            // Resolving to a name is the whole mode: the untargeted `Dwim` arm below then attaches
+            // it when running and creates it from its canonical profile when not, which is exactly
+            // what `rozi <name>` does.
+            config::SessionStartup::Profile => {
+                match resolve_profile_session_target(&loaded.config) {
+                    Ok(name) => {
+                        attach_session = Some(name);
+                        startup_autostart = true;
+                    }
+                    Err(warning) => startup_messages.push(warning),
+                }
             }
-            LastSessionTarget::Pick(name) => startup_picker_highlight = name,
+            config::SessionStartup::Picker | config::SessionStartup::Ephemeral => {}
         }
     }
     let mut startup_profile = None;
@@ -819,10 +834,16 @@ pub fn run() -> Result<()> {
                     ));
                 }
             }
+            // Reached only for a target startup policy chose (`last`, `profile`), never one the
+            // user typed: a profile that will not load reports the failure and opens the session
+            // blank, rather than refusing to launch rozi at all until the file is fixed.
             cli::SessionCommand::Dwim => {
                 startup_autostart = true;
                 if !running && canonical_path.exists() {
-                    startup_profile = Some(load_startup_profile(name, canonical_path));
+                    match try_load_startup_profile(name, canonical_path) {
+                        Ok(profile) => startup_profile = Some(profile),
+                        Err(message) => startup_messages.push(message),
+                    }
                 }
             }
         }
@@ -873,14 +894,16 @@ pub fn run() -> Result<()> {
     }
     let config = loaded.config;
     // Open the picker at startup only for a bare launch (no explicit attach target). The
-    // "anything to pick" gate is checked in `init` so it reflects live state at mount. `last`
-    // reaches here only when its remembered session could not be reopened.
+    // "anything to pick" gate is checked in `init` so it reflects live state at mount. `last` and
+    // `profile` reach here only when the session they name could not be opened.
     let want_startup_picker = attach_session.is_none()
         && cli.remote.is_none()
         && (cli.pick
             || matches!(
                 config.session.startup,
-                config::SessionStartup::Picker | config::SessionStartup::Last
+                config::SessionStartup::Picker
+                    | config::SessionStartup::Last
+                    | config::SessionStartup::Profile
             ));
     let startup_host_colors = query_host_colors();
     let terminal_bg = startup_host_colors.map(|colors| colors.bg);
@@ -974,15 +997,27 @@ pub fn run() -> Result<()> {
     .run()
 }
 
+/// Load a profile the user named explicitly. A target typed on the command line is a request that
+/// either happens or fails, so an unreadable profile ends the launch.
 fn load_startup_profile(name: &str, path: PathBuf) -> StartupProfile {
+    match try_load_startup_profile(name, path) {
+        Ok(profile) => profile,
+        Err(message) => startup_fatal(message),
+    }
+}
+
+fn try_load_startup_profile(
+    name: &str,
+    path: PathBuf,
+) -> std::result::Result<StartupProfile, String> {
     match profiles::load_profile(&path) {
-        Ok(profile) => StartupProfile {
+        Ok(profile) => Ok(StartupProfile {
             profile,
             name: name.to_string(),
             path,
             records_origin: true,
-        },
-        Err(err) => startup_fatal(format!("Profile `{name}` load failed: {err}")),
+        }),
+        Err(err) => Err(format!("Profile `{name}` load failed: {err}")),
     }
 }
 
@@ -1006,15 +1041,42 @@ fn resolve_last_session_target() -> LastSessionTarget {
     let Some(last) = crate::session::read_last_named_session() else {
         return LastSessionTarget::Pick(None);
     };
-    let running = crate::session::discovery::discover_session(&last)
+    let reopenable = session_openable_by_name(&last);
+    select_last_session_target(last, reopenable)
+}
+
+/// Whether attaching to this name would land on something: a running server, a resurrection
+/// snapshot the server can restore, or its canonical same-name profile to launch from.
+fn session_openable_by_name(name: &str) -> bool {
+    crate::session::discovery::discover_session(name)
         .ok()
         .flatten()
-        .is_some();
-    let restorable = crate::session::server::list_snapshot_names_by_recency()
-        .iter()
-        .any(|name| name == &last)
-        || config::profile_path_for_name(&last).exists();
-    select_last_session_target(last, running || restorable)
+        .is_some()
+        || crate::session::server::list_snapshot_names_by_recency()
+            .iter()
+            .any(|snapshot| snapshot == name)
+        || config::profile_path_for_name(name).exists()
+}
+
+/// `[session] startup = "profile"`: the session named after `[profile] default`. Returns the warning
+/// to report when there is nothing to open under that name; the launch then takes the ordinary
+/// bare-launch path (picker, or ephemeral with nothing to pick) rather than attaching some other
+/// session. No picker highlight: an unresolvable name has no row to land on.
+fn resolve_profile_session_target(config: &config::Config) -> std::result::Result<String, String> {
+    let Some(name) = config.profile.default.as_deref() else {
+        return Err("session.startup = \"profile\" needs a [profile] default.".to_string());
+    };
+    if !crate::session::discovery::valid_session_name(name) {
+        return Err(format!(
+            "Profile `{name}` is not a usable session name; ignored session.startup = \"profile\"."
+        ));
+    }
+    if !session_openable_by_name(name) {
+        return Err(format!(
+            "No session or profile named `{name}`; ignored session.startup = \"profile\"."
+        ));
+    }
+    Ok(name.to_string())
 }
 
 fn select_last_session_target(last: String, reopenable: bool) -> LastSessionTarget {
@@ -1089,6 +1151,53 @@ mod tests {
         assert_eq!(
             select_last_session_target("dev".to_string(), false),
             LastSessionTarget::Pick(Some("dev".to_string()))
+        );
+    }
+
+    /// `profile` mode resolves to the canonical session name so the untargeted `Dwim` path can
+    /// attach it or launch it from `profiles/<name>.toml`.
+    #[test]
+    fn startup_profile_targets_the_session_named_after_the_default_profile() {
+        let profiles = crate::config::profiles_dir();
+        std::fs::create_dir_all(&profiles).expect("profiles dir");
+        let path = profiles.join("startup-profile-mode.toml");
+        crate::profiles::save_profile(&path, &crate::profiles::Profile::default())
+            .expect("write profile");
+
+        let mut config = crate::config::Config::default();
+        config.profile.default = Some("startup-profile-mode".to_string());
+        let resolved = resolve_profile_session_target(&config);
+
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(resolved, Ok("startup-profile-mode".to_string()));
+    }
+
+    /// The mode reads a config key it cannot validate at parse time, so every unusable value falls
+    /// through to the picker with a warning instead of exiting or attaching something else.
+    #[test]
+    fn startup_profile_defers_to_the_picker_without_a_usable_default() {
+        let config = crate::config::Config::default();
+        assert!(config.profile.default.is_none());
+        assert!(
+            resolve_profile_session_target(&config)
+                .expect_err("no default configured")
+                .contains("[profile] default")
+        );
+
+        let mut config = crate::config::Config::default();
+        config.profile.default = Some("not a session name".to_string());
+        assert!(
+            resolve_profile_session_target(&config)
+                .expect_err("invalid session name")
+                .contains("not a usable session name")
+        );
+
+        let mut config = crate::config::Config::default();
+        config.profile.default = Some("rozi-no-such-profile-xyzzy".to_string());
+        assert!(
+            resolve_profile_session_target(&config)
+                .expect_err("nothing to open")
+                .contains("No session or profile named")
         );
     }
 

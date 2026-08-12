@@ -181,6 +181,10 @@ immediately recreate it while staying attached).
 **Session picker** — a fuzzy modal listing local sessions, attached sessions, configured remote
 hosts, and cached remote sessions, with `ctrl+t` to reach a scratch ephemeral shell.
 
+**Startup policy** — `[session] startup` decides what a bare launch does: `picker` (default, attaches
+nothing until you choose), `ephemeral`, `last` (the most recent named session), or `profile` (the
+session named after `[profile] default`). Explicit targets, `--pick`, and `--remote` take precedence.
+
 **Autosave** — `[session] autosave` persists layout locally and restores it on next launch.
 
 **Resurrect** — `[session] resurrect` snapshots named sessions so layout, commands, and scrollback
@@ -235,7 +239,8 @@ Profiles are named, reusable launch recipes stored in `~/.config/rozi/profiles/`
 - **Launch** the canonical same-name session, or open a profile under another name.
 - **Apply** a profile to replace the current session's contents.
 - **Profile picker** with fuzzy search.
-- `[profile] default` seeds every session opened without a recipe, not just the startup one.
+- `[profile] default` seeds every session opened without a recipe, not just the startup one, and
+  with `[session] startup = "profile"` also names the session a bare launch opens.
 - Profiles store the layout tree, pane commands and identities, workspace names, layout kinds, and
   pane-synchronization state, via the serde-stable tree shared with session layout documents.
 

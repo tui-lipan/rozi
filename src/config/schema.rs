@@ -178,14 +178,21 @@ pub enum SessionStartup {
     /// Reopen the exact most recently used named session. When it is not available, open the
     /// picker with it highlighted rather than silently attaching an unrelated session.
     Last,
+    /// Open the session named after `[profile] default`, exactly as `rozi <that name>` would:
+    /// attach when it is running, otherwise create it from its canonical same-name profile. With no
+    /// default configured, or nothing to open under that name, fall through to the picker.
+    Profile,
 }
 
 impl SessionStartup {
+    /// One spelling per mode: an unrecognized value warns and leaves the default in place rather
+    /// than resolving through aliases that describe a different mode than they name.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "ephemeral" | "default" | "attach" => Some(Self::Ephemeral),
-            "picker" | "pick" | "choose" => Some(Self::Picker),
+            "ephemeral" => Some(Self::Ephemeral),
+            "picker" => Some(Self::Picker),
             "last" => Some(Self::Last),
+            "profile" => Some(Self::Profile),
             _ => None,
         }
     }
@@ -1339,11 +1346,21 @@ mod tests {
             Some(SessionStartup::Picker)
         );
         assert_eq!(
-            SessionStartup::parse(" pick "),
+            SessionStartup::parse(" picker "),
             Some(SessionStartup::Picker)
         );
         assert_eq!(SessionStartup::parse("last"), Some(SessionStartup::Last));
+        assert_eq!(
+            SessionStartup::parse("profile"),
+            Some(SessionStartup::Profile)
+        );
         assert_eq!(SessionStartup::parse("nonsense"), None);
+        // Each mode has exactly one spelling: `attach` named a mode that attaches nothing and
+        // `default` named the mode that is no longer the default, so both are rejected.
+        assert_eq!(SessionStartup::parse("default"), None);
+        assert_eq!(SessionStartup::parse("attach"), None);
+        assert_eq!(SessionStartup::parse("pick"), None);
+        assert_eq!(SessionStartup::parse("choose"), None);
     }
 
     #[test]

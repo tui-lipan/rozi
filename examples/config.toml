@@ -133,6 +133,7 @@
 [profile]
 # Profile seeding every session opened without a recipe. Named targets, --profile, and
 # session.startup = "last" all take precedence. No default; Ctrl+f in Profiles writes it.
+# session.startup = "profile" also makes this the session a bare launch opens.
 #default = "dev"
 
 [clipboard]
@@ -191,7 +192,8 @@
 # Snapshot named sessions so layout, commands, and scrollback survive a server restart.
 #resurrect = true
 # "picker" opens the session picker when there is something to pick, "ephemeral" starts a
-# scratch session immediately, "last" reopens the last named session.
+# scratch session immediately, "last" reopens the last named session, "profile" opens the
+# session named after the [profile] default.
 #startup = "picker"
 # Let a writable follower take the layout-control lease immediately with request-control.
 # Set false when sharing with another person, so a request waits to be granted.

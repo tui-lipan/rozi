@@ -82,8 +82,21 @@ rozi new review --profile dev
 `attach` and `new` are reserved CLI command words. Use `rozi --session attach` or
 `rozi --session new` when a session or canonical profile binding actually has one of those
 names. A bare `rozi` opens the session picker (or starts an ephemeral scratch session when there
-is nothing to pick) unless `[session] startup = "last"` is configured. In ephemeral mode,
+is nothing to pick) unless `[session] startup` says otherwise. In ephemeral mode,
 `[profile] default` remains the first launch seed, followed by session autosave.
+
+To make one profile *the* thing a bare launch opens, without typing its name:
+
+```toml
+[profile]
+default = "dev"
+
+[session]
+startup = "profile"
+```
+
+A bare `rozi` then does exactly what `rozi dev` does — attach to session `dev`, or create it from
+`profiles/dev.toml`. See [startup policies](sessions.md#other-startup-policies).
 
 Set a default profile in config:
 

@@ -211,12 +211,38 @@ what you keep using once a session is up. Other PTY-creating actions (`open-conf
 sidebar `run`/`popup`, scratchpad, control `new-pane`) also start that ephemeral first, then run
 the requested command once the session is attached.
 
-Set `[session] startup = "ephemeral"` to skip all of this and start a scratch session immediately.
+### Other startup policies
 
-Set `[session] startup = "last"` to reopen the exact most recently attached named session, whether
-it is still running or restorable from a snapshot or its canonical same-name profile. If that
-session is gone, the picker opens with its name highlighted rather than silently attaching some
-other session. Explicit targets and `--pick` take precedence.
+`[session] startup` applies only to a **bare launch**. An explicit target (`rozi dev`, `attach`,
+`new`, `--session`), `--pick`, and `--remote` all take precedence over it; each mode has exactly one
+spelling.
+
+| Mode | A bare `rozi` |
+| --- | --- |
+| `picker` (default) | Opens the picker when there is something to pick, attaching nothing until you choose. Falls through to an ephemeral session when there is not. |
+| `ephemeral` | Starts the disposable `eph-<pid>` session immediately. |
+| `last` | Reopens the exact most recently attached named session. |
+| `profile` | Opens the session named after `[profile] default`. |
+
+`ephemeral` is the classic "open a multiplexer and start working" feel; `[profile] default` and
+`[session] autosave` still seed that scratch layout.
+
+`last` follows you: whichever named session you were in most recently is the one that reopens,
+whether it is still running or restorable from a snapshot or its canonical same-name profile.
+
+`profile` is the fixed counterpart — the same workplace every time. A bare launch behaves exactly
+like `rozi <the default profile's name>`: it attaches to that session when it is running, and
+otherwise creates it from `profiles/<name>.toml`, so the profile's layout and commands come up under
+a session name that then survives detach. Nothing needs to be typed and nothing is duplicated: the
+second launch finds the session the first one created. Because the profile *is* the session's recipe,
+this is the mode where naming a profile after a project pays off.
+
+Neither `last` nor `profile` silently substitutes a different session. If the named one cannot be
+opened — `last` has no reopenable memory, or `profile` has no `[profile] default`, an unusable name,
+or nothing to open under it — the launch falls back to the `picker` path above and a toast says why.
+`last` highlights its remembered name there; `profile` has no row to land on, so it does not. A
+profile that exists but fails to *parse* is reported the same way and its session opens blank:
+startup policy chose that target, so a broken file does not keep rozi from launching.
 
 ## The Sessions sidebar (grouped view)
 
@@ -463,8 +489,8 @@ well as stopping the server. A crash, `SIGKILL`, or ordinary detach preserves it
 Profiles are reusable launch recipes. `rozi dev` attaches to `dev` when running, otherwise loads
 `~/.config/rozi/profiles/dev.toml` into a fresh canonical session named `dev`; use `rozi new
 review --profile dev` to create an independently named session from the same recipe. Session
-resurrection, local autosave, and `[session] startup = "last"` retain their existing precedence and
-lifecycle behavior. See [profiles.md](profiles.md).
+resurrection, local autosave, and the `last` / `profile` startup policies retain their existing
+precedence and lifecycle behavior. See [profiles.md](profiles.md).
 
 ## Stale sockets and limits
 

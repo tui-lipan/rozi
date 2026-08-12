@@ -162,6 +162,10 @@ The per-run control socket always belongs to the **local UI process**. When you 
 `list-sessions --remote` and `kill-session --remote` are separate SSH helpers that talk to rozi
 on the remote host; they are not control-socket commands. See [Remote SSH sessions](remote.md).
 
+Launch-time options are rejected on a control command rather than ignored, so `rozi --remote box
+list-panes` is an error instead of a local answer that looks like a remote one. That covers
+`--remote`, `--config`, `--read-only`, `--pick`, `--profile`, and a session target.
+
 ## Wire protocol
 
 The socket accepts one newline-delimited JSON request per connection and returns one JSON response.

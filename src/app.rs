@@ -635,6 +635,18 @@ pub(crate) fn clipboard_copy_feedback_duration(config: &Config) -> Duration {
     Duration::from_millis(clipboard_config(config).copy_feedback_duration_ms as u64)
 }
 
+/// Point config loading at `--config <PATH>` before any command reads it.
+///
+/// Every entry point that loads config goes through here, so a server, a remote `list-sessions`,
+/// and the UI all honour the same flag rather than the UI alone.
+fn apply_config_path(path: Option<String>) {
+    if let Some(path) = path {
+        unsafe {
+            std::env::set_var("ROZI_CONFIG", path);
+        }
+    }
+}
+
 pub fn run() -> Result<()> {
     let parsed = match cli::parse_cli_args(std::env::args().skip(1).collect()) {
         Ok(parsed) => parsed,
@@ -653,8 +665,8 @@ pub fn run() -> Result<()> {
     }
 
     let parsed = match parsed {
-        cli::ParsedCli::Help => {
-            cli::print_help();
+        cli::ParsedCli::Help { advanced } => {
+            cli::print_help(advanced);
             return Ok(());
         }
         cli::ParsedCli::Version => {
@@ -692,27 +704,40 @@ pub fn run() -> Result<()> {
     let cli = match parsed {
         cli::ParsedCli::Control(command) => return cli::run_control_cli(command),
         cli::ParsedCli::AgentSlots(command) => return cli::run_agent_slots_cli(command),
-        cli::ParsedCli::Server { name, fresh } => return cli::run_server_cli(&name, fresh),
+        cli::ParsedCli::Server {
+            name,
+            fresh,
+            config_path,
+        } => {
+            apply_config_path(config_path);
+            return cli::run_server_cli(&name, fresh);
+        }
         cli::ParsedCli::RemoteServe { name } => return cli::run_remote_serve_cli(&name),
-        cli::ParsedCli::ListSessions { format, remote } => {
+        cli::ParsedCli::ListSessions {
+            format,
+            remote,
+            config_path,
+        } => {
+            apply_config_path(config_path);
             return cli::run_list_sessions_cli(format, remote.as_deref());
         }
-        cli::ParsedCli::KillSession { name, remote } => {
+        cli::ParsedCli::KillSession {
+            name,
+            remote,
+            config_path,
+        } => {
+            apply_config_path(config_path);
             return cli::run_kill_session_cli(&name, remote.as_deref());
         }
         cli::ParsedCli::Run(args) => args,
-        cli::ParsedCli::Help
+        cli::ParsedCli::Help { .. }
         | cli::ParsedCli::Version
         | cli::ParsedCli::Skill
         | cli::ParsedCli::Install
         | cli::ParsedCli::Update(_) => unreachable!("early CLI command returned above"),
     };
 
-    if let Some(path) = cli.config_path {
-        unsafe {
-            std::env::set_var("ROZI_CONFIG", path);
-        }
-    }
+    apply_config_path(cli.config_path.clone());
 
     let loaded = config::load_config();
     let mut startup_messages = loaded.warnings;

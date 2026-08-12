@@ -32,6 +32,8 @@
 //! - [`process`] - the `ProcessInspector` trait plus per-OS `cwd`/`foreground_program` fallbacks
 //!   (Phase 9), wired into `session::server`'s pane-runtime-state computation (Phase 6). Windows is
 //!   an explicit "unavailable" implementation per the plan (no PEB or process-tree probing).
+//! - [`ansi`] - whether plain stdout (help, not the TUI) can render SGR styling, including the
+//!   Windows virtual-terminal switch a legacy console needs before it can.
 //! - [`notifications`] - desktop notifications (Phase 10).
 //! - [`sound`] - best-effort alert cue playback.
 //! - [`install`] - thin rozi path/policy adapter over the `relswap` signed-release engine.
@@ -45,6 +47,7 @@ pub mod install;
 pub mod paths;
 pub mod user;
 
+pub mod ansi;
 pub mod command;
 pub mod ipc;
 pub mod notifications;

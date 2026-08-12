@@ -14,9 +14,13 @@ no config at all.
 
 `rozi` resolves the config path in this order:
 
-1. `$ROZI_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
-2. `$XDG_CONFIG_HOME/rozi/config.toml`, else `~/.config/rozi/config.toml` — on Windows,
+1. `--config <PATH>`, which sets `$ROZI_CONFIG` for the run.
+2. `$ROZI_CONFIG` (a full path; `~` and `~/...` expand to `$HOME`).
+3. `$XDG_CONFIG_HOME/rozi/config.toml`, else `~/.config/rozi/config.toml` — on Windows,
    `%APPDATA%\rozi\config.toml`.
+
+`--config` applies to every command that reads config — a launch, `--server`, and the remote forms
+of `list-sessions` / `kill-session`. Control commands never load config and reject it.
 
 On startup a toast reports any warning raised while reading or parsing the file. A config that
 loads cleanly is silent - the settings taking effect is the confirmation.

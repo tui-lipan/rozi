@@ -44,7 +44,7 @@ rozi attach dev              # attach only; error unless "dev" is running
 rozi attach dev --read-only  # attach as a viewer without input authority
 rozi new dev                 # create a fresh empty session; error if running
 rozi new review --profile dev # create "review" from profile "dev"
-rozi --session dev --server  # run the server process directly
+rozi --session dev --server  # run the server process directly (`--help --advanced`)
 rozi list-sessions           # list connectable sessions with pane/layout status
 rozi kill-session dev        # attach-handshake then request a clean Shutdown
 rozi --remote workbox dev    # same attach/launch surface on a remote host over SSH

@@ -14,9 +14,9 @@ pub(crate) struct CliArgs {
     pub(crate) profile: Option<String>,
     pub(crate) config_path: Option<String>,
     pub(crate) attach_session: Option<String>,
-    /// Open the session picker at startup instead of silently attaching to an ephemeral session
-    /// (also enabled by `[session] startup = "picker"`). Ignored when a target is
-    /// given or no named session exists.
+    /// Force the startup session picker, overriding whatever `[session] startup` selects. A target
+    /// wins over it, and `--remote` skips it: the session lives on the far host, which local
+    /// discovery does not describe.
     pub(crate) pick: bool,
     pub(crate) read_only: bool,
     /// SSH remote host alias or `ssh://` URL (`--remote`).
@@ -52,7 +52,10 @@ pub(crate) struct AgentSlotsCli {
 
 #[derive(Debug)]
 pub(crate) enum ParsedCli {
-    Help,
+    Help {
+        /// Also show the plumbing a normal run never touches (`--help --advanced`).
+        advanced: bool,
+    },
     Version,
     Skill,
     Install,
@@ -63,6 +66,7 @@ pub(crate) enum ParsedCli {
     Server {
         name: String,
         fresh: bool,
+        config_path: Option<String>,
     },
     /// Hidden remote-side stdio proxy (`--remote-serve <NAME>`).
     RemoteServe {
@@ -71,10 +75,12 @@ pub(crate) enum ParsedCli {
     ListSessions {
         format: ListFormat,
         remote: Option<String>,
+        config_path: Option<String>,
     },
     KillSession {
         name: String,
         remote: Option<String>,
+        config_path: Option<String>,
     },
 }
 
@@ -100,6 +106,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             Err("--skill must be used without other arguments".to_string())
         };
     }
+    // Help wins over whatever else was typed, and from wherever it was typed: someone who has
+    // already mistyped the rest of the line is exactly who is asking for it. `--advanced` is only
+    // ever read here, so it can never be silently swallowed by another command.
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Ok(ParsedCli::Help {
+            advanced: args.iter().any(|arg| arg == "--advanced"),
+        });
+    }
     let mut cli = CliArgs::default();
     let mut socket: Option<PathBuf> = None;
     let mut socket_flag_seen = false;
@@ -107,7 +121,6 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
     let mut iter = args.into_iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--help" | "-h" => return Ok(ParsedCli::Help),
             "--version" | "-V" => return Ok(ParsedCli::Version),
             "install" => {
                 reject_trailing_control_args(&mut iter, "install")?;
@@ -136,9 +149,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 while let Some(flag) = iter.next() {
                     match flag.as_str() {
                         "--format" => {
-                            let value = iter
-                                .next()
-                                .ok_or_else(|| "--format requires text or json".to_string())?;
+                            let value = require_value(&mut iter, "--format requires text or json")?;
                             format = match value.as_str() {
                                 "text" => ListFormat::Text,
                                 "json" => ListFormat::Json,
@@ -150,10 +161,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                             };
                         }
                         "--remote" => {
-                            let target = iter.next().ok_or_else(|| {
-                                "list-sessions --remote requires a host alias or ssh:// URL"
-                                    .to_string()
-                            })?;
+                            let target = require_value(
+                                &mut iter,
+                                "list-sessions --remote requires a host alias or ssh:// URL",
+                            )?;
                             session::remote::parse_remote_target(&target)?;
                             remote = Some(target);
                         }
@@ -164,12 +175,14 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                     }
                 }
-                return Ok(ParsedCli::ListSessions { format, remote });
+                return Ok(ParsedCli::ListSessions {
+                    format,
+                    remote,
+                    config_path: cli.config_path,
+                });
             }
             "kill-session" => {
-                let name = iter
-                    .next()
-                    .ok_or_else(|| "kill-session requires a session name".to_string())?;
+                let name = require_value(&mut iter, "kill-session requires a session name")?;
                 if !session::discovery::valid_attach_target(&name) {
                     return Err("invalid session name".to_string());
                 }
@@ -177,10 +190,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 while let Some(flag) = iter.next() {
                     match flag.as_str() {
                         "--remote" => {
-                            let target = iter.next().ok_or_else(|| {
-                                "kill-session --remote requires a host alias or ssh:// URL"
-                                    .to_string()
-                            })?;
+                            let target = require_value(
+                                &mut iter,
+                                "kill-session --remote requires a host alias or ssh:// URL",
+                            )?;
                             session::remote::parse_remote_target(&target)?;
                             remote = Some(target);
                         }
@@ -191,44 +204,49 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                         }
                     }
                 }
-                return Ok(ParsedCli::KillSession { name, remote });
+                return Ok(ParsedCli::KillSession {
+                    name,
+                    remote,
+                    config_path: cli.config_path,
+                });
             }
             "attach" => {
                 if cli.attach_session.is_some() {
                     return Err("session target specified more than once".to_string());
                 }
-                cli.attach_session = Some(
-                    iter.next()
-                        .ok_or_else(|| "attach requires a session name".to_string())?,
-                );
+                cli.attach_session =
+                    Some(require_value(&mut iter, "attach requires a session name")?);
                 cli.session_command = SessionCommand::Attach;
             }
             "new" => {
                 if cli.attach_session.is_some() {
                     return Err("session target specified more than once".to_string());
                 }
-                cli.attach_session = Some(
-                    iter.next()
-                        .ok_or_else(|| "new requires a session name".to_string())?,
-                );
+                cli.attach_session = Some(require_value(&mut iter, "new requires a session name")?);
                 cli.session_command = SessionCommand::New;
             }
             "--server" => {
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --server".to_string());
                 }
-                if let Some(name) = cli.attach_session.take() {
-                    if !session_flag_target || cli.session_command != SessionCommand::Dwim {
-                        return Err("--server must follow --session <NAME>".to_string());
-                    }
-                    reject_trailing_control_args(&mut iter, "--server")?;
-                    return Ok(ParsedCli::Server { name, fresh: false });
+                if cli.read_only {
+                    return Err("--read-only cannot be combined with --server".to_string());
                 }
-                let name = iter
-                    .next()
-                    .ok_or_else(|| "--server requires a session name".to_string())?;
+                let name = match cli.attach_session.take() {
+                    Some(name) => {
+                        if !session_flag_target || cli.session_command != SessionCommand::Dwim {
+                            return Err("--server must follow --session <NAME>".to_string());
+                        }
+                        name
+                    }
+                    None => require_value(&mut iter, "--server requires a session name")?,
+                };
                 reject_trailing_control_args(&mut iter, "--server")?;
-                return Ok(ParsedCli::Server { name, fresh: false });
+                return Ok(ParsedCli::Server {
+                    name,
+                    fresh: false,
+                    config_path: cli.config_path,
+                });
             }
             "--fresh-server" => {
                 let Some(name) = cli.attach_session.take() else {
@@ -240,13 +258,18 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 if cli.remote.is_some() {
                     return Err("--remote cannot be combined with --fresh-server".to_string());
                 }
+                if cli.read_only {
+                    return Err("--read-only cannot be combined with --fresh-server".to_string());
+                }
                 reject_trailing_control_args(&mut iter, "--fresh-server")?;
-                return Ok(ParsedCli::Server { name, fresh: true });
+                return Ok(ParsedCli::Server {
+                    name,
+                    fresh: true,
+                    config_path: cli.config_path,
+                });
             }
             "--remote-serve" => {
-                let name = iter
-                    .next()
-                    .ok_or_else(|| "--remote-serve requires a session name".to_string())?;
+                let name = require_value(&mut iter, "--remote-serve requires a session name")?;
                 reject_trailing_control_args(&mut iter, "--remote-serve")?;
                 return Ok(ParsedCli::RemoteServe { name });
             }
@@ -271,9 +294,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }
             }
             "--session" => {
-                let name = iter
-                    .next()
-                    .ok_or_else(|| "--session requires a session name".to_string())?;
+                let name = require_value(&mut iter, "--session requires a session name")?;
                 if cli.attach_session.is_some() {
                     return Err("session target specified more than once".to_string());
                 }
@@ -282,9 +303,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 session_flag_target = true;
             }
             "--profile" => {
-                let profile = iter
-                    .next()
-                    .ok_or_else(|| "--profile requires a profile name".to_string())?;
+                let profile = require_value(&mut iter, "--profile requires a profile name")?;
                 if cli.profile.replace(profile).is_some() {
                     return Err("--profile specified more than once".to_string());
                 }
@@ -296,32 +315,29 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 cli.read_only = true;
             }
             "--config" => {
-                let path = iter
-                    .next()
-                    .ok_or_else(|| "--config requires a path".to_string())?;
-                if cli.config_path.is_some() {
+                let path = require_value(&mut iter, "--config requires a path")?;
+                if cli.config_path.replace(path).is_some() {
                     return Err("--config specified more than once".to_string());
                 }
-                cli.config_path = Some(path);
             }
             "--socket" => {
                 socket_flag_seen = true;
-                socket = Some(PathBuf::from(
-                    iter.next()
-                        .ok_or_else(|| "--socket requires a path".to_string())?,
-                ));
+                let path = require_value(&mut iter, "--socket requires a path")?;
+                if socket.replace(PathBuf::from(path)).is_some() {
+                    return Err("--socket specified more than once".to_string());
+                }
             }
-            "list" | "list-panes" => {
+            "list-panes" => {
                 reject_trailing_control_args(&mut iter, "list-panes")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::ListPanes),
                 }));
             }
             "metrics" => {
                 reject_trailing_control_args(&mut iter, "metrics")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::Metrics),
                 }));
             }
@@ -333,7 +349,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     .map_err(|_| "focus requires a numeric pane id".to_string())?;
                 reject_trailing_control_args(&mut iter, "focus")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::Focus { target }),
                 }));
             }
@@ -343,7 +359,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     .ok_or_else(|| "send-text requires literal text".to_string())?;
                 reject_trailing_control_args(&mut iter, "send-text")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SendText {
                         target: None,
                         text,
@@ -374,7 +390,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     return Err("send-keys requires at least one key or text argument".to_string());
                 }
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SendKeys {
                         target: None,
                         keys,
@@ -395,10 +411,9 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                     let reason = match iter.next() {
                         None => None,
-                        Some(flag) if flag == "--reason" => Some(
-                            iter.next()
-                                .ok_or_else(|| "--reason requires text".to_string())?,
-                        ),
+                        Some(flag) if flag == "--reason" => {
+                            Some(require_value(&mut iter, "--reason requires text")?)
+                        }
                         Some(extra) => {
                             return Err(format!("unexpected argument `{extra}` after status"));
                         }
@@ -407,7 +422,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     (Some(first), reason)
                 };
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SetStatus {
                         target: None,
                         status,
@@ -417,14 +432,23 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
             }
             "agent-slots" => {
                 reject_trailing_control_args(&mut iter, "agent-slots")?;
-                return Ok(ParsedCli::AgentSlots(AgentSlotsCli { socket }));
+                return Ok(ParsedCli::AgentSlots(AgentSlotsCli {
+                    socket: reject_launch_flags(&cli, socket)?,
+                }));
             }
             "split" | "new-pane" => {
                 let mut command = None;
                 let mut focus = false;
+                let mut passthrough = false;
                 for arg in iter.by_ref() {
                     match arg.as_str() {
-                        "--focus" => focus = true,
+                        "--" if !passthrough => passthrough = true,
+                        "--focus" if !passthrough => focus = true,
+                        // A mistyped `--focu` must not become the command that gets run; `--` ends
+                        // flag parsing for the rare command that really does start with a dash.
+                        other if !passthrough && other.starts_with('-') && other != "-" => {
+                            return Err(format!("unexpected split flag `{other}`"));
+                        }
                         _ if command.is_none() => command = Some(arg),
                         _ => {
                             return Err(format!("unexpected argument `{arg}` after split"));
@@ -432,7 +456,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::NewPane {
                         command,
                         cwd: None,
@@ -443,12 +467,10 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                 }));
             }
             "run-action" => {
-                let action = iter
-                    .next()
-                    .ok_or_else(|| "run-action requires an action id".to_string())?;
+                let action = require_value(&mut iter, "run-action requires an action id")?;
                 reject_trailing_control_args(&mut iter, "run-action")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::RunAction { action }),
                 }));
             }
@@ -485,7 +507,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     }
                 }
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::CapturePane {
                         target,
                         scrollback,
@@ -502,7 +524,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     })?;
                 reject_trailing_control_args(&mut iter, "switch-workspace")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::SwitchWorkspace { index }),
                 }));
             }
@@ -516,7 +538,7 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
                     })?;
                 reject_trailing_control_args(&mut iter, "move-to-workspace")?;
                 return Ok(ParsedCli::Control(ControlCli {
-                    socket,
+                    socket: reject_launch_flags(&cli, socket)?,
                     request: control_request(control::ControlCommand::MoveToWorkspace { index }),
                 }));
             }
@@ -550,6 +572,59 @@ pub(crate) fn parse_cli_args(args: Vec<String>) -> std::result::Result<ParsedCli
         return Err("--profile can only be used with new".to_string());
     }
     Ok(ParsedCli::Run(cli))
+}
+
+/// Take the value that must follow a name-taking flag or verb, rejecting a flag-shaped one.
+///
+/// Session names, profile names, and action ids all accept `-`, so a bare `next()` silently eats
+/// the following option: without this, `rozi attach --read-only` hunts for a session literally
+/// named `--read-only`, and `rozi --server --pick` starts a session server for one. A lone `-` is
+/// still a legal value; a real path that begins with a dash can be written `./-name`.
+fn require_value(
+    iter: &mut impl Iterator<Item = String>,
+    missing: &str,
+) -> std::result::Result<String, String> {
+    match iter.next() {
+        Some(value) if value.starts_with('-') && value != "-" => {
+            Err(format!("{missing} (got the flag `{value}`)"))
+        }
+        Some(value) => Ok(value),
+        None => Err(missing.to_string()),
+    }
+}
+
+/// Pass `socket` through to a control command, rejecting launch-only options.
+///
+/// A control command talks to the local UI endpoint named by `--socket`/`ROZI_SOCKET` and never
+/// loads config or attaches anything. Accepting these silently let `rozi --remote box list-panes`
+/// answer from the *local* rozi while the caller believed it had reached another host.
+fn reject_launch_flags(
+    cli: &CliArgs,
+    socket: Option<PathBuf>,
+) -> std::result::Result<Option<PathBuf>, String> {
+    let offender = if cli.remote.is_some() {
+        "--remote"
+    } else if cli.config_path.is_some() {
+        "--config"
+    } else if cli.read_only {
+        "--read-only"
+    } else if cli.pick {
+        "--pick"
+    } else if cli.profile.is_some() {
+        "--profile"
+    } else if cli.attach_session.is_some() {
+        "a session target"
+    } else {
+        return Ok(socket);
+    };
+    let hint = if offender == "--remote" {
+        " (use `list-sessions --remote` or `kill-session --remote` to reach another host)"
+    } else {
+        ""
+    };
+    Err(format!(
+        "{offender} does not apply to control commands{hint}"
+    ))
 }
 
 fn reject_trailing_control_args(
@@ -864,58 +939,327 @@ fn run_kill_session_remote(name: &str, remote: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn print_help() {
-    let endpoint_help = endpoint_help();
+pub(crate) fn print_help(advanced: bool) {
     println!(
-        "\
-rozi - Hyprland-style tiling terminal multiplexer
-
-USAGE:
-    rozi --skill
-    rozi [TARGET] [--read-only]
-    rozi install
-    rozi update [--check|--rollback]
-    rozi attach <NAME> [--read-only]
-    rozi new <NAME> [--profile <RECIPE>]
-    rozi [--socket PATH] list|list-panes
-    rozi [--socket PATH] metrics
-    rozi [--socket PATH] focus <PANE_ID>
-    rozi [--socket PATH] send-text <TEXT>
-    rozi [--socket PATH] status <VALUE> [--reason <TEXT>]
-    rozi [--socket PATH] status --clear
-    rozi [--socket PATH] agent-slots
-    rozi [--socket PATH] split [COMMAND] [--focus]
-    rozi [--socket PATH] run-action <ACTION_ID>
-    rozi [--socket PATH] capture-pane [--target <PANE_ID>]
-                            [--scrollback <N|full>] [--last-output]
-    rozi [--socket PATH] send-keys [-l|--literal] [--] <KEY|TEXT>...
-    rozi [--socket PATH] switch-workspace <1-9>
-    rozi [--socket PATH] move-to-workspace <1-9>
-    rozi --session <NAME> [--read-only]
-    rozi --remote <HOST|ssh://URL> [TARGET] [--read-only]
-    rozi --pick
-    rozi list-sessions [--format text|json] [--remote <HOST>]
-    rozi kill-session <NAME> [--remote <HOST>]
-    rozi --server <NAME>
-    rozi --session <NAME> --server
-
-OPTIONS:
-    -h, --help            Print help
-    -V, --version         Print version
-        --skill           Print agent control instructions
-        --config <PATH>   Use an alternate config.toml (sets ROZI_CONFIG)
-        --socket <PATH>   Connect CLI control command to this endpoint
-        --remote [HOST]   Attach via SSH (HOST alias or ssh:// URL; omit HOST to use [remote] default_host)
-        --pick            Open the session picker at startup when a named session exists
-        --read-only       Attach as a viewer that cannot type or control the layout
-        --profile <NAME>  Seed an explicit new session from this profile
-        --focus           split/new-pane: move focus to the new pane (default: leave focus put)
-
-{endpoint_help}
-
-TARGET attaches to a running named session or launches it from a same-named profile.
-Leave the running app with prefix d (detach) or a configured quit binding."
+        "{}",
+        help_text(&HelpStyles::detect(), &endpoint_help(), advanced)
     );
+}
+
+/// SGR sequences for the help screen, all empty when the stream cannot render them.
+///
+/// The palette stays on the terminal's own eight colours instead of picking exact RGB, so help
+/// follows whatever theme the user already reads every other tool in.
+#[derive(Clone, Copy)]
+struct HelpStyles {
+    title: &'static str,
+    heading: &'static str,
+    /// Text to type exactly as shown: command words and flags.
+    literal: &'static str,
+    /// Text to replace with a value: `<PANE_ID>`, `[COMMAND]`.
+    placeholder: &'static str,
+    reset: &'static str,
+}
+
+impl HelpStyles {
+    const fn plain() -> Self {
+        Self {
+            title: "",
+            heading: "",
+            literal: "",
+            placeholder: "",
+            reset: "",
+        }
+    }
+
+    const fn colored() -> Self {
+        Self {
+            title: "\x1b[1m",
+            heading: "\x1b[1;32m",
+            literal: "\x1b[1;36m",
+            placeholder: "\x1b[35m",
+            reset: "\x1b[0m",
+        }
+    }
+
+    fn detect() -> Self {
+        if crate::platform::ansi::stdout_supports_color() {
+            Self::colored()
+        } else {
+            Self::plain()
+        }
+    }
+}
+
+/// One help row: the literal to type, and what it does.
+///
+/// An empty `name` continues the previous row's description on a new line. A `name` too wide for
+/// the description column takes a line of its own, which is what keeps the long session and
+/// capture signatures from pushing every description past 80 columns.
+struct HelpRow {
+    name: &'static str,
+    description: &'static str,
+}
+
+struct HelpSection {
+    heading: &'static str,
+    /// Prose shown under the heading, before the rows. Empty for most sections.
+    note: &'static str,
+    /// Shown only under `--help --advanced`, keeping plumbing out of the first help a new user
+    /// reads without hiding it from someone who needs it.
+    advanced_only: bool,
+    rows: &'static [HelpRow],
+}
+
+/// Write a row's name, styling each token by what the reader has to do with it.
+///
+/// Three kinds: a *literal* is typed exactly as shown (`focus`, `--remote`, `json`), a
+/// *placeholder* stands for a value the reader supplies (`<PANE_ID>`, `[COMMAND]`), and the
+/// brackets, pipes and commas that hold a signature together are left unstyled so the structure
+/// recedes behind both. Under `HelpStyles::plain` every sequence is empty, so this appends the name
+/// unchanged.
+fn push_styled_name(out: &mut String, name: &str, styles: &HelpStyles) {
+    let bytes = name.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'<' {
+            // `<KEY|TEXT>` is one placeholder, alternatives and all; an unclosed `<` runs to the end.
+            let end = name[index..]
+                .find('>')
+                .map_or(name.len(), |offset| index + offset + 1);
+            out.push_str(styles.placeholder);
+            out.push_str(&name[index..end]);
+            out.push_str(styles.reset);
+            index = end;
+        } else if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' {
+            let mut end = index;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-' || bytes[end] == b'_')
+            {
+                end += 1;
+            }
+            let word = &name[index..end];
+            let style = if is_placeholder_word(word) {
+                styles.placeholder
+            } else {
+                styles.literal
+            };
+            out.push_str(style);
+            out.push_str(word);
+            out.push_str(styles.reset);
+            index = end;
+        } else {
+            let character = name[index..]
+                .chars()
+                .next()
+                .expect("index is a char boundary");
+            out.push(character);
+            index += character.len_utf8();
+        }
+    }
+}
+
+/// Whether a bare word stands for a value rather than something to type.
+///
+/// Bracketed placeholders are written in caps (`[COMMAND]`, `[ARGS]`), which separates them from
+/// the literal values that appear in the same position (`[--format text|json]`). A flag is never a
+/// placeholder however it is cased.
+fn is_placeholder_word(word: &str) -> bool {
+    !word.starts_with('-')
+        && word.bytes().any(|byte| byte.is_ascii_uppercase())
+        && !word.bytes().any(|byte| byte.is_ascii_lowercase())
+}
+
+/// Width of the name column. Descriptions start at `HELP_INDENT + HELP_NAME_WIDTH`.
+const HELP_NAME_WIDTH: usize = 27;
+const HELP_INDENT: &str = "    ";
+
+const fn row(name: &'static str, description: &'static str) -> HelpRow {
+    HelpRow { name, description }
+}
+
+const HELP_SECTIONS: &[HelpSection] = &[
+    HelpSection {
+        heading: "USAGE",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row(
+                "rozi [TARGET] [OPTIONS]",
+                "Attach to TARGET, or launch its profile",
+            ),
+            row("rozi <COMMAND> [ARGS]", ""),
+        ],
+    },
+    HelpSection {
+        heading: "SESSIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("attach <NAME>", "Attach to a running session, never create"),
+            row(
+                "new <NAME> [--profile <RECIPE>]",
+                "Create a session, optionally from a profile",
+            ),
+            row(
+                "list-sessions [--format text|json] [--remote <HOST>]",
+                "List connectable sessions",
+            ),
+            row(
+                "kill-session <NAME> [--remote <HOST>]",
+                "Stop a session and all of its panes",
+            ),
+        ],
+    },
+    HelpSection {
+        heading: "CONTROL",
+        advanced_only: false,
+        note: "Sent to one running rozi, chosen as described under ENDPOINTS.",
+        rows: &[
+            row("list-panes", "Print live panes as JSON"),
+            row("focus <PANE_ID>", "Focus a pane"),
+            row("send-text <TEXT>", "Send literal text to this pane"),
+            row(
+                "send-keys [-l|--literal] [--] <KEY|TEXT>...",
+                "Send tmux-style key names, text, or both",
+            ),
+            row("split [COMMAND] [--focus]", "Spawn a pane; alias new-pane"),
+            row(
+                "capture-pane [--target <PANE_ID>] [--scrollback <N|full>] [--last-output]",
+                "Print a pane's contents",
+            ),
+            row("status <VALUE> [--reason <TEXT>]", ""),
+            row("status --clear", "Set or clear this pane's reported status"),
+            row(
+                "run-action <ACTION_ID>",
+                "Run a bindable action by its command id",
+            ),
+            row("switch-workspace <1-9>", "Switch the active workspace"),
+            row(
+                "move-to-workspace <1-9>",
+                "Move the focused pane to a workspace",
+            ),
+            row("agent-slots", "Publish this pane's agent rows over stdio"),
+            row("metrics", "Print runtime metrics as JSON"),
+        ],
+    },
+    HelpSection {
+        heading: "INSTALLATION",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row("install", "Install this binary as a managed `rozi`"),
+            row(
+                "update [--check|--rollback]",
+                "Update in place, check, or roll back",
+            ),
+        ],
+    },
+    HelpSection {
+        heading: "OPTIONS",
+        advanced_only: false,
+        note: "",
+        rows: &[
+            row(
+                "-h, --help [--advanced]",
+                "Print help; --advanced adds internals",
+            ),
+            row("-V, --version", "Print version and protocol range"),
+            row("    --skill", "Print agent control instructions"),
+            row(
+                "    --session <NAME>",
+                "Session target, same as a positional TARGET",
+            ),
+            row(
+                "    --profile <NAME>",
+                "Seed a `new` session from this profile",
+            ),
+            row("    --read-only", "Attach as a viewer; cannot type or tile"),
+            row("    --pick", "Force the startup session picker, whatever"),
+            row("", "`[session] startup` selects"),
+            row(
+                "    --remote [HOST]",
+                "Attach over SSH to a host alias or ssh://",
+            ),
+            row("", "URL; omit HOST for `[remote] default_host`"),
+            row("    --config <PATH>", "Load an alternate config.toml"),
+            row(
+                "    --socket <PATH>",
+                "Send the control command to this endpoint",
+            ),
+        ],
+    },
+    HelpSection {
+        heading: "ADVANCED",
+        advanced_only: true,
+        note: "Server plumbing; a normal launch needs none of it.",
+        rows: &[
+            row("    --server", "Run --session <NAME>'s server in this"),
+            row("", "process instead of attaching a UI"),
+        ],
+    },
+];
+
+/// The help body, with the platform-specific endpoint paragraph passed in so a test can measure
+/// the template's own width without depending on how long this machine's runtime directory is.
+fn help_text(styles: &HelpStyles, endpoint_help: &str, advanced: bool) -> String {
+    let HelpStyles {
+        title,
+        heading,
+        reset,
+        ..
+    } = *styles;
+    let version = env!("CARGO_PKG_VERSION");
+    let mut out = format!("{title}rozi {version}{reset} - dynamic tiling terminal multiplexer\n");
+
+    for section in HELP_SECTIONS {
+        if section.advanced_only && !advanced {
+            continue;
+        }
+        out.push_str(&format!("\n{heading}{}{reset}\n", section.heading));
+        if !section.note.is_empty() {
+            out.push_str(&format!("{HELP_INDENT}{}\n\n", section.note));
+        }
+        for HelpRow { name, description } in section.rows {
+            if name.is_empty() {
+                // A continuation line: no literal, just description under the same column.
+                out.push_str(&format!(
+                    "{HELP_INDENT}{:width$}{description}\n",
+                    "",
+                    width = HELP_NAME_WIDTH
+                ));
+                continue;
+            }
+            out.push_str(HELP_INDENT);
+            push_styled_name(&mut out, name, styles);
+            if description.is_empty() {
+                out.push('\n');
+                continue;
+            }
+            // One space has to survive between the two columns, so a name that fills the column
+            // hands its description the next line rather than butting up against it.
+            if name.chars().count() < HELP_NAME_WIDTH {
+                out.push_str(&format!(
+                    "{:width$}{description}\n",
+                    "",
+                    width = HELP_NAME_WIDTH - name.chars().count()
+                ));
+            } else {
+                out.push_str(&format!(
+                    "\n{HELP_INDENT}{:width$}{description}\n",
+                    "",
+                    width = HELP_NAME_WIDTH
+                ));
+            }
+        }
+    }
+
+    out.push_str(&format!(
+        "\n{heading}ENDPOINTS{reset}\n{HELP_INDENT}{endpoint_help}\n\n\
+         Leave a running rozi with prefix d (detach) or a configured quit binding."
+    ));
+    out
 }
 
 /// The `--socket`/`ROZI_SOCKET` explanation, which differs by platform: a Unix-domain socket
@@ -927,14 +1271,18 @@ fn endpoint_help() -> String {
         .unwrap_or_else(|_| "the rozi runtime directory".to_string());
     if cfg!(windows) {
         format!(
-            "Control endpoints live in {runtime_dir}. Each entry stands for a named pipe\n\
-             (\\\\.\\pipe\\rozi.<user-sid>.control-<pid>); pass the entry, not the pipe name.\n\
-             With no --socket, ROZI_SOCKET is used, then the only live endpoint found there."
+            "Control endpoints live one per running rozi, named by pid, in\n        \
+             {runtime_dir}\n    \
+             Each entry stands for a named pipe (\\\\.\\pipe\\rozi.<sid>.control-<pid>);\n    \
+             pass the entry, not the pipe name. Unless --socket is given, rozi uses\n    \
+             ROZI_SOCKET; failing that, the only live endpoint there."
         )
     } else {
         format!(
-            "Control sockets live in {runtime_dir} (one per running rozi, named by pid).\n\
-             With no --socket, ROZI_SOCKET is used, then the only live socket found there."
+            "Control sockets live one per running rozi, named by pid, in\n        \
+             {runtime_dir}\n    \
+             Unless --socket is given, rozi uses ROZI_SOCKET; failing that, the\n    \
+             only live socket there."
         )
     }
 }
@@ -964,7 +1312,7 @@ mod tests {
     fn cli_help_and_version_are_early_exit_variants() {
         assert!(matches!(
             parse_cli_args(vec!["--help".into()]).expect("parses"),
-            ParsedCli::Help
+            ParsedCli::Help { advanced: false }
         ));
         assert!(matches!(
             parse_cli_args(vec!["-V".into()]).expect("parses"),
@@ -1324,14 +1672,16 @@ mod tests {
             parse_cli_args(vec!["list-sessions".into()]).expect("parses"),
             ParsedCli::ListSessions {
                 format: ListFormat::Text,
-                remote: None
+                remote: None,
+                ..
             }
         ));
         assert!(matches!(
             parse_cli_args(vec!["kill-session".into(), "dev".into()]).expect("parses"),
             ParsedCli::KillSession {
                 name,
-                remote: None
+                remote: None,
+                ..
             } if name == "dev"
         ));
         assert!(matches!(
@@ -1343,7 +1693,8 @@ mod tests {
             .expect("parses"),
             ParsedCli::ListSessions {
                 format: ListFormat::Json,
-                remote: None
+                remote: None,
+                ..
             }
         ));
         let attached = expect_run(parse_cli_args(vec!["dev".into()]).expect("parses"));
@@ -1452,6 +1803,307 @@ mod tests {
             .is_err()
         );
         assert!(parse_cli_args(vec!["--remote".into(), "ssh://".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_rejects_a_flag_where_a_name_belongs() {
+        // Every one of these used to consume the following flag as a literal name, so
+        // `--server --pick` started a session server for a session called `--pick`.
+        for args in [
+            vec!["attach", "--read-only"],
+            vec!["new", "--profile"],
+            vec!["--session", "--pick"],
+            vec!["--server", "--pick"],
+            vec!["--session", "dev", "--fresh-server", "--pick"],
+            vec!["--remote-serve", "--pick"],
+            vec!["kill-session", "--remote"],
+            vec!["--profile", "--read-only"],
+            vec!["--config", "--read-only"],
+            vec!["--socket", "--read-only", "list-panes"],
+            vec!["run-action", "--focus"],
+            vec!["status", "blocked", "--reason", "--clear"],
+            vec!["list-sessions", "--format", "--remote"],
+        ] {
+            let parsed = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
+            assert!(parsed.is_err(), "accepted a flag as a value: {args:?}");
+        }
+        // A lone `-` is still an ordinary value.
+        let dash = expect_run(
+            parse_cli_args(vec![
+                "new".into(),
+                "x".into(),
+                "--profile".into(),
+                "-".into(),
+            ])
+            .expect("parses"),
+        );
+        assert_eq!(dash.profile.as_deref(), Some("-"));
+    }
+
+    #[test]
+    fn cli_control_commands_reject_launch_only_flags() {
+        // A control command talks to the local UI endpoint, so silently dropping `--remote` would
+        // answer from this machine while the caller believed it had reached another host.
+        for args in [
+            vec!["--remote", "workbox", "list-panes"],
+            vec!["--config", "/tmp/other.toml", "list-panes"],
+            vec!["--read-only", "list-panes"],
+            vec!["--pick", "metrics"],
+            vec!["--remote", "workbox", "agent-slots"],
+            vec!["--remote", "workbox", "capture-pane"],
+        ] {
+            let parsed = parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect());
+            assert!(parsed.is_err(), "silently ignored a launch flag: {args:?}");
+        }
+        assert!(
+            parse_cli_args(vec![
+                "--remote".into(),
+                "workbox".into(),
+                "list-panes".into()
+            ])
+            .expect_err("rejected")
+            .contains("list-sessions --remote"),
+            "the remote rejection should point at the command that does reach a host"
+        );
+    }
+
+    #[test]
+    fn cli_carries_config_path_to_every_command_that_loads_config() {
+        // `--config` used to be parsed and then dropped for everything but the UI, so a server or a
+        // remote listing quietly read the developer's own config instead.
+        let ParsedCli::Server { config_path, .. } = parse_cli_args(vec![
+            "--config".into(),
+            "/tmp/alt.toml".into(),
+            "--session".into(),
+            "dev".into(),
+            "--server".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected server");
+        };
+        assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
+
+        let ParsedCli::ListSessions { config_path, .. } = parse_cli_args(vec![
+            "--config".into(),
+            "/tmp/alt.toml".into(),
+            "list-sessions".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected list-sessions");
+        };
+        assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
+
+        let ParsedCli::KillSession { config_path, .. } = parse_cli_args(vec![
+            "--config".into(),
+            "/tmp/alt.toml".into(),
+            "kill-session".into(),
+            "dev".into(),
+        ])
+        .expect("parses") else {
+            panic!("expected kill-session");
+        };
+        assert_eq!(config_path.as_deref(), Some("/tmp/alt.toml"));
+    }
+
+    #[test]
+    fn cli_server_modes_reject_read_only_instead_of_dropping_it() {
+        assert!(
+            parse_cli_args(vec![
+                "--session".into(),
+                "dev".into(),
+                "--read-only".into(),
+                "--server".into(),
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_cli_args(vec![
+                "--session".into(),
+                "dev".into(),
+                "--read-only".into(),
+                "--fresh-server".into(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cli_split_rejects_a_mistyped_flag_rather_than_running_it() {
+        // `--focu` reaching the shell as the command is worse than an error.
+        assert!(parse_cli_args(vec!["split".into(), "--focu".into()]).is_err());
+        let ParsedCli::Control(dashed) =
+            parse_cli_args(vec!["split".into(), "--".into(), "--odd-command".into()])
+                .expect("parses")
+        else {
+            panic!("expected control");
+        };
+        assert_eq!(
+            dashed.request.command,
+            control::ControlCommand::NewPane {
+                command: Some("--odd-command".into()),
+                cwd: None,
+                title: None,
+                keep_open: false,
+                focus: false,
+            }
+        );
+    }
+
+    #[test]
+    fn cli_repeated_socket_is_rejected_like_every_other_repeatable_flag() {
+        assert!(
+            parse_cli_args(vec![
+                "--socket".into(),
+                "/tmp/a".into(),
+                "--socket".into(),
+                "/tmp/b".into(),
+                "list-panes".into(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cli_help_fits_an_eighty_column_terminal() {
+        // The help is the only UI a first run gets; wrapping it destroys the aligned columns.
+        let endpoint = "Control sockets live one per running rozi, named by pid, in\n    \
+                        <dir>\n    \
+                        With no --socket, ROZI_SOCKET is used, then the only live socket there.";
+        for advanced in [false, true] {
+            let mut widest = 0;
+            for line in help_text(&HelpStyles::plain(), endpoint, advanced).lines() {
+                assert!(
+                    !line.ends_with(' '),
+                    "trailing whitespace in help line: {line:?}"
+                );
+                widest = widest.max(line.chars().count());
+            }
+            assert!(
+                widest <= 80,
+                "help reaches {widest} columns (advanced: {advanced})"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_advanced_help_gates_server_plumbing_without_hiding_it() {
+        let render = |advanced| help_text(&HelpStyles::plain(), "<endpoints>", advanced);
+        let normal = render(false);
+        let advanced = render(true);
+
+        assert!(
+            !normal.contains("--server"),
+            "plumbing should stay out of the first help a new user reads"
+        );
+        assert!(!normal.contains("ADVANCED"));
+        assert!(advanced.contains("ADVANCED"));
+        assert!(advanced.contains("--server"));
+        // Normal help still has to say where the rest went.
+        assert!(normal.contains("--advanced"));
+
+        // `--advanced` reads on either side of the help flag, and means nothing without it.
+        for args in [
+            vec!["--help", "--advanced"],
+            vec!["--advanced", "--help"],
+            vec!["-h", "--advanced"],
+        ] {
+            assert!(matches!(
+                parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect())
+                    .expect("parses"),
+                ParsedCli::Help { advanced: true }
+            ));
+        }
+        assert!(matches!(
+            parse_cli_args(vec!["--help".into()]).expect("parses"),
+            ParsedCli::Help { advanced: false }
+        ));
+        assert!(parse_cli_args(vec!["--advanced".into()]).is_err());
+    }
+
+    #[test]
+    fn cli_help_wins_over_the_rest_of_a_mistyped_line() {
+        // Someone who has already got the line wrong is exactly who is asking for help.
+        for args in [
+            vec!["attach", "--help"],
+            vec!["--nope", "--help"],
+            vec!["--socket", "-h"],
+        ] {
+            assert!(
+                matches!(
+                    parse_cli_args(args.iter().map(|arg| (*arg).to_string()).collect()),
+                    Ok(ParsedCli::Help { .. })
+                ),
+                "help did not win in {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_help_names_split_into_literals_and_placeholders() {
+        // Marker styles rather than real SGR, so a failure reads as the classification it is.
+        let styles = HelpStyles {
+            title: "",
+            heading: "",
+            literal: "L<",
+            placeholder: "P<",
+            reset: ">",
+        };
+        let styled = |name: &str| {
+            let mut out = String::new();
+            push_styled_name(&mut out, name, &styles);
+            out
+        };
+
+        assert_eq!(styled("focus <PANE_ID>"), "L<focus> P<<PANE_ID>>");
+        // Brackets and pipes stay unstyled; what is inside them is classified on its own.
+        assert_eq!(
+            styled("new <NAME> [--profile <RECIPE>]"),
+            "L<new> P<<NAME>> [L<--profile> P<<RECIPE>>]"
+        );
+        // An all-caps bracketed word is a value to supply; a lowercase one is typed verbatim.
+        assert_eq!(styled("split [COMMAND]"), "L<split> [P<COMMAND>]");
+        assert_eq!(
+            styled("list-sessions [--format text|json]"),
+            "L<list-sessions> [L<--format> L<text>|L<json>]"
+        );
+        // `-l` is a flag, not a placeholder, and `<KEY|TEXT>` is one placeholder including its
+        // alternatives.
+        assert_eq!(
+            styled("send-keys [-l|--literal] [--] <KEY|TEXT>..."),
+            "L<send-keys> [L<-l>|L<--literal>] [L<-->] P<<KEY|TEXT>>..."
+        );
+        assert_eq!(styled("-h, --help"), "L<-h>, L<--help>");
+
+        // Plain styling has to leave every name exactly as written.
+        for section in HELP_SECTIONS {
+            for row in section.rows {
+                let mut plain = String::new();
+                push_styled_name(&mut plain, row.name, &HelpStyles::plain());
+                assert_eq!(plain, row.name);
+            }
+        }
+    }
+
+    #[test]
+    fn cli_help_styling_only_adds_escapes() {
+        // Colour must not move a single glyph: the styled help has to be the plain help with SGR
+        // sequences woven in, or the aligned columns drift the moment a terminal supports colour.
+        let endpoint = "Control sockets live in <dir>.";
+        let plain = help_text(&HelpStyles::plain(), endpoint, true);
+        let colored = help_text(&HelpStyles::colored(), endpoint, true);
+        assert_ne!(plain, colored, "colored help should carry escapes");
+
+        let mut stripped = String::with_capacity(colored.len());
+        let mut rest = colored.as_str();
+        while let Some(start) = rest.find('\x1b') {
+            stripped.push_str(&rest[..start]);
+            let end = rest[start..]
+                .find('m')
+                .expect("every SGR sequence this help emits ends in `m`");
+            rest = &rest[start + end + 1..];
+        }
+        stripped.push_str(rest);
+        assert_eq!(stripped, plain);
     }
 
     fn expect_run(parsed: ParsedCli) -> CliArgs {

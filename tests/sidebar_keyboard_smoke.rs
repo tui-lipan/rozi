@@ -11,7 +11,7 @@ use hyprmux::config::{
 };
 use hyprmux::input::Action;
 use hyprmux::state::Pane;
-use hyprmux::{HyprmuxApp, Msg};
+use hyprmux::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{Color, KeyCode, KeyEvent, KeyMods, Rect};
@@ -39,7 +39,7 @@ fn pane(id: u32) -> Pane {
 
 /// Focus notifications are queued after reconciliation, so a focus change needs another pass
 /// before `on_focus` has turned into state.
-fn settle(backend: &mut TestBackend<HyprmuxApp>) {
+fn settle(backend: &mut TestBackend<AppRoot>) {
     for _ in 0..4 {
         backend.render();
         let _ = backend.pump();
@@ -61,9 +61,9 @@ fn modified_key(code: KeyCode, mods: KeyMods) -> KeyEvent {
 /// Every backend in this binary is built here: reordering tabs and toggling the split persist
 /// `[sidebar]`, so the config has to resolve out of a scratch root rather than the developer's own
 /// (`hyprmux::test_support`).
-fn sidebar_backend() -> TestBackend<HyprmuxApp> {
+fn sidebar_backend() -> TestBackend<AppRoot> {
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -74,7 +74,7 @@ fn sidebar_backend() -> TestBackend<HyprmuxApp> {
 }
 
 /// Two workspaces, so the list carries section headers between the selectable rows.
-fn backend_with_panes() -> TestBackend<HyprmuxApp> {
+fn backend_with_panes() -> TestBackend<AppRoot> {
     let mut backend = sidebar_backend();
     {
         let state = backend.state_mut();
@@ -118,7 +118,7 @@ fn focus_sidebar_then_escape_is_a_round_trip() {
         .expect("round trip completes");
 }
 
-fn backend_with_explorer() -> TestBackend<HyprmuxApp> {
+fn backend_with_explorer() -> TestBackend<AppRoot> {
     let mut backend = sidebar_backend();
     {
         let state = backend.state_mut();
@@ -142,7 +142,7 @@ fn backend_with_explorer() -> TestBackend<HyprmuxApp> {
     backend
 }
 
-fn explorer_input_position(backend: &TestBackend<HyprmuxApp>) -> (u16, u16) {
+fn explorer_input_position(backend: &TestBackend<AppRoot>) -> (u16, u16) {
     backend
         .capture_frame()
         .to_fixed_grid_lines()
@@ -157,7 +157,7 @@ fn explorer_input_position(backend: &TestBackend<HyprmuxApp>) -> (u16, u16) {
         .expect("explorer input is visible")
 }
 
-fn click(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16) {
+fn click(backend: &mut TestBackend<AppRoot>, x: u16, y: u16) {
     for kind in [
         MouseKind::Down(MouseButton::Left),
         MouseKind::Up(MouseButton::Left),

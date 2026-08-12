@@ -30,7 +30,7 @@ impl AlertsAction {
 
     pub fn disabled_reason(
         self,
-        pane: &crate::config::HyprmuxPaneConfig,
+        pane: &crate::config::PaneConfig,
         notifications: bool,
         sounds: bool,
     ) -> Option<&'static str> {

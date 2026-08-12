@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::{active_pane_is_fullscreen, sync_scrollable_reveal};
@@ -14,7 +14,7 @@ use super::tiling::{
     master_available_width, resize_master_split_by_pixels, resize_scrollable_width_by_pixels,
 };
 
-pub(crate) fn resize_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+pub(crate) fn resize_focused_in_direction(ctx: &mut Context<AppRoot>, direction: Direction) {
     let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
@@ -119,7 +119,7 @@ mod tests {
         first_pane_extent, in_test_stack, steps, two_pane_backend,
     };
     use crate::state::{LayoutKind, SplitAxis};
-    use crate::{HyprmuxApp, Msg};
+    use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
     use tui_lipan::core::event::{KeyCode, KeyEvent, KeyMods};
 
@@ -180,7 +180,7 @@ mod tests {
             ] {
                 let mut backend = two_pane_backend(axis);
                 let before = first_pane_extent(&mut backend, axis);
-                let press = |backend: &mut TestBackend<HyprmuxApp>, code| {
+                let press = |backend: &mut TestBackend<AppRoot>, code| {
                     backend
                         .dispatch(Msg::RunAction(Action::EnterResizeMode))
                         .expect("enter resize mode");
@@ -245,7 +245,7 @@ mod tests {
             }
             backend.render();
             let before = backend.state().current().workspaces[0].panes[0].scrollable_width;
-            let press = |backend: &mut TestBackend<HyprmuxApp>, code| {
+            let press = |backend: &mut TestBackend<AppRoot>, code| {
                 backend
                     .dispatch(Msg::RunAction(Action::EnterResizeMode))
                     .expect("enter resize mode");

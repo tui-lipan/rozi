@@ -1,4 +1,4 @@
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::config::{SidebarPosition, SidebarTab};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
@@ -10,8 +10,8 @@ use tui_lipan::style::Color;
 const SIDEBAR_CELL: (u16, u16) = (2, 6);
 const WORKSPACE_CELL: (u16, u16) = (35, 0);
 
-fn backend() -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend() -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -31,7 +31,7 @@ fn backend() -> TestBackend<HyprmuxApp> {
     backend
 }
 
-fn cells(backend: &TestBackend<HyprmuxApp>) -> (Color, Color) {
+fn cells(backend: &TestBackend<AppRoot>) -> (Color, Color) {
     let frame = backend.capture_frame();
     (
         frame.cell(SIDEBAR_CELL.0, SIDEBAR_CELL.1).bg,

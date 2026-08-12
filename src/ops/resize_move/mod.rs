@@ -28,7 +28,7 @@ pub(super) mod test_util {
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::*;
 
-    use crate::HyprmuxApp;
+    use crate::AppRoot;
     use crate::state::{Pane, SplitAxis, Workspace};
     use crate::tiling::DwindleTree;
 
@@ -54,8 +54,8 @@ pub(super) mod test_util {
     /// left|right split divides come to an odd number, the rows a stacked split divides to an
     /// even one. Only the odd extent can put a divider on a half-cell, so a resize that is exact
     /// on one axis and not the other shows up here.
-    pub(super) fn two_pane_backend(axis: SplitAxis) -> TestBackend<HyprmuxApp> {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+    pub(super) fn two_pane_backend(axis: SplitAxis) -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(TEST_VIEWPORT);
         {
             let state = backend.state_mut();
@@ -80,7 +80,7 @@ pub(super) mod test_util {
     }
 
     /// Pane 1's extent along `axis`, in cells - the visible half of a resize.
-    pub(super) fn first_pane_extent(backend: &mut TestBackend<HyprmuxApp>, axis: SplitAxis) -> f32 {
+    pub(super) fn first_pane_extent(backend: &mut TestBackend<AppRoot>, axis: SplitAxis) -> f32 {
         let state = backend.state_mut();
         let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
         let top_gap = state.workspace_top_gap();

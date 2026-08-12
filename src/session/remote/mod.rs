@@ -21,7 +21,7 @@ pub use proxy::run_remote_serve;
 pub use target::{RemoteTarget, parse_remote_target};
 pub(crate) use target::{validate_remote_executable_token, validate_remote_target};
 
-use crate::config::{HyprmuxRemoteConfig, RemoteHostConfig};
+use crate::config::{RemoteConfig, RemoteHostConfig};
 
 /// Resolved SSH destination after merging CLI target with `[remote]` / `[remote.hosts.*]` config.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub struct ResolvedRemote {
 }
 
 impl ResolvedRemote {
-    pub fn resolve(target: &RemoteTarget, config: &HyprmuxRemoteConfig) -> Self {
+    pub fn resolve(target: &RemoteTarget, config: &RemoteConfig) -> Self {
         let default_cfg = config
             .default_host
             .as_ref()

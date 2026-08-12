@@ -3,7 +3,7 @@
 //! that actually did: a `tab_hover_style` with an absolute background replaces the alert instead of
 //! layering over it, and nothing but a rendered frame catches it.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{AlertMode, Pane};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
@@ -27,9 +27,9 @@ fn live_pane(id: u32) -> Pane {
 
 /// Workspace 1 active and quiet, workspace 2 blocked. `Static` rather than `Pulse` so the colour
 /// rests at its peak and the assertions do not depend on which half of a breathe was captured.
-fn backend() -> TestBackend<HyprmuxApp> {
+fn backend() -> TestBackend<AppRoot> {
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -55,7 +55,7 @@ fn backend() -> TestBackend<HyprmuxApp> {
 }
 
 /// Backgrounds along the workbar row, left to right.
-fn row_backgrounds(backend: &mut TestBackend<HyprmuxApp>) -> Vec<Color> {
+fn row_backgrounds(backend: &mut TestBackend<AppRoot>) -> Vec<Color> {
     backend.render();
     let frame = backend.capture_frame();
     let width = frame.width as usize;
@@ -137,7 +137,7 @@ fn a_marked_tab_paints_a_background_no_quiet_tab_uses() {
 /// removing the pane is what makes a column-by-column diff meaningful: the label is identity only
 /// (`2 ·1`), so both renders lay out identically and every differing column is a colour difference
 /// rather than a width shift.
-fn quiet_backend() -> TestBackend<HyprmuxApp> {
+fn quiet_backend() -> TestBackend<AppRoot> {
     let mut quiet = backend();
     quiet.state_mut().config.workbar.alert.blocked = false;
     quiet

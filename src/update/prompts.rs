@@ -11,9 +11,9 @@ use crate::ops::profile::{
     submit_save_profile as save_profile,
 };
 use crate::ops::search::{recompute_search, search_next as next_search, select_search_match};
-use crate::{HyprmuxApp, session};
+use crate::{AppRoot, session};
 
-pub(super) fn close_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_search(ctx: &mut Context<AppRoot>) -> Update {
     let from_copy_mode = ctx
         .state
         .search
@@ -30,7 +30,7 @@ pub(super) fn close_search(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(super) fn search_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+pub(super) fn search_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     if let Some(search) = ctx.state.search.as_mut() {
         let cursor = query.len();
         search.input.set_text(query);
@@ -40,15 +40,15 @@ pub(super) fn search_query_changed(ctx: &mut Context<HyprmuxApp>, query: String)
     recompute_search(ctx)
 }
 
-pub(super) fn search_next(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
+pub(super) fn search_next(ctx: &mut Context<AppRoot>, backward: bool) -> Update {
     next_search(ctx, backward)
 }
 
-pub(super) fn search_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn search_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     select_search_match(ctx, index)
 }
 
-pub(super) fn search_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn search_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     select_search_match(ctx, index);
     let from_copy_mode = ctx
         .state
@@ -66,17 +66,17 @@ pub(super) fn search_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Up
     Update::full()
 }
 
-pub(super) fn search_cycle_scope(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn search_cycle_scope(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::search::cycle_search_scope(ctx)
 }
 
-pub(super) fn close_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
     let update = close_pane_rename(ctx);
     request_current_pane_focus(ctx);
     update
 }
 
-pub(super) fn rename_pane_changed(ctx: &mut Context<HyprmuxApp>, event: InputEvent) -> Update {
+pub(super) fn rename_pane_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
     if let Some(rename) = ctx.state.rename.as_mut() {
         event.apply_to(&mut rename.input);
     }
@@ -84,17 +84,17 @@ pub(super) fn rename_pane_changed(ctx: &mut Context<HyprmuxApp>, event: InputEve
     Update::full()
 }
 
-pub(super) fn submit_rename_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn submit_rename_pane(ctx: &mut Context<AppRoot>) -> Update {
     let update = apply_rename_pane(ctx);
     request_current_pane_focus(ctx);
     update
 }
 
-pub(super) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::close_rename_session(ctx)
 }
 
-pub(super) fn rename_session_changed(ctx: &mut Context<HyprmuxApp>, event: InputEvent) -> Update {
+pub(super) fn rename_session_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
     if let Some(rename) = ctx.state.rename_session.as_mut() {
         event.apply_to(&mut rename.input);
         // Editing is a change of mind: an armed "close it" must not survive typing a name and
@@ -109,18 +109,15 @@ pub(super) fn rename_session_changed(ctx: &mut Context<HyprmuxApp>, event: Input
     Update::full()
 }
 
-pub(super) fn submit_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn submit_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::apply_rename_session(ctx)
 }
 
-pub(super) fn close_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_save_profile(ctx: &mut Context<AppRoot>) -> Update {
     close_save_profile_prompt(ctx)
 }
 
-pub(super) fn save_profile_name_changed(
-    ctx: &mut Context<HyprmuxApp>,
-    event: InputEvent,
-) -> Update {
+pub(super) fn save_profile_name_changed(ctx: &mut Context<AppRoot>, event: InputEvent) -> Update {
     if let Some(prompt) = ctx.state.save_profile_prompt.as_mut() {
         event.apply_to(&mut prompt.input);
         prompt.pending_overwrite = false;
@@ -129,64 +126,64 @@ pub(super) fn save_profile_name_changed(
     Update::full()
 }
 
-pub(super) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
     save_profile(ctx)
 }
 
-pub(super) fn close_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
     let update = cancel_profile_picker(ctx);
     request_current_pane_focus(ctx);
     update
 }
 
 pub(super) fn profile_sessions_discovered(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     rows: Vec<crate::session::discovery::DiscoveredSession>,
 ) -> Update {
     crate::ops::profile::apply_profile_sessions(ctx, epoch, rows)
 }
 
-pub(super) fn profile_picker_apply(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn profile_picker_apply(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::profile::apply_selected_profile_in_place(ctx)
 }
 
-pub(super) fn profile_picker_open_as(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn profile_picker_open_as(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::profile::open_selected_profile_as(ctx)
 }
 
-pub(super) fn profile_picker_new(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn profile_picker_new(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::profile::open_save_profile_prompt(ctx)
 }
 
-pub(super) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+pub(super) fn profile_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     change_profile_query(ctx, query)
 }
 
-pub(super) fn profile_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn profile_picker_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     profile_picker_selection_changed(ctx, index)
 }
 
-pub(super) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     set_default_profile(ctx)
 }
 
-pub(super) fn profile_picker_delete(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn profile_picker_delete(ctx: &mut Context<AppRoot>) -> Update {
     profile_picker_delete_key(ctx)
 }
 
-pub(super) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn select_profile(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let update = choose_profile(ctx, index);
     request_current_pane_focus(ctx);
     update
 }
 
-pub(super) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::close_session_picker(ctx)
 }
 
 pub(super) fn sessions_discovered(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     rows: Vec<session::discovery::DiscoveredSession>,
     host_status: crate::ops::session::HostProbeStatus,
@@ -194,7 +191,7 @@ pub(super) fn sessions_discovered(
     crate::ops::session::apply_discovered_sessions(ctx, epoch, rows, host_status)
 }
 
-pub(super) fn session_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+pub(super) fn session_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.input.set_text(query);
     }
@@ -202,7 +199,7 @@ pub(super) fn session_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
     Update::full()
 }
 
-pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn session_picker_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.selected = index.min(picker.entries.len().saturating_sub(1));
     }
@@ -221,46 +218,46 @@ pub(super) fn session_picker_select(ctx: &mut Context<HyprmuxApp>, index: usize)
     Update::full()
 }
 
-pub(super) fn session_picker_activate(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn session_picker_activate(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     crate::ops::session::activate_selected_session(ctx, index)
 }
 
-pub(super) fn session_picker_create_from_query(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_create_from_query(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::open_create_session(ctx)
 }
 
-pub(super) fn session_picker_kill_selected(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_kill_selected(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::kill_selected_session(ctx)
 }
 
-pub(super) fn session_picker_restart_selected(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_restart_selected(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::restart_selected_session(ctx)
 }
 
-pub(super) fn session_picker_disconnect_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_disconnect_attachment(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::disconnect_selected_attachment(ctx)
 }
 
-pub(super) fn session_picker_disconnect_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_disconnect_host(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::disconnect_selected_host(ctx)
 }
 
-pub(super) fn session_picker_connect_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_connect_host(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::open_connect_remote_host(ctx)
 }
 
-pub(super) fn session_picker_name_current(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn session_picker_name_current(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::session::open_rename_session(ctx)
 }
 
-pub(super) fn close_collaboration(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_collaboration(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.collaboration = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(super) fn collaboration_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+pub(super) fn collaboration_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     if let Some(collaboration) = ctx.state.collaboration.as_mut() {
         collaboration.query = query;
         // Re-filtering moves what is highlighted; an arming aimed at the old row must not survive.
@@ -269,7 +266,7 @@ pub(super) fn collaboration_query_changed(ctx: &mut Context<HyprmuxApp>, query: 
     Update::full()
 }
 
-pub(super) fn collaboration_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(list) = ctx.state.collaboration.as_mut() {
         // The view clamps this against its state-dependent mix of control actions and other
         // clients. Keeping the requested item here avoids duplicating that derivation in update.
@@ -282,26 +279,26 @@ pub(super) fn collaboration_select(ctx: &mut Context<HyprmuxApp>, index: usize) 
     Update::full()
 }
 
-pub(super) fn collaboration_grant(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_grant(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     crate::ops::session::grant_control(ctx, index)
 }
 
-pub(super) fn collaboration_decline(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_decline(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     crate::ops::session::decline_control(ctx, index)
 }
 
-pub(super) fn collaboration_kick(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn collaboration_kick(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     crate::ops::session::evict_client(ctx, index)
 }
 
-pub(super) fn follow_prompt_select(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn follow_prompt_select(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(prompt) = ctx.state.follow_prompt.as_mut() {
         prompt.selected = index.min(crate::state::FollowChoice::ALL.len() - 1);
     }
     Update::full()
 }
 
-pub(super) fn follow_prompt_choose(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn follow_prompt_choose(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(choice) = crate::state::FollowChoice::ALL.get(index).copied() else {
         return Update::full();
     };

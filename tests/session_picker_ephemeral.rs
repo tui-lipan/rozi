@@ -3,7 +3,7 @@
 
 use hyprmux::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use hyprmux::state::SessionPickerState;
-use hyprmux::{HyprmuxApp, Msg};
+use hyprmux::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::*;
 
@@ -39,7 +39,7 @@ fn on_a_big_stack(body: impl FnOnce() + Send + 'static) {
         .expect("render thread completes");
 }
 
-fn screen(backend: &mut TestBackend<HyprmuxApp>) -> String {
+fn screen(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
     backend.capture_frame().plain_text()
 }
@@ -47,7 +47,7 @@ fn screen(backend: &mut TestBackend<HyprmuxApp>) -> String {
 #[test]
 fn nothing_to_pick_puts_the_scratch_session_on_enter() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
@@ -90,7 +90,7 @@ fn nothing_to_pick_puts_the_scratch_session_on_enter() {
 #[test]
 fn a_query_that_matches_nothing_frees_enter_the_same_way() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
@@ -112,7 +112,7 @@ fn a_query_that_matches_nothing_frees_enter_the_same_way() {
 #[test]
 fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
@@ -136,7 +136,7 @@ fn a_populated_list_advertises_the_chord_until_the_scratch_session_exists() {
 #[test]
 fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();
@@ -173,7 +173,7 @@ fn holding_the_scratch_session_drops_the_hint_but_not_the_key() {
 #[test]
 fn a_parked_scratch_session_also_drops_the_hint() {
     on_a_big_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(VIEWPORT);
         {
             let state = backend.state_mut();

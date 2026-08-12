@@ -356,7 +356,7 @@ Two consequences worth preserving:
 
 ## What a full render actually costs
 
-`HyprmuxApp` is the only `Component` in the crate, so every `Update::full()` re-runs `view()` for
+`AppRoot` is the only `Component` in the crate, so every `Update::full()` re-runs `view()` for
 every pane, the workbar, and the overlays — there is no smaller subtree to refresh. `app_render`
 measures that on a 200x60 viewport with styled terminal content and dwindle-tiled panes (2026-08-04
 Ryzen release build):

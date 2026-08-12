@@ -270,7 +270,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn emit_fans_out_all_matching_hooks() {
-        use crate::config::{HyprmuxConfig, HyprmuxHookConfig};
+        use crate::config::{Config, HookConfig};
         use std::time::{Duration, Instant};
 
         let dir = std::env::temp_dir().join(format!("hyprmux-hook-test-{}", std::process::id()));
@@ -279,22 +279,22 @@ mod tests {
         let first = dir.join("first");
         let second = dir.join("second");
         let socket = dir.join("control.sock");
-        let config = HyprmuxConfig {
+        let config = Config {
             hooks: vec![
-                HyprmuxHookConfig {
+                HookConfig {
                     event: EventKind::PaneExited,
                     run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", first.display()),
                 },
-                HyprmuxHookConfig {
+                HookConfig {
                     event: EventKind::PaneExited,
                     run: format!("printf '%s' \"$HYPRMUX_SOCKET\" > '{}'", second.display()),
                 },
-                HyprmuxHookConfig {
+                HookConfig {
                     event: EventKind::PaneSpawned,
                     run: format!("touch '{}'", dir.join("wrong-event").display()),
                 },
             ],
-            ..HyprmuxConfig::default()
+            ..Config::default()
         };
         let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
         state.control_socket_path = Some(socket.clone());

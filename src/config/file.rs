@@ -17,7 +17,7 @@ use super::workbar::{apply_pane_alert_colors, apply_workbar_config, apply_workba
 
 #[derive(Debug)]
 pub struct LoadedConfig {
-    pub config: HyprmuxConfig,
+    pub config: Config,
     pub warnings: Vec<String>,
 }
 
@@ -468,14 +468,14 @@ pub fn load_config() -> LoadedConfig {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             note_config_text(None);
             return LoadedConfig {
-                config: HyprmuxConfig::default(),
+                config: Config::default(),
                 warnings: Vec::new(),
             };
         }
         Err(err) => {
             note_config_text(None);
             return LoadedConfig {
-                config: HyprmuxConfig::default(),
+                config: Config::default(),
                 warnings: vec![format!("Config read failed for {}: {err}", path.display())],
             };
         }
@@ -489,7 +489,7 @@ pub fn load_config() -> LoadedConfig {
 /// this is the whole load pipeline minus the filesystem.
 fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
     let mut warnings = Vec::new();
-    let mut config = HyprmuxConfig::default();
+    let mut config = Config::default();
 
     let Some(parsed) = parse_file_config(text, path, &mut warnings) else {
         return LoadedConfig { config, warnings };
@@ -830,7 +830,7 @@ fn parse_file_config(text: &str, path: &Path, warnings: &mut Vec<String>) -> Opt
     }
 }
 
-fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<HyprmuxHookConfig> {
+fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<HookConfig> {
     hooks
         .into_iter()
         .filter_map(|hook| {
@@ -842,7 +842,7 @@ fn build_hooks(hooks: Vec<HookFileConfig>, warnings: &mut Vec<String>) -> Vec<Hy
                 warnings.push(format!("Ignored empty hook for `{}`", hook.event));
                 return None;
             }
-            Some(HyprmuxHookConfig {
+            Some(HookConfig {
                 event,
                 run: hook.run,
             })
@@ -958,7 +958,7 @@ mod file_tests {
         let hooks = build_hooks(parsed.hooks, &mut warnings);
         assert_eq!(
             hooks,
-            vec![HyprmuxHookConfig {
+            vec![HookConfig {
                 event: crate::events::EventKind::PaneSpawned,
                 run: "kept".into(),
             }]
@@ -998,7 +998,7 @@ mod file_tests {
             toml::from_str("[layout]\nsplit_width_multiplier = 2.28").expect("config parses");
         assert_eq!(parsed.layout.split_width_multiplier, Some(2.28));
         assert_eq!(
-            HyprmuxLayoutConfig::default().split_width_multiplier,
+            LayoutConfig::default().split_width_multiplier,
             DEFAULT_SPLIT_WIDTH_MULTIPLIER
         );
     }
@@ -1014,7 +1014,7 @@ mod file_tests {
         );
         // The built-in fallback stays dwindle when the key is absent.
         assert_eq!(
-            HyprmuxLayoutConfig::default().default,
+            LayoutConfig::default().default,
             crate::state::LayoutKind::Dwindle
         );
     }
@@ -1033,7 +1033,7 @@ mod file_tests {
 
     #[test]
     fn confirm_section_overrides_defaults() {
-        let defaults = HyprmuxConfirmConfig::default();
+        let defaults = ConfirmConfig::default();
         assert!(!defaults.close_pane);
         assert!(defaults.kill_workspace);
         assert!(defaults.kill_session);
@@ -1065,11 +1065,7 @@ mod file_tests {
     /// default config.
     #[test]
     fn takeover_is_enabled_by_default_on_both_sides() {
-        assert!(
-            crate::config::HyprmuxConfig::default()
-                .session
-                .allow_takeover
-        );
+        assert!(crate::config::Config::default().session.allow_takeover);
         assert!(crate::session::server::ServerSettings::default().allow_takeover);
     }
 
@@ -1251,7 +1247,7 @@ mod file_tests {
 
     #[test]
     fn default_navigation_recognizes_vim_family_case_insensitively() {
-        let nav = HyprmuxNavigationConfig::default();
+        let nav = NavigationConfig::default();
         assert!(nav.is_split_editor("nvim"));
         assert!(nav.is_split_editor("VIM"));
         assert!(nav.is_split_editor("vimdiff"));

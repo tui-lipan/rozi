@@ -4,7 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::{HyprmuxRemoteConfig, RemoteInstallPolicy};
+use crate::config::{RemoteConfig, RemoteInstallPolicy};
 use crate::platform::command::program_exists;
 use crate::session::protocol::{MIN_SUPPORTED_PROTOCOL, PROTOCOL_VERSION};
 
@@ -291,7 +291,7 @@ pub fn prompt_install_confirmation(host: &str) -> io::Result<bool> {
 /// protocol range; unsafe configured tokens are rejected before any remote command is spawned.
 pub fn probe_remote_report(
     target: &RemoteTarget,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
 ) -> Result<ProbeReport, String> {
     validate_remote_target(target)?;
     let resolved = ResolvedRemote::resolve(target, config);
@@ -347,7 +347,7 @@ enum RemoteFamily {
 /// `Windows_NT`; a POSIX shell echoes the literal `%OS%`. Neither treats the marker as code.
 fn detect_remote_family(
     resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
 ) -> Result<RemoteFamily, String> {
     let mut command = ssh_base_command(resolved, config);
     append_ssh_destination(&mut command, resolved);
@@ -382,7 +382,7 @@ fn detect_remote_family(
 /// Pipe `script` to a remote `interpreter` over ssh stdin and return its stdout (POSIX probe).
 fn run_probe_script(
     resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     interpreter: &[&str],
     script: &str,
 ) -> Result<String, String> {
@@ -420,7 +420,7 @@ fn run_probe_script(
 /// whose script is carried in the argv as an `-EncodedCommand` rather than piped on stdin).
 fn run_probe_command(
     resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     argv: &[&str],
 ) -> Result<String, String> {
     let mut command = ssh_base_command(resolved, config);
@@ -446,10 +446,7 @@ fn run_probe_command(
 }
 
 #[allow(dead_code)] // CLI / test helper alongside probe_remote_report
-pub fn probe_remote(
-    target: &RemoteTarget,
-    config: &HyprmuxRemoteConfig,
-) -> Result<ProbeResult, String> {
+pub fn probe_remote(target: &RemoteTarget, config: &RemoteConfig) -> Result<ProbeResult, String> {
     Ok(select_compatible(&probe_remote_report(target, config)?))
 }
 
@@ -459,7 +456,7 @@ pub fn probe_remote(
 /// so the yes/no prompt can read stdin.
 pub fn ensure_remote_binary(
     target: &RemoteTarget,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     interactive: bool,
 ) -> Result<String, String> {
     if let Ok(path) = std::env::var("HYPRMUX_REMOTE_BINARY") {
@@ -506,7 +503,7 @@ pub fn ensure_remote_binary(
 
 fn install_for_platforms(
     target: &RemoteTarget,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     report: &ProbeReport,
 ) -> Result<String, String> {
     let local_os = normalize_os(std::env::consts::OS);
@@ -561,7 +558,7 @@ fn family_from_os(os: &str) -> RemoteFamily {
 /// `.exe` suffix propagates.
 fn install_bytes(
     target: &RemoteTarget,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     local: &Path,
     _source: &str,
     family: RemoteFamily,
@@ -585,7 +582,7 @@ fn install_bytes(
 /// Stream the binary onto a POSIX remote over ssh stdin (`cat > tmp`, `chmod 755`, atomic `mv`).
 fn install_bytes_posix(
     resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     local: &Path,
 ) -> Result<String, String> {
     // Atomic install with quoted paths; refuse to overwrite a non-regular destination. The binary
@@ -658,7 +655,7 @@ printf 'installed=%s\n' "$final"
 /// hard). `scp` sidesteps that entirely.
 fn install_bytes_windows(
     resolved: &ResolvedRemote,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
     local: &Path,
 ) -> Result<String, String> {
     if !program_exists("scp") {
@@ -735,7 +732,7 @@ fn parse_installed_path(stdout: &str) -> Result<String, String> {
 
 /// `scp` argv mirroring [`ssh_base_command`]'s connection options (scp uses `-P` for the port, not
 /// `-p`). `ssh_args` are passed through — they are `-o key=value` pairs scp also accepts.
-fn scp_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemoteConfig) -> Command {
+fn scp_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     let mut command = Command::new("scp");
     if config.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
@@ -939,7 +936,7 @@ fn verify_sha256(archive: &Path, sha_file: &Path) -> Result<(), String> {
 /// `BatchMode` comes from `[remote] batch_mode` (default on). It is the single place that decides
 /// whether ssh may prompt, so probe, install, attach, list, and kill all agree — a mix would mean
 /// a host that lists fine but hangs on attach.
-pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &HyprmuxRemoteConfig) -> Command {
+pub(crate) fn ssh_base_command(resolved: &ResolvedRemote, config: &RemoteConfig) -> Command {
     let mut command = Command::new("ssh");
     command.arg("-T");
     if config.batch_mode {
@@ -1419,14 +1416,14 @@ protocol_max=1
             ssh_args: Vec::new(),
             binary_path: None,
         };
-        let args = |config: &HyprmuxRemoteConfig| -> Vec<String> {
+        let args = |config: &RemoteConfig| -> Vec<String> {
             ssh_base_command(&resolved, config)
                 .get_args()
                 .map(|arg| arg.to_string_lossy().into_owned())
                 .collect()
         };
 
-        let mut config = HyprmuxRemoteConfig::default();
+        let mut config = RemoteConfig::default();
         assert!(config.batch_mode, "batch mode must default on");
         assert!(
             args(&config).iter().any(|arg| arg == "BatchMode=yes"),
@@ -1458,7 +1455,7 @@ protocol_max=1
             ssh_args: Vec::new(),
             binary_path: None,
         };
-        let mut command = ssh_base_command(&resolved, &HyprmuxRemoteConfig::default());
+        let mut command = ssh_base_command(&resolved, &RemoteConfig::default());
         append_ssh_destination(&mut command, &resolved);
         command.args(["/usr/local/bin/hyprmux", "--remote-serve", "dev"]);
         let args: Vec<String> = command
@@ -1485,7 +1482,7 @@ protocol_max=1
             ssh_args: vec!["-o".into(), "UserKnownHostsFile=/tmp/kh".into()],
             binary_path: None,
         };
-        let config = HyprmuxRemoteConfig::default();
+        let config = RemoteConfig::default();
         let args: Vec<String> = scp_base_command(&resolved, &config)
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())

@@ -2,7 +2,7 @@ use tui_lipan::prelude::*;
 
 use crate::config::SidebarTabId;
 use crate::state::PaneId;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// What activating a row does. Rows are built as a pure function of `State`, so the update side can
 /// rebuild the same list and resolve an index back to one of these — which is what lets Enter and a
@@ -191,7 +191,7 @@ impl Row {
 
     pub(super) fn build(
         mut self,
-        ctx: &Context<HyprmuxApp>,
+        ctx: &Context<AppRoot>,
         selected: bool,
         close: Option<CloseAffordance>,
     ) -> Element {
@@ -314,7 +314,7 @@ impl Row {
 /// so the row's `on_click` never fires for it. That nesting is also why it reports hover itself —
 /// hover resolves to a single innermost node, so without this the pointer reaching the ✕ would read
 /// as leaving the row and take the ✕ away with it.
-fn close_affordance(ctx: &Context<HyprmuxApp>, close: CloseAffordance) -> Element {
+fn close_affordance(ctx: &Context<AppRoot>, close: CloseAffordance) -> Element {
     let panel = close.panel;
     let index = close.index;
     let style = super::super::fg_only(&ctx.state.theme.muted);
@@ -356,7 +356,7 @@ pub(super) fn close_hover_key(panel: usize, index: usize) -> String {
 }
 
 /// One-line section header, aligned with the glyph column so headed rows read as a tree.
-pub(super) fn header(ctx: &Context<HyprmuxApp>, label: impl Into<String>, muted: bool) -> Element {
+pub(super) fn header(ctx: &Context<AppRoot>, label: impl Into<String>, muted: bool) -> Element {
     let style = if muted {
         super::super::fg_only(&ctx.state.theme.muted).bold()
     } else {
@@ -373,7 +373,7 @@ pub(super) fn header(ctx: &Context<HyprmuxApp>, label: impl Into<String>, muted:
 /// fixed short thing that is either fully readable or worthless, while a clipped project name is
 /// still recognizable.
 pub(super) fn header_with_note(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     label: impl Into<String>,
     note: impl Into<String>,
 ) -> Element {

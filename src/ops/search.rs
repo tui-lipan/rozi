@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::ops::focus::{focus_pane, request_search_focus, switch_workspace};
 use crate::pane_lifecycle::{find_pane, find_pane_mut};
@@ -18,7 +18,7 @@ fn invalidate_search_scan(state: &mut State) -> u64 {
     state.search_scan_epoch
 }
 
-pub(crate) fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_search(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
@@ -33,7 +33,7 @@ pub(crate) fn open_search(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Open scrollback search from copy mode: keep `Mode::Copy`, scope to the focused pane, and
 /// return to copy mode on confirm/cancel with the cursor parked on the match.
-pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx
         .state
         .copy_mode
@@ -53,7 +53,7 @@ pub(crate) fn open_search_from_copy_mode(ctx: &mut Context<HyprmuxApp>) -> Updat
 }
 
 /// Cycle the search scope (focused pane → workspace → all) and re-run the search.
-pub(crate) fn cycle_search_scope(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn cycle_search_scope(ctx: &mut Context<AppRoot>) -> Update {
     let Some(search) = ctx.state.search.as_mut() else {
         return Update::none();
     };
@@ -137,7 +137,7 @@ fn schedule_search_scan(state: &mut State, epoch: u64) -> Option<Command> {
     Some(search_scan_command(epoch))
 }
 
-pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn recompute_search(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(search) = ctx.state.search.as_mut()
         && search.from_copy_mode
     {
@@ -206,7 +206,7 @@ pub(crate) fn recompute_search(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// re-arm the newest scan when it arrives, rather than every output frame adding another stale
 /// message to the queue.
 pub(crate) fn restart_search_after_pane_output(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
 ) -> Option<Update> {
     if let Some(copy) = ctx.state.copy_mode.as_mut()
@@ -341,7 +341,7 @@ pub fn advance_search_scan(
     }
 }
 
-pub(crate) fn search_scan_chunk(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(crate) fn search_scan_chunk(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if ctx.state.search_scan_scheduled_epoch != Some(epoch) {
         return Update::none();
     }
@@ -392,7 +392,7 @@ fn scan_advance_update(advance: SearchScanAdvance, epoch: u64) -> Update {
     }
 }
 
-pub(crate) fn select_search_match(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn select_search_match(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if purge_missing_search_matches(&mut ctx.state) {
         jump_to_search_match(ctx);
         request_search_focus(ctx);
@@ -412,7 +412,7 @@ pub(crate) fn select_search_match(ctx: &mut Context<HyprmuxApp>, index: usize) -
     Update::full()
 }
 
-pub(crate) fn search_next(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
+pub(crate) fn search_next(ctx: &mut Context<AppRoot>, backward: bool) -> Update {
     purge_missing_search_matches(&mut ctx.state);
     let Some(search) = ctx.state.search.as_mut() else {
         return Update::none();
@@ -441,7 +441,7 @@ fn pane_workspace(state: &State, id: PaneId) -> Option<usize> {
         .position(|workspace| workspace.panes.iter().any(|pane| pane.id == id))
 }
 
-pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn jump_to_search_match(ctx: &mut Context<AppRoot>) {
     let Some(matched) = ctx
         .state
         .search
@@ -488,7 +488,7 @@ pub(crate) fn jump_to_search_match(ctx: &mut Context<HyprmuxApp>) {
 ///
 /// Only clears the search overlay when it was opened from copy mode; otherwise leaves the
 /// normal scrollback-search overlay alone for its own confirm/cancel path.
-pub(crate) fn finish_copy_mode_search(ctx: &mut Context<HyprmuxApp>, apply_current: bool) {
+pub(crate) fn finish_copy_mode_search(ctx: &mut Context<AppRoot>, apply_current: bool) {
     if !ctx
         .state
         .search
@@ -563,7 +563,7 @@ mod tests {
     }
 
     fn state_with_two_panes(second_count: usize) -> State {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         find_pane_mut(&mut state, 1)
             .expect("initial pane")
             .terminal
@@ -657,7 +657,7 @@ mod tests {
 
     #[test]
     fn scans_target_first_and_skips_a_pane_that_disappears_between_slices() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         find_pane_mut(&mut state, 1)
             .expect("initial pane")
             .terminal
@@ -711,7 +711,7 @@ mod tests {
 
     #[test]
     fn disappearing_contributor_is_purged_and_selected_stale_row_clamps() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         find_pane_mut(&mut state, 1)
             .expect("initial pane")
             .terminal
@@ -788,7 +788,7 @@ mod tests {
     #[test]
     fn restart_clear_close_and_reopen_reject_stale_scan_epochs() {
         on_large_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             let target = backend
                 .state()
                 .current()
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn appending_slices_preserves_selection_and_item_alignment() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         find_pane_mut(&mut state, 1)
             .expect("initial pane")
             .terminal
@@ -915,7 +915,7 @@ mod tests {
 
     #[test]
     fn scan_discovers_newest_lines_first_across_small_chunks() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = find_pane_mut(&mut state, 1).expect("initial pane");
         pane.terminal.apply_server_resize(80, 2);
         pane.terminal.process_server_output(
@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn scan_keeps_same_line_hits_left_to_right_when_lines_are_reversed() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = find_pane_mut(&mut state, 1).expect("initial pane");
         pane.terminal.apply_server_resize(80, 2);
         pane.terminal.process_server_output(
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn capped_scan_keeps_the_newest_line_prefix_before_older_hits() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = find_pane_mut(&mut state, 1).expect("initial pane");
         pane.terminal.apply_server_resize(120, 1);
         pane.terminal
@@ -1097,7 +1097,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()
@@ -1144,7 +1144,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()
@@ -1217,7 +1217,7 @@ mod tests {
     #[test]
     fn incomplete_copy_search_hands_off_discovered_matches_as_truncated() {
         on_large_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             let target = backend
                 .state()
                 .current()
@@ -1270,7 +1270,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+                let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()
@@ -1349,7 +1349,7 @@ mod tests {
     #[test]
     fn search_jump_scrollable_animation_policy_by_workspace() {
         on_large_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

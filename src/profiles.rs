@@ -11,14 +11,14 @@ use crate::state::{Pane, PaneId, State, WORKSPACE_COUNT, Workspace};
 use crate::tiling::DwindleTree;
 use crate::tiling::append_tiled_window;
 
-pub fn load_profile(path: &Path) -> Result<HyprmuxProfile, String> {
+pub fn load_profile(path: &Path) -> Result<Profile, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|err| format!("Could not read profile {}: {err}", path.display()))?;
-    HyprmuxProfile::from_toml_str(&text)
+    Profile::from_toml_str(&text)
         .map_err(|err| format!("Could not parse profile {}: {err}", path.display()))
 }
 
-pub fn save_profile(path: &Path, profile: &HyprmuxProfile) -> Result<(), String> {
+pub fn save_profile(path: &Path, profile: &Profile) -> Result<(), String> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -41,7 +41,7 @@ pub fn save_profile(path: &Path, profile: &HyprmuxProfile) -> Result<(), String>
 
 /// Resolve the session-autosave file path: the configured override, else
 /// `$XDG_STATE_HOME/hyprmux/session.toml` (falling back to `~/.local/state/...`).
-pub fn session_path(config: &crate::config::HyprmuxConfig) -> Option<PathBuf> {
+pub fn session_path(config: &crate::config::Config) -> Option<PathBuf> {
     if let Some(path) = &config.session.path {
         return Some(path.clone());
     }
@@ -78,9 +78,9 @@ fn persist_session_to_disk(state: &State) {
     }
 }
 
-pub fn profile_from_state(state: &State) -> HyprmuxProfile {
+pub fn profile_from_state(state: &State) -> Profile {
     let shells = shell_basenames(&state.config);
-    HyprmuxProfile {
+    Profile {
         version: 1,
         active_workspace: state.current().active_workspace,
         workspaces: state
@@ -95,9 +95,9 @@ pub fn profile_from_state(state: &State) -> HyprmuxProfile {
 }
 
 pub fn restore_state_from_profile(
-    config: crate::config::HyprmuxConfig,
+    config: crate::config::Config,
     theme: tui_lipan::prelude::Theme,
-    profile: HyprmuxProfile,
+    profile: Profile,
 ) -> State {
     // A profile only ever seeds the *attachment* (the window-manager layout); everything else on
     // `State` is the same as a fresh launch, so build one and drop the profile's attachment in.
@@ -115,7 +115,7 @@ pub fn restore_state_from_profile(
 /// intent that records where it came from: the configured `[profile] default` when one is set and
 /// loads, otherwise a single shell.
 ///
-/// Startup resolves the same default separately (see `HyprmuxApp::create_state`). Every *other*
+/// Startup resolves the same default separately (see `AppRoot::create_state`). Every *other*
 /// path that opens a blank session goes through here, which is what makes `[profile] default` mean
 /// "every session I did not otherwise specify" rather than "only the first one this process
 /// opened".
@@ -124,7 +124,7 @@ pub fn restore_state_from_profile(
 /// open one: startup already reported the failure, and the session the user asked for should still
 /// appear.
 pub(crate) fn default_session_seed(
-    config: &crate::config::HyprmuxConfig,
+    config: &crate::config::Config,
 ) -> (crate::state::Attachment, crate::state::AttachIntent) {
     let blank = || {
         (
@@ -156,8 +156,8 @@ pub(crate) fn default_session_seed(
 /// no panes, so the caller falls back to a fresh default attachment. The panes are spawned on the
 /// session server once the attach completes (see `spawn_state_panes_on_session`).
 pub(crate) fn attachment_from_profile(
-    config: &crate::config::HyprmuxConfig,
-    profile: HyprmuxProfile,
+    config: &crate::config::Config,
+    profile: Profile,
 ) -> Option<crate::state::Attachment> {
     if profile
         .workspaces
@@ -276,11 +276,7 @@ pub(crate) fn attachment_from_profile(
     Some(attachment)
 }
 
-pub fn replace_layout_from_profile(
-    state: &mut State,
-    mut profile: HyprmuxProfile,
-    first_pane_id: PaneId,
-) {
+pub fn replace_layout_from_profile(state: &mut State, mut profile: Profile, first_pane_id: PaneId) {
     if first_pane_id > 1
         && profile
             .workspaces
@@ -404,7 +400,7 @@ fn live_running_command(pane: &Pane, shells: &HashSet<String>) -> Option<String>
     }
 }
 
-fn shell_basenames(config: &crate::config::HyprmuxConfig) -> HashSet<String> {
+fn shell_basenames(config: &crate::config::Config) -> HashSet<String> {
     let mut shells: HashSet<String> = [
         "bash",
         "zsh",
@@ -453,13 +449,13 @@ fn profile_tree_from_dwindle(
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct HyprmuxProfile {
+pub struct Profile {
     pub version: u32,
     pub active_workspace: usize,
     pub workspaces: Vec<WorkspaceProfile>,
 }
 
-impl Default for HyprmuxProfile {
+impl Default for Profile {
     fn default() -> Self {
         Self {
             version: 1,
@@ -469,7 +465,7 @@ impl Default for HyprmuxProfile {
     }
 }
 
-impl HyprmuxProfile {
+impl Profile {
     pub fn to_toml_string(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)
     }
@@ -565,7 +561,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::{LayoutKind, Pane, SplitAxis, State};
     use tui_lipan::prelude::Theme;
 
@@ -573,7 +569,7 @@ mod tests {
     /// that leaves it behind hands them a broken starting point.
     #[test]
     fn documented_profile_example_still_loads() {
-        let profile = HyprmuxProfile::from_toml_str(include_str!("../examples/profiles/dev.toml"))
+        let profile = Profile::from_toml_str(include_str!("../examples/profiles/dev.toml"))
             .expect("profile example parses");
 
         assert_eq!(profile.workspaces.len(), 1);
@@ -589,7 +585,7 @@ mod tests {
 
     #[test]
     fn profile_tree_toml_shape_is_stable() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 0,
             workspaces: vec![WorkspaceProfile {
@@ -651,7 +647,7 @@ mod tests {
 
     #[test]
     fn snapshot_preserves_custom_name_and_floating_rect() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let first = state.current_mut().workspaces[0]
             .panes
             .first_mut()
@@ -713,7 +709,7 @@ mod tests {
 
     #[test]
     fn restore_preserves_explicit_session_pane_ids_and_tree() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
                 focused_pane: Some(1),
@@ -737,10 +733,10 @@ mod tests {
                 ],
                 ..WorkspaceProfile::default()
             }],
-            ..HyprmuxProfile::default()
+            ..Profile::default()
         };
 
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
         let workspace = &state.current().workspaces[0];
 
         assert_eq!(
@@ -766,7 +762,7 @@ mod tests {
 
     #[test]
     fn cleared_restored_name_does_not_round_trip_old_profile_name() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
                 panes: vec![PaneProfile {
@@ -776,9 +772,9 @@ mod tests {
                 }],
                 ..WorkspaceProfile::default()
             }],
-            ..HyprmuxProfile::default()
+            ..Profile::default()
         };
-        let mut state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let mut state = State::from_profile(Config::default(), Theme::default(), profile);
         let pane_id = state.current().workspaces[0].panes[0].id;
 
         crate::ops::identity::rename_pane_in_workspaces(
@@ -787,7 +783,7 @@ mod tests {
             "",
         );
         let snapshot = profile_from_state(&state);
-        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), snapshot);
+        let restored = State::from_profile(Config::default(), Theme::default(), snapshot);
 
         assert_eq!(
             restored.current().workspaces[0].panes[0]
@@ -807,13 +803,13 @@ mod tests {
     /// rather than blocking one from opening.
     #[test]
     fn default_seed_falls_back_to_a_blank_session() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         assert!(config.profile.default.is_none());
         let (attachment, intent) = default_session_seed(&config);
         assert_eq!(attachment.workspaces[0].panes.len(), 1);
         assert!(matches!(intent, crate::state::AttachIntent::Plain));
 
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config.profile.default = Some("hyprmux-no-such-profile-xyzzy".to_string());
         let (attachment, intent) = default_session_seed(&config);
         assert_eq!(attachment.workspaces[0].panes.len(), 1);
@@ -832,7 +828,7 @@ mod tests {
         let profiles = crate::config::profiles_dir();
         std::fs::create_dir_all(&profiles).expect("profiles dir");
 
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
                 panes: vec![
@@ -847,11 +843,11 @@ mod tests {
                 ],
                 ..WorkspaceProfile::default()
             }],
-            ..HyprmuxProfile::default()
+            ..Profile::default()
         };
         save_profile(&profiles.join("work.toml"), &profile.clone()).expect("write default profile");
 
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config.profile.default = Some("work".to_string());
         let (attachment, intent) = default_session_seed(&config);
 
@@ -873,7 +869,7 @@ mod tests {
         // `test_support` already points `$HOME` at this process's scratch root, so the expansion
         // has a home to resolve against without any test touching the real one.
         let home = crate::test_support::isolate_user_dirs();
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             workspaces: vec![WorkspaceProfile {
                 index: 0,
                 panes: vec![PaneProfile {
@@ -883,10 +879,10 @@ mod tests {
                 }],
                 ..WorkspaceProfile::default()
             }],
-            ..HyprmuxProfile::default()
+            ..Profile::default()
         };
 
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
 
         let expected = home.join("code/my-app").to_string_lossy().to_string();
         assert_eq!(
@@ -900,7 +896,7 @@ mod tests {
 
     #[test]
     fn snapshot_includes_only_live_panes() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let mut exiting = Pane::new(
             2,
             state.config.scrollback,
@@ -924,7 +920,7 @@ mod tests {
 
     #[test]
     fn profile_round_trips_named_pane_and_tree() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 0,
             workspaces: vec![WorkspaceProfile {
@@ -978,14 +974,14 @@ mod tests {
         };
 
         let encoded = profile.to_toml_string().expect("profile serializes");
-        let decoded = HyprmuxProfile::from_toml_str(&encoded).expect("profile parses");
+        let decoded = Profile::from_toml_str(&encoded).expect("profile parses");
 
         assert_eq!(decoded, profile);
     }
 
     #[test]
     fn old_profile_without_synchronized_loads_false() {
-        let profile = HyprmuxProfile::from_toml_str(
+        let profile = Profile::from_toml_str(
             r#"
             version = 1
             active_workspace = 0
@@ -1000,24 +996,24 @@ mod tests {
         .expect("old profile parses");
 
         assert!(!profile.workspaces[0].synchronized);
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
         assert!(!state.current().workspaces[0].synchronized);
     }
 
     #[test]
     fn synchronized_workspace_round_trips_from_state() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().workspaces[0].synchronized = true;
 
         let profile = profile_from_state(&state);
-        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let restored = State::from_profile(Config::default(), Theme::default(), profile);
 
         assert!(restored.current().workspaces[0].synchronized);
     }
 
     #[test]
     fn save_captures_local_runtime_identity_without_remote_paths_or_shells() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.identity.cwd = Some("/local/fallback".to_string());
         pane.terminal.cwd = Some("/remote/project".to_string());
@@ -1051,7 +1047,7 @@ mod tests {
         // `foreground_program` still holds the last command's executable (here a shell hook that
         // ran during `cd`) while shell integration reports the pane idle at a prompt; capturing
         // it would replay prompt machinery as a pane command on restore.
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.foreground_program = Some("__zoxide_hook".to_string());
         for phase in [
@@ -1079,7 +1075,7 @@ mod tests {
 
     #[test]
     fn restored_profile_commands_are_marked_for_interactive_replay() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 0,
             workspaces: vec![WorkspaceProfile {
@@ -1104,7 +1100,7 @@ mod tests {
             }],
         };
 
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
         let panes = &state.current().workspaces[0].panes;
         assert_eq!(panes[0].identity.command.as_deref(), Some("n"));
         assert!(panes[0].identity.replay);
@@ -1117,13 +1113,13 @@ mod tests {
 
     #[test]
     fn in_place_profile_replacement_remaps_ids_and_preserves_session_runtime() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().session_name = Some("work".to_string());
         state.current_mut().session_attached = true;
         state.runtime_epoch = 9;
         state.current_mut().next_pty_generation = 42;
         state.current_mut().next_pane_id = 20;
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 0,
             workspaces: vec![WorkspaceProfile {
@@ -1163,13 +1159,13 @@ mod tests {
 
     #[test]
     fn named_workspace_round_trips_from_state() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().workspaces[0].name = Some("code".to_string());
 
         let profile = profile_from_state(&state);
         assert_eq!(profile.workspaces[0].name.as_deref(), Some("code"));
 
-        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let restored = State::from_profile(Config::default(), Theme::default(), profile);
         assert_eq!(
             restored.current().workspaces[0].name.as_deref(),
             Some("code")
@@ -1178,12 +1174,12 @@ mod tests {
 
     #[test]
     fn blank_workspace_name_restores_as_unnamed() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().workspaces[0].name = Some("code".to_string());
         let mut profile = profile_from_state(&state);
         profile.workspaces[0].name = Some("   ".to_string());
 
-        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let restored = State::from_profile(Config::default(), Theme::default(), profile);
 
         assert_eq!(restored.current().workspaces[0].name, None);
     }
@@ -1194,7 +1190,7 @@ mod tests {
             std::env::temp_dir().join(format!("hyprmux-save-profile-test-{}", std::process::id()));
         let path = root.join("nested").join("project.toml");
 
-        let result = save_profile(&path, &HyprmuxProfile::default());
+        let result = save_profile(&path, &Profile::default());
 
         assert!(result.is_ok(), "save failed: {result:?}");
         let contents = std::fs::read_to_string(&path).expect("profile file was written");
@@ -1214,10 +1210,7 @@ mod tests {
         std::fs::create_dir_all(&root).expect("temporary profile directory created");
 
         std::env::set_current_dir(&root).expect("changed to temporary profile directory");
-        let result = save_profile(
-            Path::new("bare-relative-profile.toml"),
-            &HyprmuxProfile::default(),
-        );
+        let result = save_profile(Path::new("bare-relative-profile.toml"), &Profile::default());
         std::env::set_current_dir(original_cwd).expect("restored current dir");
 
         assert!(result.is_ok(), "save failed: {result:?}");
@@ -1239,15 +1232,15 @@ layout = "scrollable"
 [[workspaces.panes]]
 id = 0
 "#;
-        let profile = HyprmuxProfile::from_toml_str(absent).expect("parse");
+        let profile = Profile::from_toml_str(absent).expect("parse");
         assert_eq!(profile.workspaces[0].panes[0].scrollable_width, None);
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
         assert_eq!(
             state.current().workspaces[0].panes[0].scrollable_width,
             crate::state::DEFAULT_SCROLLABLE_WIDTH
         );
 
-        let mut live = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut live = State::new(Config::default(), Theme::default());
         live.current_mut().workspaces[0].layout_kind = LayoutKind::Scrollable;
         live.current_mut().workspaces[0].panes[0].scrollable_width =
             crate::state::DEFAULT_SCROLLABLE_WIDTH;
@@ -1265,7 +1258,7 @@ id = 0
         live.current_mut().workspaces[0].panes[0].scrollable_width = 0.62;
         let captured = profile_from_state(&live);
         assert_eq!(captured.workspaces[0].panes[0].scrollable_width, Some(0.62));
-        let restored = State::from_profile(HyprmuxConfig::default(), Theme::default(), captured);
+        let restored = State::from_profile(Config::default(), Theme::default(), captured);
         assert!((restored.current().workspaces[0].panes[0].scrollable_width - 0.62).abs() < 1e-6);
 
         let invalid = r#"
@@ -1278,8 +1271,8 @@ layout = "scrollable"
 id = 0
 scrollable_width = 9.0
 "#;
-        let profile = HyprmuxProfile::from_toml_str(invalid).expect("parse");
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let profile = Profile::from_toml_str(invalid).expect("parse");
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
         assert_eq!(
             state.current().workspaces[0].panes[0].scrollable_width,
             crate::state::MAX_SPLIT_RATIO
@@ -1288,7 +1281,7 @@ scrollable_width = 9.0
 
     #[test]
     fn restore_recreates_focus_identity_and_tree() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 1,
             workspaces: vec![
@@ -1344,7 +1337,7 @@ scrollable_width = 9.0
             ],
         };
 
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
 
         assert_eq!(state.current().active_workspace, 1);
         assert_eq!(
@@ -1405,7 +1398,7 @@ scrollable_width = 9.0
 
     #[test]
     fn restore_falls_back_when_no_valid_panes_restore() {
-        let profile = HyprmuxProfile {
+        let profile = Profile {
             version: 1,
             active_workspace: 0,
             workspaces: vec![WorkspaceProfile {
@@ -1419,7 +1412,7 @@ scrollable_width = 9.0
             }],
         };
 
-        let state = State::from_profile(HyprmuxConfig::default(), Theme::default(), profile);
+        let state = State::from_profile(Config::default(), Theme::default(), profile);
 
         assert_eq!(state.current().workspaces[0].panes.len(), 1);
         assert_eq!(state.current().focused_pane, Some(1));

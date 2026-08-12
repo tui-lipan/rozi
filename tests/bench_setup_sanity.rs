@@ -8,7 +8,7 @@
 //! - Reusing pane id 1 collides with the pane `State::new` seeds, whose stale per-pane transition
 //!   entries keep the reused pane off its target rect.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneId};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
@@ -30,7 +30,7 @@ fn bench_style_setup_renders_populated_tiled_panes() {
                 w: 200,
                 h: 60,
             };
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(viewport);
             {
                 let state = backend.state_mut();

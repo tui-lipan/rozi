@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::input::Action;
 use crate::ops::focus::{focus_pane, request_current_pane_focus};
 use crate::ops::resize_move::resize_focused_in_direction;
@@ -12,7 +12,7 @@ use crate::view;
 /// `terminal_key_policy` in `main.rs`), so by the time a key gets here it is either a
 /// `Resize`/`Copy` mode key or plain PTY input.
 pub(crate) fn handle_key_routing(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     key: KeyEvent,
     source_pane: Option<PaneId>,
 ) -> (bool, Update) {
@@ -74,7 +74,7 @@ fn launcher_start_key(state: &State, key: KeyEvent) -> bool {
 /// The file tree is a widget that navigates itself, so only the tab-level keys are taken there; the
 /// composed row lists have no widget behind them, so hyprmux owns their cursor too. Page movement
 /// uses the active row list's measured viewport size, with a small fallback before its first layout.
-fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Update> {
+fn handle_sidebar_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Option<Update> {
     use crate::update::sidebar;
     // App commands run before focused widgets. Let the explorer consume its own Escape so `/`
     // returns to the tree; pointer-entered explorer focus never sets `sidebar.focused`, so its
@@ -135,14 +135,14 @@ fn handle_sidebar_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Option<Up
 }
 
 /// The file tree owns its own keyboard navigation; the composed row lists do not.
-fn tree_tab_active(ctx: &Context<HyprmuxApp>) -> bool {
+fn tree_tab_active(ctx: &Context<AppRoot>) -> bool {
     matches!(
         crate::view::sidebar::active_tab(ctx),
         Some(crate::config::SidebarTab::Tree { .. })
     )
 }
 
-fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
+fn handle_resize_mode_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (bool, Update) {
     if key.is(KeyCode::Esc) || key.is(KeyCode::Enter) {
         ctx.state.mode = Mode::Normal;
         ctx.state.commands_dirty = true;
@@ -166,7 +166,7 @@ fn handle_resize_mode_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool
     (true, Update::none())
 }
 
-fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
+fn framework_focused_pane(ctx: &Context<AppRoot>) -> Option<PaneId> {
     let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
     workspace
         .panes
@@ -176,7 +176,7 @@ fn framework_focused_pane(ctx: &Context<HyprmuxApp>) -> Option<PaneId> {
         .map(|pane| pane.id)
 }
 
-pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn sync_focus_from_framework(ctx: &mut Context<AppRoot>) {
     let workspace = &ctx.state.current().workspaces[ctx.state.current().active_workspace];
     if let Some(id) = ctx.state.current().focused_pane
         && workspace
@@ -196,7 +196,7 @@ pub(crate) fn sync_focus_from_framework(ctx: &mut Context<HyprmuxApp>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::Attachment;
     use tui_lipan::prelude::{KeyMods, Theme};
 
@@ -206,7 +206,7 @@ mod tests {
 
     /// A state in the launcher: what dismissing the startup picker leaves behind.
     fn launcher_state() -> State {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         *state.current_mut() = Attachment::new();
         assert!(state.is_launcher());
         state
@@ -242,7 +242,7 @@ mod tests {
     /// With a session attached, Enter is the shell's, not the app's.
     #[test]
     fn bare_enter_is_not_claimed_outside_the_launcher() {
-        let state = State::new(HyprmuxConfig::default(), Theme::default());
+        let state = State::new(Config::default(), Theme::default());
         assert!(!state.is_launcher());
         assert!(!launcher_start_key(
             &state,

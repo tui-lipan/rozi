@@ -1,4 +1,4 @@
-pub(crate) fn help_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn help_overlay(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let prefix = ctx.state.config.input.prefix.to_string();
     let intro = if ctx.state.config.input.modifier_shortcuts {

@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{PaneId, ToastChannel};
 
@@ -10,7 +10,7 @@ struct BlockedInput {
     notified: Notified,
 }
 
-fn input_blocked(ctx: &mut Context<HyprmuxApp>) -> Option<BlockedInput> {
+fn input_blocked(ctx: &mut Context<AppRoot>) -> Option<BlockedInput> {
     let reason = ctx.state.pane_input_block_reason()?.to_string();
     // A held key against a read-only pane fires this at key-repeat rate. The first press pushes;
     // every repeat renews the same message in place, which costs no frame, so the toast stays up
@@ -87,7 +87,7 @@ pub(crate) fn content_key(content: &str) -> u64 {
 /// Drop tracking entries whose toasts must already have expired, bounding the map to whatever was
 /// raised in the last [`TOAST_TRACKING_TTL`]. Without this, content-keyed entries would accumulate
 /// one per distinct message for the life of the process.
-fn prune_tracked_toasts(ctx: &mut Context<HyprmuxApp>) {
+fn prune_tracked_toasts(ctx: &mut Context<AppRoot>) {
     ctx.state
         .replaceable_toasts
         .retain(|_, tracked| tracked.touched_at.elapsed() < TOAST_TRACKING_TTL);
@@ -99,7 +99,7 @@ fn prune_tracked_toasts(ctx: &mut Context<HyprmuxApp>) {
 /// existing toast keeps its place and its look, and just lives longer); a changed message in an
 /// explicit channel *replaces* what was there; anything else is *pushed*.
 fn notify(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     key: ToastKey,
     content: std::sync::Arc<str>,
     toast: Toast,
@@ -138,7 +138,7 @@ fn toast_content(title: Option<&str>, message: &str) -> std::sync::Arc<str> {
 }
 
 /// Report app state or a rejection. Identical repeats renew rather than stack.
-pub(crate) fn notify_info(ctx: &mut Context<HyprmuxApp>, message: impl Into<String>) -> Notified {
+pub(crate) fn notify_info(ctx: &mut Context<AppRoot>, message: impl Into<String>) -> Notified {
     let message = message.into();
     let content = toast_content(None, &message);
     let toast = info_toast(
@@ -156,7 +156,7 @@ pub(crate) fn notify_info(ctx: &mut Context<HyprmuxApp>, message: impl Into<Stri
 
 /// Report a failure. Identical repeats renew, which matters most for errors a loop can retry.
 pub(crate) fn notify_error(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     title: impl Into<String>,
     message: impl Into<String>,
 ) -> Notified {
@@ -178,7 +178,7 @@ pub(crate) fn notify_error(
 
 /// Report the newest state of `channel`, superseding whatever that channel last showed.
 pub(crate) fn notify_on(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     channel: ToastChannel,
     title: Option<String>,
     message: impl Into<String>,
@@ -272,11 +272,7 @@ fn toast_text_style(theme: &Theme) -> Style {
         .map_or_else(Style::new, |text| Style::new().fg(text))
 }
 
-pub(crate) fn forward_key_to_pane(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    key: KeyEvent,
-) -> Update {
+pub(crate) fn forward_key_to_pane(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) -> Update {
     if let Some(blocked) = input_blocked(ctx) {
         return blocked.notified.update();
     }
@@ -284,11 +280,7 @@ pub(crate) fn forward_key_to_pane(
     forward_key_to_targets(ctx, &targets, key)
 }
 
-fn forward_key_to_targets(
-    ctx: &mut Context<HyprmuxApp>,
-    targets: &[PaneId],
-    key: KeyEvent,
-) -> Update {
+fn forward_key_to_targets(ctx: &mut Context<AppRoot>, targets: &[PaneId], key: KeyEvent) -> Update {
     let mut repaint = false;
     let client = ctx.state.current().session_client.clone();
     ctx.state.current_mut().engaged = true;
@@ -324,7 +316,7 @@ fn forward_key_to_targets(
 /// Send raw bytes (paste payloads, user `Send` commands, control-socket text) to a pane's shell
 /// through the session server. Returns an error string when no client is connected.
 pub(crate) fn send_pane_bytes(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     bytes: Vec<u8>,
 ) -> std::result::Result<(), String> {
@@ -364,7 +356,7 @@ pub(crate) fn synchronized_key_targets(state: &crate::state::State, source: Pane
         .collect()
 }
 
-pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: PaneId, code: i32) {
+pub(crate) fn maybe_notify_pane_exit(config: &crate::config::Config, id: PaneId, code: i32) {
     if !should_notify_pane_exit(config, code) {
         return;
     }
@@ -374,7 +366,7 @@ pub(crate) fn maybe_notify_pane_exit(config: &crate::config::HyprmuxConfig, id: 
     );
 }
 
-fn should_notify_pane_exit(config: &crate::config::HyprmuxConfig, code: i32) -> bool {
+fn should_notify_pane_exit(config: &crate::config::Config, code: i32) -> bool {
     config.notifications.enabled
         && if code == 0 {
             config.notifications.pane_exit
@@ -390,7 +382,7 @@ pub(crate) struct PaneStatusNotification<'a> {
 }
 
 pub(crate) fn maybe_notify_pane_status(
-    config: &crate::config::HyprmuxConfig,
+    config: &crate::config::Config,
     is_controller: bool,
     is_attended: bool,
     id: PaneId,
@@ -436,7 +428,7 @@ pub(crate) fn maybe_notify_pane_status(
 }
 
 fn should_notify_pane_status(
-    config: &crate::config::HyprmuxConfig,
+    config: &crate::config::Config,
     is_controller: bool,
     is_attended: bool,
     blocked: bool,
@@ -449,7 +441,7 @@ fn should_notify_pane_status(
 }
 
 pub(crate) fn handle_pane_input(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     input: TerminalInputEvent,
 ) -> Update {
@@ -484,11 +476,7 @@ pub(crate) fn handle_pane_input(
     Update::none()
 }
 
-pub(crate) fn handle_pane_mouse(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    bytes: Vec<u8>,
-) -> Update {
+pub(crate) fn handle_pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
     // A pane running mouse tracking consumes the event in the framework before this pane's
     // `MouseRegion` runs, so the `on_mouse_down` that normally raises `Msg::FocusPane` never fires
     // for a full-screen TUI. The framework has already moved its *own* focus for clicks, drags and
@@ -526,7 +514,7 @@ pub(crate) fn handle_pane_mouse(
 const RESIZE_DEBOUNCE_MS: u64 = 16;
 
 pub(crate) fn handle_pane_resize(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     cols: u16,
     rows: u16,
@@ -585,7 +573,7 @@ fn schedule_pane_resize_flush(epoch: u64) -> Command {
 /// widget reports a viewport only when it *changes*. Nothing re-derives one. So a size dropped here
 /// leaves the PTY wrong until the pane's geometry happens to change again - which for a pane the
 /// user is not currently resizing may be never.
-pub(crate) fn flush_pending_resizes(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn flush_pending_resizes(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         // Mid-attach or a reconnect window. Disarm so a later report can schedule a fresh flush,
         // but keep the sizes: `flush_pending_resizes` runs again once the client is installed.
@@ -608,11 +596,7 @@ pub(crate) fn flush_pending_resizes(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
-pub(crate) fn handle_pane_scroll(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    offset: usize,
-) -> Update {
+pub(crate) fn handle_pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset: usize) -> Update {
     if let Some(pane) = find_pane_mut(&mut ctx.state, id)
         && pane.terminal.set_scrollback(offset)
     {
@@ -734,7 +718,7 @@ mod tests {
                 let app = App::new()
                     .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
                     .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal);
-                let mut backend = TestBackend::new_with_app(app, HyprmuxApp::default(), ());
+                let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -786,7 +770,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 backend.state_mut().current_mut().session_client = Some(client);
                 backend.state_mut().current_mut().engaged = false;
@@ -838,7 +822,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -889,7 +873,7 @@ mod tests {
 
     #[test]
     fn synchronized_targets_default_to_source_only() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0]
             .panes
             .push(Pane::new(2, 100, rect()));
@@ -899,7 +883,7 @@ mod tests {
 
     #[test]
     fn pane_status_notification_policy_is_controller_only_and_configurable() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         config.notifications.enabled = true;
 
         assert!(should_notify_pane_status(&config, true, false, true, false));
@@ -920,7 +904,7 @@ mod tests {
 
     #[test]
     fn status_notification_treats_a_focused_background_window_as_unattended() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         config.notifications.enabled = true;
         let mut state = State::new(config.clone(), Theme::default());
         let pane_id = state.current().focused_pane.expect("fresh pane focus");
@@ -938,7 +922,7 @@ mod tests {
 
     #[test]
     fn pane_exit_notification_splits_clean_and_error_codes() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         config.notifications.enabled = true;
         // Enabling notifications is not on its own a reason to announce a clean exit.
         assert!(!should_notify_pane_exit(&config, 0));
@@ -953,7 +937,7 @@ mod tests {
 
     #[test]
     fn follower_resize_is_suppressed_and_controller_resize_debounces() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::ClientMessage;
@@ -982,7 +966,7 @@ mod tests {
                 };
 
                 // Follower: a resize forwards nothing (it letterboxes to the canonical size).
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(viewport);
                 let (client, follower_rx) = SessionClient::test_channel();
                 {
@@ -1003,7 +987,7 @@ mod tests {
                 );
 
                 // Controller: rapid resizes coalesce; the flush sends only the latest size.
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(viewport);
                 let (client, controller_rx) = SessionClient::test_channel();
                 {
@@ -1077,7 +1061,7 @@ mod tests {
                 // A flush with no client must hold the size rather than discard it: nothing
                 // re-derives one, so dropping it leaves the PTY wrong until the pane's geometry
                 // happens to change again.
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(viewport);
                 let (client, reconnect_rx) = SessionClient::test_channel();
                 {
@@ -1128,7 +1112,7 @@ mod tests {
 
     #[test]
     fn synchronized_targets_exclude_floating_and_scratch() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].synchronized = true;
         state.current_mut().workspaces[0]
             .panes

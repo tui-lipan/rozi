@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{close_rect, workspace_tile_bounds};
 use crate::ops::focus::{request_current_pane_focus, request_pane_focus};
@@ -26,7 +26,7 @@ pub(crate) fn popup_rect(bounds: FloatRect, top_gap: f32, width: f32, height: f3
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn open(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     command: String,
     cwd: Option<String>,
     width: Option<f32>,
@@ -106,7 +106,7 @@ pub(crate) fn open(
     )))
 }
 
-pub(crate) fn close(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn close(ctx: &mut Context<AppRoot>) -> Update {
     let client = ctx.state.current().session_client.clone();
     let Some(pane) = ctx.state.popup.as_mut().filter(|pane| !pane.closing) else {
         return Update::none();
@@ -129,7 +129,7 @@ pub(crate) fn close(ctx: &mut Context<HyprmuxApp>) -> Update {
     ))
 }
 
-pub(crate) fn handle_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn handle_exit(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(pane) = ctx.state.popup.as_mut()
         && pane.identity.keep_open
     {
@@ -146,7 +146,7 @@ pub(crate) fn dismisses_completed(key: KeyEvent) -> bool {
 /// Tear down an open popup before detaching or leaving the session. The popup pane is
 /// client-local, so nothing else would ever kill its server-side PTY, and its reserved id must
 /// not linger in the server pane map across a reattach.
-pub(crate) fn kill_if_open(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn kill_if_open(ctx: &mut Context<AppRoot>) {
     if let Some(pane) = ctx.state.popup.take() {
         ctx.state.popup_return_focus = None;
         if let Some(client) = ctx.state.current().session_client.clone() {
@@ -155,7 +155,7 @@ pub(crate) fn kill_if_open(ctx: &mut Context<HyprmuxApp>) {
     }
 }
 
-fn restore_focus(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn restore_focus(ctx: &mut Context<AppRoot>) -> Update {
     if let Some(previous) = ctx.state.popup_return_focus.take() {
         crate::ops::focus::focus_pane(&mut ctx.state, previous);
         request_pane_focus(ctx, previous);
@@ -165,10 +165,7 @@ fn restore_focus(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn placement(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
-) -> Option<(FloatRect, Element)> {
+pub(crate) fn placement(app: &AppRoot, ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     let pane = ctx.state.popup.as_ref()?;
     let target = if pane.opening || pane.closing {
         close_rect(pane.floating_rect)
@@ -195,7 +192,7 @@ pub(crate) fn placement(
     ))
 }
 
-pub(crate) fn backdrop(ctx: &Context<HyprmuxApp>) -> Option<(FloatRect, Element)> {
+pub(crate) fn backdrop(ctx: &Context<AppRoot>) -> Option<(FloatRect, Element)> {
     ctx.state.popup.as_ref()?;
     let region: Element = MouseRegion::new()
         .capture_click(true)

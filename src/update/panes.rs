@@ -8,25 +8,25 @@ use crate::pty_events::{
     handle_pane_input, handle_pane_mouse, handle_pane_resize, handle_pane_scroll,
 };
 use crate::state::{AlertMode, PaneId, ResizeCorner, State};
-use crate::{HyprmuxApp, control, schedule_alert_pulse_tick};
+use crate::{AppRoot, control, schedule_alert_pulse_tick};
 
-pub(super) fn close_popup(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_popup(ctx: &mut Context<AppRoot>) -> Update {
     crate::popup::close(ctx)
 }
 
-pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     focus(&mut ctx.state, id);
     request_pane_focus(ctx, id);
     Update::full()
 }
 
-pub(super) fn hover_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(super) fn hover_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     crate::ops::focus::hover_focus_pane(ctx, id)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn begin_move(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     current_rect: FloatRect,
     from_local_x: u16,
@@ -48,7 +48,7 @@ pub(super) fn begin_move(
 }
 
 pub(super) fn move_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     dx: i16,
     dy: i16,
@@ -57,12 +57,12 @@ pub(super) fn move_pane(
     crate::ops::resize_move::move_pane(ctx, id, dx, dy, modified)
 }
 
-pub(super) fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16) -> Update {
+pub(super) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -> Update {
     crate::ops::resize_move::end_move(ctx, id, x, y)
 }
 
 pub(super) fn begin_resize(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     corner: ResizeCorner,
     x: u16,
@@ -74,7 +74,7 @@ pub(super) fn begin_resize(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn resize_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     corner: ResizeCorner,
     from_x: u16,
@@ -86,7 +86,7 @@ pub(super) fn resize_pane(
     crate::ops::resize_move::resize_pane(ctx, id, corner, (from_x, from_y), (x, y), modified)
 }
 
-pub(super) fn end_resize(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(super) fn end_resize(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     if ctx
         .state
         .resizing_pane
@@ -99,7 +99,7 @@ pub(super) fn end_resize(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
 }
 
 pub(super) fn begin_resize_split(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     horizontal_split: bool,
     x: u16,
@@ -109,7 +109,7 @@ pub(super) fn begin_resize_split(
 }
 
 pub(super) fn resize_split(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     horizontal_split: bool,
     from_x: u16,
@@ -121,7 +121,7 @@ pub(super) fn resize_split(
 }
 
 pub(super) fn begin_resize_split_junction(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     horizontal_panes: Vec<PaneId>,
     vertical_panes: Vec<PaneId>,
     x: u16,
@@ -138,7 +138,7 @@ pub(super) fn begin_resize_split_junction(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn resize_split_junction(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     horizontal_panes: Vec<PaneId>,
     vertical_panes: Vec<PaneId>,
     from_x: u16,
@@ -157,25 +157,25 @@ pub(super) fn resize_split_junction(
     )
 }
 
-pub(super) fn end_resize_split(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn end_resize_split(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.split_drag = None;
     Update::full()
 }
 
-pub(super) fn begin_scratch_resize(ctx: &mut Context<HyprmuxApp>, _from_y: u16) -> Update {
+pub(super) fn begin_scratch_resize(ctx: &mut Context<AppRoot>, _from_y: u16) -> Update {
     crate::scratchpad::begin_resize(ctx)
 }
 
-pub(super) fn scratch_resize(ctx: &mut Context<HyprmuxApp>, from_y: u16, y: u16) -> Update {
+pub(super) fn scratch_resize(ctx: &mut Context<AppRoot>, from_y: u16, y: u16) -> Update {
     crate::scratchpad::resize(ctx, from_y, y)
 }
 
-pub(super) fn end_scratch_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn end_scratch_resize(ctx: &mut Context<AppRoot>) -> Update {
     crate::scratchpad::end_resize(ctx)
 }
 
 pub(super) fn finish_open(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     id: PaneId,
     generation: u64,
@@ -196,7 +196,7 @@ pub(super) fn finish_open(
 }
 
 pub(super) fn activate_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     id: PaneId,
     generation: u64,
@@ -221,7 +221,7 @@ pub(super) fn activate_pane(
 }
 
 pub(super) fn copy_feedback_expired(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     attachment: u64,
     id: PaneId,
     epoch: u64,
@@ -230,14 +230,14 @@ pub(super) fn copy_feedback_expired(
 }
 
 pub(super) fn pane_input(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     input: TerminalInputEvent,
 ) -> Update {
     handle_pane_input(ctx, id, input)
 }
 
-pub(super) fn pane_key(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent) -> Update {
+pub(super) fn pane_key(ctx: &mut Context<AppRoot>, id: PaneId, key: KeyEvent) -> Update {
     if logical_focus_pending_activation(&ctx.state).is_none_or(|pending| pending == id) {
         focus(&mut ctx.state, id);
     }
@@ -246,39 +246,34 @@ pub(super) fn pane_key(ctx: &mut Context<HyprmuxApp>, id: PaneId, key: KeyEvent)
     update
 }
 
-pub(super) fn forward_prefix(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> Update {
+pub(super) fn forward_prefix(ctx: &mut Context<AppRoot>, key: KeyEvent) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
     crate::pty_events::forward_key_to_pane(ctx, id, key)
 }
 
-pub(super) fn pane_mouse(ctx: &mut Context<HyprmuxApp>, id: PaneId, bytes: Vec<u8>) -> Update {
+pub(super) fn pane_mouse(ctx: &mut Context<AppRoot>, id: PaneId, bytes: Vec<u8>) -> Update {
     handle_pane_mouse(ctx, id, bytes)
 }
 
-pub(super) fn pane_resize(
-    ctx: &mut Context<HyprmuxApp>,
-    id: PaneId,
-    cols: u16,
-    rows: u16,
-) -> Update {
+pub(super) fn pane_resize(ctx: &mut Context<AppRoot>, id: PaneId, cols: u16, rows: u16) -> Update {
     handle_pane_resize(ctx, id, cols, rows)
 }
 
-pub(super) fn pane_scroll(ctx: &mut Context<HyprmuxApp>, id: PaneId, offset: usize) -> Update {
+pub(super) fn pane_scroll(ctx: &mut Context<AppRoot>, id: PaneId, offset: usize) -> Update {
     handle_pane_scroll(ctx, id, offset)
 }
 
 pub(super) fn control_request(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     envelope: control::ControlEnvelope,
 ) -> Update {
     crate::ops::control::handle_control_request(ctx, envelope)
 }
 
 /// One shared, self-cancelling pulse chain for visible pane frames and inactive marked tabs.
-pub(crate) fn arm_alert_pulse(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn arm_alert_pulse(ctx: &mut Context<AppRoot>) {
     if ctx.state.alert_pulse_armed || !alert_pulse_should_run(&ctx.state) {
         return;
     }
@@ -292,7 +287,7 @@ pub(crate) fn arm_alert_pulse(ctx: &mut Context<HyprmuxApp>) {
     );
 }
 
-pub(super) fn alert_pulse_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn alert_pulse_tick(ctx: &mut Context<AppRoot>) -> Update {
     if !alert_pulse_should_run(&ctx.state) {
         let changed = ctx.state.alert_pulse_phase || ctx.state.alert_pulse_calm_phase;
         ctx.state.alert_pulse_armed = false;
@@ -385,7 +380,7 @@ fn logical_focus_pending_activation(state: &State) -> Option<PaneId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::{Pane, PaneBorderMode};
     use tui_lipan::prelude::{Color, Style};
 
@@ -410,7 +405,7 @@ mod tests {
 
     #[test]
     fn default_pulse_sleeps_without_alerts_and_arms_for_visible_frame_alerts() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         assert!(!alert_pulse_should_run(&state));
         state.current_mut().workspaces[0]
             .panes
@@ -426,7 +421,7 @@ mod tests {
 
     #[test]
     fn workbar_pulse_can_arm_for_a_background_marker_when_borders_are_off() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.config.pane.alert_border = AlertMode::Off;
         state.config.workbar.alert.mode = AlertMode::Pulse;
         let mut pane = blocked_pane(2);
@@ -472,7 +467,7 @@ mod tests {
 
     #[test]
     fn pulse_surfaces_ignore_each_others_nonanimatable_roles() {
-        let mut pane_state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut pane_state = State::new(Config::default(), Theme::default());
         pane_state.config.pane.alert_border = AlertMode::Pulse;
         pane_state.config.workbar.alert.mode = AlertMode::Pulse;
         let mut finished = blocked_pane(2);
@@ -485,7 +480,7 @@ mod tests {
         pane_state.theme.status.error = Color::Red;
         assert!(alert_pulse_should_run(&pane_state));
 
-        let mut tab_state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut tab_state = State::new(Config::default(), Theme::default());
         tab_state.config.pane.alert_border = AlertMode::Pulse;
         tab_state.config.workbar.alert.mode = AlertMode::Pulse;
         tab_state.current_mut().workspaces[0]
@@ -501,7 +496,7 @@ mod tests {
 
     #[test]
     fn equal_or_palette_alert_endpoints_do_not_arm_a_pane_pulse() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.config.pane.alert_border = AlertMode::Pulse;
         state.current_mut().workspaces[0]
             .panes

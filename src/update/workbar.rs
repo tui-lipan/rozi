@@ -1,13 +1,13 @@
 use tui_lipan::prelude::*;
 
 use crate::config::WorkbarSegment;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const COMMAND_CAPTURE_BYTES: usize = 64 * 1024;
 const COMMAND_BUSY_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
-fn command_interval(ctx: &Context<HyprmuxApp>, command: &str) -> Option<u64> {
+fn command_interval(ctx: &Context<AppRoot>, command: &str) -> Option<u64> {
     ctx.state
         .config
         .workbar
@@ -24,7 +24,7 @@ fn command_interval(ctx: &Context<HyprmuxApp>, command: &str) -> Option<u64> {
 }
 
 /// Kick every configured command once the app's command link exists and after each config reload.
-pub(crate) fn request_command_polls(ctx: &Context<HyprmuxApp>) {
+pub(crate) fn request_command_polls(ctx: &Context<AppRoot>) {
     let Some(link) = ctx.state.command_link.as_ref() else {
         return;
     };
@@ -34,7 +34,7 @@ pub(crate) fn request_command_polls(ctx: &Context<HyprmuxApp>) {
     }
 }
 
-pub(super) fn poll_command(ctx: &mut Context<HyprmuxApp>, epoch: u64, command: String) -> Update {
+pub(super) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, command: String) -> Update {
     let configured = command_interval(ctx, &command).is_some();
     match begin_poll(&mut ctx.state.workbar, epoch, &command, configured) {
         PollDecision::Ignored => return Update::none(),
@@ -105,7 +105,7 @@ fn first_output_line(result: std::io::Result<crate::platform::command::CommandOu
 }
 
 pub(super) fn command_output(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     command: String,
     output: String,

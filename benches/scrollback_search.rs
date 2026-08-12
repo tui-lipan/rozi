@@ -2,7 +2,7 @@ mod support;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use hyprmux::benchmark_advance_search_scan;
-use hyprmux::config::HyprmuxConfig;
+use hyprmux::config::Config;
 use hyprmux::pane::TerminalPane;
 use hyprmux::state::{ScrollbackSearchScan, ScrollbackSearchState, State};
 use std::cell::RefCell;
@@ -26,7 +26,7 @@ fn populated_pane(corpus: &[u8]) -> TerminalPane {
 }
 
 fn populated_search_state(corpus: &[u8], query: &'static str) -> FullSliceFixture {
-    let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+    let mut state = State::new(Config::default(), Theme::default());
     let target = state.current().focused_pane.expect("benchmark target");
     let pane = state.current_mut().workspaces[0]
         .panes

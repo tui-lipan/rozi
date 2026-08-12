@@ -1,4 +1,4 @@
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::config::{SidebarPosition, SidebarTab, SidebarTabId};
 use hyprmux::state::SidebarPanelState;
 use tui_lipan::TestBackend;
@@ -17,9 +17,9 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
 /// Every backend in this binary is built here: committing a splitter drag or toggling the split
 /// persists `[sidebar]`, so the config has to resolve out of a scratch root rather than the
 /// developer's own (`hyprmux::test_support`).
-fn sidebar_backend(w: u16, h: u16) -> TestBackend<HyprmuxApp> {
+fn sidebar_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
     backend
 }

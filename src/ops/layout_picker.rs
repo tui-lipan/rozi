@@ -1,12 +1,12 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::ops::focus::{request_current_pane_focus, request_layout_picker_focus};
 use crate::ops::resize_move::set_layout;
 use crate::state::{LayoutKind, LayoutPickerState, Mode};
 
 /// The active workspace's current layout, and its index in [`LayoutKind::all`].
-fn current_layout(ctx: &Context<HyprmuxApp>) -> (usize, LayoutKind) {
+fn current_layout(ctx: &Context<AppRoot>) -> (usize, LayoutKind) {
     let workspace_index = ctx.state.current().active_workspace;
     let current = ctx.state.current().workspaces[workspace_index].layout_kind;
     let index = LayoutKind::all()
@@ -18,13 +18,13 @@ fn current_layout(ctx: &Context<HyprmuxApp>) -> (usize, LayoutKind) {
 
 /// Apply a layout for live preview. Only the client that may actually reshape the layout previews:
 /// a follower cannot, and would only see its highlight flicker as server pushes overwrite it.
-fn preview_layout(ctx: &mut Context<HyprmuxApp>, kind: LayoutKind) {
+fn preview_layout(ctx: &mut Context<AppRoot>, kind: LayoutKind) {
     if ctx.state.is_controller() {
         set_layout(ctx, kind, false);
     }
 }
 
-pub(crate) fn open_layout_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_layout_picker(ctx: &mut Context<AppRoot>) -> Update {
     let (selected, original) = current_layout(ctx);
     ctx.state.layout_picker = Some(LayoutPickerState::new(selected, original));
     ctx.state.show_layout_picker = true;
@@ -37,7 +37,7 @@ pub(crate) fn open_layout_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn cancel_layout_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn cancel_layout_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Leaving without committing restores the layout the picker previewed away from.
     if let Some(picker) = ctx.state.layout_picker.take() {
         let (_, current) = current_layout(ctx);
@@ -53,10 +53,7 @@ pub(crate) fn cancel_layout_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Highlight moved to a different row: preview that layout live so the workspace reflects the
 /// selection before the user commits with Enter.
-pub(crate) fn layout_picker_selection_changed(
-    ctx: &mut Context<HyprmuxApp>,
-    index: usize,
-) -> Update {
+pub(crate) fn layout_picker_selection_changed(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(kind) = LayoutKind::all().get(index).copied() else {
         return Update::none();
     };
@@ -69,7 +66,7 @@ pub(crate) fn layout_picker_selection_changed(
 
 /// Enter on a row: commit the highlighted layout and close the picker. Live preview has usually
 /// already applied it; this is the point the change becomes permanent (survives cancel).
-pub(crate) fn select_layout(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn select_layout(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(kind) = LayoutKind::all().get(index).copied() else {
         return Update::none();
     };
@@ -91,7 +88,7 @@ pub(crate) fn select_layout(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
 
 /// Persist the highlighted layout as `[layout] default`. The picker stays open and its `default`
 /// badge moves to the new row; only a write failure surfaces a toast.
-pub(crate) fn layout_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn layout_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     let Some(picker) = ctx.state.layout_picker.as_ref() else {
         return Update::none();
     };

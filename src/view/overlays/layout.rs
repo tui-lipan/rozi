@@ -1,4 +1,4 @@
-pub(crate) fn layout_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn layout_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let body = VStack::new()
         .height(Length::Auto)
         .child(layout_picker_palette(ctx))
@@ -14,7 +14,7 @@ pub(crate) fn layout_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
-fn layout_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
+fn layout_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     hint_row()
         .child(hint_pill(theme, "switch", "enter"))
@@ -22,7 +22,7 @@ fn layout_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
-fn layout_picker_palette(ctx: &Context<HyprmuxApp>) -> SearchPalette<usize> {
+fn layout_picker_palette(ctx: &Context<AppRoot>) -> SearchPalette<usize> {
     let workspace_index = ctx.state.current().active_workspace;
     // The real applied layout is the one the picker opened on and will revert to on cancel — not the
     // live-previewed layout under the highlight, which changes as the user browses. `current`
@@ -71,7 +71,7 @@ fn layout_picker_palette(ctx: &Context<HyprmuxApp>) -> SearchPalette<usize> {
         )
 }
 
-fn layout_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn layout_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     ctx.link().key_handler(|key| {
         if key.mods.ctrl && matches!(key.code, KeyCode::Char('f') | KeyCode::Char('F')) {
             Some(Msg::LayoutPickerSetDefault)

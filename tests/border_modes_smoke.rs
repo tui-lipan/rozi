@@ -1,13 +1,13 @@
 //! Pins borderless headers, internal Divider rendering, and the config-only special-pane frame.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{MoveSession, Pane, PaneBorderMode, PaneTitlebarMode, SplitAxis};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{CapStyle, FloatRect, Rect};
 
-fn backend(mode: PaneBorderMode, pane_count: usize) -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend(mode: PaneBorderMode, pane_count: usize) -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -220,7 +220,7 @@ fn integrated_header_uses_one_row_in_borderless_modes() {
 #[test]
 fn merged_border_titlebar_keeps_lower_title_when_upper_focused() {
     on_large_stack(|| {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
             y: 0,

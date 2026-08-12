@@ -57,7 +57,7 @@ fn status_test_pane(generation: u64, exited: Option<i32>) -> ServerPane {
 
 /// A server with takeover turned off, so a control request has to be granted or declined rather
 /// than transferring the lease outright. Takeover is on by default (see
-/// [`crate::config::HyprmuxSessionConfig::allow_takeover`]), so the cooperative path only exists in
+/// [`crate::config::SessionConfig::allow_takeover`]), so the cooperative path only exists in
 /// a session that has opted into it — and a test exercising that path has to say so.
 fn cooperative_server(session_name: &str) -> SessionServer {
     SessionServer::new_named_with_settings(

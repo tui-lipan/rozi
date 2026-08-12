@@ -1,4 +1,4 @@
-pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn profile_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.profile_picker.as_ref() else {
         return Text::new("").into();
     };
@@ -22,7 +22,7 @@ pub(crate) fn profile_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
-fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
+fn profile_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.profile_picker.as_ref() else {
         return Text::new("").into();
@@ -66,7 +66,7 @@ fn profile_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
 }
 
 fn profile_picker_palette(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     picker: &ProfilePickerState,
 ) -> SearchPalette<usize> {
     let theme = &ctx.state.theme;
@@ -187,7 +187,7 @@ fn profile_picker_palette(
     palette
 }
 
-fn profile_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn profile_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     ctx.link().key_handler(|key| {
         if key.mods.ctrl && matches!(key.code, KeyCode::Char('o') | KeyCode::Char('O')) {
             Some(Msg::ProfilePickerOpenAs)

@@ -43,7 +43,7 @@ optional mode — a bare `hyprmux` launch attaches to a disposable per-process e
 CLI / thin main.rs
   |
   v
-lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
+lib.rs -> app.rs: AppRoot (tui-lipan Component)
   |-- State / Msg model in state/ + msg.rs
   |-- update/::handle_msg dispatches messages to focused ops modules
   |-- key_routing routes prefix / held-modifier / terminal keys

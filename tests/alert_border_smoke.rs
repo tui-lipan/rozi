@@ -1,13 +1,13 @@
 //! Render-level regression coverage for pane alert colors across border modes.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneBorderMode, SplitAxis};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{Color, FloatRect, Rect};
 
-fn backend(mode: PaneBorderMode) -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend(mode: PaneBorderMode) -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -44,7 +44,7 @@ fn backend(mode: PaneBorderMode) -> TestBackend<HyprmuxApp> {
     backend
 }
 
-fn block_second(backend: &mut TestBackend<HyprmuxApp>) {
+fn block_second(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
         .reported_status = Some(hyprmux::session::protocol::PaneStatus {
@@ -54,7 +54,7 @@ fn block_second(backend: &mut TestBackend<HyprmuxApp>) {
     });
 }
 
-fn detect_second_as_blocked(backend: &mut TestBackend<HyprmuxApp>) {
+fn detect_second_as_blocked(backend: &mut TestBackend<AppRoot>) {
     backend.state_mut().current_mut().workspaces[0].panes[1]
         .terminal
         .detected_agent = Some(hyprmux::session::protocol::DetectedAgent {

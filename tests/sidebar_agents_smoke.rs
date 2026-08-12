@@ -1,7 +1,7 @@
 use hyprmux::config::SidebarTab;
 use hyprmux::session::protocol::{AgentKind, DetectedAgent, DetectedAgentState, PaneStatus};
 use hyprmux::state::{Pane, PaneId};
-use hyprmux::{HyprmuxApp, Msg};
+use hyprmux::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::{FloatRect, Rect};
 
@@ -93,7 +93,7 @@ fn agents_tab_renders_project_groups() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -189,7 +189,7 @@ fn agents_tab_heads_projects_with_their_branch() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -273,7 +273,7 @@ fn focusing_a_finished_agent_clears_its_pulse() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -309,7 +309,7 @@ fn published_slots_render_one_numbered_row_each() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

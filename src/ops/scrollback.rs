@@ -2,7 +2,7 @@
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::ops::config::{config_editor, missing_editor_command, quote_shell_arg};
 use crate::pane_lifecycle::find_pane_mut;
 use crate::platform::paths::{PlatformEnv, write_scrollback_dump};
@@ -10,7 +10,7 @@ use crate::state::PaneIdentity;
 
 /// Dump the focused pane's full scrollback to a private file and open it in `$EDITOR` as a tiled
 /// pane (same pattern as [`crate::ops::config::open_config_file`]).
-pub(crate) fn edit_scrollback(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn edit_scrollback(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };

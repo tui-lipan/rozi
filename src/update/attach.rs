@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::pane_lifecycle::{find_pane_mut, pane_env};
 use crate::state::State;
 use crate::tiling::append_tiled_window;
@@ -27,7 +27,7 @@ pub(super) fn reset_state_for_shared_seed(state: &mut State) {
 /// the authoritative size and stamp its live metadata (title, cwd, pid) from the attach frame, so
 /// replay seed frames land on a correctly sized screen.
 pub(super) fn bind_attached_pane_backends(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     panes: Vec<crate::session::protocol::PaneMeta>,
 ) {
     for meta in panes {
@@ -80,7 +80,7 @@ pub(super) fn bind_attached_pane_backends(
 /// (should not happen since the shared-layout protocol landed). Rebuilds a flat tiled workspace
 /// from the pane list.
 pub(super) fn apply_attached_panes(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     panes: Vec<crate::session::protocol::PaneMeta>,
 ) {
     for workspace in &mut ctx.state.current_mut().workspaces {
@@ -159,7 +159,7 @@ pub(super) fn apply_attached_panes(
 /// their `(pane_id, generation)` so the caller can schedule the open/activate reveal timers (these
 /// panes start with `opening = true` and would otherwise stay invisible).
 pub(crate) fn spawn_state_panes_on_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
 ) -> Vec<(crate::state::PaneId, u64)> {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return Vec::new();
@@ -261,7 +261,7 @@ pub(crate) fn spawn_state_panes_on_session(
 
 /// Flush pane spawns that were queued while no client was connected (see
 /// [`crate::state::State::pending_spawns`]).
-pub(super) fn flush_pending_spawns(ctx: &mut Context<HyprmuxApp>) {
+pub(super) fn flush_pending_spawns(ctx: &mut Context<AppRoot>) {
     let Some(client) = ctx.state.current().session_client.clone() else {
         return;
     };

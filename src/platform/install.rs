@@ -3,13 +3,13 @@
 //! Path policy (`PlatformEnv` / XDG) stays here; the durable activation engine lives in `relswap`.
 
 use crate::platform::paths::{self, PlatformEnv};
-use crate::release_app::HYPRMUX;
+use crate::release_app::ROZI;
 use relswap::{Installation, NoFaultInjector, UreqDownloader};
 
 /// Production constructor using the platform's managed data and command paths.
 pub fn from_platform_env(env: &PlatformEnv) -> Installation<UreqDownloader> {
     Installation::new(
-        &HYPRMUX,
+        &ROZI,
         paths::data_dir(env),
         paths::managed_command_path(env),
         UreqDownloader::new(),

@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{closest_pane_to_rect, directional_score, workspace_tile_bounds};
 use crate::layout::{
@@ -29,7 +29,7 @@ pub(crate) fn active_pane_is_fullscreen(state: &State, id: PaneId) -> bool {
 }
 
 /// Record host-window focus and acknowledge the one pane the user can now see.
-pub(crate) fn window_focus_changed(ctx: &mut Context<HyprmuxApp>, focused: bool) -> Update {
+pub(crate) fn window_focus_changed(ctx: &mut Context<AppRoot>, focused: bool) -> Update {
     ctx.state.window_focused = focused;
     let pane_id = ctx.state.current().focused_pane;
     let changed =
@@ -91,7 +91,7 @@ pub(crate) fn focus_locked_by_fullscreen(state: &State) -> bool {
 }
 
 /// Focus a live workspace pane regardless of which workspace currently owns the view.
-pub(crate) fn focus_pane_anywhere(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> bool {
+pub(crate) fn focus_pane_anywhere(ctx: &mut Context<AppRoot>, target: PaneId) -> bool {
     let Some(workspace_index) = ctx.state.current().workspaces.iter().position(|workspace| {
         workspace
             .panes
@@ -831,7 +831,7 @@ fn transfer_workspace_fields(from: &mut Workspace, to: &mut Workspace) {
 /// the framework before the per-pane hover callback can run, so without this path on-hover focus
 /// would never fire over a full-screen TUI. Only tiled/floating panes in the active workspace
 /// participate; the scratchpad keeps its own focus lifecycle and must not hijack `focused_pane`.
-pub(crate) fn hover_focus_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(crate) fn hover_focus_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     if !ctx.state.config.pane.focus_on_hover {
         return Update::none();
     }
@@ -1208,7 +1208,7 @@ pub(crate) fn active_pane_mut(state: &mut State, id: PaneId) -> Option<&mut Pane
         .find(|pane| pane.id == id)
 }
 
-pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
+pub(crate) fn request_pane_focus(ctx: &mut Context<AppRoot>, id: PaneId) {
     if crate::pane_lifecycle::find_pane_mut(&mut ctx.state, id)
         .is_some_and(|pane| pane.terminal_active && !pane.opening && !pane.closing)
     {
@@ -1216,7 +1216,7 @@ pub(crate) fn request_pane_focus(ctx: &mut Context<HyprmuxApp>, id: PaneId) {
     }
 }
 
-pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_current_pane_focus(ctx: &mut Context<AppRoot>) {
     if let Some(id) = ctx.state.current().focused_pane {
         request_pane_focus(ctx, id);
     }
@@ -1228,57 +1228,57 @@ pub(crate) fn request_current_pane_focus(ctx: &mut Context<HyprmuxApp>) {
 /// to `has_focus_within_key` — so hyprmux cannot ask the framework whether the sidebar still holds
 /// the keyboard. `sidebar.focused` is therefore app-owned intent, and this is the one place that
 /// has to retract it.
-fn focus_key(ctx: &mut Context<HyprmuxApp>, key: impl Into<tui_lipan::Key>) {
+fn focus_key(ctx: &mut Context<AppRoot>, key: impl Into<tui_lipan::Key>) {
     ctx.state.sidebar.focused = false;
     ctx.request_focus(key);
 }
 
-pub(crate) fn request_search_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_search_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::search_input_key());
 }
 
-pub(crate) fn request_rename_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_rename_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::rename_input_key());
 }
 
-pub(crate) fn request_rename_session_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_rename_session_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::rename_session_input_key());
 }
 
-pub(crate) fn request_save_profile_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_save_profile_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::save_profile_key());
 }
 
-pub(crate) fn request_profile_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_profile_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::profile_picker_key());
 }
 
-pub(crate) fn request_theme_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_theme_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::theme_picker_key());
 }
 
-pub(crate) fn request_layout_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_layout_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::layout_picker_key());
 }
 
-pub(crate) fn request_palette_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_palette_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::palette_key());
 }
 
-pub(crate) fn request_session_picker_focus(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn request_session_picker_focus(ctx: &mut Context<AppRoot>) {
     focus_key(ctx, view::session_picker_key());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::{LayoutKind, Pane};
     use crate::tiling::{append_tiled_window, collect_tree_leaves};
     use tui_lipan::prelude::Theme;
 
     fn state_with_tiled(ids: &[PaneId]) -> State {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         // State::new seeds pane 1; clear and rebuild a deterministic tiled set.
         state.current_mut().workspaces[0].panes.clear();
         state.current_mut().workspaces[0].tile_tree = None;
@@ -1303,10 +1303,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::HyprmuxApp;
+                use crate::AppRoot;
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let pane_id = backend
                     .state()
                     .current()
@@ -1356,10 +1356,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::HyprmuxApp;
+                use crate::AppRoot;
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let target = 2;
                 let rect = backend.state().current().workspaces[0].panes[0].floating_rect;
                 let mut pane = Pane::new(target, 100, rect);
@@ -2049,10 +2049,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::HyprmuxApp;
+                use crate::AppRoot;
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2246,10 +2246,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2546,10 +2546,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2606,7 +2606,7 @@ mod tests {
                 );
                 assert_right_edge_aligned(backend.state(), 3);
                 let sibling = &backend.state().current().workspaces[0].panes[0];
-                let cfg = HyprmuxApp::geometry_transition_for_pane(backend.state(), sibling, false);
+                let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false);
                 assert!(cfg.duration > std::time::Duration::ZERO);
             })
             .expect("spawn")
@@ -2619,10 +2619,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2717,10 +2717,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2771,10 +2771,10 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 use crate::state::SharedSessionState;
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 // Local viewport narrower than the controller canvas → letterbox overhang.
                 backend.set_viewport(Rect {
                     x: 0,
@@ -2901,10 +2901,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2960,10 +2960,10 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -3024,10 +3024,10 @@ mod tests {
                 use std::sync::mpsc;
 
                 use crate::control::{ControlCommand, ControlEnvelope, ControlRequest};
-                use crate::{HyprmuxApp, Msg};
+                use crate::{AppRoot, Msg};
                 use tui_lipan::TestBackend;
 
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,

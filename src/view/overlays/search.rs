@@ -1,4 +1,4 @@
-pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn search_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(search) = ctx.state.search.as_ref() else {
         return Text::new("").into();
     };
@@ -30,7 +30,7 @@ pub(crate) fn search_overlay(ctx: &Context<HyprmuxApp>) -> Element {
         .key(search_input_key())
 }
 
-fn scrollback_search_hints(ctx: &Context<HyprmuxApp>, search: &ScrollbackSearchState) -> Element {
+fn scrollback_search_hints(ctx: &Context<AppRoot>, search: &ScrollbackSearchState) -> Element {
     let theme = &ctx.state.theme;
     let mut hints = hint_row()
         .child(hint_pill(theme, "next", "ctrl+n"))
@@ -42,7 +42,7 @@ fn scrollback_search_hints(ctx: &Context<HyprmuxApp>, search: &ScrollbackSearchS
 }
 
 fn scrollback_search_palette(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     search: &ScrollbackSearchState,
 ) -> SearchPalette<usize> {
     let current = search.current;
@@ -86,7 +86,7 @@ fn scrollback_search_empty_text(search: &ScrollbackSearchState, query: &str) -> 
     }
 }
 
-fn scrollback_search_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn scrollback_search_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     ctx.link().key_handler(|key| {
         if key.is(KeyCode::Esc) {
             Some(Msg::CloseSearch)

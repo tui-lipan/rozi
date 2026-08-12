@@ -515,7 +515,7 @@ mod tests {
             w: 100,
             h: 30,
         };
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         config.sidebar.visible = true;
         let mut state = crate::state::State::new(config, tui_lipan::prelude::Theme::default());
         assert_eq!(state.content_viewport(viewport).w, 68);

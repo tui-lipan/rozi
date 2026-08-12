@@ -1,6 +1,6 @@
 //! Full-app view/expand/layout cost, the work every `Update::full()` pays for.
 //!
-//! `HyprmuxApp` is the only `Component` in the crate, so there is no subtree smaller than "the
+//! `AppRoot` is the only `Component` in the crate, so there is no subtree smaller than "the
 //! whole app": one pane's output redraws every pane, the workbar, and the overlays. This target
 //! measures that per-frame cost against pane count and terminal content, so the value of scoping
 //! renders (child components with `memo_key`, in-view `Memo`) can be judged against a number
@@ -18,7 +18,7 @@
 mod support;
 
 use criterion::{BenchmarkId, Criterion};
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneId};
 use hyprmux::tiling::build_dwindle_tree;
 use std::hint::black_box;
@@ -42,8 +42,8 @@ const STACK_SIZE: usize = 16 * 1024 * 1024;
 /// `opening` must be cleared (an opening pane animates in from nothing) and ids must start past
 /// the pane `State::new` seeds (a reused id inherits stale transition entries). Getting either
 /// wrong renders an almost empty frame while the state still looks correct.
-fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend_with_panes(panes: usize, corpus: &[u8]) -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(VIEWPORT);
     {
         let state = backend.state_mut();

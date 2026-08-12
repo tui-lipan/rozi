@@ -1,6 +1,6 @@
 //! Sessions sidebar hierarchy, color, and host action presentation.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::config::{RemoteHostConfig, SidebarTab, SidebarTabId};
 use hyprmux::session::CachedHostSession;
 use hyprmux::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
@@ -33,9 +33,9 @@ fn session(name: &str, panes: usize, clients: u32, host: Option<&str>) -> Discov
 /// removes the timing assumption without weakening what is asserted - a hover that never arrives
 /// still fails, just with a message saying so.
 fn settle_until(
-    backend: &mut TestBackend<HyprmuxApp>,
+    backend: &mut TestBackend<AppRoot>,
     what: &str,
-    mut condition: impl FnMut(&mut TestBackend<HyprmuxApp>) -> bool,
+    mut condition: impl FnMut(&mut TestBackend<AppRoot>) -> bool,
 ) {
     // Generous for the same reason as the integration harness's IO_TIMEOUT: the wait ends as soon
     // as the condition holds, so this only bounds how long a real failure takes to surface.
@@ -76,7 +76,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -189,7 +189,7 @@ fn sessions_sidebar_renders_group_and_child_hierarchy() {
             assert_eq!(frame.cell(1, (winvm + 1) as u16).fg, muted);
             assert_eq!(frame.cell(2, (winvm + 3) as u16).fg, muted);
 
-            let move_to = |backend: &mut TestBackend<HyprmuxApp>, y: u16| {
+            let move_to = |backend: &mut TestBackend<AppRoot>, y: u16| {
                 backend
                     .send_mouse(MouseEvent {
                         x: 4,

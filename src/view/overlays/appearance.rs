@@ -1,4 +1,4 @@
-pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let pane = &ctx.state.config.pane;
     // Dependent rows (Titlebar Style, Workbar Gap/Position) always stay in the list; when their
     // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
@@ -226,7 +226,7 @@ pub(crate) fn appearance_overlay(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) ->
         .key(appearance_palette_key())
 }
 
-fn appearance_palette_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn appearance_palette_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     // Always claim bare Left/Right; `appearance_step` reads live selection so a stale
     // render-time capture cannot step the wrong row (or miss a move after Up/Down).
     ctx.link().key_handler(|key| {
@@ -249,7 +249,7 @@ fn padding_summary((top, right, bottom, left): (u16, u16, u16, u16)) -> String {
     }
 }
 
-pub(crate) fn pane_padding_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
         return Text::new("").into();
     };
@@ -348,7 +348,7 @@ fn enabled_status(enabled: bool) -> String {
     if enabled { "Enabled" } else { "Disabled" }.to_string()
 }
 
-fn current_theme_label(ctx: &Context<HyprmuxApp>) -> String {
+fn current_theme_label(ctx: &Context<AppRoot>) -> String {
     let current = &ctx.state.config.theme.name;
     crate::config::theme_choices()
         .into_iter()
@@ -358,7 +358,7 @@ fn current_theme_label(ctx: &Context<HyprmuxApp>) -> String {
 }
 
 fn action_search_palette(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     entries: Vec<SearchEntry<Callback<()>>>,
     placeholder: &str,
 ) -> SearchPalette<Callback<()>> {
@@ -375,7 +375,7 @@ fn action_search_palette(
         }))
 }
 
-pub(crate) fn theme_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn theme_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     // Built-in presets plus every custom theme file, selected by index into the same list.
     let choices = crate::config::theme_choices();
     let current = &ctx.state.config.theme.name;

@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::config::{
     clear_default_profile, delete_profile_file, list_profiles, persist_default_profile,
     profile_path_for_name,
@@ -10,7 +10,7 @@ use crate::ops::focus::request_save_profile_focus;
 use crate::profiles::{load_profile, profile_from_state, save_profile};
 use crate::state::{Mode, ProfilePickerState, SaveProfileState};
 
-pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
     let initial = ctx
         .state
         .current()
@@ -37,7 +37,7 @@ pub(crate) fn open_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update 
     Update::full()
 }
 
-pub(crate) fn close_save_profile_prompt(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn close_save_profile_prompt(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.save_profile_prompt = None;
     ctx.state.commands_dirty = true;
     crate::ops::overlay_return::finish(ctx)
@@ -69,7 +69,7 @@ pub(crate) fn should_promote_session(state: &crate::state::State) -> bool {
 /// and rebuilds from the profile once it is gone. That is simply what capture *means* here, so
 /// there is no second commit to opt out of it - a session captured under a name it should not keep
 /// can be killed afterwards.
-pub(crate) fn submit_save_profile(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn submit_save_profile(ctx: &mut Context<AppRoot>) -> Update {
     let Some(name) = ctx
         .state
         .save_profile_prompt
@@ -158,15 +158,15 @@ fn normalize_profile_name(name: &str) -> Option<String> {
     crate::session::discovery::valid_session_name(name).then(|| name.to_string())
 }
 
-pub(crate) fn open_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
     open_profile_picker_mode(ctx, false)
 }
 
-pub(crate) fn open_apply_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_apply_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
     open_profile_picker_mode(ctx, true)
 }
 
-fn open_profile_picker_mode(ctx: &mut Context<HyprmuxApp>, apply_mode: bool) -> Update {
+fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Update {
     let entries = list_profiles();
     ctx.state.profile_picker_epoch = ctx.state.profile_picker_epoch.wrapping_add(1);
     let epoch = ctx.state.profile_picker_epoch;
@@ -190,7 +190,7 @@ fn open_profile_picker_mode(ctx: &mut Context<HyprmuxApp>, apply_mode: bool) -> 
 }
 
 fn profile_session_rows(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
 ) -> Vec<crate::session::discovery::DiscoveredSession> {
     let current = ctx.state.local_current_session_name();
     let mut rows =
@@ -236,7 +236,7 @@ fn profile_session_watch_command(epoch: u64, current: Option<String>) -> Command
 }
 
 pub(crate) fn apply_profile_sessions(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     mut rows: Vec<crate::session::discovery::DiscoveredSession>,
 ) -> Update {
@@ -273,14 +273,14 @@ pub(crate) fn apply_profile_sessions(
     ))
 }
 
-pub(crate) fn cancel_profile_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn cancel_profile_picker(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
     ctx.state.commands_dirty = true;
     Update::full()
 }
 
-pub(crate) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query: String) -> Update {
+pub(crate) fn profile_picker_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
     if let Some(picker) = ctx.state.profile_picker.as_mut() {
         let cursor = query.len();
         picker.input.set_text(query);
@@ -295,10 +295,7 @@ pub(crate) fn profile_picker_query_changed(ctx: &mut Context<HyprmuxApp>, query:
     Update::full()
 }
 
-pub(crate) fn profile_picker_selection_changed(
-    ctx: &mut Context<HyprmuxApp>,
-    index: usize,
-) -> Update {
+pub(crate) fn profile_picker_selection_changed(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if let Some(picker) = ctx.state.profile_picker.as_mut() {
         picker.selected = index;
         if picker
@@ -317,7 +314,7 @@ pub(crate) fn profile_picker_selection_changed(
     Update::full()
 }
 
-pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
@@ -422,7 +419,7 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<HyprmuxApp>) -> 
     }
 }
 
-pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
@@ -447,7 +444,7 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<HyprmuxApp>) -> Updat
     Update::full()
 }
 
-pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
@@ -503,7 +500,7 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<HyprmuxApp>) -> Update
     Update::full()
 }
 
-pub(crate) fn select_profile(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn select_profile(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(entry) = ctx
         .state
         .profile_picker
@@ -558,7 +555,7 @@ pub(crate) enum OpenNamedIntent {
 }
 
 pub(crate) fn open_named_target(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     name: String,
     intent: OpenNamedIntent,
 ) -> Update {
@@ -676,7 +673,7 @@ pub(crate) fn open_named_target(
     }))
 }
 
-pub(crate) fn open_selected_profile_as(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_selected_profile_as(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
     };
@@ -693,7 +690,7 @@ pub(crate) fn open_selected_profile_as(ctx: &mut Context<HyprmuxApp>) -> Update 
 }
 
 pub(crate) fn load_profile_into_fresh_ephemeral(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     entry: crate::config::ProfileEntry,
 ) -> Update {
     let profile = match load_profile(&entry.path) {
@@ -747,14 +744,14 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     }))
 }
 
-fn selected_profile_entry(ctx: &Context<HyprmuxApp>) -> Option<crate::config::ProfileEntry> {
+fn selected_profile_entry(ctx: &Context<AppRoot>) -> Option<crate::config::ProfileEntry> {
     ctx.state
         .profile_picker
         .as_ref()
         .and_then(|picker| picker.entries.get(picker.selected).cloned())
 }
 
-fn refresh_profile_picker_entries(ctx: &mut Context<HyprmuxApp>) {
+fn refresh_profile_picker_entries(ctx: &mut Context<AppRoot>) {
     let Some(picker) = ctx.state.profile_picker.as_mut() else {
         return;
     };
@@ -772,7 +769,7 @@ mod tests {
     use super::*;
     use crate::Msg;
     use crate::config::ProfileEntry;
-    use crate::profiles::{HyprmuxProfile, save_profile};
+    use crate::profiles::{Profile, save_profile};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tui_lipan::TestBackend;
@@ -820,7 +817,7 @@ mod tests {
     #[test]
     fn only_an_attached_temporary_session_is_promoted_by_a_capture() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
             assert!(should_promote_session(backend.state()));
@@ -857,7 +854,7 @@ mod tests {
     #[test]
     fn capture_prompt_says_whether_the_commit_also_names_the_session() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().current_mut().session_name = Some("eph-123".to_string());
             backend
@@ -885,10 +882,10 @@ mod tests {
     #[test]
     fn replace_arms_on_the_shared_confirm_clock_and_expires_with_it() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             let path = temp_profile_path();
-            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            save_profile(&path, &Profile::default()).expect("write profile");
             let mut picker = ProfilePickerState::new(vec![entry("dev", path.clone())]);
             picker.apply_mode = true;
             backend.state_mut().profile_picker = Some(picker);
@@ -933,7 +930,7 @@ mod tests {
     #[test]
     fn save_prompt_prefills_named_session_but_not_ephemeral_session() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().current_mut().session_attached = true;
             backend.state_mut().current_mut().session_name = Some("dev".to_string());
             backend
@@ -988,7 +985,7 @@ mod tests {
     #[test]
     fn picker_query_and_selection_dispatch_reset_transient_state() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![
                 entry("one", PathBuf::from("one.toml")),
                 entry("two", PathBuf::from("two.toml")),
@@ -1018,9 +1015,9 @@ mod tests {
     fn selecting_profile_dispatches_named_profile_seed_attach() {
         on_large_stack(|| {
             let path = temp_profile_path();
-            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
+            save_profile(&path, &Profile::default()).expect("write profile");
 
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().profile_picker =
                 Some(ProfilePickerState::new(vec![entry("empty", path.clone())]));
             backend.state_mut().show_profile_picker = true;
@@ -1058,8 +1055,8 @@ mod tests {
     fn open_as_queues_entered_session_with_selected_profile_seed() {
         on_large_stack(|| {
             let path = temp_profile_path();
-            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![entry(
                 "rust-dev",
                 path.clone(),
@@ -1101,8 +1098,8 @@ mod tests {
     fn open_as_without_name_queues_ephemeral_profile_seed() {
         on_large_stack(|| {
             let path = temp_profile_path();
-            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().profile_picker = Some(ProfilePickerState::new(vec![entry(
                 "rust-dev",
                 path.clone(),
@@ -1141,8 +1138,8 @@ mod tests {
     fn replacing_session_emits_profile_applied_not_profile_loaded() {
         on_large_stack(|| {
             let path = temp_profile_path();
-            save_profile(&path, &HyprmuxProfile::default()).expect("write profile");
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let mut backend = TestBackend::new(AppRoot::default());
             let (client, _rx) = crate::session::client::SessionClient::test_channel();
             {
                 let state = backend.state_mut();

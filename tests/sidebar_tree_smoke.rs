@@ -1,6 +1,6 @@
 use hyprmux::config::{SidebarTab, SidebarTreeConfig, SidebarTreeView};
 use hyprmux::input::Action;
-use hyprmux::{HyprmuxApp, Msg};
+use hyprmux::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyCode, KeyEvent, KeyMods, Rect};
@@ -49,7 +49,7 @@ fn render_tree(view: SidebarTreeView, cwd: &str) -> Vec<String> {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -147,7 +147,7 @@ fn git_markers_and_diff_stats_use_theme_status_colors() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -220,7 +220,7 @@ fn sidebar_scrollbars_use_the_half_block_thumb() {
         .spawn(|| {
             // Short viewport against this repository, so both surfaces certainly overflow.
             let has_thumb = |tab: SidebarTab, panes: usize| -> bool {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -293,7 +293,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -316,7 +316,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
                 state.current_mut().workspaces[0].focused_pane = Some(pane);
                 state.current_mut().workspaces[0].panes[0].terminal.cwd = Some(cwd);
             }
-            let settle = |backend: &mut TestBackend<HyprmuxApp>| {
+            let settle = |backend: &mut TestBackend<AppRoot>| {
                 for _ in 0..40 {
                     backend.render();
                     let _ = backend.pump();
@@ -330,7 +330,7 @@ fn clicking_a_directory_expands_it_and_styles_the_selection() {
             let selection_bg = backend.state().theme.surface.element.elevate_by(0.08);
 
             // Find and click the `src` directory row.
-            let row_text = |backend: &TestBackend<HyprmuxApp>, row: u16| -> String {
+            let row_text = |backend: &TestBackend<AppRoot>, row: u16| -> String {
                 backend.capture_frame().to_fixed_grid_lines()[row as usize]
                     .chars()
                     .take(34)

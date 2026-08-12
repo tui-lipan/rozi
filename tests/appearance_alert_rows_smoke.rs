@@ -1,15 +1,15 @@
 //! Alert controls live only in Alerts, where the four alert channels are configured together.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{AlertMode, PaneBorderMode};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 
-/// Isolated per `AGENTS.md`: building a `HyprmuxApp` otherwise resolves the developer's own config
+/// Isolated per `AGENTS.md`: building a `AppRoot` otherwise resolves the developer's own config
 /// and state directories.
-fn alerts_backend(w: u16, h: u16) -> TestBackend<HyprmuxApp> {
+fn alerts_backend(w: u16, h: u16) -> TestBackend<AppRoot> {
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect { x: 0, y: 0, w, h });
     backend.state_mut().show_alerts = true;
     backend
@@ -17,14 +17,14 @@ fn alerts_backend(w: u16, h: u16) -> TestBackend<HyprmuxApp> {
 
 /// Tall enough that the whole row list clears the fold, so a status string can be asserted against
 /// the drawn grid rather than against whatever happens to be scrolled into view.
-fn rendered_rows(backend: &mut TestBackend<HyprmuxApp>) -> String {
+fn rendered_rows(backend: &mut TestBackend<AppRoot>) -> String {
     backend.render();
     backend.capture_frame().to_fixed_grid_lines().join("\n")
 }
 
 /// How many rows carry `label`, counted from the snapshot's widget inventory rather than the grid:
 /// a row below the fold is still a row that exists.
-fn row_count(backend: &mut TestBackend<HyprmuxApp>, label: &str) -> usize {
+fn row_count(backend: &mut TestBackend<AppRoot>, label: &str) -> usize {
     backend.render();
     backend
         .capture_ui_snapshot()

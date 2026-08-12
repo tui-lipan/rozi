@@ -10,7 +10,7 @@ use crate::state::{
     AlertsAction, AppearanceAction, MAX_MATCHES, ProfilePickerState, ScrollbackSearchState,
     SessionPickerState, cap_style_label,
 };
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 use super::keys::{
     alerts_palette_key, appearance_palette_key, collaboration_key, help_scroll_key,

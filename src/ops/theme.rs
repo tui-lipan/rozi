@@ -5,7 +5,7 @@ use tui_lipan::utils::color_contrast::readable_text_color;
 use crate::config::BadgeColor;
 use crate::ops::focus::request_theme_picker_focus;
 use crate::state::{AlertPaint, Mode, State, ThemePickerPreview, ThemePreset};
-use crate::{HyprmuxApp, Msg, schedule_theme_tick};
+use crate::{AppRoot, Msg, schedule_theme_tick};
 
 pub(crate) fn system_theme_from_host_colors(colors: HostTerminalColors) -> Theme {
     Theme::from_host_colors(colors)
@@ -66,7 +66,7 @@ pub(crate) fn apply_backdrop_policy(
 /// policy. Used when flipping `pane.background_follows_terminal`, since the already-resolved
 /// `state.theme` may have had its `surface.backdrop` overwritten by a previous policy pass and
 /// can no longer tell us what the theme itself authored.
-pub(crate) fn reapply_active_theme(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn reapply_active_theme(ctx: &mut Context<AppRoot>) -> Update {
     let system_theme = ctx.state.system_theme.clone();
     let resolved =
         crate::config::resolve_theme(&ctx.state.config.theme.name, system_theme.as_ref());
@@ -80,7 +80,7 @@ pub(crate) fn reapply_active_theme(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
     let Some(watcher) = ctx.state.theme_watcher.as_ref() else {
         return Update::none();
     };
@@ -111,7 +111,7 @@ pub(crate) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::command_only(schedule_theme_tick())
 }
 
-pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.theme_picker_preview.is_none() {
         ctx.state.theme_picker_preview = Some(ThemePickerPreview {
             theme: ctx.state.theme.clone(),
@@ -140,7 +140,7 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn preview_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     if !ctx.state.show_theme_picker {
         return Update::none();
     }
@@ -167,7 +167,7 @@ pub(crate) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
     Update::full()
 }
 
-pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn cancel_theme_picker(ctx: &mut Context<AppRoot>) {
     if let Some(preview) = ctx.state.theme_picker_preview.take() {
         ctx.state.theme = preview.theme;
         apply_terminal_palette_to_state(&mut ctx.state);
@@ -180,13 +180,13 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<HyprmuxApp>) {
 /// Picking a theme finishes the errand it was opened for, so it leaves the whole dialog stack —
 /// including the Appearance list it may have been raised from — rather than stepping back one level
 /// into a dialog the user is done with. Cancelling still returns to Appearance.
-fn close_after_theme_pick(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn close_after_theme_pick(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::overlay_return::leave(ctx);
     crate::ops::focus::request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(crate) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let choices = crate::config::theme_choices();
     let Some(choice) = choices.get(index) else {
         ctx.state.theme_picker_selected = None;
@@ -555,7 +555,7 @@ fn fallback_text_color(background: Color) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::{Pane, PaneId};
 
     /// Both ends of a marked tab's breathe must be readable *on their own background*. The bug this
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn terminal_palette_background_respects_focused_background_config() {
         let theme = ThemePreset::OneDark.theme();
-        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        let mut state = State::new(Config::default(), theme.clone());
         let scrollback = state.config.scrollback;
         state.current_mut().workspaces[0].panes.push(Pane::new(
             2,
@@ -747,7 +747,7 @@ mod tests {
     fn host_terminal_palette_background_still_follows_pane_background() {
         let colors = host_colors();
         let theme = system_theme_from_host_colors(colors);
-        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        let mut state = State::new(Config::default(), theme.clone());
         state.config.pane.highlight_focused_background = true;
 
         assert!(apply_terminal_palette_to_state(&mut state));
@@ -822,7 +822,7 @@ mod tests {
         theme.surface.backdrop = Color::Backdrop;
         theme.surface.backdrop = theme.concretize_backdrop(Some(host_bg));
 
-        let mut state = State::new(HyprmuxConfig::default(), theme.clone());
+        let mut state = State::new(Config::default(), theme.clone());
         state.current_mut().focused_pane = Some(1);
         state.current_mut().workspaces[0].focused_pane = Some(1);
 

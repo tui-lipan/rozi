@@ -2,14 +2,14 @@
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::pane_lifecycle::find_pane_mut;
 
 /// Resolve `last_command_output_range`, copy the text, and confirm with a toast.
 ///
 /// A viewport selection flash would be misleading when the output has scrolled into
 /// history (or spans more than the live grid), so this path uses a toast instead.
-pub(crate) fn copy_last_output(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn copy_last_output(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };

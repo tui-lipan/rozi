@@ -69,7 +69,7 @@ pub(crate) fn attach_remote_session_client(
     read_only: bool,
     create_only: bool,
     remote: super::remote::RemoteTarget,
-    remote_config: crate::config::HyprmuxRemoteConfig,
+    remote_config: crate::config::RemoteConfig,
     reconnect: bool,
     link: CommandLink<Msg>,
 ) {
@@ -92,10 +92,7 @@ fn attach_session_client_with_profile(
     autostart: bool,
     read_only: bool,
     create_only: bool,
-    remote: Option<(
-        super::remote::RemoteTarget,
-        crate::config::HyprmuxRemoteConfig,
-    )>,
+    remote: Option<(super::remote::RemoteTarget, crate::config::RemoteConfig)>,
     reconnect: bool,
     link: CommandLink<Msg>,
 ) {
@@ -269,7 +266,7 @@ fn attach_remote(
     read_only: bool,
     create_only: bool,
     target: super::remote::RemoteTarget,
-    remote_config: crate::config::HyprmuxRemoteConfig,
+    remote_config: crate::config::RemoteConfig,
     reconnect: bool,
     link: CommandLink<Msg>,
 ) {
@@ -345,7 +342,7 @@ fn attach_remote_after_skew(
     read_only: bool,
     create_only: bool,
     target: &super::remote::RemoteTarget,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
     link: &CommandLink<Msg>,
     message: String,
 ) {
@@ -399,7 +396,7 @@ fn try_attach_remote(
     read_only: bool,
     create_only: bool,
     target: &super::remote::RemoteTarget,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
     link: &CommandLink<Msg>,
 ) -> AttachRemoteOutcome {
     let mailbox = super::client::InboundMailbox::new(epoch, name.to_string(), link.clone());

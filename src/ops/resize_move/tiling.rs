@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{
     clamp_float_rect, directional_score, lift_off_float_rect, workspace_tile_bounds,
@@ -20,7 +20,7 @@ use super::float::{
     ensure_tile_tree, finish_pointer_layout_interaction, layout_has_resizable_splits,
 };
 
-pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn toggle_tiling(ctx: &mut Context<AppRoot>) {
     finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.current().focused_pane else {
         return;
@@ -73,7 +73,7 @@ pub(crate) fn toggle_tiling(ctx: &mut Context<HyprmuxApp>) {
     request_pane_focus(ctx, id);
 }
 
-pub(crate) fn toggle_fullscreen(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle_fullscreen(ctx: &mut Context<AppRoot>) -> Update {
     finish_pointer_layout_interaction(ctx);
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::full();
@@ -137,7 +137,7 @@ pub(crate) fn toggle_focused_split_axis(state: &mut State) {
 ///
 /// The axis is whichever way that innermost split runs, which is what separates this from resize
 /// mode: there the direction key picks the axis and the pane may push against an outer split.
-pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<HyprmuxApp>, grow: bool) {
+pub(crate) fn adjust_focused_split_ratio(ctx: &mut Context<AppRoot>, grow: bool) {
     let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
@@ -206,7 +206,7 @@ fn signed_step(grow: bool, available: f32) -> f32 {
 /// looks identical under all of them — so the name is worth a toast. It rides
 /// [`ToastChannel::LayoutMode`], so cycling several steps replaces one message instead of stacking
 /// a name per press.
-pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
+pub(crate) fn toggle_layout(ctx: &mut Context<AppRoot>, show_toast: bool) {
     let workspace_index = ctx.state.current().active_workspace;
     let next = ctx.state.current().workspaces[workspace_index]
         .layout_kind
@@ -217,7 +217,7 @@ pub(crate) fn toggle_layout(ctx: &mut Context<HyprmuxApp>, show_toast: bool) {
 /// Switch the active workspace to a specific layout mode. Shared by the cycle command
 /// ([`toggle_layout`]) and the layout picker's direct selection.
 pub(crate) fn set_layout(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     kind: crate::state::LayoutKind,
     show_toast: bool,
 ) {
@@ -303,7 +303,7 @@ pub(crate) fn resize_scrollable_width_by_pixels(
 /// Lift the focused pane out of its slot and re-insert it beside its directional neighbor,
 /// reshaping the tree — the keyboard equivalent of dropping a pane onto another with the mouse.
 /// A floating pane has no slot to leave, so it slides instead.
-pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+pub(crate) fn move_focused_in_direction(ctx: &mut Context<AppRoot>, direction: Direction) {
     if super::float::move_focused_float(ctx, direction) {
         return;
     }
@@ -356,7 +356,7 @@ pub(crate) fn move_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction
 
 /// Exchange the focused pane with its directional neighbor. The two trade slots in place, so the
 /// layout keeps its shape. A floating pane has nothing to trade with, so it slides instead.
-pub(crate) fn swap_focused_in_direction(ctx: &mut Context<HyprmuxApp>, direction: Direction) {
+pub(crate) fn swap_focused_in_direction(ctx: &mut Context<AppRoot>, direction: Direction) {
     if super::float::move_focused_float(ctx, direction) {
         return;
     }
@@ -541,7 +541,7 @@ mod tests {
     };
     use crate::state::{Pane, SplitAxis};
     use crate::tiling::DwindleTree;
-    use crate::{HyprmuxApp, Msg};
+    use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
     /// Grow/shrink split steps whole cells too, and by the same amount each press.
@@ -592,7 +592,7 @@ mod tests {
     fn swap_keeps_the_tree_shape_where_move_reshapes_it() {
         in_test_stack(|| {
             let tree_after = |action: fn(Direction) -> Action| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(TEST_VIEWPORT);
                 {
                     let state = backend.state_mut();
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn fullscreen_toggle_finishes_tiled_drag_at_current_pointer() {
         in_test_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             let (start_rect, start_pointer, target_pointer, original_tree) = {
                 let state = backend.state_mut();
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn tiling_toggle_persists_floating_drag_before_insertion() {
         in_test_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             let start_rect = FloatRect {
                 x: 8.0,
@@ -892,7 +892,7 @@ mod tests {
             use crate::state::{LayoutKind, ScrollableRevealEdge};
             use crate::tiling::append_tiled_window;
 
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             {
                 let state = backend.state_mut();
@@ -1038,7 +1038,7 @@ mod tests {
             use crate::state::{LayoutKind, ScrollableRevealEdge};
             use crate::tiling::append_tiled_window;
 
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             {
                 let state = backend.state_mut();

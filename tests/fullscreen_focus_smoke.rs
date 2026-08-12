@@ -7,7 +7,7 @@
 
 use hyprmux::input::Action;
 use hyprmux::state::{Direction, Pane};
-use hyprmux::{HyprmuxApp, Msg};
+use hyprmux::{AppRoot, Msg};
 use tui_lipan::TestBackend;
 use tui_lipan::prelude::Rect;
 use tui_lipan::style::geometry::FloatRect;
@@ -31,7 +31,7 @@ fn pane(id: u32) -> Pane {
     pane
 }
 
-fn settle(backend: &mut TestBackend<HyprmuxApp>) {
+fn settle(backend: &mut TestBackend<AppRoot>) {
     for _ in 0..4 {
         backend.render();
         let _ = backend.pump();
@@ -40,11 +40,11 @@ fn settle(backend: &mut TestBackend<HyprmuxApp>) {
 }
 
 /// Two tiled panes with the focused one covering the workspace.
-fn backend_with_fullscreen() -> TestBackend<HyprmuxApp> {
+fn backend_with_fullscreen() -> TestBackend<AppRoot> {
     // `Action::Spawn` writes the shell-integration scripts, which belong in a scratch cache rather
     // than the one a developer's running hyprmux injects from (`hyprmux::test_support`).
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,
@@ -63,7 +63,7 @@ fn backend_with_fullscreen() -> TestBackend<HyprmuxApp> {
     backend
 }
 
-fn fullscreen_ids(backend: &TestBackend<HyprmuxApp>) -> Vec<u32> {
+fn fullscreen_ids(backend: &TestBackend<AppRoot>) -> Vec<u32> {
     backend.state().current().workspaces[0]
         .panes
         .iter()

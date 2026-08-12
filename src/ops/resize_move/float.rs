@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::{
     canvas_local_point_from_mouse, clamp_floating_rect, grabbed_edge_on_outer_border,
@@ -48,7 +48,7 @@ fn float_keyboard_delta(direction: Direction, bounds: FloatRect) -> (f32, f32) {
 /// Translate the focused floating pane one step. Returns whether the focus was floating at all, so
 /// `super::tiling::reorder_focused_in_direction` can fall through to the tiled reorder when it was
 /// not.
-pub(super) fn move_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
+pub(super) fn move_focused_float(ctx: &mut Context<AppRoot>, direction: Direction) -> bool {
     let Some(id) = ctx.state.current().focused_pane else {
         return false;
     };
@@ -83,7 +83,7 @@ pub(super) fn move_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direc
 /// Grow (`Right`/`Down`) or shrink (`Left`/`Up`) the focused floating pane one step, anchored at
 /// its top-left corner - dragging the top-left instead would walk the pane across the workspace as
 /// it resized. Returns whether the focus was floating at all.
-pub(super) fn resize_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> bool {
+pub(super) fn resize_focused_float(ctx: &mut Context<AppRoot>, direction: Direction) -> bool {
     let Some(id) = ctx.state.current().focused_pane else {
         return false;
     };
@@ -119,7 +119,7 @@ pub(super) fn resize_focused_float(ctx: &mut Context<HyprmuxApp>, direction: Dir
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn begin_move(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     current_rect: FloatRect,
     from_local_x: u16,
@@ -170,7 +170,7 @@ pub(crate) fn begin_move(
 }
 
 pub(crate) fn move_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     dx: i16,
     dy: i16,
@@ -211,7 +211,7 @@ pub(crate) fn move_pane(
     Update::full()
 }
 
-pub(crate) fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16) -> Update {
+pub(crate) fn end_move(ctx: &mut Context<AppRoot>, id: PaneId, x: u16, y: u16) -> Update {
     let session = ctx.state.moving_pane.filter(|session| session.id == id);
     if session.is_some() {
         ctx.state.moving_pane = None;
@@ -231,7 +231,7 @@ pub(crate) fn end_move(ctx: &mut Context<HyprmuxApp>, id: PaneId, x: u16, y: u16
 
 /// Finish any pointer-driven layout edit before an action changes pane/layout mode. Mouse drag-end
 /// events arriving afterward become harmless because their session has already been cleared.
-pub(super) fn finish_pointer_layout_interaction(ctx: &mut Context<HyprmuxApp>) {
+pub(super) fn finish_pointer_layout_interaction(ctx: &mut Context<AppRoot>) {
     if let Some(session) = ctx.state.moving_pane {
         focus_pane(&mut ctx.state, session.id);
         request_pane_focus(ctx, session.id);
@@ -244,7 +244,7 @@ pub(super) fn finish_pointer_layout_interaction(ctx: &mut Context<HyprmuxApp>) {
 }
 
 pub(crate) fn begin_resize(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     corner: ResizeCorner,
     x: u16,
@@ -296,7 +296,7 @@ pub(crate) fn begin_resize(
 }
 
 pub(crate) fn resize_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     // The corner is fixed when the resize begins; the per-event callback value is ignored in favor
     // of the session's stored corner so a jittery pointer near a border does not flip axes mid-drag.
@@ -534,13 +534,13 @@ mod tests {
     use crate::ops::resize_move::test_util::in_test_stack;
     use crate::state::{Pane, SharedSessionState, SplitAxis};
     use crate::tiling::DwindleTree;
-    use crate::{HyprmuxApp, Msg};
+    use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
     /// A backend whose active workspace holds one focused floating pane at `rect`, in a 100x30
     /// viewport. `RATIO_STEP` (4%) of that canvas rounds to a 4-column / 1-row keyboard step.
-    fn floating_backend(rect: FloatRect) -> TestBackend<HyprmuxApp> {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+    fn floating_backend(rect: FloatRect) -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
             y: 0,
@@ -562,7 +562,7 @@ mod tests {
         backend
     }
 
-    fn floating_rect(backend: &mut TestBackend<HyprmuxApp>) -> FloatRect {
+    fn floating_rect(backend: &mut TestBackend<AppRoot>) -> FloatRect {
         let state = backend.state_mut();
         state.current().workspaces[state.current().active_workspace].panes[0].floating_rect
     }
@@ -685,7 +685,7 @@ mod tests {
                 first: Box::new(DwindleTree::Leaf(1)),
                 second: Box::new(DwindleTree::Leaf(2)),
             };
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -745,8 +745,8 @@ mod tests {
         });
     }
 
-    fn scrollable_backend(focus: PaneId) -> TestBackend<HyprmuxApp> {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+    fn scrollable_backend(focus: PaneId) -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
             y: 0,
@@ -963,8 +963,8 @@ mod tests {
                 let state = backend.state();
                 let resized = &state.current().workspaces[0].panes[3];
                 let sibling = &state.current().workspaces[0].panes[0];
-                let resized_cfg = HyprmuxApp::geometry_transition_for_pane(state, resized, false);
-                let sibling_cfg = HyprmuxApp::geometry_transition_for_pane(state, sibling, false);
+                let resized_cfg = AppRoot::geometry_transition_for_pane(state, resized, false);
+                let sibling_cfg = AppRoot::geometry_transition_for_pane(state, sibling, false);
                 assert_eq!(
                     resized_cfg.duration,
                     std::time::Duration::ZERO,
@@ -1094,7 +1094,7 @@ mod tests {
                 after.x
             );
             let sibling = &backend.state().current().workspaces[0].panes[0];
-            let cfg = HyprmuxApp::geometry_transition_for_pane(backend.state(), sibling, false);
+            let cfg = AppRoot::geometry_transition_for_pane(backend.state(), sibling, false);
             assert_eq!(
                 cfg.duration,
                 backend.state().config.animations.geometry_duration

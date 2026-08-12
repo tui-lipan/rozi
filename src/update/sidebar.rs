@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::config::{SidebarTab, SidebarTabId, UserCommandAction};
 use crate::state::{SidebarCommandOutput, SidebarCommandRow, ToastChannel};
 use crate::view::sidebar::RowTarget;
@@ -13,7 +13,7 @@ const COMMAND_RAW_ROW_CHARS: usize = 4096;
 const COMMAND_DISPLAY_ROW_CHARS: usize = 160;
 const COMMAND_BUSY_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
 
-fn sessions_active(ctx: &Context<HyprmuxApp>) -> bool {
+fn sessions_active(ctx: &Context<AppRoot>) -> bool {
     ctx.state.sidebar_visible
         && ctx
             .state
@@ -22,11 +22,11 @@ fn sessions_active(ctx: &Context<HyprmuxApp>) -> bool {
             .any(|id| id.as_str() == "sessions")
 }
 
-fn command_active(ctx: &Context<HyprmuxApp>, id: &SidebarTabId) -> bool {
+fn command_active(ctx: &Context<AppRoot>, id: &SidebarTabId) -> bool {
     ctx.state.sidebar_visible && ctx.state.sidebar.active_tabs().any(|active| active == id)
 }
 
-fn command_tab(ctx: &Context<HyprmuxApp>, id: &SidebarTabId) -> Option<(String, u64)> {
+fn command_tab(ctx: &Context<AppRoot>, id: &SidebarTabId) -> Option<(String, u64)> {
     ctx.state
         .config
         .sidebar
@@ -43,14 +43,14 @@ fn command_tab(ctx: &Context<HyprmuxApp>, id: &SidebarTabId) -> Option<(String, 
         })
 }
 
-pub(crate) fn invalidate_sessions(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn invalidate_sessions(ctx: &mut Context<AppRoot>) {
     ctx.state.sidebar.invalidate_sessions();
 }
 
 /// Nudge the open Sessions tab to re-sweep now (e.g. after a config reload or a session change),
 /// without disturbing the epoch. The steady-state loop is kept alive by [`ensure_sessions_refresh_armed`];
 /// this just kicks an extra immediate sweep for the current epoch.
-pub(crate) fn request_sessions_refresh(ctx: &Context<HyprmuxApp>) {
+pub(crate) fn request_sessions_refresh(ctx: &Context<AppRoot>) {
     if sessions_active(ctx)
         && let Some(link) = ctx.state.command_link.as_ref()
     {
@@ -64,7 +64,7 @@ pub(crate) fn request_sessions_refresh(ctx: &Context<HyprmuxApp>) {
 /// every message: if the tab is active but the loop's epoch has fallen behind (a session switch,
 /// create, or reopen bumped `sessions_epoch` and killed the old loop), re-arm it. The armed-epoch
 /// guard makes this fire exactly once per epoch, so it never stacks parallel loops.
-pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<AppRoot>) {
     if !sessions_active(ctx) {
         ctx.state.sidebar.sessions_refresh_armed_epoch = None;
         return;
@@ -88,7 +88,7 @@ pub(crate) fn ensure_sessions_refresh_armed(ctx: &mut Context<HyprmuxApp>) {
     link.send(crate::Msg::SidebarSessionsRefresh { epoch });
 }
 
-pub(crate) fn request_command_poll(ctx: &Context<HyprmuxApp>) {
+pub(crate) fn request_command_poll(ctx: &Context<AppRoot>) {
     if !ctx.state.sidebar_visible {
         return;
     }
@@ -108,7 +108,7 @@ pub(crate) fn request_command_poll(ctx: &Context<HyprmuxApp>) {
 /// Start the Agents tab's elapsed-time tick unless one is already running or there is nothing to
 /// advance. Sent rather than returned as a command so the call sites — which already return
 /// commands of their own — do not have to compose two.
-pub(crate) fn arm_agent_tick(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn arm_agent_tick(ctx: &mut Context<AppRoot>) {
     if ctx.state.sidebar.agent_tick_armed
         || crate::view::sidebar::agent_durations(&ctx.state).is_none()
     {
@@ -125,7 +125,7 @@ pub(crate) fn arm_agent_tick(ctx: &mut Context<HyprmuxApp>) {
 /// repaint only when the text it would show actually differs. A row sitting at `12m` therefore
 /// costs one string comparison a second rather than sixty repaints, and the chain stops outright
 /// once nothing is showing a duration.
-pub(super) fn agent_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn agent_tick(ctx: &mut Context<AppRoot>) -> Update {
     let current = crate::view::sidebar::agent_durations(&ctx.state);
     if current.is_none() {
         ctx.state.sidebar.agent_tick_armed = false;
@@ -140,7 +140,7 @@ pub(super) fn agent_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::with_command(command)
 }
 
-pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+pub(super) fn tab_selected(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
     let Some(id) = ctx
         .state
         .sidebar
@@ -197,7 +197,7 @@ pub(super) fn tab_selected(ctx: &mut Context<HyprmuxApp>, panel: usize, index: u
 }
 
 pub(super) fn tab_reordered(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     panel: usize,
     event: DraggableTabReorderEvent,
 ) -> Update {
@@ -209,7 +209,7 @@ pub(super) fn tab_reordered(
 }
 
 pub(super) fn tab_transferred(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     event: DraggableTabTransferEvent,
 ) -> Update {
     let Some(from_panel) = crate::view::sidebar::panel_from_bar_id(&event.from_bar) else {
@@ -232,14 +232,14 @@ pub(super) fn tab_transferred(
     update
 }
 
-pub(super) fn panels_resized(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+pub(super) fn panels_resized(ctx: &mut Context<AppRoot>, event: SplitterResizeEvent) -> Update {
     let Some(ratio) = event.weights.first().copied() else {
         return Update::none();
     };
     set_split_ratio(ctx, ratio)
 }
 
-fn width_from_resize_event(ctx: &Context<HyprmuxApp>, event: &SplitterResizeEvent) -> Option<u16> {
+fn width_from_resize_event(ctx: &Context<AppRoot>, event: &SplitterResizeEvent) -> Option<u16> {
     let viewport = ctx.viewport();
     let sidebar_index =
         usize::from(ctx.state.config.sidebar.position == crate::config::SidebarPosition::Right);
@@ -252,7 +252,7 @@ fn width_from_resize_event(ctx: &Context<HyprmuxApp>, event: &SplitterResizeEven
     ))
 }
 
-pub(super) fn width_resizing(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+pub(super) fn width_resizing(ctx: &mut Context<AppRoot>, event: SplitterResizeEvent) -> Update {
     let Some(width) = width_from_resize_event(ctx, &event) else {
         return Update::none();
     };
@@ -263,7 +263,7 @@ pub(super) fn width_resizing(ctx: &mut Context<HyprmuxApp>, event: SplitterResiz
     Update::full()
 }
 
-pub(super) fn width_resized(ctx: &mut Context<HyprmuxApp>, event: SplitterResizeEvent) -> Update {
+pub(super) fn width_resized(ctx: &mut Context<AppRoot>, event: SplitterResizeEvent) -> Update {
     let Some(width) = width_from_resize_event(ctx, &event) else {
         ctx.state.sidebar.width_preview = None;
         return Update::full();
@@ -272,7 +272,7 @@ pub(super) fn width_resized(ctx: &mut Context<HyprmuxApp>, event: SplitterResize
     set_width(ctx, width)
 }
 
-fn sync_and_persist_panels(ctx: &mut Context<HyprmuxApp>) {
+fn sync_and_persist_panels(ctx: &mut Context<AppRoot>) {
     let panels = persisted_panel_ids(
         ctx.state.sidebar.panel_ids(),
         &ctx.state.config.sidebar.panels,
@@ -309,7 +309,7 @@ fn persisted_panel_ids(
         .collect()
 }
 
-fn set_split_enabled(ctx: &mut Context<HyprmuxApp>, split: bool) {
+fn set_split_enabled(ctx: &mut Context<AppRoot>, split: bool) {
     if ctx.state.config.sidebar.split == split {
         return;
     }
@@ -324,7 +324,7 @@ fn set_split_enabled(ctx: &mut Context<HyprmuxApp>, split: bool) {
 }
 
 fn persist_sidebar_preference(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     result: std::result::Result<std::path::PathBuf, String>,
 ) {
     if let Err(error) = result {
@@ -339,7 +339,7 @@ fn persist_sidebar_preference(
 
 /// Re-aim keyboard focus at the active tab's body after the previous one unmounted. A no-op unless
 /// the sidebar already had the keyboard — switching tabs with the mouse must not steal it.
-pub(crate) fn refocus_body(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn refocus_body(ctx: &mut Context<AppRoot>) {
     if !ctx.state.sidebar.focused {
         return;
     }
@@ -347,7 +347,7 @@ pub(crate) fn refocus_body(ctx: &mut Context<HyprmuxApp>) {
     ctx.request_focus(key);
 }
 
-pub(crate) fn visibility_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn visibility_changed(ctx: &mut Context<AppRoot>) -> Update {
     // Hiding the sidebar unmounts the body, so hand the keyboard back before it disappears rather
     // than leaving focus on a widget that is about to stop existing.
     if !ctx.state.sidebar_visible && ctx.state.sidebar.focused {
@@ -366,7 +366,7 @@ pub(crate) fn visibility_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// `focus-sidebar`: reveal the sidebar if it is hidden, then move keyboard focus into its row list.
 /// The body sits in a `FocusScope::Exclude` subtree, so an explicit keyed request is the only way
 /// in — Tab and clicks deliberately cannot do this.
-pub(crate) fn focus_body(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn focus_body(ctx: &mut Context<AppRoot>) -> Update {
     let command = if ctx.state.sidebar_visible {
         None
     } else {
@@ -390,7 +390,7 @@ pub(crate) fn focus_body(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Escape from the sidebar or a pointer-focused explorer: give the keyboard back to the focused
 /// pane.
-pub(crate) fn blur_body(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn blur_body(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.sidebar.focused = false;
     ctx.state.sidebar.explorer_entered_from_tree = false;
     ctx.state.commands_dirty = true;
@@ -399,7 +399,7 @@ pub(crate) fn blur_body(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn explorer_focus(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     origin: Option<FileTreeExplorerFocusOrigin>,
 ) -> Update {
     ctx.state.sidebar.explorer_entered_from_tree =
@@ -410,7 +410,7 @@ pub(crate) fn explorer_focus(
 /// The explorer committed its query with Enter and returned focus to the tree. This is a real
 /// sidebar-mode entry, unlike a pointer click into the explorer, so restore the sidebar cursor and
 /// its keyboard ownership before the next key arrives.
-pub(crate) fn tree_focused(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn tree_focused(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.sidebar.focused = true;
     ctx.state.sidebar.explorer_entered_from_tree = false;
     if let Some(panel) = ctx.state.sidebar.active_panel_mut() {
@@ -423,14 +423,14 @@ pub(crate) fn tree_focused(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Drop focus from the sidebar body and hand it to the focused pane when there is one to hand it
 /// to. The unconditional `blur` matters: a pane whose terminal has not come up yet refuses focus,
 /// and without this the sidebar would keep the keyboard with no way out.
-fn release_focus(ctx: &mut Context<HyprmuxApp>) {
+fn release_focus(ctx: &mut Context<AppRoot>) {
     ctx.blur();
     crate::ops::focus::request_current_pane_focus(ctx);
 }
 
 /// Tab / Shift-Tab while the body has focus. Cycling remounts the body under a new key, so focus
 /// has to be re-requested for the tab the user just landed on.
-pub(crate) fn cycle_tab(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update {
+pub(crate) fn cycle_tab(ctx: &mut Context<AppRoot>, forward: bool) -> Update {
     if !ctx.state.sidebar_visible {
         return Update::none();
     }
@@ -450,7 +450,7 @@ pub(crate) fn cycle_tab(ctx: &mut Context<HyprmuxApp>, forward: bool) -> Update 
 /// keyed by tab because switching tabs can queue the old list's final viewport event alongside the
 /// new one.
 pub(crate) fn viewport_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     panel: usize,
     tab_id: crate::config::SidebarTabId,
     event: ScrollViewportEvent,
@@ -480,7 +480,7 @@ pub(crate) fn viewport_changed(
 }
 
 /// Move by the number of selectable rows that fit in the active row list's viewport.
-pub(crate) fn move_cursor_page(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+pub(crate) fn move_cursor_page(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     let page_rows = ctx
         .state
         .sidebar
@@ -490,7 +490,7 @@ pub(crate) fn move_cursor_page(ctx: &mut Context<HyprmuxApp>, down: bool) -> Upd
     move_cursor(ctx, if down { page_rows } else { -page_rows })
 }
 
-pub(crate) fn focus_panel(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+pub(crate) fn focus_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     if ctx.state.sidebar.panels.len() < 2 {
         return Update::none();
     }
@@ -506,7 +506,7 @@ pub(crate) fn focus_panel(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
     Update::full()
 }
 
-pub(crate) fn reorder_active_tab(ctx: &mut Context<HyprmuxApp>, right: bool) -> Update {
+pub(crate) fn reorder_active_tab(ctx: &mut Context<AppRoot>, right: bool) -> Update {
     let panel = ctx.state.sidebar.active_panel;
     let Some(panel_state) = ctx.state.sidebar.panels.get(panel) else {
         return Update::none();
@@ -529,7 +529,7 @@ pub(crate) fn reorder_active_tab(ctx: &mut Context<HyprmuxApp>, right: bool) -> 
     Update::layout()
 }
 
-pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     if ctx.state.sidebar.panels.len() == 1 {
         if !down {
             return Update::none();
@@ -566,12 +566,12 @@ pub(crate) fn move_active_tab_to_panel(ctx: &mut Context<HyprmuxApp>, down: bool
     update
 }
 
-pub(crate) fn toggle_visible(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle_visible(ctx: &mut Context<AppRoot>) -> Update {
     set_visible(ctx, !ctx.state.sidebar_visible);
     visibility_changed(ctx)
 }
 
-fn set_visible(ctx: &mut Context<HyprmuxApp>, visible: bool) {
+fn set_visible(ctx: &mut Context<AppRoot>, visible: bool) {
     ctx.state.sidebar_visible = visible;
     if ctx.state.config.sidebar.visible == visible {
         return;
@@ -580,7 +580,7 @@ fn set_visible(ctx: &mut Context<HyprmuxApp>, visible: bool) {
     persist_sidebar_preference(ctx, crate::config::persist_sidebar_visible(visible));
 }
 
-pub(crate) fn toggle_split(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle_split(ctx: &mut Context<AppRoot>) -> Update {
     let split = !ctx.state.config.sidebar.split;
     set_split_enabled(ctx, split);
     let update = visibility_changed(ctx);
@@ -588,7 +588,7 @@ pub(crate) fn toggle_split(ctx: &mut Context<HyprmuxApp>) -> Update {
     update
 }
 
-pub(crate) fn resize_width(ctx: &mut Context<HyprmuxApp>, handle_right: bool) -> Update {
+pub(crate) fn resize_width(ctx: &mut Context<AppRoot>, handle_right: bool) -> Update {
     let wider = match ctx.state.config.sidebar.position {
         crate::config::SidebarPosition::Left => handle_right,
         crate::config::SidebarPosition::Right => !handle_right,
@@ -598,7 +598,7 @@ pub(crate) fn resize_width(ctx: &mut Context<HyprmuxApp>, handle_right: bool) ->
     set_width(ctx, width)
 }
 
-fn set_width(ctx: &mut Context<HyprmuxApp>, width: u16) -> Update {
+fn set_width(ctx: &mut Context<AppRoot>, width: u16) -> Update {
     let width = width.clamp(
         crate::config::SIDEBAR_MIN_WIDTH,
         crate::config::SIDEBAR_MAX_WIDTH,
@@ -612,7 +612,7 @@ fn set_width(ctx: &mut Context<HyprmuxApp>, width: u16) -> Update {
     Update::full()
 }
 
-pub(crate) fn resize_panel_split(ctx: &mut Context<HyprmuxApp>, down: bool) -> Update {
+pub(crate) fn resize_panel_split(ctx: &mut Context<AppRoot>, down: bool) -> Update {
     if ctx.state.sidebar.panels.len() < 2 {
         return Update::none();
     }
@@ -620,7 +620,7 @@ pub(crate) fn resize_panel_split(ctx: &mut Context<HyprmuxApp>, down: bool) -> U
     set_split_ratio(ctx, ctx.state.config.sidebar.split_ratio + delta)
 }
 
-fn set_split_ratio(ctx: &mut Context<HyprmuxApp>, ratio: f32) -> Update {
+fn set_split_ratio(ctx: &mut Context<AppRoot>, ratio: f32) -> Update {
     let ratio = ratio.clamp(
         crate::config::SIDEBAR_MIN_SPLIT_RATIO,
         crate::config::SIDEBAR_MAX_SPLIT_RATIO,
@@ -634,7 +634,7 @@ fn set_split_ratio(ctx: &mut Context<HyprmuxApp>, ratio: f32) -> Update {
     Update::full()
 }
 
-fn open_sessions(ctx: &mut Context<HyprmuxApp>) {
+fn open_sessions(ctx: &mut Context<AppRoot>) {
     // Populate the tab instantly with local rows, then run the full sweep (configured remote hosts
     // included) off the UI thread. Querying remote hosts over ssh here used to block the tab switch
     // on a round-trip — or the whole connect timeout when a host was down — every time it opened.
@@ -642,7 +642,7 @@ fn open_sessions(ctx: &mut Context<HyprmuxApp>) {
     crate::ops::session::seed_host_registry(ctx);
 }
 
-fn refresh_active_tabs(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn refresh_active_tabs(ctx: &mut Context<AppRoot>) -> Update {
     if sessions_active(ctx) {
         open_sessions(ctx);
     }
@@ -653,7 +653,7 @@ fn refresh_active_tabs(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Move the keyboard cursor by `delta` selectable rows, stopping at the ends rather than wrapping —
 /// the row list is a panel, not a carousel, and wrapping past the last agent back to the first reads
 /// as a glitch. Headers and spacers are stepped over rather than landed on.
-pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update {
+pub(crate) fn move_cursor(ctx: &mut Context<AppRoot>, delta: isize) -> Update {
     let panel = ctx.state.sidebar.active_panel;
     let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
@@ -689,7 +689,7 @@ pub(crate) fn move_cursor(ctx: &mut Context<HyprmuxApp>, delta: isize) -> Update
 }
 
 /// A real pointer move ends keyboard modality and lets row hover follow the pointer again.
-pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>, panel: usize) -> Update {
+pub(crate) fn pointer_moved(ctx: &mut Context<AppRoot>, panel: usize) -> Update {
     let Some(panel) = ctx.state.sidebar.panels.get_mut(panel) else {
         return Update::none();
     };
@@ -709,7 +709,7 @@ pub(crate) fn pointer_moved(ctx: &mut Context<HyprmuxApp>, panel: usize) -> Upda
 /// drained before the next paint — so ordering them this way keeps the glyph steady under the
 /// pointer instead of flickering out from under it.
 pub(crate) fn row_hover(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     panel: usize,
     index: usize,
     hovered: bool,
@@ -743,7 +743,7 @@ pub(crate) fn row_hover(
 /// This is a one-cell pointer target sitting on a row whose ordinary click merely focuses a pane or
 /// attaches a session, so a slip is both easy and expensive — the two are not the same gesture and
 /// do not share a switch.
-pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+pub(crate) fn row_close(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
     let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
@@ -776,7 +776,7 @@ pub(crate) fn row_close(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usiz
 }
 
 /// Enter: run whatever the row under the cursor does — the same path a click on it takes.
-pub(crate) fn activate_cursor(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn activate_cursor(ctx: &mut Context<AppRoot>) -> Update {
     let panel = ctx.state.sidebar.active_panel;
     let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
@@ -791,7 +791,7 @@ pub(crate) fn activate_cursor(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// A row was activated by Enter or by a click. The index is resolved against a freshly rebuilt row
 /// list — the same pure function of `State` the view rendered from — so both gestures land on the
 /// same handler and a row list that changed underneath simply resolves to nothing.
-pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, panel: usize, index: usize) -> Update {
+pub(super) fn row_activate(ctx: &mut Context<AppRoot>, panel: usize, index: usize) -> Update {
     let Some(tab) = crate::view::sidebar::active_tab_in(ctx, panel).cloned() else {
         return Update::none();
     };
@@ -830,7 +830,7 @@ pub(super) fn row_activate(ctx: &mut Context<HyprmuxApp>, panel: usize, index: u
 }
 
 pub(super) fn launcher_activate(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     config_epoch: u64,
     tab_id: SidebarTabId,
     entry_index: usize,
@@ -855,11 +855,7 @@ pub(super) fn launcher_activate(
     })
 }
 
-pub(super) fn poll_command(
-    ctx: &mut Context<HyprmuxApp>,
-    epoch: u64,
-    tab_id: SidebarTabId,
-) -> Update {
+pub(super) fn poll_command(ctx: &mut Context<AppRoot>, epoch: u64, tab_id: SidebarTabId) -> Update {
     if epoch != ctx.state.sidebar.command_epoch || !command_active(ctx, &tab_id) {
         return Update::none();
     }
@@ -898,7 +894,7 @@ pub(super) fn poll_command(
 }
 
 pub(super) fn command_output(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     tab_id: SidebarTabId,
     rows: Vec<SidebarCommandRow>,
@@ -942,7 +938,7 @@ pub(super) fn command_output(
 }
 
 pub(super) fn command_row_activate(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     config_epoch: u64,
     tab_id: SidebarTabId,
     output_epoch: u64,
@@ -996,7 +992,7 @@ fn substitute(action: &UserCommandAction, placeholder: &str, value: &str) -> Use
 /// would type the directory's path at the prompt just because it was opened, so directories are
 /// dropped here.
 pub(super) fn tree_activate(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     config_epoch: u64,
     tab_id: SidebarTabId,
     path: String,
@@ -1032,7 +1028,7 @@ pub(super) fn tree_activate(
 /// Deduplicated against in-flight and already-delivered paths: the widget re-emits a request on
 /// every rebuild while a directory is still absent from the provided source, so without this an
 /// expanded-but-slow directory would issue one `ListDirectory` per frame.
-pub(super) fn tree_entry_request(ctx: &mut Context<HyprmuxApp>, path: String) -> Update {
+pub(super) fn tree_entry_request(ctx: &mut Context<AppRoot>, path: String) -> Update {
     if ctx.state.current().remote_host.is_none() {
         return Update::none();
     }
@@ -1062,7 +1058,7 @@ pub(super) fn tree_entry_request(ctx: &mut Context<HyprmuxApp>, path: String) ->
 /// A server-served directory listing arrived. Replaces any previous listing for that path so a
 /// refresh overwrites rather than duplicating.
 pub(super) fn tree_directory_listed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     path: String,
     entries: Vec<crate::session::protocol::WireDirEntry>,
@@ -1086,7 +1082,7 @@ pub(super) fn tree_directory_listed(
 
 /// A server-served change scan arrived, backing the `Changes` tab under `--remote`.
 pub(super) fn tree_changes_listed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     root: String,
     changes: Vec<crate::session::protocol::WireChange>,
@@ -1159,7 +1155,7 @@ fn bump_git_refresh(sidebar: &mut crate::state::SidebarState) {
 /// compares the pane's reported directory against the cached one and does nothing when unchanged.
 /// The ancestor walk only runs when the directory actually changed, which is user-paced — a shell
 /// re-reporting the same directory on every prompt costs one string comparison.
-pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn sync_tree_roots(ctx: &mut Context<AppRoot>) {
     // Compared as a borrow: this runs per message, including output from off-screen panes that the
     // session handler deliberately makes free, so the steady state must not allocate.
     // Under `--remote` the tree roots at the server's path, not a local one, so this follows
@@ -1213,7 +1209,7 @@ pub(crate) fn sync_tree_roots(ctx: &mut Context<HyprmuxApp>) {
 /// Keyed on `git_refresh_token`, the same signal the local tree refreshes on, so this fires once
 /// per root change or completed command rather than per message. Already-known directories are
 /// re-requested in place rather than cleared, so the tree does not flash back to loading rows.
-fn refresh_remote_tree(ctx: &mut Context<HyprmuxApp>) {
+fn refresh_remote_tree(ctx: &mut Context<AppRoot>) {
     if ctx.state.current().remote_host.is_none() {
         return;
     }
@@ -1308,7 +1304,7 @@ fn row(text: &str, error: bool) -> SidebarCommandRow {
     }
 }
 
-pub(super) fn refresh_sessions(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(super) fn refresh_sessions(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if !sessions_active(ctx) || epoch != ctx.state.sidebar.sessions_epoch {
         return Update::none();
     }
@@ -1358,7 +1354,7 @@ pub(super) fn refresh_sessions(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
 }
 
 pub(super) fn sessions_discovered(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     rows: std::result::Result<Vec<crate::session::discovery::DiscoveredSession>, String>,
     host_status: Vec<(crate::session::remote::RemoteTarget, Option<String>)>,
@@ -1422,7 +1418,7 @@ pub(super) fn sessions_discovered(
 }
 
 pub(super) fn activate_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     entry: crate::session::discovery::DiscoveredSession,
 ) -> Update {
     crate::ops::session::activate_discovered_session(ctx, entry)
@@ -1432,7 +1428,7 @@ pub(super) fn activate_session(
 /// "Connecting…" at once) and bump the sessions epoch so the post-update chokepoint re-sweeps with
 /// this host now included, probing it immediately rather than at the next periodic tick.
 pub(super) fn connect_host(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
 ) -> Update {
     let Some(entry) = ctx.state.hosts.get_mut(&target) else {
@@ -1450,7 +1446,7 @@ pub(super) fn connect_host(
 /// showing); the second commits it. Disconnecting closes any live attachments to the host — their
 /// servers keep running — and returns it to offline.
 pub(super) fn disconnect_host(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
     armed: Option<crate::session::remote::RemoteTarget>,
 ) -> Update {
@@ -1470,7 +1466,7 @@ pub(super) fn disconnect_host(
     landed
 }
 
-pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId) -> Update {
+pub(super) fn focus_pane(ctx: &mut Context<AppRoot>, id: crate::state::PaneId) -> Update {
     if crate::ops::focus::focus_pane_anywhere(ctx, id) {
         Update::full()
     } else {
@@ -1483,7 +1479,7 @@ pub(super) fn focus_pane(ctx: &mut Context<HyprmuxApp>, id: crate::state::PaneId
 /// The request travels back over the connection the publisher opened; a program that has since
 /// stopped listening still gets its pane focused, which is the part hyprmux can do alone.
 fn activate_pane_slot(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: crate::state::PaneId,
     slot_id: String,
 ) -> Update {
@@ -1553,8 +1549,8 @@ mod tests {
     ///
     /// Pumping until the link arrives makes both sides deterministic: tests that need it can rely
     /// on it, and tests that need it *gone* have something real to drop.
-    fn settled_backend() -> TestBackend<HyprmuxApp> {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+    fn settled_backend() -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while backend.state().command_link.is_none() {
             assert!(
@@ -1582,7 +1578,7 @@ mod tests {
     ///
     /// Only for tests that assert on discovered rows. Anything exercising a flow that sends
     /// through the link needs it left alone.
-    fn open_sessions_tab_unswept(backend: &mut TestBackend<HyprmuxApp>, epoch: u64) {
+    fn open_sessions_tab_unswept(backend: &mut TestBackend<AppRoot>, epoch: u64) {
         assert!(
             backend.state().command_link.is_some(),
             "settle the mount with `settled_backend` before disarming the loop"
@@ -1605,7 +1601,7 @@ mod tests {
 
     /// Pretend an attach is already in flight so PTY-creating sidebar actions queue into
     /// `pending_spawns` instead of starting a real ephemeral (see `needs_session_for_pty`).
-    fn hold_attach_open(backend: &mut TestBackend<HyprmuxApp>) {
+    fn hold_attach_open(backend: &mut TestBackend<AppRoot>) {
         backend.state_mut().current_mut().pending_session_attach =
             Some(crate::state::PendingSessionAttach {
                 epoch: backend.state().runtime_epoch,
@@ -1781,7 +1777,7 @@ mod tests {
                 ),
             }];
             backend.state_mut().sidebar.config_epoch = 6;
-            let activate = |backend: &mut TestBackend<HyprmuxApp>, is_dir: bool, epoch: u64| {
+            let activate = |backend: &mut TestBackend<AppRoot>, is_dir: bool, epoch: u64| {
                 backend
                     .dispatch(crate::Msg::SidebarTreeActivate {
                         config_epoch: epoch,

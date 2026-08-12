@@ -89,7 +89,7 @@ pub fn scheme_shortcuts(input: &InputConfig, key: &str) -> Vec<KeyBinding> {
 }
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxThemeConfig {
+pub struct ThemeConfig {
     /// Name of the active theme: a built-in preset id, the reserved name `system` (derive
     /// colors from the host terminal), or the file stem of a custom theme in
     /// [`crate::config::themes_dir`].
@@ -97,7 +97,7 @@ pub struct HyprmuxThemeConfig {
     pub name: String,
 }
 
-impl Default for HyprmuxThemeConfig {
+impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
             name: ThemePreset::Lipan.id().to_string(),
@@ -136,21 +136,21 @@ impl ThemeChoice {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct HyprmuxProfileConfig {
+pub struct ProfileConfig {
     /// Name of a profile in [`crate::config::profiles_dir`] to load on startup when no CLI profile
     /// is given.
     pub default: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct HyprmuxLayoutConfig {
+pub struct LayoutConfig {
     /// Terminal cell height divided by cell width, used to compare tile dimensions visually.
     pub split_width_multiplier: f32,
     /// Layout mode every fresh workspace starts in. Profiles override this per workspace.
     pub default: crate::state::LayoutKind,
 }
 
-impl Default for HyprmuxLayoutConfig {
+impl Default for LayoutConfig {
     fn default() -> Self {
         Self {
             split_width_multiplier: DEFAULT_SPLIT_WIDTH_MULTIPLIER,
@@ -192,7 +192,7 @@ impl SessionStartup {
 }
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxSessionConfig {
+pub struct SessionConfig {
     /// Persist the live layout on quit and restore it on next launch.
     pub autosave: bool,
     /// Override the session file location; defaults to `$XDG_STATE_HOME/hyprmux/session.toml`.
@@ -214,7 +214,7 @@ pub struct HyprmuxSessionConfig {
     pub allow_takeover: bool,
 }
 
-impl Default for HyprmuxSessionConfig {
+impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             autosave: false,
@@ -260,7 +260,7 @@ pub struct RemoteHostConfig {
 
 /// `[remote]` configuration for SSH session attach.
 #[derive(Clone, Debug)]
-pub struct HyprmuxRemoteConfig {
+pub struct RemoteConfig {
     pub default_host: Option<String>,
     pub hosts: HashMap<String, RemoteHostConfig>,
     pub connection_timeout_secs: u64,
@@ -277,7 +277,7 @@ pub struct HyprmuxRemoteConfig {
     pub batch_mode: bool,
 }
 
-impl Default for HyprmuxRemoteConfig {
+impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
             default_host: None,
@@ -292,7 +292,7 @@ impl Default for HyprmuxRemoteConfig {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct HyprmuxPaneConfig {
+pub struct PaneConfig {
     /// Keep naturally exited panes in the layout so they can be respawned in place.
     pub hold_on_exit: bool,
     /// Whether the focused pane uses the theme's panel background instead of the normal
@@ -361,7 +361,7 @@ pub struct HyprmuxPaneConfig {
     pub toast_opacity: f32,
 }
 
-impl Default for HyprmuxPaneConfig {
+impl Default for PaneConfig {
     fn default() -> Self {
         Self {
             hold_on_exit: false,
@@ -392,18 +392,18 @@ impl Default for HyprmuxPaneConfig {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct HyprmuxClipboardConfig {
+pub struct ClipboardConfig {
     pub enable_osc52: bool,
 }
 
-impl Default for HyprmuxClipboardConfig {
+impl Default for ClipboardConfig {
     fn default() -> Self {
         Self { enable_osc52: true }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HyprmuxNotificationsConfig {
+pub struct NotificationsConfig {
     pub enabled: bool,
     pub pane_exit: bool,
     pub pane_exit_error: bool,
@@ -412,7 +412,7 @@ pub struct HyprmuxNotificationsConfig {
     pub pane_done: bool,
 }
 
-impl Default for HyprmuxNotificationsConfig {
+impl Default for NotificationsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -429,7 +429,7 @@ impl Default for HyprmuxNotificationsConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HyprmuxSoundsConfig {
+pub struct SoundsConfig {
     pub enabled: bool,
     pub bell: bool,
     pub blocked: bool,
@@ -442,7 +442,7 @@ pub struct HyprmuxSoundsConfig {
     pub error_file: Option<PathBuf>,
     pub player: Option<String>,
 }
-impl Default for HyprmuxSoundsConfig {
+impl Default for SoundsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -459,7 +459,7 @@ impl Default for HyprmuxSoundsConfig {
         }
     }
 }
-impl HyprmuxSoundsConfig {
+impl SoundsConfig {
     pub fn enabled_for(&self, cue: crate::platform::sound::Cue) -> bool {
         match cue {
             crate::platform::sound::Cue::Bell => self.bell,
@@ -484,11 +484,11 @@ impl HyprmuxSoundsConfig {
 /// [docs/keybindings.md]); matching is case-insensitive against the pane's foreground process
 /// name.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HyprmuxNavigationConfig {
+pub struct NavigationConfig {
     pub editors: Vec<String>,
 }
 
-impl Default for HyprmuxNavigationConfig {
+impl Default for NavigationConfig {
     fn default() -> Self {
         Self {
             editors: DEFAULT_SPLIT_EDITORS
@@ -499,7 +499,7 @@ impl Default for HyprmuxNavigationConfig {
     }
 }
 
-impl HyprmuxNavigationConfig {
+impl NavigationConfig {
     /// Whether `command` (a pane's foreground process name) is a program that handles its own
     /// splits, so `smart-focus-*` should forward the navigation key to it rather than move focus.
     pub fn is_split_editor(&self, command: &str) -> bool {
@@ -529,7 +529,7 @@ const DEFAULT_SPLIT_EDITORS: &[&str] = &[
 
 /// Which destructive actions require a confirming second press within the confirm window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HyprmuxConfirmConfig {
+pub struct ConfirmConfig {
     /// Confirm before closing a pane whose process is still running.
     pub close_pane: bool,
     /// Confirm before killing every pane on the active workspace.
@@ -548,7 +548,7 @@ pub struct HyprmuxConfirmConfig {
     pub load_profile: bool,
 }
 
-impl Default for HyprmuxConfirmConfig {
+impl Default for ConfirmConfig {
     fn default() -> Self {
         Self {
             close_pane: false,
@@ -567,7 +567,7 @@ pub const SCRATCHPAD_MIN_HEIGHT: f32 = 0.1;
 pub const SCRATCHPAD_MAX_HEIGHT: f32 = 0.9;
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxScratchpadConfig {
+pub struct ScratchpadConfig {
     /// Command to run instead of the normal shell (e.g. `btop`); `None` uses the shell.
     pub command: Option<String>,
     pub cwd: Option<String>,
@@ -575,7 +575,7 @@ pub struct HyprmuxScratchpadConfig {
     pub height: f32,
 }
 
-impl Default for HyprmuxScratchpadConfig {
+impl Default for ScratchpadConfig {
     fn default() -> Self {
         Self {
             command: None,
@@ -616,12 +616,12 @@ impl ShellIntegrationMode {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct HyprmuxShellIntegrationConfig {
+pub struct ShellIntegrationConfig {
     pub mode: ShellIntegrationMode,
 }
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxConfig {
+pub struct Config {
     /// Interactive-shell override (argument-preserving; first element is the program). `None`
     /// falls through to `$SHELL`/`/bin/sh` on Unix or `pwsh.exe`/`powershell.exe`/`%COMSPEC%`/
     /// `cmd.exe` on Windows - see [`crate::platform::command::resolve_interactive_shell`].
@@ -632,28 +632,28 @@ pub struct HyprmuxConfig {
     /// (`["/bin/sh", "-c"]` on Unix, `[%COMSPEC%, "/D", "/S", "/C"]` on Windows) - see
     /// [`crate::platform::command::resolve_command_shell`].
     pub command_shell: Option<Vec<String>>,
-    pub shell_integration: HyprmuxShellIntegrationConfig,
+    pub shell_integration: ShellIntegrationConfig,
     pub cwd: Option<String>,
     pub scrollback: usize,
     pub input: InputConfig,
     pub animations: WindowAnimationConfig,
-    pub theme: HyprmuxThemeConfig,
-    pub profile: HyprmuxProfileConfig,
-    pub session: HyprmuxSessionConfig,
-    pub remote: HyprmuxRemoteConfig,
-    pub layout: HyprmuxLayoutConfig,
-    pub pane: HyprmuxPaneConfig,
-    pub clipboard: HyprmuxClipboardConfig,
-    pub notifications: HyprmuxNotificationsConfig,
-    pub sounds: HyprmuxSoundsConfig,
-    pub navigation: HyprmuxNavigationConfig,
-    pub confirm: HyprmuxConfirmConfig,
-    pub scratchpad: HyprmuxScratchpadConfig,
+    pub theme: ThemeConfig,
+    pub profile: ProfileConfig,
+    pub session: SessionConfig,
+    pub remote: RemoteConfig,
+    pub layout: LayoutConfig,
+    pub pane: PaneConfig,
+    pub clipboard: ClipboardConfig,
+    pub notifications: NotificationsConfig,
+    pub sounds: SoundsConfig,
+    pub navigation: NavigationConfig,
+    pub confirm: ConfirmConfig,
+    pub scratchpad: ScratchpadConfig,
     pub sidebar: SidebarConfig,
-    pub rules: Vec<HyprmuxRuleConfig>,
-    pub hints: Vec<HyprmuxHintConfig>,
-    pub hooks: Vec<HyprmuxHookConfig>,
-    pub logging: HyprmuxLoggingConfig,
+    pub rules: Vec<RuleConfig>,
+    pub hints: Vec<HintConfig>,
+    pub hooks: Vec<HookConfig>,
+    pub logging: LoggingConfig,
     pub workbar: WorkbarConfig,
     /// Explicit `[keys]` overrides: command id -> native `KeyBinding` shortcuts. A command id
     /// present with an empty list is an explicit unbind; an id absent here uses the built-in
@@ -665,7 +665,7 @@ pub struct HyprmuxConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HyprmuxHookConfig {
+pub struct HookConfig {
     pub event: crate::events::EventKind,
     pub run: String,
 }
@@ -675,13 +675,13 @@ pub struct HyprmuxHookConfig {
 pub const DEFAULT_LOG_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxLoggingConfig {
+pub struct LoggingConfig {
     pub dir: Option<PathBuf>,
     /// Size ceiling for one pane log file. `0` disables the cap and restores unbounded growth.
     pub max_bytes: u64,
 }
 
-impl Default for HyprmuxLoggingConfig {
+impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             dir: None,
@@ -725,7 +725,7 @@ impl RuleMatcher {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct HyprmuxRuleConfig {
+pub struct RuleConfig {
     pub matcher: RuleMatcher,
     pub float: bool,
     pub width: Option<f32>,
@@ -737,12 +737,12 @@ pub struct HyprmuxRuleConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct HyprmuxHintConfig {
+pub struct HintConfig {
     pub pattern: regex_lite::Regex,
     pub open: bool,
 }
 
-impl PartialEq for HyprmuxHintConfig {
+impl PartialEq for HintConfig {
     fn eq(&self, other: &Self) -> bool {
         self.open == other.open && self.pattern.as_str() == other.pattern.as_str()
     }
@@ -1071,35 +1071,35 @@ fn truncate_for_label(text: &str) -> String {
     }
 }
 
-impl Default for HyprmuxConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             shell: None,
             command_shell: None,
-            shell_integration: HyprmuxShellIntegrationConfig::default(),
+            shell_integration: ShellIntegrationConfig::default(),
             cwd: std::env::current_dir()
                 .ok()
                 .map(|path| path.to_string_lossy().to_string()),
             scrollback: 5000,
             input: InputConfig::default(),
             animations: WindowAnimationConfig::default(),
-            theme: HyprmuxThemeConfig::default(),
-            profile: HyprmuxProfileConfig::default(),
-            session: HyprmuxSessionConfig::default(),
-            remote: HyprmuxRemoteConfig::default(),
-            layout: HyprmuxLayoutConfig::default(),
-            pane: HyprmuxPaneConfig::default(),
-            clipboard: HyprmuxClipboardConfig::default(),
-            notifications: HyprmuxNotificationsConfig::default(),
-            sounds: HyprmuxSoundsConfig::default(),
-            navigation: HyprmuxNavigationConfig::default(),
-            confirm: HyprmuxConfirmConfig::default(),
-            scratchpad: HyprmuxScratchpadConfig::default(),
+            theme: ThemeConfig::default(),
+            profile: ProfileConfig::default(),
+            session: SessionConfig::default(),
+            remote: RemoteConfig::default(),
+            layout: LayoutConfig::default(),
+            pane: PaneConfig::default(),
+            clipboard: ClipboardConfig::default(),
+            notifications: NotificationsConfig::default(),
+            sounds: SoundsConfig::default(),
+            navigation: NavigationConfig::default(),
+            confirm: ConfirmConfig::default(),
+            scratchpad: ScratchpadConfig::default(),
             sidebar: SidebarConfig::default(),
             rules: Vec::new(),
             hints: Vec::new(),
             hooks: Vec::new(),
-            logging: HyprmuxLoggingConfig::default(),
+            logging: LoggingConfig::default(),
             workbar: WorkbarConfig::default(),
             key_overrides: HashMap::new(),
             user_commands: Vec::new(),
@@ -1389,14 +1389,11 @@ mod tests {
                 },
             ]
         );
-        assert!(HyprmuxPaneConfig::default().workbar_powerline);
-        assert!(HyprmuxPaneConfig::default().show_titles);
-        assert_eq!(
-            HyprmuxPaneConfig::default().border_mode,
-            PaneBorderMode::Separate
-        );
-        assert!(!HyprmuxPaneConfig::default().keep_special_borders);
-        assert!(HyprmuxPaneConfig::default().highlight_focused_titlebar);
+        assert!(PaneConfig::default().workbar_powerline);
+        assert!(PaneConfig::default().show_titles);
+        assert_eq!(PaneConfig::default().border_mode, PaneBorderMode::Separate);
+        assert!(!PaneConfig::default().keep_special_borders);
+        assert!(PaneConfig::default().highlight_focused_titlebar);
     }
 
     #[test]

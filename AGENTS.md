@@ -197,7 +197,7 @@ See `docs/benchmarks.md` for targets, Criterion 0.8 baselines, stress recipes, a
 CLI / thin main.rs
   |
   v
-lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
+lib.rs -> app.rs: AppRoot (tui-lipan Component)
   |-- State / Msg model in state/ + msg.rs
   |-- update/::handle_msg dispatches messages to focused update/ops modules
   |-- key_routing routes prefix/held-modifier/terminal keys
@@ -209,7 +209,7 @@ lib.rs -> app.rs: HyprmuxApp (tui-lipan Component)
   +--> session/client <-> session/server <-> server-owned PTYs
 ```
 
-`hyprmux` is an Elm-style app with one root `Component` (`HyprmuxApp`), a central `State`, and
+`hyprmux` is an Elm-style app with one root `Component` (`AppRoot`), a central `State`, and
 `Msg` updates. `tui-lipan` supplies runtime primitives such as `Canvas`, `Frame`, transitions,
 mouse regions, overlays, and terminal widgets. The app owns window-manager policy: tiling trees,
 floating geometry, focus, input routing, profiles, sessions, and terminal palette synchronization.
@@ -324,7 +324,7 @@ under Code Style.
   scripts), and a running hyprmux live-reloads its config file, so an unisolated test lands in the
   UI the developer is working in. Unit tests are isolated automatically - `PlatformEnv::from_process`
   resolves into a per-process scratch root under `cfg(test)`. An integration test that builds a
-  `HyprmuxApp` must call `hyprmux::test_support::isolate_user_dirs()` first, from whatever helper
+  `AppRoot` must call `hyprmux::test_support::isolate_user_dirs()` first, from whatever helper
   constructs its `TestBackend`. Never mutate `HOME`/`XDG_*`/`APPDATA`/`HYPRMUX_CONFIG` to redirect a
   test: `std::env::set_var` is unsound beside parallel tests, and isolation now outranks it anyway.
 - Prefer targeted tests for layout, geometry, key routing, profile restore, session protocol, and

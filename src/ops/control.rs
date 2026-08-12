@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::actions::execute_action;
 use crate::control::{
     CaptureScrollback, CaptureScrollbackNamed, ControlCommand, ControlEnvelope, ControlResponse,
@@ -41,7 +41,7 @@ struct PaneCapture {
 }
 
 pub(crate) fn handle_control_request(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     envelope: ControlEnvelope,
 ) -> Update {
     let response = match envelope.request.command {
@@ -167,7 +167,7 @@ pub(crate) fn handle_control_request(
     Update::full()
 }
 
-fn runtime_metrics(ctx: &Context<HyprmuxApp>) -> ControlResponse {
+fn runtime_metrics(ctx: &Context<AppRoot>) -> ControlResponse {
     if let Some(client) = &ctx.state.current().session_client {
         // Refresh asynchronously for the next sample; this response always uses the cache.
         client.request_runtime_metrics();
@@ -177,7 +177,7 @@ fn runtime_metrics(ctx: &Context<HyprmuxApp>) -> ControlResponse {
     ))
 }
 
-fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
+fn list_panes(ctx: &Context<AppRoot>) -> ControlResponse {
     let mut panes = Vec::new();
     for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
         for pane in workspace.panes.iter().filter(|pane| !pane.closing) {
@@ -225,7 +225,7 @@ fn list_panes(ctx: &Context<HyprmuxApp>) -> ControlResponse {
 }
 
 fn set_status(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
     status: Option<String>,
     reason: Option<String>,
@@ -257,7 +257,7 @@ fn set_status(
     ControlResponse::empty()
 }
 
-fn focus_target(ctx: &mut Context<HyprmuxApp>, target: PaneId) -> ControlResponse {
+fn focus_target(ctx: &mut Context<AppRoot>, target: PaneId) -> ControlResponse {
     if !focus_pane_anywhere(ctx, target) {
         return ControlResponse::error(format!("pane {target} not found"));
     }
@@ -281,7 +281,7 @@ struct InputTarget {
 /// which is what a person typing into a freshly split pane already gets. A pane that has exited or
 /// failed is not — those keep failing loudly, because nothing will ever read the input.
 fn control_input_target(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
 ) -> std::result::Result<InputTarget, ControlResponse> {
     if let Some(reason) = ctx.state.pane_input_block_reason() {
@@ -316,7 +316,7 @@ fn control_input_target(
 
 /// Write control input to the PTY, or append it to the pane's type-ahead queue while the spawn is
 /// still in flight (see [`crate::state::State::pending_control_input`]).
-fn deliver_control_input(ctx: &mut Context<HyprmuxApp>, target: &InputTarget, bytes: Vec<u8>) {
+fn deliver_control_input(ctx: &mut Context<AppRoot>, target: &InputTarget, bytes: Vec<u8>) {
     if target.starting {
         ctx.state
             .pending_control_input
@@ -330,11 +330,7 @@ fn deliver_control_input(ctx: &mut Context<HyprmuxApp>, target: &InputTarget, by
     }
 }
 
-fn send_text(
-    ctx: &mut Context<HyprmuxApp>,
-    target: Option<PaneId>,
-    text: String,
-) -> ControlResponse {
+fn send_text(ctx: &mut Context<AppRoot>, target: Option<PaneId>, text: String) -> ControlResponse {
     let target = match control_input_target(ctx, target) {
         Ok(target) => target,
         Err(response) => return response,
@@ -344,7 +340,7 @@ fn send_text(
 }
 
 fn send_keys(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
     keys: Vec<String>,
     literal: bool,
@@ -382,7 +378,7 @@ fn send_keys(
 /// Run any keybindable action by its stable id, the same names used in `[keys]` config and the
 /// command palette (see `Action::id`/`Action::from_id`).
 fn run_action(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action_id: &str,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) -> Update {
@@ -414,7 +410,7 @@ fn run_action(
 }
 
 fn capture_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: Option<PaneId>,
     scrollback: Option<CaptureScrollback>,
 ) -> ControlResponse {
@@ -444,7 +440,7 @@ fn capture_pane(
     ControlResponse::ok(PaneCapture { id, text })
 }
 
-fn switch_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {
+fn switch_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> ControlResponse {
     let Some(response) = validate_workspace_index(index) else {
         switch_workspace(&mut ctx.state, index - 1);
         request_current_pane_focus(ctx);
@@ -453,7 +449,7 @@ fn switch_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Cont
     response
 }
 
-fn move_to_workspace_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> ControlResponse {
+fn move_to_workspace_command(ctx: &mut Context<AppRoot>, index: usize) -> ControlResponse {
     if !ctx.state.is_controller() {
         return ControlResponse::error("not controller");
     }
@@ -479,7 +475,7 @@ fn validate_workspace_index(index: usize) -> Option<ControlResponse> {
 
 #[allow(clippy::too_many_arguments)]
 fn new_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
     command: Option<String>,
     cwd: Option<String>,
@@ -537,7 +533,7 @@ const SPAWN_READY_DEADLINE: std::time::Duration = std::time::Duration::from_secs
 /// rather than acceptance. Falls back to answering immediately when there is no command link to arm
 /// the deadline with — without one nothing would ever release the reply.
 pub(crate) fn hold_spawn_reply(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     reply: std::sync::mpsc::Sender<ControlResponse>,
 ) {
@@ -594,7 +590,7 @@ pub(crate) fn resolve_spawn_reply(
 /// Spawn a pane once a session client is available (shared by the live control path and the
 /// deferred launcher replay).
 pub(crate) fn new_pane_after_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     source: Option<PaneId>,
     command: Option<String>,
     cwd: Option<String>,
@@ -622,7 +618,7 @@ pub(crate) fn new_pane_after_session(
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_new_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     source_workspace: usize,
     source: Option<PaneId>,
     command: Option<String>,
@@ -679,7 +675,7 @@ mod tests {
 
     #[test]
     fn workspace_for_source_errors_on_invalid_explicit_source() {
-        let state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let state = State::new(crate::config::Config::default(), Theme::default());
         assert_eq!(
             workspace_for_source(&state, Some(999)),
             Err("source pane 999 not found".to_string())
@@ -688,7 +684,7 @@ mod tests {
 
     #[test]
     fn workspace_for_source_falls_back_only_without_source() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().active_workspace = 2;
         state.current_mut().workspaces[1]
             .panes
@@ -710,7 +706,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let (client, outbound) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -779,8 +775,8 @@ mod tests {
 
     /// A backend whose mount has delivered the command link, which `hold_spawn_reply` needs to arm
     /// its deadline; without one it answers immediately and the held-reply behavior never runs.
-    fn settled_backend() -> TestBackend<crate::HyprmuxApp> {
-        let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+    fn settled_backend() -> TestBackend<crate::AppRoot> {
+        let mut backend = TestBackend::new(crate::AppRoot::default());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while backend.state().command_link.is_none() {
             assert!(
@@ -794,7 +790,7 @@ mod tests {
     }
 
     fn attach_test_session(
-        backend: &mut TestBackend<crate::HyprmuxApp>,
+        backend: &mut TestBackend<crate::AppRoot>,
     ) -> mpsc::Receiver<ClientOutbound> {
         let (client, outbound) = SessionClient::test_channel();
         let state = backend.state_mut();
@@ -1047,7 +1043,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 backend.state_mut().current_mut().workspaces[0].panes[0]
                     .terminal
                     .reported_status = Some(crate::session::protocol::PaneStatus {
@@ -1084,7 +1080,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let (reply, response) = mpsc::channel();
                 let level = backend
                     .update_level(crate::Msg::ControlRequest(ControlEnvelope {

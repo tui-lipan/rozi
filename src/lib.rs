@@ -41,7 +41,7 @@ pub mod tiling;
 mod update;
 mod view;
 
-pub use app::HyprmuxApp;
+pub use app::AppRoot;
 pub use msg::Msg;
 
 #[doc(hidden)]

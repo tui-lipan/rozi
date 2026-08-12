@@ -13,7 +13,7 @@
 //!
 //! Unit tests get this for free - [`PlatformEnv::from_process`] isolates itself under `cfg(test)`.
 //! Integration tests link the non-test build of the library, so a test binary that builds a
-//! `HyprmuxApp` and dispatches actions must call [`isolate_user_dirs`] first.
+//! `AppRoot` and dispatches actions must call [`isolate_user_dirs`] first.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

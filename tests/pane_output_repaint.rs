@@ -5,7 +5,7 @@
 //! `Update::paint()`: one agent streaming into one pane must not re-run `view()` and layout for every
 //! other pane, workbar segment and sidebar row in the window on every chunk.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneId};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
@@ -21,8 +21,8 @@ const VIEWPORT: Rect = Rect {
 const PANE: PaneId = 10;
 const OTHER_PANE: PaneId = 11;
 
-fn backend() -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend() -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(VIEWPORT);
     {
         let state = backend.state_mut();

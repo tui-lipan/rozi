@@ -9,7 +9,7 @@ use crate::ops::focus::{
 use crate::ops::theme::{
     cancel_theme_picker, preview_theme as preview, select_theme as select, theme_tick as tick,
 };
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 fn valid_padding_text(value: &str) -> bool {
     value.is_empty()
@@ -24,11 +24,11 @@ fn padding_value(value: &str) -> Option<u16> {
         .flatten()
 }
 
-fn padding_error(ctx: &mut Context<HyprmuxApp>) {
+fn padding_error(ctx: &mut Context<AppRoot>) {
     crate::pty_events::notify_error(ctx, "Invalid padding", "Enter one digit");
 }
 
-pub(super) fn command_link_ready(ctx: &mut Context<HyprmuxApp>, link: CommandLink<Msg>) -> Update {
+pub(super) fn command_link_ready(ctx: &mut Context<AppRoot>, link: CommandLink<Msg>) -> Update {
     ctx.state.command_link = Some(link);
     crate::update::sidebar::request_sessions_refresh(ctx);
     crate::update::sidebar::request_command_poll(ctx);
@@ -36,11 +36,11 @@ pub(super) fn command_link_ready(ctx: &mut Context<HyprmuxApp>, link: CommandLin
     Update::none()
 }
 
-pub(super) fn hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn hangup(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::exit::detach_on_hangup(ctx)
 }
 
-pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     // Return before overlay cleanup and focus restoration: blocked actions must leave the
     // scratchpad terminal as the focused layer.
     if crate::actions::is_blocked_by_scratchpad(&ctx.state, action) {
@@ -87,21 +87,21 @@ pub(super) fn run_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Updat
     update
 }
 
-pub(super) fn close_palette(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_palette(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_palette = false;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(super) fn close_help(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_help(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_help = false;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(super) fn close_appearance(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_appearance(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_appearance = false;
     ctx.state.appearance_selected = None;
     ctx.state.pane_padding_editor = None;
@@ -110,7 +110,7 @@ pub(super) fn close_appearance(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(super) fn close_alerts(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_alerts(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_alerts = false;
     ctx.state.alerts_selected = None;
     ctx.state.commands_dirty = true;
@@ -118,20 +118,20 @@ pub(super) fn close_alerts(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 pub(super) fn alerts_select(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AlertsAction,
 ) -> Update {
     ctx.state.alerts_selected = Some(action);
     Update::none()
 }
 pub(super) fn alerts_activate(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AlertsAction,
 ) -> Update {
     alerts_activate_dir(ctx, action, false)
 }
 
-pub(super) fn alerts_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> Update {
+pub(super) fn alerts_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
     let Some(action) = ctx.state.alerts_selected else {
         return Update::none();
     };
@@ -142,7 +142,7 @@ pub(super) fn alerts_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> Updat
 }
 
 fn alerts_activate_dir(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AlertsAction,
     reverse: bool,
 ) -> Update {
@@ -308,7 +308,7 @@ fn alerts_activate_dir(
     ctx.request_focus(crate::view::alerts_palette_key());
     Update::full()
 }
-fn preference_error(ctx: &mut Context<HyprmuxApp>, err: String) {
+fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
     crate::pty_events::notify_on(
         ctx,
         crate::state::ToastChannel::PreferenceSave,
@@ -318,14 +318,14 @@ fn preference_error(ctx: &mut Context<HyprmuxApp>, err: String) {
 }
 
 pub(super) fn appearance_select(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AppearanceAction,
 ) -> Update {
     ctx.state.appearance_selected = Some(action);
     Update::none()
 }
 
-pub(super) fn appearance_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> Update {
+pub(super) fn appearance_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
     let Some(action) = ctx.state.appearance_selected else {
         return Update::none();
     };
@@ -336,14 +336,14 @@ pub(super) fn appearance_step(ctx: &mut Context<HyprmuxApp>, reverse: bool) -> U
 }
 
 pub(super) fn appearance_activate(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AppearanceAction,
 ) -> Update {
     appearance_activate_dir(ctx, action, false)
 }
 
 fn appearance_activate_dir(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::AppearanceAction,
     reverse: bool,
 ) -> Update {
@@ -470,7 +470,7 @@ fn appearance_activate_dir(
     Update::full()
 }
 
-fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
         crate::pty_events::notify_on(
             ctx,
@@ -481,7 +481,7 @@ fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value:
     }
 }
 
-pub(super) fn close_pane_padding_editor(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_pane_padding_editor(ctx: &mut Context<AppRoot>) -> Update {
     if ctx.state.pane_padding_editor.is_none() {
         return Update::none();
     }
@@ -493,7 +493,7 @@ pub(super) fn close_pane_padding_editor(ctx: &mut Context<HyprmuxApp>) -> Update
 }
 
 pub(super) fn pane_padding_vertical_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     event: InputEvent,
 ) -> Update {
     let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
@@ -507,7 +507,7 @@ pub(super) fn pane_padding_vertical_changed(
 }
 
 pub(super) fn pane_padding_horizontal_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     event: InputEvent,
 ) -> Update {
     let Some(editor) = ctx.state.pane_padding_editor.as_mut() else {
@@ -520,7 +520,7 @@ pub(super) fn pane_padding_horizontal_changed(
     Update::full()
 }
 
-pub(super) fn advance_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn advance_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
     let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
         return Update::none();
     };
@@ -533,7 +533,7 @@ pub(super) fn advance_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn submit_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
     let Some(editor) = ctx.state.pane_padding_editor.as_ref() else {
         return Update::none();
     };
@@ -558,24 +558,24 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(super) fn close_theme_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn close_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
     cancel_theme_picker(ctx);
     crate::ops::overlay_return::finish(ctx)
 }
-pub(super) fn preview_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn preview_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     preview(ctx, index)
 }
-pub(super) fn select_theme(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(super) fn select_theme(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     select(ctx, index)
 }
-pub(super) fn theme_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn theme_tick(ctx: &mut Context<AppRoot>) -> Update {
     tick(ctx)
 }
-pub(super) fn config_file_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::config::config_file_changed(ctx)
 }
 
-pub(super) fn workbar_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(super) fn workbar_tick(ctx: &mut Context<AppRoot>) -> Update {
     // Reschedule only while a clock segment is configured.
     if !ctx.state.config.workbar.has_clock() {
         return Update::none();
@@ -601,7 +601,7 @@ pub(super) fn workbar_tick(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 }
 
-pub(super) fn theme_error(ctx: &mut Context<HyprmuxApp>, message: String) -> Update {
+pub(super) fn theme_error(ctx: &mut Context<AppRoot>, message: String) -> Update {
     crate::pty_events::notify_error(ctx, "Theme reload failed", message);
     Update::full()
 }
@@ -632,7 +632,7 @@ mod tests {
     #[test]
     fn alerts_left_right_steps_modes_and_keeps_selection() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_alerts = true;
             backend.state_mut().config.pane.show_workbar = true;
             backend.state_mut().alerts_selected =
@@ -669,7 +669,7 @@ mod tests {
     #[test]
     fn opening_another_overlay_closes_alerts() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.state_mut().show_alerts = true;
             backend
                 .dispatch(Msg::RunAction(Action::OpenAppearance))
@@ -682,7 +682,7 @@ mod tests {
     #[test]
     fn opening_alerts_clears_a_session_picker_and_focuses_alerts() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             {
                 let state = backend.state_mut();
                 state.show_session_picker = true;

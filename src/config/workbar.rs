@@ -2,7 +2,7 @@ use tui_lipan::prelude::CapStyle as TuiCapStyle;
 
 use super::file::{PaneFileConfig, WorkbarFileConfig, WorkbarSegmentSpec};
 use super::schema::{
-    BadgeColor, HyprmuxPaneConfig, PaneAlertColors, WorkbarConfig, WorkbarItem, WorkbarSegment,
+    BadgeColor, PaneAlertColors, PaneConfig, WorkbarConfig, WorkbarItem, WorkbarSegment,
 };
 use crate::state::parse_cap_style;
 
@@ -135,7 +135,7 @@ pub(super) fn apply_pane_alert_colors(
 }
 
 pub(super) fn apply_workbar_style_config(
-    config: &mut HyprmuxPaneConfig,
+    config: &mut PaneConfig,
     parsed: &PaneFileConfig,
     warnings: &mut Vec<String>,
 ) {
@@ -290,7 +290,7 @@ mod tests {
     fn workbar_powerline_parses_and_applies() {
         let parsed: PaneFileConfig =
             toml::from_str("workbar_powerline = false").expect("config parses");
-        let mut pane = HyprmuxPaneConfig::default();
+        let mut pane = PaneConfig::default();
         let mut warnings = Vec::new();
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
         assert!(warnings.is_empty());
@@ -300,13 +300,13 @@ mod tests {
     #[test]
     fn toast_opacity_defaults_to_glass_and_accepts_a_unit_fraction() {
         assert_eq!(
-            HyprmuxPaneConfig::default().toast_opacity,
+            PaneConfig::default().toast_opacity,
             0.8,
             "toasts default to tinted glass rather than a solid panel",
         );
 
         let parsed: PaneFileConfig = toml::from_str("toast_opacity = 0.82").expect("config parses");
-        let mut pane = HyprmuxPaneConfig::default();
+        let mut pane = PaneConfig::default();
         let mut warnings = Vec::new();
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
         assert!(warnings.is_empty());
@@ -317,7 +317,7 @@ mod tests {
     fn toast_opacity_outside_the_unit_range_warns_and_keeps_the_default() {
         for raw in ["toast_opacity = 1.5", "toast_opacity = -0.2"] {
             let parsed: PaneFileConfig = toml::from_str(raw).expect("config parses");
-            let mut pane = HyprmuxPaneConfig::default();
+            let mut pane = PaneConfig::default();
             let mut warnings = Vec::new();
             apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
             assert_eq!(warnings.len(), 1, "{raw} should warn");
@@ -329,7 +329,7 @@ mod tests {
     fn workbar_badge_style_backfills_workbar_tabs_when_tabs_are_unset() {
         let parsed: PaneFileConfig =
             toml::from_str(r#"workbar_badge_style = "arrow""#).expect("config parses");
-        let mut pane = HyprmuxPaneConfig::default();
+        let mut pane = PaneConfig::default();
         let mut warnings = Vec::new();
 
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);
@@ -348,7 +348,7 @@ mod tests {
             "#,
         )
         .expect("config parses");
-        let mut pane = HyprmuxPaneConfig::default();
+        let mut pane = PaneConfig::default();
         let mut warnings = Vec::new();
 
         apply_workbar_style_config(&mut pane, &parsed, &mut warnings);

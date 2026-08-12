@@ -1,12 +1,9 @@
 use regex_lite::Regex;
 
 use super::file::{HintFileConfig, RuleFileConfig};
-use super::schema::{HyprmuxHintConfig, HyprmuxRuleConfig, RuleMatcher};
+use super::schema::{HintConfig, RuleConfig, RuleMatcher};
 
-pub(super) fn build_rules(
-    raw: Vec<RuleFileConfig>,
-    warnings: &mut Vec<String>,
-) -> Vec<HyprmuxRuleConfig> {
+pub(super) fn build_rules(raw: Vec<RuleFileConfig>, warnings: &mut Vec<String>) -> Vec<RuleConfig> {
     raw.into_iter()
         .filter_map(|rule| {
             let matches = rule.matches.trim().to_string();
@@ -64,7 +61,7 @@ pub(super) fn build_rules(
                     None
                 }
             });
-            Some(HyprmuxRuleConfig {
+            Some(RuleConfig {
                 width: clamp("width", rule.width, warnings),
                 height: clamp("height", rule.height, warnings),
                 matcher,
@@ -77,10 +74,7 @@ pub(super) fn build_rules(
         .collect()
 }
 
-pub(super) fn build_hints(
-    raw: Vec<HintFileConfig>,
-    warnings: &mut Vec<String>,
-) -> Vec<HyprmuxHintConfig> {
+pub(super) fn build_hints(raw: Vec<HintFileConfig>, warnings: &mut Vec<String>) -> Vec<HintConfig> {
     raw.into_iter()
         .filter_map(|hint| {
             let pattern = hint.pattern.trim().to_string();
@@ -89,7 +83,7 @@ pub(super) fn build_hints(
                 return None;
             }
             match Regex::new(&pattern) {
-                Ok(regex) => Some(HyprmuxHintConfig {
+                Ok(regex) => Some(HintConfig {
                     pattern: regex,
                     open: hint.open,
                 }),

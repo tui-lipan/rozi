@@ -1,11 +1,11 @@
 use tui_lipan::prelude::{Context, Element, Text};
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 use crate::state::{Attachment, is_ephemeral_session_name};
 
 /// Build the one-shot view rendered after the client leaves the event loop.
-pub(crate) fn exit_view(_component: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn exit_view(_component: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     exit_summary(ctx.state.current())
         .map_or_else(Element::default, |summary| Text::new(summary).into())
 }

@@ -477,7 +477,7 @@ impl AppearanceAction {
     /// Whether this row configures a feature that is currently switched off, so the row is inert:
     /// it still renders (greyed) but activating it does nothing. Keeps the appearance list stable
     /// instead of hiding dependent rows as their parent toggles.
-    pub fn disabled_reason(self, pane: &crate::config::HyprmuxPaneConfig) -> Option<&'static str> {
+    pub fn disabled_reason(self, pane: &crate::config::PaneConfig) -> Option<&'static str> {
         match self {
             Self::CycleTitlebar if !pane.show_titles => Some("Needs titlebar"),
             Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
@@ -775,7 +775,7 @@ mod tests {
 
     #[test]
     fn frame_only_controls_are_disabled_for_borderless_modes() {
-        let mut pane = crate::config::HyprmuxPaneConfig::default();
+        let mut pane = crate::config::PaneConfig::default();
         for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
             pane.border_mode = mode;
             assert_eq!(
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn alert_border_control_requires_visible_borders_only_in_none_mode() {
-        let mut pane = crate::config::HyprmuxPaneConfig {
+        let mut pane = crate::config::PaneConfig {
             border_mode: PaneBorderMode::None,
             ..Default::default()
         };

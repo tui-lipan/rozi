@@ -113,7 +113,7 @@ pub struct SessionServer {
 pub struct ServerSettings {
     pub log_dir: Option<PathBuf>,
     /// Ceiling on one pane log file, mirroring
-    /// [`crate::config::HyprmuxLoggingConfig::max_bytes`] including its `0` (unlimited) escape.
+    /// [`crate::config::LoggingConfig::max_bytes`] including its `0` (unlimited) escape.
     pub log_max_bytes: u64,
     pub resurrect: bool,
     pub snapshot_dir: Option<PathBuf>,
@@ -121,7 +121,7 @@ pub struct ServerSettings {
     /// Maximum time an attached client may go without a heartbeat pong.
     pub heartbeat_timeout: Duration,
     /// Whether a writable follower's control request immediately transfers the lease. Mirrors
-    /// [`crate::config::HyprmuxSessionConfig::allow_takeover`], including its `true` default, so a
+    /// [`crate::config::SessionConfig::allow_takeover`], including its `true` default, so a
     /// server started without a config behaves like one started from the default config.
     pub allow_takeover: bool,
     /// Scrollback retained by each server-side terminal parser.

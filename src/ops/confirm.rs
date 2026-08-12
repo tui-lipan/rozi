@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// How long a destructive action stays armed. Long enough to move a pointer back onto a one-cell ✕
 /// or find a key deliberately, short enough that a confirmation left on screen cannot be committed
@@ -21,7 +21,7 @@ pub(crate) const CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 /// Callers set their own pending field and return this. Clearing one does *not* need a matching
 /// call — arming always advances the token, so an expiry still in flight from an abandoned arming
 /// can only ever find its own arming already gone and clear nothing.
-pub(crate) fn arm(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn arm(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.confirm_epoch = ctx.state.confirm_epoch.wrapping_add(1);
     let epoch = ctx.state.confirm_epoch;
     Update::with_command(Command::after(
@@ -34,7 +34,7 @@ pub(crate) fn arm(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// The window lapsed. Drop whatever was armed, unless something has been armed since — in which
 /// case this expiry belongs to an arming that is already over and must not disarm the new one.
-pub(crate) fn expired(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(crate) fn expired(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if ctx.state.confirm_epoch != epoch {
         return Update::none();
     }
@@ -44,7 +44,7 @@ pub(crate) fn expired(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
 /// Drop every armed confirmation. Only one can be armed at a time in practice — the pickers are
 /// modal over the sidebar — so this is written as "clear them all" rather than as a dispatch on
 /// which surface armed it, which would have to be kept in step with every new one.
-fn clear_all(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn clear_all(ctx: &mut Context<AppRoot>) -> Update {
     let mut cleared = ctx.state.sidebar.pending_row_close.take().is_some();
     cleared |= ctx.state.sidebar.pending_host_disconnect.take().is_some();
     if let Some(picker) = ctx.state.session_picker.as_mut() {

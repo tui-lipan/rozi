@@ -1,13 +1,13 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
 use crate::pane_lifecycle::find_pane_mut;
 use crate::state::{CopyModeState, Mode};
 
 /// Enter copy mode on the focused pane: seed tui-lipan's navigator at the live cursor position
 /// with no selection, and park scrollback at its current offset. Closes any open overlay first.
-pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
@@ -33,7 +33,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Leave copy mode. When `copy` is set the current selection (if any) is sent to the system
 /// clipboard and flashed by the framework after the controlled selection is cleared.
-pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
+pub(crate) fn exit(ctx: &mut Context<AppRoot>, copy: bool) -> Update {
     let Some(state) = ctx.state.copy_mode.take() else {
         ctx.state.mode = Mode::Normal;
         ctx.state.commands_dirty = true;
@@ -78,7 +78,7 @@ pub(crate) fn exit(ctx: &mut Context<HyprmuxApp>, copy: bool) -> Update {
     Update::with_command(feedback)
 }
 
-pub(crate) fn clear_copy_feedback(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn clear_copy_feedback(ctx: &mut Context<AppRoot>) {
     ctx.state.copy_feedback_epoch = ctx.state.copy_feedback_epoch.wrapping_add(1);
     if let Some((attachment, target)) = ctx.state.copy_feedback_target.take()
         && let Some(pane) = ctx
@@ -91,7 +91,7 @@ pub(crate) fn clear_copy_feedback(ctx: &mut Context<HyprmuxApp>) {
 }
 
 pub(crate) fn flash_copy_feedback(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: crate::state::PaneId,
     selection: tui_lipan::utils::GridSelection,
 ) -> Command {
@@ -111,7 +111,7 @@ pub(crate) fn flash_copy_feedback(
 }
 
 pub(crate) fn expire_copy_feedback(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     attachment: u64,
     target: crate::state::PaneId,
     epoch: u64,
@@ -134,7 +134,7 @@ pub(crate) fn expire_copy_feedback(
 
 /// Route a key while in copy mode. Returns `(handled, update)`; every key is consumed so
 /// nothing leaks to the PTY, mirroring resize mode.
-pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
+pub(crate) fn handle_copy_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (bool, Update) {
     if key.is(KeyCode::Char('/')) {
         return (true, crate::ops::search::open_search_from_copy_mode(ctx));
     }
@@ -218,7 +218,7 @@ pub(crate) fn handle_copy_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (
     }
 }
 
-fn cycle_copy_search(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
+fn cycle_copy_search(ctx: &mut Context<AppRoot>, backward: bool) -> Update {
     let Some(copy) = ctx.state.copy_mode.as_mut() else {
         return Update::none();
     };
@@ -237,7 +237,7 @@ fn cycle_copy_search(ctx: &mut Context<HyprmuxApp>, backward: bool) -> Update {
 }
 
 pub(crate) fn apply_copy_search_match(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     matched: &crate::state::CopySearchMatch,
 ) {
     let Some(copy) = ctx.state.copy_mode.as_mut() else {
@@ -306,7 +306,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()

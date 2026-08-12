@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tui_lipan::prelude::{FloatRect, Rect, Theme, ThemeWatcher};
 
 use crate::anim::GeometryAnimation;
-use crate::config::HyprmuxConfig;
+use crate::config::Config;
 use crate::tiling::append_tiled_window;
 
 mod alerts;
@@ -60,7 +60,7 @@ pub const RATIO_STEP: f32 = 0.04;
 pub const DEFAULT_SPLIT_WIDTH_MULTIPLIER: f32 = 2.3;
 
 pub struct State {
-    pub config: HyprmuxConfig,
+    pub config: Config,
     /// Whether the host terminal/window currently has focus. This is distinct from which pane the
     /// app has selected: a selected pane is only attended while the host window is focused too.
     pub window_focused: bool,
@@ -235,7 +235,7 @@ pub struct State {
 /// session hops onto. Its one pane inherits the launch directory so the shell starts where hyprmux
 /// was invoked. Factored out so every "start a blank session" path builds the same thing without
 /// rebuilding the whole [`State`].
-pub fn fresh_default_attachment(config: &HyprmuxConfig) -> Attachment {
+pub fn fresh_default_attachment(config: &Config) -> Attachment {
     let mut workspaces: Vec<Workspace> = (0..WORKSPACE_COUNT).map(Workspace::new).collect();
     for workspace in &mut workspaces {
         workspace.layout_kind = config.layout.default;
@@ -263,7 +263,7 @@ pub fn fresh_default_attachment(config: &HyprmuxConfig) -> Attachment {
 }
 
 impl State {
-    pub fn new(config: HyprmuxConfig, theme: Theme) -> Self {
+    pub fn new(config: Config, theme: Theme) -> Self {
         let sidebar_visible = config.sidebar.visible;
         let sidebar = SidebarState::new(&config.sidebar);
         let attachment = fresh_default_attachment(&config);
@@ -352,11 +352,7 @@ impl State {
         }
     }
 
-    pub fn from_profile(
-        config: HyprmuxConfig,
-        theme: Theme,
-        profile: crate::profiles::HyprmuxProfile,
-    ) -> Self {
+    pub fn from_profile(config: Config, theme: Theme, profile: crate::profiles::Profile) -> Self {
         crate::profiles::restore_state_from_profile(config, theme, profile)
     }
 
@@ -707,12 +703,12 @@ impl State {
 #[cfg(test)]
 mod render_visibility_tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use tui_lipan::prelude::Theme;
 
     #[test]
     fn fresh_workspaces_adopt_the_configured_default_layout() {
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config.layout.default = LayoutKind::Master;
         let attachment = fresh_default_attachment(&config);
         assert!(
@@ -725,7 +721,7 @@ mod render_visibility_tests {
     }
 
     fn state_with_two_workspaces() -> State {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let rect = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -785,7 +781,7 @@ mod render_visibility_tests {
 
     #[test]
     fn pane_attendance_requires_focused_window_and_pane() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let pane_id = state.current().focused_pane.expect("fresh pane focus");
 
         assert!(state.is_pane_attended(pane_id));
@@ -805,11 +801,11 @@ mod render_visibility_tests {
 #[cfg(test)]
 mod retention_tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use tui_lipan::prelude::Theme;
 
     fn state() -> State {
-        State::new(HyprmuxConfig::default(), Theme::default())
+        State::new(Config::default(), Theme::default())
     }
 
     #[test]

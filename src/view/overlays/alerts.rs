@@ -1,4 +1,4 @@
-pub(crate) fn alerts_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn alerts_overlay(ctx: &Context<AppRoot>) -> Element {
     use AlertsAction::*;
 
     let pane = &ctx.state.config.pane;
@@ -211,7 +211,7 @@ fn alerts_group(
     (group, entries)
 }
 
-fn alerts_palette_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn alerts_palette_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     ctx.link().key_handler(|key| {
         if key.mods != KeyMods::default() {
             return None;

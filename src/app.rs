@@ -5,7 +5,7 @@ use tui_lipan::prelude::*;
 
 use crate::Msg;
 use crate::anim::GeometryAnimation;
-use crate::config::HyprmuxConfig;
+use crate::config::Config;
 use crate::session::bootstrap::{SessionStart, attach_session_client, has_session_candidates};
 use crate::state::{Pane, PaneId, State, ThemePreset};
 use crate::{
@@ -13,8 +13,8 @@ use crate::{
     update, view,
 };
 
-pub struct HyprmuxApp {
-    config: HyprmuxConfig,
+pub struct AppRoot {
+    config: Config,
     initial_theme: Theme,
     initial_system_theme: Option<Theme>,
     startup_profile: Option<StartupProfile>,
@@ -55,15 +55,15 @@ pub struct HyprmuxApp {
 
 #[derive(Clone)]
 struct StartupProfile {
-    profile: profiles::HyprmuxProfile,
+    profile: profiles::Profile,
     name: String,
     path: PathBuf,
     records_origin: bool,
 }
 
-impl Default for HyprmuxApp {
+impl Default for AppRoot {
     fn default() -> Self {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         Self {
             initial_theme: ThemePreset::Lipan.theme(),
             initial_system_theme: None,
@@ -86,10 +86,10 @@ impl Default for HyprmuxApp {
     }
 }
 
-impl HyprmuxApp {
+impl AppRoot {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        config: HyprmuxConfig,
+        config: Config,
         initial_theme: Theme,
         initial_system_theme: Option<Theme>,
         startup_profile: Option<StartupProfile>,
@@ -126,7 +126,7 @@ impl HyprmuxApp {
     }
 }
 
-impl Component for HyprmuxApp {
+impl Component for AppRoot {
     type Message = Msg;
     type Properties = ();
     type State = State;
@@ -388,7 +388,7 @@ impl Component for HyprmuxApp {
     }
 }
 
-impl HyprmuxApp {
+impl AppRoot {
     pub(crate) fn transition_config_for(
         &self,
         ctx: &Context<Self>,
@@ -621,7 +621,7 @@ pub(crate) fn schedule_alert_pulse_tick(half_period: Duration) -> Command {
     })
 }
 
-fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
+fn clipboard_config(config: &Config) -> ClipboardConfig {
     // OSC52 always targets the *local* terminal emulator that hosts this client. Under `--remote`
     // that is what we want: copy from a remote pane reaches the local clipboard. Disabling
     // `enable_osc52` drops OSC52 without redirecting copies to the remote host.
@@ -631,7 +631,7 @@ fn clipboard_config(config: &HyprmuxConfig) -> ClipboardConfig {
     }
 }
 
-pub(crate) fn clipboard_copy_feedback_duration(config: &HyprmuxConfig) -> Duration {
+pub(crate) fn clipboard_copy_feedback_duration(config: &Config) -> Duration {
     Duration::from_millis(clipboard_config(config).copy_feedback_duration_ms as u64)
 }
 
@@ -954,7 +954,7 @@ pub fn run() -> Result<()> {
         }
     }
 
-    app.mount(HyprmuxApp::new(
+    app.mount(AppRoot::new(
         config,
         theme,
         startup_system_theme,
@@ -1035,7 +1035,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1097,7 +1097,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1124,7 +1124,7 @@ mod tests {
             .spawn(|| {
                 // Selecting a theme persists it; `test_support` has already pointed the writer at
                 // this process's scratch root rather than the developer's own config.
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1163,7 +1163,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1221,7 +1221,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1361,7 +1361,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1371,7 +1371,7 @@ mod tests {
                 backend.state_mut().show_palette = true;
                 backend.render();
 
-                let commands_modal = |backend: &TestBackend<HyprmuxApp>| {
+                let commands_modal = |backend: &TestBackend<AppRoot>| {
                     backend
                         .capture_ui_snapshot_with_options(&UiSnapshotOptions::default())
                         .widgets
@@ -1424,7 +1424,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1494,7 +1494,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1549,7 +1549,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1679,7 +1679,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()
@@ -1771,7 +1771,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend
                     .dispatch(Msg::RunAction(crate::input::Action::OpenSearch))
                     .expect("open search");
@@ -1873,7 +1873,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let target = backend
                     .state()
                     .current()
@@ -1976,7 +1976,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,

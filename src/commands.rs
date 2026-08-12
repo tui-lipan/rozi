@@ -22,13 +22,13 @@ use std::sync::Arc;
 
 use tui_lipan::prelude::*;
 
-use crate::config::HyprmuxConfig;
+use crate::config::Config;
 use crate::input::Action;
 use crate::state::{
     Direction::{Down, Left, Right, Up},
     Mode, Pane, SCRATCH_PANE_ID, State, cap_style_label,
 };
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// One built-in, individually rebindable command: default key steps (mirrored into a leader
 /// chord and a WM-modifier chord), display label/category, and whether it appears in the
@@ -769,7 +769,7 @@ fn is_exit_command(action: Action) -> bool {
 /// actions, workspace digit switches, and user `[keys]` commands. Idempotent - call again after
 /// anything that changes shortcuts (config reload), labels (toggle actions, layout cycling), or
 /// the `commands_active` gate (mode/overlay transitions).
-pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
+pub(crate) fn sync(ctx: &Context<AppRoot>) {
     let state = &ctx.state;
     let config = &state.config;
     let active = commands_active(state);
@@ -814,11 +814,7 @@ pub(crate) fn sync(ctx: &Context<HyprmuxApp>) {
     register_user_commands(ctx, config, active);
 }
 
-fn register_forward_prefix_command(
-    ctx: &Context<HyprmuxApp>,
-    config: &HyprmuxConfig,
-    active: bool,
-) {
+fn register_forward_prefix_command(ctx: &Context<AppRoot>, config: &Config, active: bool) {
     let (shortcuts, prefix_key) = prefix_forward_binding(config)
         .map(|(binding, key)| (KeyBindings::from_bindings([binding]), Some(key)))
         .unwrap_or_else(|| (KeyBindings::from_bindings([]), None));
@@ -836,14 +832,14 @@ fn register_forward_prefix_command(
     );
 }
 
-fn prefix_forward_binding(config: &HyprmuxConfig) -> Option<(KeyBinding, KeyEvent)> {
+fn prefix_forward_binding(config: &Config) -> Option<(KeyBinding, KeyEvent)> {
     let prefix = config.input.prefix.canonical_lowercase();
     let binding = KeyBinding::from_str(&format!("{prefix} {prefix}")).ok()?;
     let mut events = config.input.prefix.key_events().ok()?;
     (events.len() == 1).then(|| (binding, events.remove(0)))
 }
 
-fn register_workspace_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig, active: bool) {
+fn register_workspace_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
     for index in 0..9 {
         let digit = WORKSPACE_DIGITS[index];
         let symbol = WORKSPACE_SHIFT_SYMBOLS[index];
@@ -876,7 +872,7 @@ fn register_workspace_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig
 }
 
 fn register_workspace_command(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     id: &str,
     shortcuts: Vec<KeyBinding>,
     active: bool,
@@ -893,7 +889,7 @@ fn register_workspace_command(
     );
 }
 
-fn register_user_commands(ctx: &Context<HyprmuxApp>, config: &HyprmuxConfig, active: bool) {
+fn register_user_commands(ctx: &Context<AppRoot>, config: &Config, active: bool) {
     for (index, command) in config.user_commands.iter().enumerate() {
         let id = format!("user.{index}");
         let hint = command.binding.compact_display();
@@ -1005,7 +1001,7 @@ pub(crate) fn command_available(action: Action, state: &State) -> bool {
 /// The display chord for a built-in command's first current binding (e.g. `ctrl+a e`), read live
 /// from the registry so `[keys]` overrides are honored. `None` when the command is unbound. Prefer
 /// this over hardcoding keys in toasts/hints, since every binding is user-configurable.
-pub(crate) fn command_prefix_chord(ctx: &Context<HyprmuxApp>, id: &str) -> Option<String> {
+pub(crate) fn command_prefix_chord(ctx: &Context<AppRoot>, id: &str) -> Option<String> {
     ctx.command_registry()
         .entries()
         .into_iter()
@@ -1019,7 +1015,7 @@ pub(crate) fn command_prefix_chord(ctx: &Context<HyprmuxApp>, id: &str) -> Optio
 /// explicit empty override that unbinds it) if configured, otherwise the leader-prefix chord and
 /// WM-modifier chord mirrored from its default key steps. Paste also accepts plain `Ctrl+V`, which
 /// tui-lipan handles for text inputs but intentionally forwards from terminal widgets by default.
-fn resolve_shortcuts(config: &HyprmuxConfig, id: &str, defaults: &[&str]) -> KeyBindings {
+fn resolve_shortcuts(config: &Config, id: &str, defaults: &[&str]) -> KeyBindings {
     if let Some(bindings) = config.key_overrides.get(id) {
         KeyBindings::from_bindings(bindings.iter().cloned())
     } else {
@@ -1032,11 +1028,7 @@ fn resolve_shortcuts(config: &HyprmuxConfig, id: &str, defaults: &[&str]) -> Key
     }
 }
 
-fn builtin_keybinding_hint(
-    config: &HyprmuxConfig,
-    id: &str,
-    defaults: &[&str],
-) -> Option<Arc<str>> {
+fn builtin_keybinding_hint(config: &Config, id: &str, defaults: &[&str]) -> Option<Arc<str>> {
     let mut hints = builtin_keybinding_hint_parts(config, id, defaults);
     if id == "quit"
         && let Some(detach) = BUILTIN_COMMANDS
@@ -1061,11 +1053,7 @@ fn builtin_keybinding_hint(
 
 /// Return the live display alternatives for one built-in action. Defaults intentionally stay as
 /// command key steps (`w`, `x`, …), while explicit overrides retain their exact bindings.
-fn builtin_keybinding_hint_parts(
-    config: &HyprmuxConfig,
-    id: &str,
-    defaults: &[&str],
-) -> Vec<String> {
+fn builtin_keybinding_hint_parts(config: &Config, id: &str, defaults: &[&str]) -> Vec<String> {
     if config.key_overrides.contains_key(id) {
         resolve_shortcuts(config, id, defaults)
             .iter()
@@ -1090,7 +1078,7 @@ fn builtin_keybinding_hint_parts(
 /// The modifier mirror is an all-or-nothing layer controlled by `modifier_shortcuts`: with it off,
 /// only leader chords are emitted so held `Alt`/`Super` chords reach the focused pane instead. A
 /// user who wants to drop the mirror for one specific command uses a `[keys]` override instead.
-fn default_shortcuts_for<S: AsRef<str>>(config: &HyprmuxConfig, keys: &[S]) -> Vec<KeyBinding> {
+fn default_shortcuts_for<S: AsRef<str>>(config: &Config, keys: &[S]) -> Vec<KeyBinding> {
     keys.iter()
         .flat_map(|key| crate::config::scheme_shortcuts(&config.input, key.as_ref()))
         .collect()
@@ -1371,7 +1359,7 @@ mod tests {
 
     #[test]
     fn alert_border_dynamic_label_matches_the_appearance_static_fallback() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.config.animations.enabled = false;
         assert_eq!(
             toggle_command_label(Action::CycleAlertBorder, &state).as_deref(),
@@ -1387,7 +1375,7 @@ mod tests {
 
     #[test]
     fn default_shortcuts_mirror_prefix_chord_and_modifier() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         let shortcuts = default_shortcuts_for(&config, &["c"]);
 
         assert!(
@@ -1406,7 +1394,7 @@ mod tests {
 
     #[test]
     fn sidebar_defaults_use_spatial_navigation_keys() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         let has = |id: &str, event: KeyEvent| {
             default_shortcuts_for_action(&config.input, id)
                 .expect("builtin sidebar action")
@@ -1456,7 +1444,7 @@ mod tests {
         // Enabled by default: every default key mirrors onto its Alt chord, with no per-key
         // carve-outs - keys that once had exceptions (Tab, detach `d`, paste `v`, spawn `enter`)
         // all mirror now.
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         assert!(config.input.modifier_shortcuts);
         for key in ["d", "v", "tab", "enter", "c"] {
             let shortcuts = default_shortcuts_for(&config, &[key]);
@@ -1467,7 +1455,7 @@ mod tests {
         }
 
         // Disabled: only leader chords remain, no Alt mirror anywhere.
-        let mut prefix_only = HyprmuxConfig::default();
+        let mut prefix_only = Config::default();
         prefix_only.input.modifier_shortcuts = false;
         let shortcuts = default_shortcuts_for(&prefix_only, &["c"]);
         assert!(
@@ -1535,7 +1523,7 @@ mod tests {
     /// share one key rather than the cycle owning both spellings.
     #[test]
     fn layout_cycle_and_picker_split_the_m_key() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         let keys_for = |id: &str| {
             BUILTIN_COMMANDS
                 .iter()
@@ -1565,7 +1553,7 @@ mod tests {
 
     #[test]
     fn key_override_replaces_defaults_verbatim() {
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config.key_overrides.insert(
             "spawn".to_string(),
             vec![KeyBinding::from_str("ctrl-b c").unwrap()],
@@ -1583,7 +1571,7 @@ mod tests {
 
     #[test]
     fn paste_accepts_ctrl_v_unless_explicitly_overridden() {
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         let shortcuts = resolve_shortcuts(&config, "paste", &["v"]);
         assert!(
             shortcuts
@@ -1605,7 +1593,7 @@ mod tests {
 
     #[test]
     fn empty_override_unbinds_a_default() {
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config
             .key_overrides
             .insert("scratchpad".to_string(), Vec::new());
@@ -1616,7 +1604,7 @@ mod tests {
 
     #[test]
     fn workspace_relocate_covers_both_terminal_encodings_of_ctrl_shift_digit() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         let shortcuts = default_shortcuts_for(&config, &["ctrl-#", "ctrl-shift-3"]);
 
         // Some terminals report Ctrl+Shift+3 as the shifted symbol with only ctrl set...
@@ -1646,7 +1634,7 @@ mod tests {
 
     #[test]
     fn commands_active_is_false_during_resize_mode_and_overlays() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         let mut state = State::new(config, tui_lipan::Theme::default());
         assert!(commands_active(&state));
 
@@ -1717,7 +1705,7 @@ mod tests {
 
     #[test]
     fn default_command_hints_show_command_keys_only() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
 
         assert_eq!(
             builtin_keybinding_hint(&config, "close", &["w", "x"]),
@@ -1731,7 +1719,7 @@ mod tests {
 
     #[test]
     fn command_hints_compact_shifted_aliases_without_changing_shortcuts() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
 
         assert_eq!(
             builtin_keybinding_hint(&config, "help", &["?", "shift-/"]),
@@ -1756,13 +1744,13 @@ mod tests {
 
     #[test]
     fn paste_hint_shows_only_the_prefix_command_key_by_default() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         assert_eq!(
             builtin_keybinding_hint(&config, "paste", &["v"]),
             Some(Arc::<str>::from("v"))
         );
 
-        let mut overridden = HyprmuxConfig::default();
+        let mut overridden = Config::default();
         overridden.key_overrides.insert(
             "paste".to_string(),
             vec![KeyBinding::from_str("alt-p").unwrap()],
@@ -1775,7 +1763,7 @@ mod tests {
 
     #[test]
     fn override_command_hints_stay_verbatim() {
-        let mut config = HyprmuxConfig::default();
+        let mut config = Config::default();
         config.key_overrides.insert(
             "close".to_string(),
             vec![
@@ -1792,13 +1780,13 @@ mod tests {
 
     #[test]
     fn quit_hint_combines_live_quit_and_detach_bindings() {
-        let config = HyprmuxConfig::default();
+        let config = Config::default();
         assert_eq!(
             builtin_keybinding_hint(&config, "quit", &["q"]),
             Some(Arc::<str>::from("q / d"))
         );
 
-        let mut overridden = HyprmuxConfig::default();
+        let mut overridden = Config::default();
         overridden.key_overrides.insert(
             "quit".to_string(),
             vec![KeyBinding::from_str("ctrl-q").unwrap()],
@@ -1814,7 +1802,7 @@ mod tests {
     }
 
     fn shared_state(client_id: u64, controller: u64, read_only: bool, count: u64) -> State {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let mut shared = crate::state::SharedSessionState::new(client_id);
         shared.controller = Some(controller);
         shared.read_only = read_only;
@@ -1893,7 +1881,7 @@ mod tests {
 
     #[test]
     fn respawn_is_available_only_for_the_focused_exited_pane() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         assert!(!command_available(Action::RespawnPane, &state));
 
         let focused = state.current().focused_pane.unwrap();

@@ -4,7 +4,7 @@
 //! it; with `focus_on_hover` disabled there is otherwise no path that moves focus there at all, so
 //! the pane becomes unfocusable by mouse.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneId};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
@@ -33,12 +33,12 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
 
 /// Two side-by-side panes, focus on the left, hover-focus off, and the right pane running a
 /// full-screen TUI (any-event tracking + SGR encoding, as vim or lazygit enable).
-fn backend_with_tracking_pane() -> TestBackend<HyprmuxApp> {
+fn backend_with_tracking_pane() -> TestBackend<AppRoot> {
     backend_with_tracking_pane_hover(false)
 }
 
-fn backend_with_tracking_pane_hover(focus_on_hover: bool) -> TestBackend<HyprmuxApp> {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+fn backend_with_tracking_pane_hover(focus_on_hover: bool) -> TestBackend<AppRoot> {
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(VIEWPORT);
     {
         let state = backend.state_mut();

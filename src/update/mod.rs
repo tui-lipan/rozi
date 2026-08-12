@@ -9,11 +9,11 @@ pub(crate) mod workbar;
 
 use tui_lipan::prelude::*;
 
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 const LAYOUT_COMMIT_DEBOUNCE_MS: u64 = 16;
 
-pub(crate) fn handle_msg(_app: &mut HyprmuxApp, msg: Msg, ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot>) -> Update {
     let is_layout_flush = matches!(&msg, Msg::FlushLayoutCommit { .. });
     let mut update = match msg {
         Msg::ClosePopup => panes::close_popup(ctx),
@@ -441,14 +441,14 @@ fn runtime_metrics_update(epoch: u64, current_epoch: u64, devtools_visible: bool
 /// Attention chokepoint after every message: acknowledge the current pane only while the host window
 /// and pane are both focused. This keeps unseen output, BEL, and finished-run attention on one rule
 /// across clicks, keyboard focus, workspace switches, and layout reconciliation.
-fn acknowledge_attended_pane(ctx: &mut Context<HyprmuxApp>) {
+fn acknowledge_attended_pane(ctx: &mut Context<AppRoot>) {
     let Some(focused) = ctx.state.current().focused_pane else {
         return;
     };
     crate::ops::focus::acknowledge_pane_if_attended(&mut ctx.state, focused);
 }
 
-pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn schedule_layout_commit(ctx: &mut Context<AppRoot>) {
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }
@@ -481,7 +481,7 @@ pub(crate) fn schedule_layout_commit(ctx: &mut Context<HyprmuxApp>) {
 /// If this client controls a shared session and its layout differs from the last commit, publish a
 /// new [`SharedLayout`] at the optimistic base revision. The canonical canvas is this controller's
 /// own pane canvas (viewport minus workbar), which followers letterbox to.
-pub(crate) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn flush_layout_commit(ctx: &mut Context<AppRoot>) {
     if !ctx.state.current().session_attached || !ctx.state.is_controller() {
         return;
     }

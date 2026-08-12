@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::Msg;
 use crate::ops::focus::{
     request_current_pane_focus, request_rename_session_focus, request_session_picker_focus,
@@ -14,7 +14,7 @@ use crate::state::{NamingMode, SessionPickerState, SessionRenameState};
 /// that abandons or resolves the arming (a confirmed kill, moving off the row, editing the query,
 /// refreshing, closing, or switching sessions) so the "press again" toast never outlives the
 /// confirmation. A no-op when nothing is armed.
-pub(crate) fn clear_pending_kill(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn clear_pending_kill(ctx: &mut Context<AppRoot>) {
     if let Some(picker) = ctx.state.session_picker.as_mut() {
         picker.pending_kill = None;
         picker.pending_restart = None;
@@ -22,7 +22,7 @@ pub(crate) fn clear_pending_kill(ctx: &mut Context<HyprmuxApp>) {
 }
 
 /// Clear the session-picker kill confirmation when navigation abandons its armed row.
-pub(crate) fn clear_pending_session_arms(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn clear_pending_session_arms(ctx: &mut Context<AppRoot>) {
     clear_pending_kill(ctx);
 }
 
@@ -30,7 +30,7 @@ pub(crate) fn clear_pending_session_arms(ctx: &mut Context<HyprmuxApp>) {
 /// appearing/disappearing from other UIs) without a manual refresh key.
 const SESSION_PICKER_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
 
-pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Open instantly from local discovery and the last successful remote-host snapshots. Live
     // remote state arrives through the recurring watcher; opening the picker does not need a
     // duplicate eager ssh sweep.
@@ -63,7 +63,7 @@ pub(crate) fn open_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// `highlight` lands the selection on a specific session — what `[session] startup = "last"` uses
 /// to point at the session it remembered but could not reopen.
 pub(crate) fn open_startup_session_picker(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     highlight: Option<String>,
 ) -> u64 {
     let rows = immediate_picker_rows(ctx);
@@ -84,7 +84,7 @@ pub(crate) fn open_startup_session_picker(
     ctx.state.session_picker_epoch
 }
 
-pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn refresh_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     // Carry the typed query and the highlighted row across the rebuild. After a kill the killed row
     // is gone, so clamping keeps the highlight on the row that slid into its place instead of
     // snapping back to the top; it also keeps our `selected` in step with the persistent
@@ -110,7 +110,7 @@ pub(crate) fn refresh_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Fast, local-only rows used by the picker and Sessions sidebar: local named sessions plus the
 /// attached session, with no remote ssh.
-pub(crate) fn local_picker_rows(ctx: &Context<HyprmuxApp>) -> Vec<DiscoveredSession> {
+pub(crate) fn local_picker_rows(ctx: &Context<AppRoot>) -> Vec<DiscoveredSession> {
     let current_name = ctx.state.local_current_session_name();
     let mut rows =
         crate::session::discovery::discover_selectable_sessions(current_name).unwrap_or_default();
@@ -118,7 +118,7 @@ pub(crate) fn local_picker_rows(ctx: &Context<HyprmuxApp>) -> Vec<DiscoveredSess
     rows
 }
 
-fn immediate_picker_rows(ctx: &mut Context<HyprmuxApp>) -> Vec<DiscoveredSession> {
+fn immediate_picker_rows(ctx: &mut Context<AppRoot>) -> Vec<DiscoveredSession> {
     if ctx.state.host_session_cache.is_empty() {
         ctx.state.host_session_cache = crate::session::read_host_session_cache();
     }
@@ -138,7 +138,7 @@ fn immediate_picker_rows(ctx: &mut Context<HyprmuxApp>) -> Vec<DiscoveredSession
 /// `epoch`, which is how the watcher shuts itself down. Selection and the typed query are preserved
 /// so a live refresh never disrupts navigation.
 pub(crate) fn apply_discovered_sessions(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     mut rows: Vec<DiscoveredSession>,
     host_status: HostProbeStatus,
@@ -196,7 +196,7 @@ pub(crate) fn apply_discovered_sessions(
 fn session_watch_command(
     epoch: u64,
     current_name: Option<String>,
-    remote_config: crate::config::HyprmuxRemoteConfig,
+    remote_config: crate::config::RemoteConfig,
 ) -> Command {
     // Recurring watch: see `profile_session_watch_command` -- the wait belongs on the timer
     // thread, not on a pooled worker held open for the life of the picker.
@@ -228,7 +228,7 @@ fn session_watch_command(
 /// unreachable host never blocks the picker).
 pub(crate) fn discover_picker_sessions(
     current_name: Option<&str>,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<(Vec<DiscoveredSession>, HostProbeStatus)> {
     let mut rows = crate::session::discovery::discover_selectable_sessions(current_name)?;
     let (remote_rows, host_status) =
@@ -248,7 +248,7 @@ type SidebarDiscovery = (std::io::Result<Vec<DiscoveredSession>>, HostProbeStatu
 
 /// Every configured remote target: `[remote.hosts.*]` aliases plus `default_host`.
 fn configured_targets(
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
 ) -> Vec<crate::session::remote::RemoteTarget> {
     let mut hosts: Vec<String> = remote_config.hosts.keys().cloned().collect();
     if let Some(default_host) = &remote_config.default_host
@@ -270,7 +270,7 @@ fn configured_targets(
 /// empty. One down host never blocks the others.
 fn probe_remote_targets_reporting(
     targets: &[crate::session::remote::RemoteTarget],
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
 ) -> (Vec<DiscoveredSession>, HostProbeStatus) {
     let mut handles = Vec::with_capacity(targets.len());
     for target in targets {
@@ -323,7 +323,7 @@ fn cached_sessions_for_target(
 /// win identity collisions, especially for an attachment whose pane/client counts are newer.
 fn push_cached_configured_remote_rows(
     rows: &mut Vec<DiscoveredSession>,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
     cache: &crate::session::HostSessionCache,
     fresh_targets: &[crate::session::remote::RemoteTarget],
 ) {
@@ -360,7 +360,7 @@ fn push_cached_configured_remote_rows(
 /// host is never probed, so opening the Sessions tab does not fan out to every configured host.
 pub(crate) fn discover_sidebar_sessions(
     current_name: Option<&str>,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
     probe_targets: Vec<crate::session::remote::RemoteTarget>,
     attached: Vec<DiscoveredSession>,
 ) -> SidebarDiscovery {
@@ -410,7 +410,7 @@ fn sort_session_rows(rows: &mut [DiscoveredSession]) {
 
 /// Append rows for every current or retained attachment. This keeps ad-hoc remotes selectable even
 /// when they are not part of configured-host discovery.
-fn push_attached_session_rows(ctx: &Context<HyprmuxApp>, rows: &mut Vec<DiscoveredSession>) {
+fn push_attached_session_rows(ctx: &Context<AppRoot>, rows: &mut Vec<DiscoveredSession>) {
     for attached in attached_session_rows(&ctx.state) {
         merge_current_session_row(rows, attached);
     }
@@ -439,7 +439,7 @@ pub(crate) fn held_host_targets(
 /// Refresh the unified Sessions view's known-host registry from config, recent ad-hoc targets, and
 /// live attachments. Preserves each host's expand/collapse and error state (see
 /// [`crate::state::HostRegistry::seed`]).
-pub(crate) fn seed_host_registry(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn seed_host_registry(ctx: &mut Context<AppRoot>) {
     let recents = crate::session::read_recent_remotes();
     let held = held_host_targets(&ctx.state);
     let remote_config = ctx.state.config.remote.clone();
@@ -474,7 +474,7 @@ fn attachment_session_row(attachment: &crate::state::Attachment) -> Option<Disco
     })
 }
 
-fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
+fn require_attached(ctx: &mut Context<AppRoot>) -> Option<()> {
     if ctx.state.current().session_attached {
         Some(())
     } else {
@@ -483,7 +483,7 @@ fn require_attached(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
     }
 }
 
-fn require_writable(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
+fn require_writable(ctx: &mut Context<AppRoot>) -> Option<()> {
     require_attached(ctx)?;
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         crate::pty_events::notify_info(ctx, "Not attached to a session");
@@ -499,7 +499,7 @@ fn require_writable(ctx: &mut Context<HyprmuxApp>) -> Option<()> {
 /// If this client is a follower (attached but not the controller), push the take-control nudge and
 /// return `true` so the caller aborts a layout-mutating gesture. Controllers and local/unattached
 /// sessions return `false`.
-pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
+pub(crate) fn nudge_if_follower(ctx: &mut Context<AppRoot>) -> bool {
     if ctx.state.is_controller() {
         return false;
     }
@@ -533,7 +533,7 @@ pub(crate) fn nudge_if_follower(ctx: &mut Context<HyprmuxApp>) -> bool {
 
 /// Request the layout-control lease. A takeover-enabled server grants immediately; cooperative
 /// sessions flag the request and notify the controller for a grant or decline.
-pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn request_control(ctx: &mut Context<AppRoot>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
@@ -583,7 +583,7 @@ pub(crate) fn request_control(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Open the roster of everyone else on the session. The session-wide controls that go with it
 /// (request control, input lock, takeover) are their own command-palette entries, not a menu here.
-pub(crate) fn open_collaborators(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_collaborators(ctx: &mut Context<AppRoot>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
@@ -599,7 +599,7 @@ pub(crate) fn open_collaborators(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// attachment, so it goes through the shared arm-then-confirm window ([`crate::ops::confirm`]) the
 /// session kill and pane close use: the first press arms, a second within the window sends it, and
 /// an arming left alone lapses.
-pub(crate) fn evict_client(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn evict_client(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
@@ -661,7 +661,7 @@ pub(crate) fn can_evict(state: &crate::state::State) -> bool {
 /// your keyboard no longer shapes the layout. It is now a decision: watch along, ask for the lease,
 /// or back out. A session with no active controller — including one whose only other client is
 /// parked — needs no prompt, because attaching there gets control outright.
-pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<AppRoot>) {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return;
     };
@@ -700,7 +700,7 @@ pub(crate) fn prompt_follow_if_occupied(ctx: &mut Context<HyprmuxApp>) {
 /// away from it would, landing on the session picker when other choices remain, otherwise the
 /// launcher.
 pub(crate) fn resolve_follow_prompt(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     choice: crate::state::FollowChoice,
 ) -> Update {
     ctx.state.follow_prompt = None;
@@ -734,7 +734,7 @@ pub(crate) fn resolve_follow_prompt(
     }
 }
 
-pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle_input_lock(ctx: &mut Context<AppRoot>) -> Update {
     if nudge_if_follower(ctx) {
         return Update::full();
     }
@@ -753,7 +753,7 @@ pub(crate) fn toggle_input_lock(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn toggle_control_takeover(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle_control_takeover(ctx: &mut Context<AppRoot>) -> Update {
     if nudge_if_follower(ctx) {
         return Update::full();
     }
@@ -788,7 +788,7 @@ pub(crate) fn toggle_control_takeover(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn grant_control(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
@@ -811,7 +811,7 @@ pub(crate) fn grant_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Upda
 /// Controller-only quick action: grant the lease to the client that requested it (the earliest
 /// pending requester when several are waiting). Nudges a follower, and toasts when nothing is
 /// pending, so the bound key always gives feedback.
-pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn grant_control_to_requester(ctx: &mut Context<AppRoot>) -> Update {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
@@ -844,7 +844,7 @@ pub(crate) fn grant_control_to_requester(ctx: &mut Context<HyprmuxApp>) -> Updat
 /// Controller-only: decline the pending control request from the client at `index` in the roster.
 /// A no-op (with a follower nudge) when this client is not the controller, or when the target has no
 /// pending request.
-pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn decline_control(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(shared) = ctx.state.current().shared.as_ref() else {
         return Update::none();
     };
@@ -866,7 +866,7 @@ pub(crate) fn decline_control(ctx: &mut Context<HyprmuxApp>, index: usize) -> Up
 /// everywhere a transition leaves the current session: a solely attached controller tears down
 /// its ephemeral server, while followers, viewers, shared ephemeral clients, and named-session
 /// clients detach so they cannot destroy another client's session.
-pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn release_current_session(ctx: &mut Context<AppRoot>) {
     crate::update::sidebar::invalidate_sessions(ctx);
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
@@ -888,7 +888,7 @@ pub(crate) fn release_current_session(ctx: &mut Context<HyprmuxApp>) {
 /// moved into `State::background` under its epoch, and a fresh empty attachment takes its place for
 /// the session being switched to. Named and ephemeral sessions are both retained; parked sessions
 /// are only torn down on quit (see [`crate::ops::exit`]).
-pub(crate) fn park_current_session(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn park_current_session(ctx: &mut Context<AppRoot>) {
     crate::update::sidebar::invalidate_sessions(ctx);
     // The popup is a client-local overlay bound to the current server; it must not linger across a
     // switch. The scratchpad, likewise client-local, closes with the current view.
@@ -906,7 +906,7 @@ pub(crate) fn park_current_session(ctx: &mut Context<HyprmuxApp>) {
 /// layout-control lease follows what the client is actually doing. A parked connection is not an
 /// occupant: it must not hold the lease, or the next client to attach joins as a follower of a
 /// session nobody is looking at.
-fn mark_current_parked(ctx: &mut Context<HyprmuxApp>, parked: bool) {
+fn mark_current_parked(ctx: &mut Context<AppRoot>, parked: bool) {
     if let Some(client) = ctx.state.current().session_client.as_ref() {
         client.set_parked(parked);
     }
@@ -918,7 +918,7 @@ fn mark_current_parked(ctx: &mut Context<HyprmuxApp>, parked: bool) {
 /// later asks to be confirmed away on quit — a session the user never asked for and never used.
 ///
 /// A session the user asked for, worked in, or shares with another client is always kept.
-fn discard_parked_if_disposable(ctx: &mut Context<HyprmuxApp>, epoch: crate::state::AttachmentId) {
+fn discard_parked_if_disposable(ctx: &mut Context<AppRoot>, epoch: crate::state::AttachmentId) {
     let disposable = ctx.state.background.get(&epoch).is_some_and(|attachment| {
         attachment.disposition() == crate::state::SessionDisposition::Discard
     });
@@ -946,7 +946,7 @@ fn discard_parked_if_disposable(ctx: &mut Context<HyprmuxApp>, epoch: crate::sta
 /// attachment (id `parked`) to the foreground. Its client and screens are already live, so no
 /// reconnect is needed - only the view is re-seeded.
 pub(crate) fn switch_to_parked(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     parked: crate::state::AttachmentId,
 ) -> Update {
     crate::update::sidebar::invalidate_sessions(ctx);
@@ -986,7 +986,7 @@ pub(crate) fn switch_to_parked(
     Update::full()
 }
 
-pub(crate) fn apply_pending_background_closes(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn apply_pending_background_closes(ctx: &mut Context<AppRoot>) {
     if !ctx.state.is_controller() {
         return;
     }
@@ -1005,7 +1005,7 @@ pub(crate) fn apply_pending_background_closes(ctx: &mut Context<HyprmuxApp>) {
 
 /// Reconnect the current attachment without replacing its retained screens or window-manager state.
 /// The new id invalidates frames from the dead transport while preserving the attachment identity.
-pub(crate) fn reconnect_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn reconnect_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
         return Update::none();
     };
@@ -1074,7 +1074,7 @@ pub(crate) fn may_shutdown_attachment(attachment: &crate::state::Attachment) -> 
 /// Let go of every retained background attachment when leaving the client, applying the same
 /// per-session rule the current session gets (see [`crate::ops::exit::shutdown_on_exit`]): close
 /// what nobody could come back to, detach everything else and leave its server running.
-pub(crate) fn release_background_for_exit(ctx: &mut Context<HyprmuxApp>, close_temporary: bool) {
+pub(crate) fn release_background_for_exit(ctx: &mut Context<AppRoot>, close_temporary: bool) {
     for (_epoch, attachment) in std::mem::take(&mut ctx.state.background) {
         let Some(client) = attachment.session_client.as_ref() else {
             continue;
@@ -1088,7 +1088,7 @@ pub(crate) fn release_background_for_exit(ctx: &mut Context<HyprmuxApp>, close_t
 }
 
 /// Drop the session and profile pickers that led into a session switch or attach.
-fn dismiss_session_pickers(ctx: &mut Context<HyprmuxApp>) {
+fn dismiss_session_pickers(ctx: &mut Context<AppRoot>) {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.show_profile_picker = false;
@@ -1098,7 +1098,7 @@ fn dismiss_session_pickers(ctx: &mut Context<HyprmuxApp>) {
 /// Shared cleanup when a new current session is installed: close the popup and scratchpad (bound to
 /// the outgoing session) and the session/profile selection overlays that led here, and mark the
 /// Sessions tab stale so the post-update chokepoint re-sweeps for the new current.
-fn prepare_session_install(ctx: &mut Context<HyprmuxApp>) {
+fn prepare_session_install(ctx: &mut Context<AppRoot>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     dismiss_session_pickers(ctx);
@@ -1107,7 +1107,7 @@ fn prepare_session_install(ctx: &mut Context<HyprmuxApp>) {
 
 /// Shared tail after a new current attachment is in place: snap geometry, resync commands and the
 /// terminal palette.
-fn finish_session_install(ctx: &mut Context<HyprmuxApp>) {
+fn finish_session_install(ctx: &mut Context<AppRoot>) {
     // Snap to the new session's geometry rather than interpolating from the previous layout.
     ctx.state.animation = crate::anim::GeometryAnimation::None;
     ctx.state.commands_dirty = true;
@@ -1123,7 +1123,7 @@ fn finish_session_install(ctx: &mut Context<HyprmuxApp>) {
 /// exactly
 /// as it was, so this no longer rebuilds — and silently loses — that state.
 pub(crate) fn install_fresh_attachment(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     attachment: crate::state::Attachment,
 ) {
     prepare_session_install(ctx);
@@ -1142,7 +1142,7 @@ pub(crate) fn install_fresh_attachment(
 /// names a *released* session for the confirmation toast (`None` when parked, since parking is not a
 /// detach). `new_epoch` becomes the runtime epoch.
 pub(crate) fn park_current_and_install(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     attachment: crate::state::Attachment,
     new_epoch: crate::state::AttachmentId,
 ) -> (
@@ -1186,7 +1186,7 @@ pub(crate) fn park_current_and_install(
 /// Kill the current session's server (its PTYs die with it) but keep the UI alive. Does not quit
 /// and does not auto-attach elsewhere: the client lands on the session picker when another choice
 /// remains, otherwise the sessionless launcher.
-pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) -> Update {
+pub(crate) fn kill_current_session(ctx: &mut Context<AppRoot>, name: String) -> Update {
     let killed_identity = ctx
         .state
         .current()
@@ -1212,7 +1212,7 @@ pub(crate) fn kill_current_session(ctx: &mut Context<HyprmuxApp>, name: String) 
 
 /// Shut the current session's server down and immediately recreate it, keeping the client attached
 /// to the replacement. Distinct from kill (which leaves the client sessionless).
-pub(crate) fn restart_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn restart_current_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(name) = ctx.state.current().session_name.clone() else {
         crate::pty_events::notify_info(ctx, "Not attached to a session");
         return Update::full();
@@ -1246,7 +1246,7 @@ pub(crate) fn restart_current_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Land after the active session is taken away rather than left — killed, disconnected, or
 /// evicted. Never auto-attaches: open the session picker when another meaningful choice exists,
 /// otherwise the sessionless launcher. The caller has already torn the outgoing session down.
-pub(crate) fn land_on_surviving_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn land_on_surviving_session(ctx: &mut Context<AppRoot>) -> Update {
     let picker_was_open = ctx.state.show_session_picker;
     enter_sessionless(ctx);
     if picker_was_open {
@@ -1257,12 +1257,12 @@ pub(crate) fn land_on_surviving_session(ctx: &mut Context<HyprmuxApp>) -> Update
 
 /// Drop into the sessionless launcher. Raises the session picker only when another local, remote,
 /// running, parked, or restorable session remains to choose from.
-pub(crate) fn enter_launcher(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn enter_launcher(ctx: &mut Context<AppRoot>) -> Update {
     enter_sessionless(ctx);
     offer_session_picker_or_launcher(ctx)
 }
 
-fn enter_sessionless(ctx: &mut Context<HyprmuxApp>) {
+fn enter_sessionless(ctx: &mut Context<AppRoot>) {
     crate::popup::kill_if_open(ctx);
     crate::scratchpad::close_for_session_switch(ctx);
     ctx.state.show_profile_picker = false;
@@ -1277,11 +1277,11 @@ fn enter_sessionless(ctx: &mut Context<HyprmuxApp>) {
     finish_session_install(ctx);
 }
 
-fn has_meaningful_session_choices(ctx: &mut Context<HyprmuxApp>) -> bool {
+fn has_meaningful_session_choices(ctx: &mut Context<AppRoot>) -> bool {
     !immediate_picker_rows(ctx).is_empty() || crate::session::bootstrap::has_session_candidates()
 }
 
-fn offer_session_picker_or_launcher(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn offer_session_picker_or_launcher(ctx: &mut Context<AppRoot>) -> Update {
     if has_meaningful_session_choices(ctx) {
         open_session_picker(ctx)
     } else {
@@ -1294,7 +1294,7 @@ fn offer_session_picker_or_launcher(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// After a kill from the open picker: rebuild the list, keep the nearest selection, and close into
 /// the launcher when nothing remains to pick.
-fn refresh_picker_after_kill(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn refresh_picker_after_kill(ctx: &mut Context<AppRoot>) -> Update {
     let update = refresh_session_picker(ctx);
     let empty = ctx
         .state
@@ -1309,7 +1309,7 @@ fn refresh_picker_after_kill(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Install a brand-new ephemeral session as current and spawn its attach, after the outgoing
 /// session has already been shut down or detached by the caller.
-pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     let epoch = ctx.state.mint_attachment_id();
     let name = crate::state::fresh_ephemeral_session_name(epoch);
     // A fresh ephemeral is a session with no recipe named for it, so it seeds from
@@ -1337,7 +1337,7 @@ pub(crate) fn swap_to_fresh_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
 }
 
 pub(crate) fn attach_session_by_name(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     name: String,
     remote_host: Option<String>,
     discovered_target: Option<crate::session::remote::RemoteTarget>,
@@ -1458,7 +1458,7 @@ pub(crate) fn attach_session_by_name(
     }))
 }
 
-pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+pub(crate) fn activate_selected_session(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     // A kill can never be armed on the same press that resolves an open, so drop any kill arm; the
     // open arm is handled explicitly below.
     clear_pending_kill(ctx);
@@ -1476,7 +1476,7 @@ pub(crate) fn activate_selected_session(ctx: &mut Context<HyprmuxApp>, index: us
 /// Activate a discovered running session without resolving it through a mutable row index. Picker
 /// and sidebar callers keep separate ephemeral-discard confirmations.
 pub(crate) fn activate_discovered_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
     // Discovery already probed this session; an `Unknown` status means the handshake was refused
@@ -1506,7 +1506,7 @@ pub(crate) fn activate_discovered_session(
 /// launcher panel and by the session picker's scratch-session key, which is why it also drops any
 /// deferred PTY action — asking for a plain shell replaces whatever spawn was queued against a
 /// session that never arrived.
-pub(crate) fn start_launcher_shell(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn start_launcher_shell(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_action(ctx, None);
     attach_startup_ephemeral(ctx)
 }
@@ -1537,7 +1537,7 @@ pub(crate) fn held_ephemeral_session(
 /// One key covers both directions — start the ephemeral when there is none, switch to it when there
 /// already is — because from the keyboard they are the same request. Already being on it is a
 /// no-op beyond closing the picker: switching somewhere you already are is not worth a toast.
-pub(crate) fn open_ephemeral_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_ephemeral_session(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     // Checked before the launcher case: the session on screen being the scratch one settles this
     // whether or not its client is live, and re-attaching what is already attached is never right.
@@ -1577,7 +1577,7 @@ pub(crate) fn open_ephemeral_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// A launcher reached by killing a session has no seed; it falls back to a single default pane.
 /// When a [`PendingSessionAction`] is waiting, the seed is empty so the deferred action creates the
 /// only pane after attach — avoiding a blank local pane and a leftover shell.
-pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
     ctx.state.commands_dirty = true;
@@ -1585,7 +1585,7 @@ pub(crate) fn attach_startup_ephemeral(ctx: &mut Context<HyprmuxApp>) -> Update 
     // already carries the launch's own `deferred_profile_seed`.
     let mut seeded_intent = None;
     if ctx.state.needs_session_for_pty() {
-        let mut seed_from_default = |ctx: &mut Context<HyprmuxApp>| {
+        let mut seed_from_default = |ctx: &mut Context<AppRoot>| {
             let (attachment, intent) = crate::profiles::default_session_seed(&ctx.state.config);
             seeded_intent = Some(intent);
             attachment
@@ -1650,7 +1650,7 @@ pub(crate) fn needs_session_for_pty(state: &crate::state::State) -> bool {
 /// `Some(update)` when the caller must stop — the action runs from [`run_pending_session_action`]
 /// after `SessionAttached`. Returns `None` when the caller should proceed immediately.
 pub(crate) fn ensure_session_for_pty(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: crate::state::PendingSessionAction,
 ) -> Option<Update> {
     if !needs_session_for_pty(&ctx.state) {
@@ -1662,7 +1662,7 @@ pub(crate) fn ensure_session_for_pty(
 
 /// Drop a deferred PTY action (and any held control reply) without running it — attach failed, or
 /// the user started a plain shell instead.
-pub(crate) fn clear_pending_session_action(ctx: &mut Context<HyprmuxApp>, error: Option<&str>) {
+pub(crate) fn clear_pending_session_action(ctx: &mut Context<AppRoot>, error: Option<&str>) {
     ctx.state.pending_session_action = None;
     if let Some(reply) = ctx.state.pending_control_reply.take() {
         let _ = reply.send(match error {
@@ -1673,7 +1673,7 @@ pub(crate) fn clear_pending_session_action(ctx: &mut Context<HyprmuxApp>, error:
 }
 
 /// Replay a deferred PTY action now that a session client is installed.
-pub(crate) fn run_pending_session_action(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn run_pending_session_action(ctx: &mut Context<AppRoot>) -> Update {
     let Some(action) = ctx.state.pending_session_action.take() else {
         return Update::none();
     };
@@ -1742,7 +1742,7 @@ pub(crate) fn run_pending_session_action(ctx: &mut Context<HyprmuxApp>) -> Updat
 /// current pane; dismissed with nothing attached it leaves the client in the launcher, which is a
 /// state the app is allowed to sit in. Dismissing a picker is not a request for a session, so it
 /// no longer starts an ephemeral one — the launcher says how to start one.
-pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn close_session_picker(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     ctx.state.show_session_picker = false;
     ctx.state.session_picker = None;
@@ -1759,7 +1759,7 @@ pub(crate) fn close_session_picker(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// The rule stays inside the prompt rather than in a toast for two reasons: the prompt is modal and
 /// a toast would overlap the very field being corrected, and the message is about the text still
 /// sitting in that field, so it should disappear when the text does.
-fn reject_session_name(ctx: &mut Context<HyprmuxApp>, reason: impl Into<String>) {
+fn reject_session_name(ctx: &mut Context<AppRoot>, reason: impl Into<String>) {
     if let Some(rename) = ctx.state.rename_session.as_mut() {
         rename.error = Some(reason.into());
     }
@@ -1770,7 +1770,7 @@ fn reject_session_name(ctx: &mut Context<HyprmuxApp>, reason: impl Into<String>)
 /// or a cached remote row. Checked before the create prompt is torn down so a collision stays in
 /// the modal instead of toasting over a blank, unfocused client.
 pub(crate) fn session_name_already_running(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     name: &str,
     remote_target: Option<&crate::session::remote::RemoteTarget>,
 ) -> bool {
@@ -1797,7 +1797,7 @@ pub(crate) fn session_name_already_running(
 /// Swap whatever overlays are open for a session naming/rename prompt and focus it. Shared by the
 /// create-new, rename-in-place, and detach-and-name entry points so they raise the prompt the same
 /// way.
-fn enter_session_rename(ctx: &mut Context<HyprmuxApp>, rename: SessionRenameState) -> Update {
+fn enter_session_rename(ctx: &mut Context<AppRoot>, rename: SessionRenameState) -> Update {
     ctx.state.rename_session = Some(rename);
     // Raised from the session picker, cancelling returns to it rather than to the pane; the
     // branches of `apply_rename_session` that attach or detach drop the origin instead.
@@ -1815,7 +1815,7 @@ fn enter_session_rename(ctx: &mut Context<HyprmuxApp>, rename: SessionRenameStat
 /// Raise the create-session prompt, carrying whatever was typed into the session picker. Reaching
 /// `Ctrl+N` from a query that matched nothing means "then make that one", so the name comes along
 /// rather than making the user type it a second time.
-pub(crate) fn open_create_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_create_session(ctx: &mut Context<AppRoot>) -> Update {
     let seed = ctx
         .state
         .session_picker
@@ -1830,7 +1830,7 @@ pub(crate) fn open_create_session(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Raise the create-session prompt pre-targeted at a remote host ("New session on `<host>`"). The
 /// named session is created on that host's server when the name is submitted.
 pub(crate) fn open_create_session_on_host(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: crate::session::remote::RemoteTarget,
 ) -> Update {
     clear_pending_session_arms(ctx);
@@ -1842,7 +1842,7 @@ pub(crate) fn open_create_session_on_host(
 /// only way to keep it: the server is renamed, kept running, and the client leaves. Submitting
 /// nothing closes those sessions instead, after a second press confirms it. Cancelling (`Esc`)
 /// returns to the session with nothing torn down.
-pub(crate) fn open_leave_prompt(ctx: &mut Context<HyprmuxApp>, temporary: usize) -> Update {
+pub(crate) fn open_leave_prompt(ctx: &mut Context<AppRoot>, temporary: usize) -> Update {
     enter_session_rename(ctx, SessionRenameState::for_leave(temporary))
 }
 
@@ -1850,7 +1850,7 @@ pub(crate) fn open_leave_prompt(ctx: &mut Context<HyprmuxApp>, temporary: usize)
 /// separate session), this keeps every live pane where it is and just changes the name the server is
 /// discoverable under. Works for both ephemeral (naming it for the first time) and already-named
 /// sessions.
-pub(crate) fn open_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(()) = require_attached(ctx) else {
         return Update::full();
     };
@@ -1868,7 +1868,7 @@ pub(crate) fn open_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     enter_session_rename(ctx, SessionRenameState::new(initial, mode))
 }
 
-pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn apply_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(rename_state) = ctx.state.rename_session.as_ref() else {
         return Update::none();
     };
@@ -2064,12 +2064,12 @@ pub(crate) fn apply_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     }
 }
 
-pub(crate) fn open_connect_remote_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_connect_remote_host(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     enter_session_rename(ctx, SessionRenameState::new_connect_host())
 }
 
-pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn close_rename_session(ctx: &mut Context<AppRoot>) -> Update {
     // Cancelling any session naming prompt - including the detach-and-name one - just returns to the
     // session. A detach never tears panes down: quitting (with its own confirmation) is the only
     // path that shuts an ephemeral server down.
@@ -2078,7 +2078,7 @@ pub(crate) fn close_rename_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     crate::ops::overlay_return::finish(ctx)
 }
 
-pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn kill_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Update::full();
     };
@@ -2105,7 +2105,7 @@ pub(crate) fn kill_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
     killed
 }
 
-pub(crate) fn restart_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn restart_selected_session(ctx: &mut Context<AppRoot>) -> Update {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Update::full();
     };
@@ -2128,7 +2128,7 @@ pub(crate) fn restart_selected_session(ctx: &mut Context<HyprmuxApp>) -> Update 
 /// Restart a discovered session: shut its server down and immediately recreate it as the active
 /// session. Distinct from kill (sessionless landing) and from disconnect (server keeps running).
 pub(crate) fn restart_discovered_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
     let is_current = ctx.state.current().session_attached
@@ -2186,7 +2186,7 @@ pub(crate) fn restart_discovered_session(
 /// launcher rather than quitting. Shared by the session picker's `Ctrl+K` and the Sessions
 /// sidebar's ✕, which mean the same thing and must not drift apart.
 pub(crate) fn kill_discovered_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     entry: DiscoveredSession,
 ) -> Update {
     let display = if entry.ephemeral {
@@ -2232,7 +2232,7 @@ pub(crate) fn kill_discovered_session(
 }
 
 fn remove_cached_remote_session(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     session_name: &str,
     target: &crate::session::remote::RemoteTarget,
 ) {
@@ -2252,7 +2252,7 @@ fn remove_cached_remote_session(
 /// attachment is discarded, but the server (and any other clients) keep going. The current session
 /// is left alone — disconnecting it is Kill (`Ctrl+K`) or leaving the client — and a merely-running
 /// session we do not hold an attachment to has nothing to disconnect.
-pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Update::full();
@@ -2299,7 +2299,7 @@ pub(crate) fn disconnect_selected_attachment(ctx: &mut Context<HyprmuxApp>) -> U
 /// selected row's host, leaving the remote servers running. A host-wide sibling of
 /// [`disconnect_selected_attachment`]; if the current session lives on that host the UI lands on the
 /// session picker or launcher. Non-destructive - the remote sessions can be reattached later.
-pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn disconnect_selected_host(ctx: &mut Context<AppRoot>) -> Update {
     clear_pending_session_arms(ctx);
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Update::full();
@@ -2323,7 +2323,7 @@ pub(crate) fn disconnect_selected_host(ctx: &mut Context<HyprmuxApp>) -> Update 
 /// The returned [`Update`] carries any picker-watch command that follows. Callers must return it;
 /// dropping it strands the client without a way to rediscover sessions.
 pub(crate) fn disconnect_host(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     target: &crate::session::remote::RemoteTarget,
 ) -> Update {
     let host_label = target.display_label();
@@ -2380,7 +2380,7 @@ pub(crate) fn disconnect_host(
 
 fn shutdown_discovered_session(
     entry: &DiscoveredSession,
-    remote_config: &crate::config::HyprmuxRemoteConfig,
+    remote_config: &crate::config::RemoteConfig,
 ) -> std::io::Result<()> {
     if let Some(target) = &entry.remote_target {
         return crate::session::remote::kill_remote_session(target, &entry.name, remote_config)
@@ -2396,7 +2396,7 @@ fn shutdown_session(name: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::session::protocol::ClientInfo;
     use crate::state::{SharedSessionState, State, ThemePreset};
 
@@ -2442,7 +2442,7 @@ mod tests {
 
     #[test]
     fn cached_configured_hosts_are_available_without_a_probe() {
-        let mut config = crate::config::HyprmuxRemoteConfig::default();
+        let mut config = crate::config::RemoteConfig::default();
         config.hosts.insert(
             "winvm".to_string(),
             crate::config::RemoteHostConfig::default(),
@@ -2479,7 +2479,7 @@ mod tests {
 
     #[test]
     fn fresh_host_results_replace_cached_rows() {
-        let mut config = crate::config::HyprmuxRemoteConfig::default();
+        let mut config = crate::config::RemoteConfig::default();
         config.hosts.insert(
             "winvm".to_string(),
             crate::config::RemoteHostConfig::default(),
@@ -2508,7 +2508,7 @@ mod tests {
     }
 
     fn ephemeral_state(client_id: u64, controller: u64, clients: Vec<ClientInfo>) -> State {
-        let mut state = State::new(HyprmuxConfig::default(), ThemePreset::Lipan.theme());
+        let mut state = State::new(Config::default(), ThemePreset::Lipan.theme());
         state.current_mut().session_name = Some("eph-test".to_string());
         state.current_mut().session_attached = true;
         let mut shared = SharedSessionState::new(client_id);
@@ -2520,7 +2520,7 @@ mod tests {
 
     #[test]
     fn follower_request_control_asks_the_controller_without_stealing() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::input::Action;
         use crate::session::client::{ClientOutbound, SessionClient};
@@ -2530,7 +2530,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -2585,13 +2585,13 @@ mod tests {
 
     /// Set up a controller on a session shared with one writable client that wants the lease.
     #[cfg(test)]
-    fn shared_controller_backend() -> tui_lipan::TestBackend<crate::HyprmuxApp> {
-        use crate::HyprmuxApp;
+    fn shared_controller_backend() -> tui_lipan::TestBackend<crate::AppRoot> {
+        use crate::AppRoot;
         use crate::session::client::SessionClient;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;
 
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         backend.set_viewport(Rect {
             x: 0,
             y: 0,
@@ -2927,7 +2927,7 @@ mod tests {
 
     #[test]
     fn occupied_session_prompt_keeps_context_in_the_title() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::state::FollowPromptState;
         use tui_lipan::TestBackend;
         use tui_lipan::prelude::Rect;
@@ -2935,7 +2935,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -2964,7 +2964,7 @@ mod tests {
 
     #[test]
     fn cancelling_occupied_attach_does_not_retain_it_as_offline() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::ClientMessage;
@@ -2974,7 +2974,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (target_client, target_rx) = SessionClient::test_channel();
                 let (survivor_client, _survivor_rx) = SessionClient::test_channel();
                 {
@@ -3057,7 +3057,7 @@ mod tests {
 
     #[test]
     fn killing_the_last_attached_session_stays_sessionless_without_auto_attach() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::input::Action;
         use crate::session::bootstrap::has_session_candidates;
@@ -3068,7 +3068,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -3102,7 +3102,7 @@ mod tests {
 
     #[test]
     fn starting_a_shell_from_the_picker_attaches_the_ephemeral_with_the_launch_seed() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::state::SessionPickerState;
         use tui_lipan::TestBackend;
@@ -3110,7 +3110,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 {
                     let state = backend.state_mut();
                     // The startup picker parks the panes the launch prepared and leaves the
@@ -3157,7 +3157,7 @@ mod tests {
 
     #[test]
     fn creating_a_session_with_an_existing_name_keeps_the_prompt_and_shows_an_inline_error() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::SessionClient;
         use crate::state::{ConnectionState, SessionRenameState};
@@ -3166,7 +3166,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -3219,7 +3219,7 @@ mod tests {
 
     #[test]
     fn create_session_starts_fresh_instead_of_carrying_current_panes() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::state::SessionRenameState;
         use tui_lipan::TestBackend;
@@ -3227,7 +3227,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 // A profile name unlikely to exist on disk, so resolution must fall through to a
                 // fresh empty session rather than a profile seed.
                 let name = format!("create-fresh-{}", std::process::id());
@@ -3310,7 +3310,7 @@ mod tests {
 
     #[test]
     fn controller_grant_control_key_grants_to_the_earliest_requester() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::input::Action;
         use crate::session::client::{ClientOutbound, SessionClient};
@@ -3320,7 +3320,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();
@@ -3398,7 +3398,7 @@ mod tests {
     /// Leaving a session for another one: whether the one being left is kept alive in the
     /// background. Driven through the create-session flow, the same path a switch takes.
     fn background_after_leaving_ephemeral(engaged: bool) -> bool {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::SessionClient;
         use crate::state::{NamingMode, SessionRenameState};
@@ -3408,7 +3408,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _outbound) = SessionClient::test_channel();
                 let name = format!("leave-target-{}", std::process::id());
                 {
@@ -3468,7 +3468,7 @@ mod tests {
     /// that just came to the foreground.
     #[test]
     fn attaching_to_parked_session_closes_profile_picker() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::SessionClient;
         use crate::state::{Attachment, ConnectionState, ProfilePickerState};
@@ -3477,7 +3477,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (current_client, _current_rx) = SessionClient::test_channel();
                 let (parked_client, _parked_rx) = SessionClient::test_channel();
                 {
@@ -3527,7 +3527,7 @@ mod tests {
     /// switch starts — not wait for `SessionAttached`, which left the overlay up over Connecting.
     #[test]
     fn cold_attach_closes_profile_picker_before_connect() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::SessionClient;
         use crate::state::{ConnectionState, ProfilePickerState};
@@ -3536,7 +3536,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 {
                     let state = backend.state_mut();

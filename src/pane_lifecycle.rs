@@ -12,7 +12,7 @@ use crate::ops::focus::{
 use crate::ops::theme::pane_frame_background;
 use crate::state::{Pane, PaneId, PaneIdentity, ScrollableRevealEdge, State};
 use crate::tiling::remove_tiled_window;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// The focused pane's local working directory, if it has a usable one.
 ///
@@ -68,7 +68,7 @@ pub(crate) fn focused_spawn_cwd(state: &State) -> Option<String> {
     focused_local_cwd(state)
 }
 
-pub(crate) fn spawn_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn spawn_pane(ctx: &mut Context<AppRoot>) -> Update {
     let previous_focused =
         ctx.state.current().workspaces[ctx.state.current().active_workspace].focused_pane;
     let identity = PaneIdentity {
@@ -109,7 +109,7 @@ impl Default for SpawnPlacement {
 }
 
 pub(crate) fn spawn_interactive_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     source_workspace: usize,
     source: Option<PaneId>,
     identity: PaneIdentity,
@@ -126,7 +126,7 @@ pub(crate) fn spawn_interactive_pane(
 /// what an interactive spawn of that command should do, so the override applies only to the
 /// automation path and leaves workspace/float/fullscreen placement alone.
 pub(crate) fn spawn_interactive_pane_with_focus(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     source_workspace: usize,
     source: Option<PaneId>,
     identity: PaneIdentity,
@@ -161,7 +161,7 @@ fn interactive_spawn_target(
 }
 
 pub(crate) fn spawn_pane_in_workspace(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     workspace_index: usize,
     previous_focused: Option<PaneId>,
     identity: PaneIdentity,
@@ -388,7 +388,7 @@ fn set_scrollable_anchor_for_spawned(ws: &mut crate::state::Workspace, id: PaneI
     ws.set_scrollable_viewport(Some(id), edge);
 }
 
-pub(crate) fn respawn_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn respawn_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
@@ -545,7 +545,7 @@ pub(crate) fn request_pane_spawn(state: &mut State, request: PaneSpawnRequest) {
 /// once at config-load time) so a hot config reload takes effect on the very next spawn without
 /// needing to re-derive anything else from the reload path.
 fn resolved_launch_argv(
-    config: &crate::config::HyprmuxConfig,
+    config: &crate::config::Config,
 ) -> (Vec<String>, Vec<String>, Vec<(String, String)>) {
     let shell_env = crate::platform::command::ShellEnv::from_process();
     let (shell, extra_env) = crate::platform::shell_integration::resolve_interactive_shell(
@@ -569,7 +569,7 @@ fn resolved_launch_argv(
 /// means the whole subtree is re-laid out every frame at a shrinking rectangle. Framework-side
 /// retention (`Animated::auto_exit`) cannot do this, because it freezes the already reconciled
 /// subtree and only clips it.
-pub(crate) fn close_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(crate) fn close_pane(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     match close_pane_inner(ctx, id, true) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
@@ -582,7 +582,7 @@ pub(crate) fn close_pane(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
 }
 
 /// Start the close animation for a pane whose server-side process has already exited.
-pub(crate) fn remove_pane_after_exit(ctx: &mut Context<HyprmuxApp>, id: PaneId) -> Update {
+pub(crate) fn remove_pane_after_exit(ctx: &mut Context<AppRoot>, id: PaneId) -> Update {
     match close_pane_inner(ctx, id, false) {
         Some(generation) => Update::with_command(prune_closed_command(
             ctx.state.runtime_epoch,
@@ -599,7 +599,7 @@ pub(crate) fn remove_pane_after_exit(ctx: &mut Context<HyprmuxApp>, id: PaneId) 
 /// schedule one [`prune_closed_batch_command`], since an [`Update`] carries only one [`Command`].
 /// Returns `None` when the pane is unknown or already closing.
 pub(crate) fn close_pane_inner(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     kill_server_pane: bool,
 ) -> Option<u64> {
@@ -610,7 +610,7 @@ pub(crate) fn close_pane_inner(
 /// focus after all panes in the batch have been marked closing; otherwise each pane can select a
 /// neighbour that the next iteration immediately closes.
 pub(crate) fn close_pane_inner_without_focus(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     kill_server_pane: bool,
 ) -> Option<u64> {
@@ -618,7 +618,7 @@ pub(crate) fn close_pane_inner_without_focus(
 }
 
 fn close_pane_inner_with_focus(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     id: PaneId,
     kill_server_pane: bool,
     resolve_focus: bool,
@@ -712,7 +712,7 @@ fn close_pane_inner_with_focus(
 
 /// Drop a pane once its close animation has run, if it is still the same closing pane.
 pub(crate) fn prune_closed_pane(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     id: PaneId,
     generation: u64,
@@ -994,8 +994,8 @@ pub(crate) fn open_timers_batch_command(
 mod tests {
     use super::*;
 
-    fn rule(matches: &str) -> crate::config::HyprmuxRuleConfig {
-        crate::config::HyprmuxRuleConfig {
+    fn rule(matches: &str) -> crate::config::RuleConfig {
+        crate::config::RuleConfig {
             matcher: crate::config::RuleMatcher::Substring(matches.to_string()),
             float: false,
             width: None,
@@ -1028,8 +1028,8 @@ mod tests {
             .expect("join test thread")
     }
 
-    fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::HyprmuxApp> {
-        let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+    fn scrollable_close_backend(focus: PaneId) -> tui_lipan::TestBackend<crate::AppRoot> {
+        let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
         backend.set_viewport(tui_lipan::prelude::Rect {
             x: 0,
             y: 0,
@@ -1076,7 +1076,7 @@ mod tests {
 
     #[test]
     fn replay_spawn_queues_the_command_as_input_instead_of_a_wire_command() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         request_pane_spawn(
             &mut state,
             spawn_request(
@@ -1128,7 +1128,7 @@ mod tests {
     #[test]
     fn remote_spawn_sends_no_local_shell_argv() {
         // Local session: the resolved interactive shell rides the request as before.
-        let mut local = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut local = State::new(crate::config::Config::default(), Theme::default());
         request_pane_spawn(&mut local, spawn_request(1, 1, PaneIdentity::default()));
         assert!(
             !local.current().pending_spawns[0].shell.is_empty(),
@@ -1136,7 +1136,7 @@ mod tests {
         );
 
         // Remote session: shell and command_shell are emptied for server-side resolution.
-        let mut remote = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut remote = State::new(crate::config::Config::default(), Theme::default());
         remote.current_mut().remote_host = Some("winvm".to_string());
         request_pane_spawn(&mut remote, spawn_request(1, 1, PaneIdentity::default()));
         assert!(
@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn replay_inputs_survive_teardown_only_while_their_spawn_is_still_queued() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         request_pane_spawn(
             &mut state,
             spawn_request(
@@ -1180,7 +1180,7 @@ mod tests {
     #[test]
     fn close_keeps_the_pane_described_while_it_animates_out() {
         in_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,
@@ -1489,7 +1489,7 @@ mod tests {
     #[test]
     fn close_popup_keeps_the_popup_described_until_it_is_pruned() {
         in_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,
@@ -1550,7 +1550,7 @@ mod tests {
     #[test]
     fn disabled_close_animation_still_prunes_the_pane() {
         in_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,
@@ -1594,7 +1594,7 @@ mod tests {
     #[test]
     fn workspace_switch_replaces_the_canvas_host_without_retaining_old_panes() {
         in_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,
@@ -1635,7 +1635,7 @@ mod tests {
 
     #[test]
     fn removing_a_pane_clears_modes_that_target_it() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.copy_mode = Some(crate::state::CopyModeState {
             target: 1,
             navigation: TerminalCopyMode::new(0, 0, 0),
@@ -1664,7 +1664,7 @@ mod tests {
 
     #[test]
     fn spawn_focus_can_update_target_workspace_without_stealing_active_focus() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().active_workspace = 0;
         state.current_mut().focused_pane = Some(1);
         apply_spawn_focus(
@@ -1692,7 +1692,7 @@ mod tests {
             w: 100.0,
             h: 24.0,
         };
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         {
             let workspace = &mut state.current_mut().workspaces[0];
             workspace.layout_kind = crate::state::LayoutKind::Scrollable;
@@ -1747,7 +1747,7 @@ mod tests {
             w: 100.0,
             h: 24.0,
         };
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         {
             let workspace = &mut state.current_mut().workspaces[0];
             workspace.layout_kind = crate::state::LayoutKind::Scrollable;
@@ -1802,7 +1802,7 @@ mod tests {
 
     #[test]
     fn interactive_command_spawn_applies_configured_rule() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         let mut configured = rule("btop");
         configured.workspace = Some(2);
         configured.float = true;
@@ -1834,7 +1834,7 @@ mod tests {
 
     #[test]
     fn interactive_spawn_without_command_keeps_source_and_default_placement() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         config.rules.push(rule("btop"));
         let state = State::new(config, Theme::default());
 
@@ -1845,7 +1845,7 @@ mod tests {
 
     #[test]
     fn focus_override_beats_the_matched_rule_without_touching_placement() {
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         let mut configured = rule("btop");
         configured.workspace = Some(3);
         configured.fullscreen = true;
@@ -1861,7 +1861,7 @@ mod tests {
         assert!(placement.fullscreen);
 
         // `--focus` overrides a rule that asked for no focus.
-        let mut config = crate::config::HyprmuxConfig::default();
+        let mut config = crate::config::Config::default();
         let mut configured = rule("btop");
         configured.focus = false;
         config.rules.push(configured);
@@ -1897,9 +1897,7 @@ mod close_animation {
     use super::tests::in_stack;
     use std::time::Duration;
 
-    fn pane_rect(
-        backend: &tui_lipan::TestBackend<crate::HyprmuxApp>,
-    ) -> Option<(i16, i16, u16, u16)> {
+    fn pane_rect(backend: &tui_lipan::TestBackend<crate::AppRoot>) -> Option<(i16, i16, u16, u16)> {
         backend
             .capture_ui_snapshot()
             .widgets
@@ -1919,7 +1917,7 @@ mod close_animation {
     fn a_closing_pane_scales_down_on_both_axes() {
         for floating in [false, true] {
             in_stack(move || {
-                let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
                 backend.set_viewport(tui_lipan::prelude::Rect {
                     x: 0,
                     y: 0,
@@ -1968,7 +1966,7 @@ mod close_animation {
     #[test]
     fn a_user_closed_pane_does_not_report_its_own_exit() {
         in_stack(|| {
-            let mut backend = tui_lipan::TestBackend::new(crate::HyprmuxApp::default());
+            let mut backend = tui_lipan::TestBackend::new(crate::AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,

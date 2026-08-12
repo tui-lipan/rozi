@@ -27,7 +27,7 @@ use crate::geometry::{
 use crate::layout::{ordered_panes, placement_for, workspace_target_rects_excluding_with_visible};
 use crate::state::{PaneId, WORKBAR_HEIGHT};
 use crate::tiling::PanePlacement;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 use pane::pane_title_bg;
 
@@ -54,7 +54,7 @@ pub(crate) fn hover_lift() -> ColorTransform {
     ColorTransform::Elevate(HOVER_LIFT)
 }
 
-pub fn render(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let viewport = ctx.viewport();
     let content_viewport = ctx.state.content_viewport(viewport);
@@ -823,7 +823,7 @@ pub(crate) fn modal_scrollbar_config(theme: &Theme) -> ScrollbarConfig {
 }
 
 pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     height: Length,
     highlight_matches: bool,
 ) -> SearchPalette<T> {
@@ -905,7 +905,7 @@ fn search_palette_item_match_style(theme: &Theme) -> Style {
 
 /// Shared modal chrome for every overlay: a rounded border, an accent title, and the
 /// surface-element background fill so overlays read as solid panels over the workspace.
-pub(crate) fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -> Modal {
+pub(crate) fn styled_modal(ctx: &Context<AppRoot>, title: &str, width: u16) -> Modal {
     let theme = &ctx.state.theme;
     Modal::new()
         .title(title.to_string())
@@ -920,12 +920,12 @@ pub(crate) fn styled_modal(ctx: &Context<HyprmuxApp>, title: &str, width: u16) -
 /// matches shrinks it, but is capped at 65% of the viewport (the inner list scrolls past that);
 /// `reserve_height` keeps the modal's top edge fixed as it shrinks below the cap instead of
 /// re-centering, so the palette does not drift while you type.
-pub(crate) fn action_palette_modal(ctx: &Context<HyprmuxApp>, title: &str) -> Modal {
+pub(crate) fn action_palette_modal(ctx: &Context<AppRoot>, title: &str) -> Modal {
     action_palette_modal_with_width(ctx, title, 60)
 }
 
 pub(crate) fn action_palette_modal_with_width(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     title: &str,
     width: u16,
 ) -> Modal {
@@ -952,8 +952,8 @@ pub(crate) fn action_palette_frame(child: impl Into<Element>) -> Element {
 /// shared cell). A taller pane above the seam shows a border there instead and yields `None`, so
 /// the cap falls back to the backdrop. Returns `(left, right)`.
 fn seam_neighbor_title_bgs(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     placements: &[PanePlacement],
     pane_id: PaneId,
     base_rect: FloatRect,

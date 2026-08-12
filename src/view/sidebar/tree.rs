@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use crate::config::{SidebarTreeConfig, SidebarTreeRoot, SidebarTreeView};
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// The file-tree tabs. `Files` browses the focused pane's directory; `Changes` shows only what git
 /// reports as changed. They are one widget configured two ways, so the change projection is the
@@ -10,7 +10,7 @@ use crate::{HyprmuxApp, Msg};
 /// Neither tab is wrapped in the sidebar's scroll view — `FileTree` scrolls internally, and nesting
 /// the two would leave the wheel fighting over which one moves.
 pub(super) fn tree_tab(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     panel: usize,
     view: SidebarTreeView,
     config: &SidebarTreeConfig,
@@ -179,13 +179,13 @@ pub(super) fn tree_focus_key(panel: usize, view: SidebarTreeView, root: &str) ->
 }
 
 /// The directory a tab is rooted at, exposed so the focus key can be derived without rendering.
-pub(super) fn tree_root(ctx: &Context<HyprmuxApp>, config: &SidebarTreeConfig) -> Option<String> {
+pub(super) fn tree_root(ctx: &Context<AppRoot>, config: &SidebarTreeConfig) -> Option<String> {
     root_for(ctx, config.root)
 }
 
 /// The directory a tab is rooted at. `Repo` falls back to the working directory when it is not
 /// inside a repository, so the Changes tab degrades to "nothing changed here" instead of vanishing.
-fn root_for(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> Option<String> {
+fn root_for(ctx: &Context<AppRoot>, root: SidebarTreeRoot) -> Option<String> {
     let sidebar = &ctx.state.sidebar;
     match root {
         SidebarTreeRoot::Cwd => sidebar.tree_cwd.clone(),
@@ -198,7 +198,7 @@ fn root_for(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> Option<String> 
 
 /// Why there is no tree to show. A focused pane whose directory is not on this client (OSC7
 /// `cwd_host`, or a `--remote` session) is worth saying plainly rather than showing an empty tree.
-fn empty_reason(ctx: &Context<HyprmuxApp>, root: SidebarTreeRoot) -> &'static str {
+fn empty_reason(ctx: &Context<AppRoot>, root: SidebarTreeRoot) -> &'static str {
     let remote = ctx.state.current().remote_host.is_some()
         || ctx
             .state

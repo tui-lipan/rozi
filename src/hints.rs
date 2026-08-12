@@ -7,14 +7,14 @@ use tui_lipan::utils::hints::{
 
 pub use tui_lipan::utils::hints::{HintKind, HintMatch};
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
 use crate::pane_lifecycle::find_pane;
 use crate::state::{HintModeState, Mode};
 
 pub fn scan_snapshot_with_custom(
     text: &str,
-    custom: &[crate::config::HyprmuxHintConfig],
+    custom: &[crate::config::HintConfig],
 ) -> Vec<HintMatch> {
     let mut scan = HintScan::new();
     for (tag, hint) in custom.iter().enumerate() {
@@ -35,7 +35,7 @@ pub fn scan_snapshot_with_custom(
     found
 }
 
-fn can_open(kind: HintKind, custom: &[crate::config::HyprmuxHintConfig]) -> bool {
+fn can_open(kind: HintKind, custom: &[crate::config::HintConfig]) -> bool {
     match kind {
         HintKind::Url => true,
         HintKind::Custom(tag) => custom.get(usize::from(tag)).is_some_and(|hint| hint.open),
@@ -43,7 +43,7 @@ fn can_open(kind: HintKind, custom: &[crate::config::HyprmuxHintConfig]) -> bool
     }
 }
 
-pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn enter(ctx: &mut Context<AppRoot>) -> Update {
     let Some(target) = ctx.state.current().focused_pane else {
         return Update::full();
     };
@@ -72,7 +72,7 @@ pub(crate) fn enter(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-fn exit(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn exit(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.hint_mode = None;
     ctx.state.mode = Mode::Normal;
     ctx.state.commands_dirty = true;
@@ -80,7 +80,7 @@ fn exit(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-pub(crate) fn handle_hint_key(ctx: &mut Context<HyprmuxApp>, key: KeyEvent) -> (bool, Update) {
+pub(crate) fn handle_hint_key(ctx: &mut Context<AppRoot>, key: KeyEvent) -> (bool, Update) {
     if key.is(KeyCode::Esc) || matches!(key.code, KeyCode::Char('q' | 'Q')) {
         return (true, exit(ctx));
     }
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn custom_hints_append_after_builtins_with_stable_label_order() {
-        let custom = [crate::config::HyprmuxHintConfig {
+        let custom = [crate::config::HintConfig {
             pattern: regex_lite::Regex::new(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b").unwrap(),
             open: true,
         }];

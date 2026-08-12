@@ -1,8 +1,8 @@
-use crate::config::HyprmuxRuleConfig;
+use crate::config::RuleConfig;
 use crate::pane_lifecycle::{SpawnFloat, SpawnPlacement};
 
 pub(crate) fn placement_for_command(
-    rules: &[HyprmuxRuleConfig],
+    rules: &[RuleConfig],
     command: &str,
 ) -> (Option<usize>, SpawnPlacement) {
     let Some(rule) = rules.iter().find(|rule| rule.matcher.matches(command)) else {
@@ -29,8 +29,8 @@ mod tests {
     use crate::config::RuleMatcher;
     use regex_lite::Regex;
 
-    fn substring_rule(matches: &str) -> HyprmuxRuleConfig {
-        HyprmuxRuleConfig {
+    fn substring_rule(matches: &str) -> RuleConfig {
+        RuleConfig {
             matcher: RuleMatcher::Substring(matches.to_string()),
             float: false,
             width: None,
@@ -41,8 +41,8 @@ mod tests {
         }
     }
 
-    fn regex_rule(pattern: &str) -> HyprmuxRuleConfig {
-        HyprmuxRuleConfig {
+    fn regex_rule(pattern: &str) -> RuleConfig {
+        RuleConfig {
             matcher: RuleMatcher::Regex(Regex::new(pattern).unwrap()),
             float: true,
             width: Some(0.5),

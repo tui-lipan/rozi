@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use super::row::{self, Row, RowTarget, SidebarRow};
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::config::{SidebarLauncherEntry, SidebarTabId, UserCommandAction};
 
 /// The glyph and human name for what activating an entry does. The glyph sits in the same column as
@@ -15,7 +15,7 @@ fn action_glyph(action: &UserCommandAction) -> (&'static str, &'static str) {
 }
 
 pub(super) fn launcher_rows(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     tab_id: &SidebarTabId,
     entries: &[SidebarLauncherEntry],
 ) -> Vec<SidebarRow> {
@@ -53,7 +53,7 @@ pub(super) fn launcher_rows(
 }
 
 pub(super) fn command_rows(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     tab_id: &SidebarTabId,
     clickable: bool,
 ) -> Vec<SidebarRow> {

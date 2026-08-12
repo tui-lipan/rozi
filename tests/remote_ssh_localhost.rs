@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use hyprmux::config::{HyprmuxRemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
+use hyprmux::config::{RemoteConfig, RemoteHostConfig, RemoteInstallPolicy};
 use hyprmux::session::client::SessionClient;
 use hyprmux::session::protocol::{FILE_TREE_PROTOCOL, ServerMessage};
 use hyprmux::session::remote::{connect_remote, parse_remote_target};
@@ -49,7 +49,7 @@ fn localhost_ssh_available() -> bool {
 }
 
 /// Config pinned to this test's binary, so probe/install never touches the host.
-fn pinned_config() -> HyprmuxRemoteConfig {
+fn pinned_config() -> RemoteConfig {
     let mut hosts = HashMap::new();
     hosts.insert(
         "localhost".to_string(),
@@ -58,12 +58,12 @@ fn pinned_config() -> HyprmuxRemoteConfig {
             ..RemoteHostConfig::default()
         },
     );
-    HyprmuxRemoteConfig {
+    RemoteConfig {
         hosts,
         // Belt and braces: even if the pin were ignored, this refuses to mutate the host.
         install: RemoteInstallPolicy::Never,
         connection_timeout_secs: 10,
-        ..HyprmuxRemoteConfig::default()
+        ..RemoteConfig::default()
     }
 }
 
@@ -257,10 +257,10 @@ fn refuses_to_install_on_the_host_when_the_policy_forbids_it() {
     }
 
     // No `binary_path`, `install = "never"`, and a probe that will not find this name on PATH.
-    let mut config = HyprmuxRemoteConfig {
+    let mut config = RemoteConfig {
         install: RemoteInstallPolicy::Never,
         connection_timeout_secs: 10,
-        ..HyprmuxRemoteConfig::default()
+        ..RemoteConfig::default()
     };
     let mut hosts = HashMap::new();
     hosts.insert("localhost".to_string(), RemoteHostConfig::default());

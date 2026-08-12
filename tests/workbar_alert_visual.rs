@@ -13,7 +13,7 @@
 //! never builds any of it.
 #![cfg(feature = "ui-snapshot")]
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{AlertMode, Pane};
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseEvent, MouseKind};
@@ -37,9 +37,9 @@ fn live_pane(id: u32) -> Pane {
 
 /// Workspace 1 active and quiet, 2 blocked, 3 finished-unseen: one tab per marker plus an unmarked
 /// neighbour, which is what makes "is this subtle enough" answerable at a glance.
-fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<HyprmuxApp> {
+fn workbar_backend(phase: bool, calm_phase: bool) -> TestBackend<AppRoot> {
     hyprmux::test_support::isolate_user_dirs();
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,

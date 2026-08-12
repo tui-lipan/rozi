@@ -1,6 +1,6 @@
 use hyprmux::config::{SidebarTab, SidebarTabId};
 use hyprmux::state::{SidebarCommandOutput, SidebarCommandRow};
-use hyprmux::{HyprmuxApp, Msg as HyprmuxMsg};
+use hyprmux::{AppRoot, Msg as HyprmuxMsg};
 use tui_lipan::core::event::{KeyMods, MouseButton, MouseEvent, MouseKind};
 use tui_lipan::prelude::*;
 use tui_lipan::{Rect, TestBackend};
@@ -114,7 +114,7 @@ fn revisiting_cached_command_tab_renders_without_an_unrelated_update() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -179,7 +179,7 @@ fn app_sidebar_tabs_keep_native_selection_hover_click_and_wheel_behavior() {
                 label: label.into(),
                 entries: Vec::new(),
             };
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -243,7 +243,7 @@ fn destination_selection_resolves_after_transfer_into_an_empty_panel() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             {
                 let state = backend.state_mut();
                 state.config.sidebar.tabs = vec![SidebarTab::Agents];

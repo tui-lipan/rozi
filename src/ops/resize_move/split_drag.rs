@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::geometry::workspace_tile_bounds;
 use crate::ops::focus::active_pane_is_fullscreen;
@@ -11,7 +11,7 @@ use super::float::{ensure_tile_tree, layout_has_resizable_splits};
 use super::tiling::{master_available_width, resize_master_split_by_pixels};
 
 pub(crate) fn begin_resize_split_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
     horizontal_split: bool,
     x: u16,
@@ -29,7 +29,7 @@ pub(crate) fn begin_resize_split_drag(
 }
 
 pub(crate) fn begin_resize_split_junction_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     horizontal_panes: Vec<PaneId>,
     vertical_panes: Vec<PaneId>,
     x: u16,
@@ -46,7 +46,7 @@ pub(crate) fn begin_resize_split_junction_drag(
     )
 }
 
-fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, y: u16) -> Update {
+fn begin_split_drag(ctx: &mut Context<AppRoot>, kind: SplitDragKind, x: u16, y: u16) -> Update {
     if crate::ops::session::nudge_if_follower(ctx) {
         return Update::full();
     }
@@ -74,7 +74,7 @@ fn begin_split_drag(ctx: &mut Context<HyprmuxApp>, kind: SplitDragKind, x: u16, 
 /// matching on it keeps every event applied to the boundary the pointer actually grabbed. Only a
 /// gesture with no session yet (the drag-start event) adopts `requested`.
 fn resolve_split_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     requested: SplitDragKind,
     from_x: u16,
     from_y: u16,
@@ -110,7 +110,7 @@ fn resolve_split_drag(
 /// the pane has a deeper split on the same axis. `horizontal_split` is true for a vertical gap (a
 /// left|right split). Used by the draggable gap strips in the view. Dwindle and master only.
 pub(crate) fn resize_split_by_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
     horizontal_split: bool,
     from_x: u16,
@@ -129,7 +129,7 @@ pub(crate) fn resize_split_by_drag(
 }
 
 fn apply_split_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     kind: SplitDragKind,
     from_x: u16,
     from_y: u16,
@@ -173,7 +173,7 @@ fn apply_split_drag(
 }
 
 fn apply_resize_split_pixels(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
     horizontal_split: bool,
     pixels: f32,
@@ -233,7 +233,7 @@ fn apply_resize_split_pixels(
 }
 
 pub(crate) fn resize_split_junction_by_drag(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     horizontal_panes: Vec<PaneId>,
     vertical_panes: Vec<PaneId>,
     from_x: u16,
@@ -279,7 +279,7 @@ mod tests {
     };
     use crate::state::{Pane, SplitAxis, TileGap, Workspace};
     use crate::tiling::{DwindleTree, nearest_split_available, resize_tiled_split};
-    use crate::{HyprmuxApp, Msg};
+    use crate::{AppRoot, Msg};
     use tui_lipan::TestBackend;
 
     #[test]
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn four_pane_junction_tracks_absolute_pointer_once_per_split() {
         in_test_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             let (root_available, left_available) = {
                 let state = backend.state_mut();
@@ -464,7 +464,7 @@ mod tests {
         }
 
         /// Every split ratio in leaf order, keyed by its tree path (`false` = first child).
-        fn ratios(backend: &mut TestBackend<HyprmuxApp>) -> Vec<(Vec<bool>, f32)> {
+        fn ratios(backend: &mut TestBackend<AppRoot>) -> Vec<(Vec<bool>, f32)> {
             fn visit(tree: &DwindleTree, path: &mut Vec<bool>, out: &mut Vec<(Vec<bool>, f32)>) {
                 let DwindleTree::Split {
                     ratio,
@@ -497,10 +497,10 @@ mod tests {
             out
         }
 
-        fn backend_with(tree: &DwindleTree) -> TestBackend<HyprmuxApp> {
+        fn backend_with(tree: &DwindleTree) -> TestBackend<AppRoot> {
             let mut ids = Vec::new();
             leaf_ids(tree, &mut ids);
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(TEST_VIEWPORT);
             {
                 let workspace = backend.state_mut().active_workspace_mut();
@@ -527,7 +527,7 @@ mod tests {
 
         /// Press at `(x, y)`, move to the target in several steps (each one re-renders the shifted
         /// layout), then release.
-        fn drag(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16, dx: i32, dy: i32) {
+        fn drag(backend: &mut TestBackend<AppRoot>, x: u16, y: u16, dx: i32, dy: i32) {
             let at = |step: i32, total: i32| {
                 (
                     (x as i32 + dx * step / total).max(0) as u16,
@@ -555,7 +555,7 @@ mod tests {
         /// Pane spans along `axis`, as `(pane, start, end)` in canvas coordinates. Ratios are
         /// proportional, so only absolute spans show whether a drag moved a divider it should not
         /// have touched.
-        fn spans(backend: &mut TestBackend<HyprmuxApp>, axis: SplitAxis) -> Vec<Span> {
+        fn spans(backend: &mut TestBackend<AppRoot>, axis: SplitAxis) -> Vec<Span> {
             let state = backend.state_mut();
             let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);
             let top_gap = state.workspace_top_gap();
@@ -606,7 +606,7 @@ mod tests {
         }
 
         /// As `grab_row`, for a backend that is already set up.
-        fn pane_leading_row(backend: &mut TestBackend<HyprmuxApp>, pane: PaneId) -> u16 {
+        fn pane_leading_row(backend: &mut TestBackend<AppRoot>, pane: PaneId) -> u16 {
             let top = backend.state_mut().content_top_offset();
             let state = backend.state_mut();
             let bounds = state.canvas_bounds_from_terminal_viewport(TEST_VIEWPORT);

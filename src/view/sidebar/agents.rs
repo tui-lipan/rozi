@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use super::row::{self, Row, RowTarget, SidebarRow};
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::platform::paths::path_segments;
 use crate::session::protocol::pane_status;
 use crate::state::{PaneId, State};
@@ -522,7 +522,7 @@ fn activity_budget(width: u16) -> usize {
     (usize::from(width)).saturating_sub(chrome).max(8)
 }
 
-pub(super) fn agents_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
+pub(super) fn agents_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let groups = agent_groups(&ctx.state);
     if groups.is_empty() {
         return Vec::new();
@@ -606,7 +606,7 @@ fn row_glyph(status: &str, finished_unseen: bool, theme: &Theme) -> (String, Col
 /// The header deliberately carries no aggregated status glyph. Groups never collapse, so every row
 /// it would summarize is already on screen directly beneath it — and the glyph plus the nesting it
 /// forced cost four cells on every row of the narrowest surface in the app.
-fn group_header(ctx: &Context<HyprmuxApp>, group: &AgentGroup) -> Element {
+fn group_header(ctx: &Context<AppRoot>, group: &AgentGroup) -> Element {
     let Some(label) = group.project.as_deref() else {
         return row::header(ctx, "elsewhere", true);
     };
@@ -653,7 +653,7 @@ fn subpath_budget(width: u16, name: &str, duration: Option<&str>, workspace: &st
 }
 
 /// A two-line agent row: status glyph, agent name and workspace badge, then the detail line.
-fn agent_row(ctx: &Context<HyprmuxApp>, row: AgentRow) -> Row {
+fn agent_row(ctx: &Context<AppRoot>, row: AgentRow) -> Row {
     let status = row.status.as_deref().unwrap_or(pane_status::IDLE);
     let (glyph, color, spinner) = row_glyph(status, row.finished_unseen, &ctx.state.theme);
     let status_icon: Element = if spinner {
@@ -782,7 +782,7 @@ mod tests {
 
     #[test]
     fn rows_sort_by_status_then_workspace_and_pane_order() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane(1, Some("idle"), false),
             pane(2, Some("Custom"), false),
@@ -817,7 +817,7 @@ mod tests {
     /// The path every agent that publishes nothing takes must be untouched by slot expansion.
     #[test]
     fn a_pane_without_slots_still_produces_exactly_one_row() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![pane(1, Some("working"), false)];
 
         let rows = agent_rows(&state);
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn a_pane_with_slots_becomes_one_row_per_slot_in_tab_order() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![
             slot("a", "working", false),
@@ -858,7 +858,7 @@ mod tests {
     /// stuck reading "answer required" for the rest of the run.
     #[test]
     fn a_titled_slot_shows_its_title_even_while_blocked() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
             title: "audit the widget layer".into(),
@@ -875,7 +875,7 @@ mod tests {
     /// Until a title exists the reason is all the row has to say.
     #[test]
     fn an_untitled_slot_falls_back_to_its_reason() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
             title: String::new(),
@@ -893,7 +893,7 @@ mod tests {
     /// A slot titled after the agent itself would repeat the name column beside it.
     #[test]
     fn a_slot_titled_after_its_agent_shows_no_activity() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![crate::session::protocol::AgentSlot {
             title: "Claude Code".into(),
@@ -930,7 +930,7 @@ mod tests {
     /// pane it lives in is the same pane as its working siblings.
     #[test]
     fn slot_rows_sort_by_status_across_their_own_pane() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![
             slot("idle-tab", "idle", false),
@@ -952,7 +952,7 @@ mod tests {
     /// the pane only ever showed the tab the publisher had on screen.
     #[test]
     fn attending_a_pane_clears_only_the_slot_on_screen() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane(1, None, false);
         publisher.terminal.slots = vec![slot("shown", "idle", true), slot("hidden", "idle", false)];
         for id in ["shown", "hidden"] {
@@ -987,7 +987,7 @@ mod tests {
     /// Location belongs to the pane, so expanding it into several rows must not split its group.
     #[test]
     fn slot_rows_inherit_their_panes_project_grouping() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut publisher = pane_in_project(1, None, "/work/api/src", "/work/api", Some("main"));
         publisher.terminal.slots = vec![slot("a", "working", true), slot("b", "idle", false)];
         state.current_mut().workspaces[0].panes = vec![publisher];
@@ -1002,7 +1002,7 @@ mod tests {
     /// above plain idle rows — so the row does not sink as it lights up.
     #[test]
     fn finished_unseen_rows_sort_as_done_not_idle() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let mut finished = pane(2, Some("idle"), false);
         finished.terminal.finished_unseen = true;
         state.current_mut().workspaces[0].panes = vec![pane(1, Some("idle"), false), finished];
@@ -1048,7 +1048,7 @@ mod tests {
 
     #[test]
     fn rows_use_server_detection_and_exclude_non_agents() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         assert!(agent_rows(&state).is_empty());
         state.current_mut().workspaces[0].panes[0]
             .terminal
@@ -1063,7 +1063,7 @@ mod tests {
 
     #[test]
     fn groups_sort_alphabetically_with_unknown_last_and_keep_row_status_order() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane_in(1, Some("idle"), false, Some("/home/x/zebra")),
             pane_in(2, Some("blocked"), false, Some("/home/x/api")),
@@ -1098,7 +1098,7 @@ mod tests {
     /// back on the row as the subpath.
     #[test]
     fn agents_below_the_project_root_join_the_project_not_a_directory() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane_in_project(
                 1,
@@ -1135,7 +1135,7 @@ mod tests {
     /// branch is what tells them apart when the directory names do not.
     #[test]
     fn worktrees_stay_separate_groups_and_head_their_own_branch() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane_in_project(
                 1,
@@ -1169,7 +1169,7 @@ mod tests {
     /// project at all. Neither may lose the group or invent a branch for it.
     #[test]
     fn a_group_without_a_branch_still_heads_its_project() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane_in_project(1, Some("idle"), "/home/x/api", "/home/x/api", None),
             pane_in_project(2, Some("idle"), "/home/x/api", "/home/x/api", Some("  ")),
@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn duplicate_project_basenames_gain_a_parent_segment() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes = vec![
             pane_in(1, Some("idle"), false, Some("/home/x/work/api")),
             pane_in(2, Some("idle"), false, Some("/home/x/oss/api")),
@@ -1434,7 +1434,7 @@ mod tests {
 
     #[test]
     fn reported_status_overrides_detected_state() {
-        let mut state = State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(crate::config::Config::default(), Theme::default());
         let pane = &mut state.current_mut().workspaces[0].panes[0];
         pane.terminal.detected_agent = Some(DetectedAgent {
             kind: AgentKind::Claude,

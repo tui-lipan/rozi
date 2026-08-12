@@ -3,9 +3,9 @@ use tui_lipan::prelude::*;
 use crate::config::{BadgeColor, InputConfig, WorkbarAlertConfig, WorkbarItem, WorkbarSegment};
 use crate::input::Action;
 use crate::state::{AlertMode, AlertPaint, Mode, Pane, WORKBAR_HEIGHT, Workspace};
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
-pub(crate) fn workbar(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn workbar(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let workbar_cfg = &state.config.workbar;
@@ -190,8 +190,8 @@ impl TrailingChip {
 /// Every segment that has a text label becomes a colored `Badge` chip (so it can chain into the
 /// powerline); the workspace tab strip is the one non-badge entry and rides along as a `Flex` chip.
 fn trailing_chip(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     item: &WorkbarItem,
 ) -> Option<TrailingChip> {
     match &item.segment {
@@ -220,7 +220,7 @@ fn trailing_chip(
 /// is nothing trailing. Sizes to `Auto` so the cluster only occupies its own width and stays pinned
 /// to the trailing edge.
 fn trailing_cluster(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     chips: Vec<TrailingChip>,
     cap_style: CapStyle,
     powerline: bool,
@@ -284,7 +284,7 @@ fn trailing_cluster(
 /// Background color a rendered workbar segment paints at the workbar's outer edge: its badge
 /// background, except the workspace tab strip, which renders on the panel surface. Only called for
 /// items that actually rendered, so it need not re-check visibility.
-fn segment_edge_color(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> Color {
+fn segment_edge_color(ctx: &Context<AppRoot>, item: &WorkbarItem) -> Color {
     match item.segment {
         WorkbarSegment::Workspaces => ctx.state.theme.surface.panel,
         _ => item_colors(ctx, item).0,
@@ -309,7 +309,7 @@ fn curated_color(segment: &WorkbarSegment) -> BadgeColor {
 
 /// Resolve a workbar item's `(bg, fg)` colors: its explicit override, else the segment's curated
 /// default, mapped through the active theme.
-fn item_colors(ctx: &Context<HyprmuxApp>, item: &WorkbarItem) -> (Color, Color) {
+fn item_colors(ctx: &Context<AppRoot>, item: &WorkbarItem) -> (Color, Color) {
     let color = item.color.unwrap_or_else(|| {
         if matches!(item.segment, WorkbarSegment::Location) {
             location_badge_color(&ctx.state)
@@ -370,7 +370,7 @@ fn resolve_badge_color(theme: &Theme, color: BadgeColor) -> (Color, Color) {
 /// overlay stack the same `Flex(1)` width the bare row carried, since `ZStack` has no width
 /// control of its own.
 fn workbar_with_caps(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     row: HStack,
     left_color: Color,
     right_color: Color,
@@ -453,7 +453,7 @@ fn workbar_badge(
 /// The badge label text (with its blank side padding) for a workbar segment, or `None` when the
 /// segment renders nothing (`Workspaces` is the tab strip, not a badge; `Session`/`Activity` hide
 /// when there is nothing to show).
-fn segment_label(ctx: &Context<HyprmuxApp>, segment: &WorkbarSegment) -> Option<String> {
+fn segment_label(ctx: &Context<AppRoot>, segment: &WorkbarSegment) -> Option<String> {
     match segment {
         WorkbarSegment::Title => Some(" hyprmux ".to_string()),
         WorkbarSegment::Location => location_label(&ctx.state),
@@ -571,8 +571,8 @@ fn location_label(state: &crate::state::State) -> Option<String> {
 /// badges cap on their right (leading pills, like the title chip) and stay gap-separated by the row
 /// - powerline chaining is a trailing-cluster feature.
 fn left_segment_element(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     item: &WorkbarItem,
 ) -> Option<Element> {
     if matches!(item.segment, WorkbarSegment::Workspaces) {
@@ -607,7 +607,7 @@ fn left_segment_element(
     }
 }
 
-fn substitute_placeholders(ctx: &Context<HyprmuxApp>, literal: &str) -> String {
+fn substitute_placeholders(ctx: &Context<AppRoot>, literal: &str) -> String {
     let state = &ctx.state;
     let active = &state.current().workspaces[state.current().active_workspace];
     literal
@@ -632,7 +632,7 @@ fn workspace_placeholder_label(name: Option<&str>, index: usize) -> String {
 /// The live attached session name, if any - backs the `Session` segment and `{session}` placeholder.
 /// Ephemeral sessions return `None`: a bare launch is a disposable per-process session, so
 /// the badge/placeholder stays empty until the session is given a real name.
-fn attached_session_name(ctx: &Context<HyprmuxApp>) -> Option<String> {
+fn attached_session_name(ctx: &Context<AppRoot>) -> Option<String> {
     if !ctx.state.current().session_attached || ctx.state.is_ephemeral_session() {
         return None;
     }
@@ -643,7 +643,7 @@ fn workbar_hostname() -> String {
     crate::platform::user::hostname().unwrap_or_else(|| "localhost".to_string())
 }
 
-fn workspace_tabs_element(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> Element {
+fn workspace_tabs_element(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     let state = &ctx.state;
     let theme = &ctx.state.theme;
     let shown = workspace_tab_count(state);
@@ -932,7 +932,7 @@ pub(crate) fn empty_workspace_panel(input: &InputConfig, theme: &Theme) -> Eleme
 /// leaves room for the headline plus three shortcut rows, and a prose spelling of the shortcuts
 /// does not survive the wrap. The key column is measured rather than fixed so a long custom prefix
 /// still aligns.
-pub(crate) fn launcher_panel(ctx: &Context<HyprmuxApp>, theme: &Theme) -> Element {
+pub(crate) fn launcher_panel(ctx: &Context<AppRoot>, theme: &Theme) -> Element {
     let input = &ctx.state.config.input;
     let prefix = input.prefix.compact_display();
     let mut leave_keys: Vec<_> = ["quit", "detach"]
@@ -1059,7 +1059,7 @@ mod tests {
     #[test]
     fn location_label_identifies_remote_and_retained_connections() {
         let mut state =
-            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().remote_host = Some("workbox".to_string());
         state.current_mut().remote_target = Some(crate::session::remote::RemoteTarget::Alias(
             "workbox".to_string(),
@@ -1202,7 +1202,7 @@ mod tests {
     #[test]
     fn inactive_marker_scan_excludes_the_active_workspace() {
         let mut state =
-            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes[0]
             .terminal
             .finished_unseen = true;
@@ -1225,8 +1225,7 @@ mod tests {
     #[test]
     fn collaboration_status_is_single_contextual_chip() {
         let theme = Theme::default();
-        let mut state =
-            crate::state::State::new(crate::config::HyprmuxConfig::default(), theme.clone());
+        let mut state = crate::state::State::new(crate::config::Config::default(), theme.clone());
         let mut shared = crate::state::SharedSessionState::new(1);
         shared.controller = Some(1);
         shared.clients = vec![crate::session::protocol::ClientInfo {

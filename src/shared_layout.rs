@@ -184,7 +184,7 @@ pub(crate) fn frac_rect_to_float(rect: FracRect, canvas_cols: u16, canvas_rows: 
 /// mode, theme) is preserved. Removed panes are dropped from application state immediately; the
 /// stable keyed Canvas retains their already-described visual subtree for its exit animation.
 pub(crate) fn apply_shared_layout(
-    ctx: &mut Context<crate::HyprmuxApp>,
+    ctx: &mut Context<crate::AppRoot>,
     layout: &SharedLayout,
     rev: u64,
 ) -> Update {
@@ -443,7 +443,7 @@ pub(crate) fn apply_shared_layout(
 /// Reborrow the shared-session bookkeeping mutably; used by the reconciler's orphan drain so it can
 /// touch `orphan_output` while also mutating a pane.
 fn ctx_shared_mut(
-    ctx: &mut Context<crate::HyprmuxApp>,
+    ctx: &mut Context<crate::AppRoot>,
 ) -> Option<&mut crate::state::SharedSessionState> {
     ctx.state.current_mut().shared.as_mut()
 }
@@ -483,7 +483,7 @@ fn apply_shared_pane_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxConfig;
+    use crate::config::Config;
     use crate::state::{Pane, State};
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
     }
 
     fn state_with_split() -> State {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         let rect = FloatRect {
             x: 0.0,
             y: 0.0,
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn floating_rect_round_trips_through_fractions() {
-        let mut state = State::new(HyprmuxConfig::default(), Theme::default());
+        let mut state = State::new(Config::default(), Theme::default());
         state.current_mut().workspaces[0].panes[0].floating = true;
         state.current_mut().workspaces[0].panes[0].floating_rect = FloatRect {
             x: 20.0,
@@ -686,7 +686,7 @@ mod tests {
 #[cfg(test)]
 mod reconciler_tests {
     use super::*;
-    use crate::HyprmuxApp;
+    use crate::AppRoot;
     use crate::Msg;
     use crate::input::Action;
     use crate::ops::focus::focus_pane;
@@ -748,7 +748,7 @@ mod reconciler_tests {
             .expect("join test thread")
     }
 
-    fn attach_follower(backend: &mut TestBackend<HyprmuxApp>, client: SessionClient) {
+    fn attach_follower(backend: &mut TestBackend<AppRoot>, client: SessionClient) {
         let state = backend.state_mut();
         state.current_mut().session_attached = true;
         state.current_mut().session_client = Some(client);
@@ -776,7 +776,7 @@ mod reconciler_tests {
     #[test]
     fn remote_removal_drops_pane_without_sending_kill() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -815,7 +815,7 @@ mod reconciler_tests {
     #[test]
     fn same_generation_readd_restores_the_retired_terminal_screen() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -855,7 +855,7 @@ mod reconciler_tests {
     #[test]
     fn shared_layout_readd_does_not_duplicate_a_pane_id() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -884,7 +884,7 @@ mod reconciler_tests {
     #[test]
     fn remote_addition_creates_a_ready_pane() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -915,7 +915,7 @@ mod reconciler_tests {
     #[test]
     fn reconciliation_discards_older_drains_exact_and_retains_future_orphans() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -972,7 +972,7 @@ mod reconciler_tests {
     #[test]
     fn shared_layout_reconcile_preserves_or_clears_scrollable_anchor() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1022,7 +1022,7 @@ mod reconciler_tests {
     #[test]
     fn shared_layout_focus_fallback_reveals_under_surviving_scrollable_anchor() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1127,7 +1127,7 @@ mod reconciler_tests {
             use crate::ops::focus::switch_workspace;
             use crate::state::LayoutKind;
 
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1307,7 +1307,7 @@ mod reconciler_tests {
     #[test]
     fn follower_reconcile_retains_scrollable_width_through_reemit() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1352,7 +1352,7 @@ mod reconciler_tests {
     #[test]
     fn shared_layout_reconcile_preserves_directional_focus_hint() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1394,7 +1394,7 @@ mod reconciler_tests {
     #[test]
     fn directional_focus_keeps_entry_row_across_shared_reconciles() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             attach_follower(&mut backend, client);
@@ -1480,7 +1480,7 @@ mod reconciler_tests {
     #[test]
     fn initial_session_layout_is_applied_without_geometry_transition() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             backend.state_mut().current_mut().pending_session_attach =
@@ -1525,7 +1525,7 @@ mod reconciler_tests {
     #[test]
     fn own_commit_echo_confirms_rev_without_reapplying() {
         in_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(VIEWPORT);
             let (client, _rx) = SessionClient::test_channel();
             {

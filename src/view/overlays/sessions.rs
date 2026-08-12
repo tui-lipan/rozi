@@ -1,4 +1,4 @@
-pub(crate) fn session_picker_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn session_picker_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
     };
@@ -30,7 +30,7 @@ struct CollaboratorItem {
 }
 
 /// Who else is on the session, and what this client may do about them.
-pub(crate) fn collaboration_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn collaboration_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(state) = ctx.state.collaboration.as_ref() else {
         return Text::new("").into();
     };
@@ -230,7 +230,7 @@ fn self_tag(shared: &crate::state::SharedSessionState) -> String {
 }
 
 /// The choice offered when an attach lands on a session another client is driving.
-pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn follow_prompt_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(prompt) = ctx.state.follow_prompt.as_ref() else {
         return Text::new("").into();
     };
@@ -294,7 +294,7 @@ pub(crate) fn follow_prompt_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 /// say it already. With nothing to pick, Enter is free and carries it; with the scratch session
 /// itself on the list, its own row is the obvious way to it. The label borrows the word the rows
 /// use (`ephemeral`) so the hint and the session it lands on read as the same thing.
-fn session_picker_hints(ctx: &Context<HyprmuxApp>) -> Element {
+fn session_picker_hints(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let Some(picker) = ctx.state.session_picker.as_ref() else {
         return Text::new("").into();
@@ -398,7 +398,7 @@ fn picker_list_is_empty(picker: &SessionPickerState) -> bool {
 }
 
 fn session_picker_palette(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     picker: &SessionPickerState,
 ) -> SearchPalette<usize> {
     let theme = &ctx.state.theme;
@@ -583,7 +583,7 @@ fn session_description(
     }
 }
 
-fn session_picker_key_interceptor(ctx: &Context<HyprmuxApp>) -> KeyHandler {
+fn session_picker_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
     let is_ephemeral = ctx.state.is_ephemeral_session();
     let is_attached = ctx.state.current().session_attached;
     // With no row on the list, Enter has nothing to activate, so it carries the scratch session

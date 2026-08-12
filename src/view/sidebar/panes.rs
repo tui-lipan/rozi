@@ -1,9 +1,9 @@
 use tui_lipan::prelude::*;
 
 use super::row::{self, Row, RowTarget, SidebarRow};
-use crate::HyprmuxApp;
+use crate::AppRoot;
 
-pub(super) fn panes_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
+pub(super) fn panes_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
     for (workspace_index, workspace) in ctx.state.current().workspaces.iter().enumerate() {
         let panes = ordered_sidebar_panes(workspace);

@@ -30,7 +30,7 @@ fn hint_row() -> Flow {
 /// thing every dialog does, so spelling it out only crowds the hints that carry information.
 /// `submit` names the commit keys, one pill each, so a prompt with two distinct commits (capture
 /// with or without naming the session) spells out what each one does instead of a bare `submit`.
-fn prompt_hints(ctx: &Context<HyprmuxApp>, submit: &[(&str, &str)]) -> Element {
+fn prompt_hints(ctx: &Context<AppRoot>, submit: &[(&str, &str)]) -> Element {
     let theme = &ctx.state.theme;
     let mut row = hint_row();
     for (label, key) in submit {
@@ -51,7 +51,7 @@ fn prompt_hints(ctx: &Context<HyprmuxApp>, submit: &[(&str, &str)]) -> Element {
 /// confirmation reads off the modal itself instead of a separate toast.
 #[allow(clippy::too_many_arguments)]
 fn prompt_overlay(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     title: &str,
     placeholder: &str,
     input_state: &TextInput,
@@ -127,7 +127,7 @@ fn prompt_overlay(
     modal.into()
 }
 
-pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn rename_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(rename) = ctx.state.rename.as_ref() else {
         return Text::new("").into();
     };
@@ -145,7 +145,7 @@ pub(crate) fn rename_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
-pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn rename_session_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(rename) = ctx.state.rename_session.as_ref() else {
         return Text::new("").into();
     };
@@ -211,7 +211,7 @@ pub(crate) fn rename_session_overlay(ctx: &Context<HyprmuxApp>) -> Element {
     )
 }
 
-pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn save_profile_overlay(ctx: &Context<AppRoot>) -> Element {
     let Some(prompt) = ctx.state.save_profile_prompt.as_ref() else {
         return Text::new("").into();
     };
@@ -246,7 +246,7 @@ pub(crate) fn save_profile_overlay(ctx: &Context<HyprmuxApp>) -> Element {
 /// the overlay's focus key. `content` is the palette itself, or a body wrapping a palette plus a
 /// hint footer.
 fn action_palette(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     title: &str,
     key: &'static str,
     close: Msg,

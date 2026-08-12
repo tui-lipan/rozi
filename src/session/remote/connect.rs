@@ -5,7 +5,7 @@ use std::process::{ChildStderr, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use crate::config::HyprmuxRemoteConfig;
+use crate::config::RemoteConfig;
 use crate::platform::command::program_exists;
 use crate::platform::ipc::{self, IpcConnection};
 
@@ -58,7 +58,7 @@ impl From<String> for RemoteConnectError {
 pub fn connect_remote(
     target: &RemoteTarget,
     session: &str,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
 ) -> Result<(IpcConnection, RemotePreamble), RemoteConnectError> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err(RemoteConnectError::Message(
@@ -144,7 +144,7 @@ pub fn connect_remote(
 pub fn kill_remote_session(
     target: &RemoteTarget,
     session: &str,
-    config: &HyprmuxRemoteConfig,
+    config: &RemoteConfig,
 ) -> Result<(), String> {
     if !crate::session::discovery::valid_attach_target(session) {
         return Err("invalid session name".to_string());
@@ -201,12 +201,12 @@ fn spawn_stderr_collector(mut stderr: ChildStderr) -> thread::JoinHandle<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::HyprmuxRemoteConfig;
+    use crate::config::RemoteConfig;
 
     #[test]
     fn kill_remote_session_rejects_hostile_session_before_spawning_ssh() {
         let target = RemoteTarget::Alias("workbox".to_string());
-        let config = HyprmuxRemoteConfig::default();
+        let config = RemoteConfig::default();
         for session in ["dev;touch /tmp/pwned", "dev\nnext", "dev\u{1b}[31m"] {
             let error = kill_remote_session(&target, session, &config)
                 .expect_err("hostile session must be rejected before ssh");
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn kill_remote_session_rejects_hostile_configured_executable_before_spawning_ssh() {
         let target = RemoteTarget::Alias("workbox".to_string());
-        let mut config = HyprmuxRemoteConfig::default();
+        let mut config = RemoteConfig::default();
         config.hosts.insert(
             "workbox".to_string(),
             crate::config::RemoteHostConfig {

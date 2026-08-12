@@ -1,12 +1,12 @@
 use tui_lipan::prelude::*;
 use tui_lipan::style::ThemeRole;
 
-use crate::config::{BadgeColor, HyprmuxPaneConfig};
+use crate::config::{BadgeColor, PaneConfig};
 use crate::state::{
     AlertMode, LayoutKind, Pane, PaneBorderMode, PaneId, PaneTitlebarMode, TileGap, Workspace,
 };
 use crate::tiling::PanePlacement;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 use super::integrated_scrollbar_config;
 use super::keys::{pane_body_key, pane_terminal_key, pane_window_key};
@@ -76,7 +76,7 @@ fn pane_scrollbar_variant(border_mode: PaneBorderMode) -> ScrollbarVariant {
 pub(crate) fn pane_alert(
     pane: &Pane,
     focused: bool,
-    config: &HyprmuxPaneConfig,
+    config: &PaneConfig,
 ) -> Option<(crate::state::PaneAlert, BadgeColor)> {
     if focused
         || pane.closing
@@ -139,7 +139,7 @@ pub(crate) fn has_pane_alert(state: &crate::state::State) -> bool {
 fn pane_alert_pulses(
     theme: &Theme,
     color: BadgeColor,
-    config: &HyprmuxPaneConfig,
+    config: &PaneConfig,
     armed: bool,
     animations: crate::anim::WindowAnimationConfig,
 ) -> bool {
@@ -153,8 +153,8 @@ fn pane_alert_pulses(
 /// A pane's titlebar background: the active border color when focused, otherwise the neutral
 /// surface element color, honoring any per-pane `title-bg` chrome override.
 pub(crate) fn pane_title_bg(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     pane_id: PaneId,
     focused: bool,
 ) -> Paint {
@@ -204,8 +204,8 @@ struct TitleParts {
 }
 
 fn title_parts(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
 ) -> TitleParts {
@@ -290,8 +290,8 @@ fn title_parts(
 /// `border` embeds the icon and title in the line (like a Frame border header). `integrated`
 /// fills the whole divider row with the titlebar strip, replacing the line.
 pub(crate) fn divider_title_element(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
 ) -> Option<Element> {
@@ -427,8 +427,8 @@ pub(crate) struct SeamTitle {
 /// Only plain tiles reach a seam - floating and fullscreen panes never merge - so there is no
 /// badge to place here.
 pub(crate) fn seam_title_element(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     pane: &Pane,
     focused_pane: Option<PaneId>,
 ) -> Option<SeamTitle> {
@@ -565,8 +565,8 @@ fn integrated_half_titlebar_top_edge(title_bg: Paint, frame_bg: Paint) -> EdgeDe
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pane_element(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     pane: &Pane,
     animated_rect: FloatRect,
     effective_focus: Option<PaneId>,
@@ -1125,10 +1125,7 @@ pub(crate) fn pane_element(
 /// Returned separately from the screen so the widget can re-apply them to whatever the screen
 /// reports at paint time. Both sources depend only on hint/search state, and a change in either
 /// already warrants a full frame of its own.
-fn terminal_decorations_for_pane(
-    ctx: &Context<HyprmuxApp>,
-    pane: &Pane,
-) -> Vec<TerminalDecoration> {
+fn terminal_decorations_for_pane(ctx: &Context<AppRoot>, pane: &Pane) -> Vec<TerminalDecoration> {
     if let Some(hints) = ctx
         .state
         .hint_mode
@@ -1210,7 +1207,7 @@ fn terminal_decorations_for_pane(
     decorations
 }
 
-fn search_highlight_query(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<&str> {
+fn search_highlight_query(ctx: &Context<AppRoot>, id: PaneId) -> Option<&str> {
     let search = ctx.state.search.as_ref()?;
     let query = search.input.text().trim();
     if query.is_empty() || search.matches.is_empty() {
@@ -1224,7 +1221,7 @@ fn search_highlight_query(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<&str>
 }
 
 fn active_search_highlight(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     pane: &Pane,
 ) -> Option<crate::pane::TerminalSearchHighlight> {
     let search = ctx.state.search.as_ref()?;
@@ -1262,7 +1259,7 @@ fn active_search_match_style() -> Style {
 /// the gap is zero, so the strip straddles the shared seam column/row (one cell thick) instead of
 /// filling a gap.
 pub(crate) fn tiled_resize_strips(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     placements: &[PanePlacement],
     workspace: &Workspace,
 ) -> Vec<(FloatRect, Element)> {
@@ -1510,7 +1507,7 @@ fn strip_pointer_owner(near: PaneId, far: PaneId, boundary: u16, along: u16) -> 
 /// press on a divider is almost always the start of a drag, not a request to select the pane
 /// under it - so only a drag resizes the split.
 fn resize_strip_element(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     strip: &ResizeStripHitbox,
     horizontal_split: bool,
 ) -> Element {
@@ -1540,7 +1537,7 @@ fn resize_strip_element(
 }
 
 fn resize_junction_element(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     junction: ResizeJunctionHitbox,
     left_offset: f32,
     top_offset: f32,
@@ -1624,7 +1621,7 @@ fn junction_target_at(targets: &[ResizeJunctionTarget], along: f32) -> Option<Pa
 
 /// Controlled selection for the copy-mode target pane. With no anchor it highlights just the
 /// cursor cell; with an anchor it spans anchor→cursor inclusive (matching copy extraction).
-fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<TerminalSelection> {
+fn copy_mode_selection(ctx: &Context<AppRoot>, id: PaneId) -> Option<TerminalSelection> {
     let copy = ctx
         .state
         .copy_mode
@@ -1644,7 +1641,7 @@ fn copy_mode_selection(ctx: &Context<HyprmuxApp>, id: PaneId) -> Option<Terminal
     Some(selection_for_render(&selection))
 }
 
-fn copy_mode_is_cursor_only(ctx: &Context<HyprmuxApp>, id: PaneId) -> bool {
+fn copy_mode_is_cursor_only(ctx: &Context<AppRoot>, id: PaneId) -> bool {
     ctx.state
         .copy_mode
         .as_ref()
@@ -1690,7 +1687,7 @@ mod tests {
 
     #[test]
     fn pane_alert_obeys_precedence_and_all_gates() {
-        let mut config = HyprmuxPaneConfig::default();
+        let mut config = PaneConfig::default();
         let mut pane = alert_test_pane();
         pane.terminal.reported_status = Some(crate::session::protocol::PaneStatus {
             value: "blocked".into(),
@@ -1747,9 +1744,9 @@ mod tests {
     #[test]
     fn static_alert_borders_stay_at_peak_while_tab_pulse_uses_the_shared_phase() {
         let theme = crate::state::ThemePreset::OneDark.theme();
-        let mut config = HyprmuxPaneConfig {
+        let mut config = PaneConfig {
             alert_border: AlertMode::Static,
-            ..HyprmuxPaneConfig::default()
+            ..PaneConfig::default()
         };
         assert!(!pane_alert_pulses(
             &theme,

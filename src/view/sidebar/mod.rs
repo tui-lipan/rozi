@@ -10,9 +10,9 @@ pub(crate) use row::RowTarget;
 use tui_lipan::prelude::*;
 
 use crate::config::SidebarTab;
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
-pub(super) fn sidebar(ctx: &Context<HyprmuxApp>) -> Element {
+pub(super) fn sidebar(ctx: &Context<AppRoot>) -> Element {
     let theme = &ctx.state.theme;
     let panels: Element = if ctx.state.sidebar.panels.len() > 1 {
         let divider_style = Style::new()
@@ -66,7 +66,7 @@ pub(super) fn sidebar(ctx: &Context<HyprmuxApp>) -> Element {
         .into()
 }
 
-fn panel(ctx: &Context<HyprmuxApp>, panel: usize) -> Element {
+fn panel(ctx: &Context<AppRoot>, panel: usize) -> Element {
     let tabs = panel_tabs(&ctx.state, panel);
     let active_id = ctx.state.sidebar.active_tab_in(panel);
     let active = active_id
@@ -175,7 +175,7 @@ pub(crate) fn panel_from_bar_id(id: &str) -> Option<usize> {
 }
 
 /// A body with nothing to list. Stays focusable so `focus-sidebar` still has a target here.
-fn empty_body(ctx: &Context<HyprmuxApp>, panel: usize, text: Option<&str>) -> Element {
+fn empty_body(ctx: &Context<AppRoot>, panel: usize, text: Option<&str>) -> Element {
     let mut view = ScrollView::new()
         .focusable(true)
         .scroll_keys(ScrollKeymap::NONE);
@@ -219,11 +219,11 @@ pub(super) fn workspace_heading(state: &crate::state::State, index: usize) -> St
 }
 
 /// The configured tab currently showing, resolved the same way the view resolves it.
-pub(crate) fn active_tab(ctx: &Context<HyprmuxApp>) -> Option<&SidebarTab> {
+pub(crate) fn active_tab(ctx: &Context<AppRoot>) -> Option<&SidebarTab> {
     active_tab_in(ctx, ctx.state.sidebar.active_panel)
 }
 
-pub(crate) fn active_tab_in(ctx: &Context<HyprmuxApp>, panel: usize) -> Option<&SidebarTab> {
+pub(crate) fn active_tab_in(ctx: &Context<AppRoot>, panel: usize) -> Option<&SidebarTab> {
     active_tab_in_state(&ctx.state, panel)
 }
 
@@ -251,11 +251,11 @@ pub(crate) fn agent_durations(state: &crate::state::State) -> Option<String> {
 /// The element key `focus-sidebar` aims at. The file tree remounts under a root-derived key so
 /// switching projects does not inherit another directory's expansion state, so the focus target has
 /// to be derived from state rather than assumed constant.
-pub(crate) fn body_focus_key(ctx: &Context<HyprmuxApp>) -> String {
+pub(crate) fn body_focus_key(ctx: &Context<AppRoot>) -> String {
     body_focus_key_for(ctx, ctx.state.sidebar.active_panel)
 }
 
-pub(crate) fn body_focus_key_for(ctx: &Context<HyprmuxApp>, panel: usize) -> String {
+pub(crate) fn body_focus_key_for(ctx: &Context<AppRoot>, panel: usize) -> String {
     match active_tab_in(ctx, panel) {
         Some(SidebarTab::Tree { view, config }) => tree::tree_root(ctx, config)
             .map(|root| {
@@ -277,7 +277,7 @@ pub(crate) fn body_key(panel: usize) -> String {
 /// Every sidebar row, in display order, for whichever tab is active. Pure in `State`, which is what
 /// lets `update` rebuild the same list to resolve an activated index — so Enter and a click reach
 /// the same handler instead of two callbacks that can drift apart.
-pub(crate) fn body_rows(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
+pub(crate) fn body_rows(ctx: &Context<AppRoot>, tab: &SidebarTab) -> Vec<row::SidebarRow> {
     match tab {
         SidebarTab::Panes => panes::panes_rows(ctx),
         SidebarTab::Agents => agents::agents_rows(ctx),
@@ -293,7 +293,7 @@ pub(crate) fn body_rows(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> Vec<row:
 
 /// The message a tab shows in place of rows. Distinct from "loading" for command tabs, where an
 /// absent entry means the first poll has not landed yet.
-fn empty_text(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> &'static str {
+fn empty_text(ctx: &Context<AppRoot>, tab: &SidebarTab) -> &'static str {
     match tab {
         SidebarTab::Panes => "No panes",
         SidebarTab::Agents => "No agents detected",
@@ -315,7 +315,7 @@ fn empty_text(ctx: &Context<HyprmuxApp>, tab: &SidebarTab) -> &'static str {
 /// Rows are direct `ScrollView` children so each can carry its own key — that is what lets
 /// `scroll_to_key` follow the cursor. Nesting them inside one stack would make the whole body a
 /// single child and scrolling would only ever resolve to the top of it.
-fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Element {
+fn row_list(ctx: &Context<AppRoot>, panel: usize, tab: &SidebarTab) -> Element {
     let rows = body_rows(ctx, tab);
     if rows.is_empty() {
         return empty_body(ctx, panel, Some(empty_text(ctx, tab)));
@@ -402,7 +402,7 @@ fn row_list(ctx: &Context<HyprmuxApp>, panel: usize, tab: &SidebarTab) -> Elemen
 /// warning on screen. `suppress_row_hover` gates the hover case the same way the row's hover lift
 /// is gated, so keyboard navigation does not leave a ✕ behind under a stale pointer.
 fn close_affordance(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     panel: usize,
     row: &row::SidebarRow,
     index: usize,
@@ -442,11 +442,7 @@ pub(crate) fn resolve_cursor(cursor: usize, rows: &[row::SidebarRow]) -> Option<
         })
 }
 
-fn cursor_index(
-    ctx: &Context<HyprmuxApp>,
-    panel: usize,
-    rows: &[row::SidebarRow],
-) -> Option<usize> {
+fn cursor_index(ctx: &Context<AppRoot>, panel: usize, rows: &[row::SidebarRow]) -> Option<usize> {
     resolve_cursor(ctx.state.sidebar.panels[panel].cursor, rows)
 }
 
@@ -473,7 +469,7 @@ pub(super) fn row_highlight(theme: &Theme) -> Style {
     Style::new().bg(theme.surface.element.elevate_by(super::HOVER_LIFT))
 }
 
-pub(super) fn placeholder(ctx: &Context<HyprmuxApp>, text: &str) -> Element {
+pub(super) fn placeholder(ctx: &Context<AppRoot>, text: &str) -> Element {
     VStack::new()
         .padding((0, 0, 0, 1))
         .child(Text::new(text.to_string()).style(super::fg_only(&ctx.state.theme.muted)))
@@ -487,7 +483,7 @@ mod tests {
     #[test]
     fn workspace_labels_keep_the_number_visible_and_ignore_blank_names() {
         let mut state = crate::state::State::new(
-            crate::config::HyprmuxConfig::default(),
+            crate::config::Config::default(),
             tui_lipan::prelude::Theme::default(),
         );
         assert_eq!(workspace_badge(&state, 1), "2");

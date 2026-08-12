@@ -11,7 +11,7 @@
 //! display *status* is derived from that plus the live attachments at render time (see
 //! [`HostRegistry::status_for`]).
 
-use crate::config::HyprmuxRemoteConfig;
+use crate::config::RemoteConfig;
 use crate::session::remote::{RemoteTarget, parse_remote_target};
 
 /// Where a known host came from. Ordered so configured hosts sort ahead of ad-hoc recents, which in
@@ -118,7 +118,7 @@ impl HostRegistry {
     /// Recent wins over Attached) so it renders and sorts as the more permanent thing it is.
     pub fn seed(
         &mut self,
-        remote_config: &HyprmuxRemoteConfig,
+        remote_config: &RemoteConfig,
         recents: &[String],
         held: &[(RemoteTarget, String)],
     ) {
@@ -219,8 +219,8 @@ mod tests {
     use super::*;
     use crate::config::RemoteHostConfig;
 
-    fn config(hosts: &[&str], default_host: Option<&str>) -> HyprmuxRemoteConfig {
-        let mut cfg = HyprmuxRemoteConfig::default();
+    fn config(hosts: &[&str], default_host: Option<&str>) -> RemoteConfig {
+        let mut cfg = RemoteConfig::default();
         for host in hosts {
             cfg.hosts
                 .insert((*host).to_string(), RemoteHostConfig::default());

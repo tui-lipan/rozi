@@ -1,7 +1,7 @@
 use tui_lipan::prelude::*;
 
 use super::row::{Row, RowTarget, SidebarRow};
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::session::discovery::{DiscoveredSession, DiscoveredSessionStatus};
 use crate::session::remote::RemoteTarget;
 use crate::state::{ConnectionState, HostEntry, HostStatus};
@@ -35,10 +35,7 @@ fn shared_client_count(entry: &DiscoveredSession, we_hold: bool) -> Option<u32> 
 
 /// The connection state of every live attachment (current or retained) on `target`. Feeds the host
 /// header's status dot, which describes the *host*, not any one session.
-fn attachment_connections(
-    ctx: &Context<HyprmuxApp>,
-    target: &RemoteTarget,
-) -> Vec<ConnectionState> {
+fn attachment_connections(ctx: &Context<AppRoot>, target: &RemoteTarget) -> Vec<ConnectionState> {
     std::iter::once(ctx.state.current())
         .chain(ctx.state.background.values())
         .filter(|attachment| attachment.remote_target.as_ref() == Some(target))
@@ -59,7 +56,7 @@ fn status_face(theme: &Theme, status: HostStatus) -> (&'static str, &'static str
 }
 
 /// One live session row: name, current/background/reconnecting state, panes, and origin.
-fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarRow {
+fn session_row(ctx: &Context<AppRoot>, entry: &DiscoveredSession) -> SidebarRow {
     let current = ctx.state.current().session_name.as_deref() == Some(entry.name.as_str())
         && ctx.state.current().remote_host == entry.host
         && ctx.state.current().remote_target == entry.remote_target;
@@ -105,7 +102,7 @@ fn session_row(ctx: &Context<HyprmuxApp>, entry: &DiscoveredSession) -> SidebarR
 /// Deliberately has no ✕: the host is offline, so there is nothing there to kill, and the row is a
 /// memory of a session rather than a live one.
 fn cached_session_row(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     host: &HostEntry,
     cached: &crate::session::CachedHostSession,
 ) -> SidebarRow {
@@ -141,7 +138,7 @@ fn cached_session_row(
 /// row list wraps the title and description in one `MouseRegion`. `LOCAL` remains a one-line,
 /// inert header.
 fn header_row(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     label: &str,
     remote: Option<(HostStatus, &RemoteTarget)>,
 ) -> SidebarRow {
@@ -186,7 +183,7 @@ fn header_row(
 }
 
 /// The muted "nothing here" line for a group with no sessions to list.
-fn empty_row(ctx: &Context<HyprmuxApp>, text: &str) -> SidebarRow {
+fn empty_row(ctx: &Context<AppRoot>, text: &str) -> SidebarRow {
     SidebarRow::item(
         Row::new(text).title_style(super::super::fg_only(&ctx.state.theme.muted)),
         RowTarget::Inert,
@@ -194,13 +191,13 @@ fn empty_row(ctx: &Context<HyprmuxApp>, text: &str) -> SidebarRow {
 }
 
 /// A child-level "＋ …" action row within a session group.
-fn session_action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> SidebarRow {
+fn session_action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
     let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(Row::new(format!("+ {label}")).title_style(style), target)
 }
 
 /// A group-level "＋ …" action row (connect a host).
-fn action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> SidebarRow {
+fn action_row(ctx: &Context<AppRoot>, label: &str, target: RowTarget) -> SidebarRow {
     let style = super::super::fg_only(&ctx.state.theme.accent);
     SidebarRow::item(
         Row::new(label)
@@ -210,7 +207,7 @@ fn action_row(ctx: &Context<HyprmuxApp>, label: &str, target: RowTarget) -> Side
     )
 }
 
-pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
+pub(super) fn sessions_rows(ctx: &Context<AppRoot>) -> Vec<SidebarRow> {
     let mut rows = Vec::new();
 
     // Local group: always present, always available.
@@ -303,7 +300,7 @@ pub(super) fn sessions_rows(ctx: &Context<HyprmuxApp>) -> Vec<SidebarRow> {
 
 /// The inline reason under a host that failed to connect: a short phrase naming what to go fix, not
 /// the ssh/plumbing message behind it — see [`crate::session::discovery::probe_failure_reason`].
-fn empty_row_error(ctx: &Context<HyprmuxApp>, error: &str) -> SidebarRow {
+fn empty_row_error(ctx: &Context<AppRoot>, error: &str) -> SidebarRow {
     SidebarRow::item(
         Row::new(crate::session::discovery::probe_failure_reason(error))
             // Aligned with the host row above rather than indented under it: this says something

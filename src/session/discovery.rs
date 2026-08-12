@@ -171,7 +171,7 @@ pub fn query_session_endpoint(name: &str, endpoint: &IpcEndpoint) -> Option<Disc
 /// Discover sessions from a local runtime dir or a remote host (one ssh round-trip).
 pub fn discover_sessions_from(
     source: &SessionSource,
-    config: &crate::config::HyprmuxRemoteConfig,
+    config: &crate::config::RemoteConfig,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     match source {
         SessionSource::Local => discover_sessions(),
@@ -236,7 +236,7 @@ pub fn probe_failure_reason(error: &str) -> &'static str {
 
 fn discover_remote_sessions(
     target: &crate::session::remote::RemoteTarget,
-    config: &crate::config::HyprmuxRemoteConfig,
+    config: &crate::config::RemoteConfig,
 ) -> std::io::Result<Vec<DiscoveredSession>> {
     use std::process::Stdio;
 

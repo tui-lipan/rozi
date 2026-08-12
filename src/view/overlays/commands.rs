@@ -1,4 +1,4 @@
-pub(crate) fn palette_overlay(ctx: &Context<HyprmuxApp>) -> Element {
+pub(crate) fn palette_overlay(ctx: &Context<AppRoot>) -> Element {
     // Commands (labels, categories, live keybinding hints, and the handler to run) come
     // straight from the registry `commands.rs` builds. Only palette-eligible ids appear here
     // (see `commands::is_palette_eligible`); the help overlay remains the full reference,

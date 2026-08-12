@@ -7,7 +7,7 @@
 
 use tui_lipan::prelude::*;
 
-use crate::app::HyprmuxApp;
+use crate::app::AppRoot;
 use crate::session::protocol::AgentSlot;
 use crate::state::PaneId;
 
@@ -16,7 +16,7 @@ use crate::state::PaneId;
 /// One pane publishes one list, so a second stream means the first is stale - a publisher that
 /// restarted inside a `keep_open` pane, say. Dropping the old sender closes it.
 pub(crate) fn stream_opened(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
     sender: std::sync::mpsc::SyncSender<String>,
 ) -> Update {
@@ -27,7 +27,7 @@ pub(crate) fn stream_opened(
 /// Publish a pane's slots to the session server, which owns their run clocks and broadcasts them
 /// to every attached client.
 pub(crate) fn slots_reported(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pane_id: PaneId,
     slots: Vec<AgentSlot>,
 ) -> Update {
@@ -44,7 +44,7 @@ pub(crate) fn slots_reported(
 }
 
 /// Withdraw a pane's slots because its publisher went away.
-pub(crate) fn stream_closed(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId) -> Update {
+pub(crate) fn stream_closed(ctx: &mut Context<AppRoot>, pane_id: PaneId) -> Update {
     if ctx.state.agent_slot_streams.remove(&pane_id).is_none() {
         return Update::none();
     }
@@ -87,11 +87,11 @@ mod tests {
     }
 
     /// Run on a worker thread with a large stack, matching the other `TestBackend` control tests.
-    fn with_backend(body: impl FnOnce(&mut TestBackend<crate::HyprmuxApp>) + Send + 'static) {
+    fn with_backend(body: impl FnOnce(&mut TestBackend<crate::AppRoot>) + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 body(&mut backend);
             })
             .expect("spawn test thread")
@@ -99,7 +99,7 @@ mod tests {
             .expect("test thread panicked");
     }
 
-    fn attach(backend: &mut TestBackend<crate::HyprmuxApp>) -> mpsc::Receiver<ClientOutbound> {
+    fn attach(backend: &mut TestBackend<crate::AppRoot>) -> mpsc::Receiver<ClientOutbound> {
         let (client, outbound) = SessionClient::test_channel();
         let state = backend.state_mut();
         state.current_mut().session_attached = true;

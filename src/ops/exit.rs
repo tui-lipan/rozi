@@ -2,13 +2,13 @@ use std::time::Instant;
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::pane_lifecycle::close_pane;
 use crate::profiles;
 use crate::pty_events::confirm_toast;
 use crate::state::{PendingDestructive, PendingDestructiveConfirmation, SessionDisposition, State};
 
-pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn clear_pending(ctx: &mut Context<AppRoot>) {
     if let Some(pending) = ctx.state.pending_destructive.take() {
         ctx.toast().dismiss(pending.toast_id);
     }
@@ -22,7 +22,7 @@ pub(crate) fn clear_pending(ctx: &mut Context<HyprmuxApp>) {
 /// is invisible. The confirm toast runs for the same window, which is what tells the user the
 /// confirmation is over.
 fn confirm_second_press(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     pending: PendingDestructive,
     toast: Toast,
 ) -> bool {
@@ -57,7 +57,7 @@ fn confirm_second_press(
 ///
 /// Both `quit` and `detach` land here. Cancelling the prompt (`Esc`) returns to the session with
 /// nothing torn down.
-pub(crate) fn leave_client(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn leave_client(ctx: &mut Context<AppRoot>) -> Update {
     crate::popup::kill_if_open(ctx);
     crate::update::flush_layout_commit(ctx);
     clear_pending(ctx);
@@ -82,7 +82,7 @@ pub(crate) fn leave_client(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Leave for real. `close_temporary` is the user's answer to the leave prompt: with it set, the
 /// temporary sessions that prompt was about are closed; without it, everything that can keep
 /// running does. Every path out of the client ends here.
-pub(crate) fn leave_client_now(ctx: &mut Context<HyprmuxApp>, close_temporary: bool) -> Update {
+pub(crate) fn leave_client_now(ctx: &mut Context<AppRoot>, close_temporary: bool) -> Update {
     clear_pending(ctx);
     crate::popup::kill_if_open(ctx);
     let shutdown_current = shutdown_on_exit(ctx.state.current(), close_temporary);
@@ -136,7 +136,7 @@ fn keepable_temporary_count(state: &State) -> usize {
 
 /// Mark the current session as intentionally left and emit its hook event exactly once.
 /// Callers must flush pending layout changes before entering this transition.
-pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Option<&str>) {
+pub(crate) fn mark_session_detached(ctx: &mut Context<AppRoot>, session: Option<&str>) {
     if !ctx.state.current().session_attached {
         return;
     }
@@ -164,7 +164,7 @@ pub(crate) fn mark_session_detached(ctx: &mut Context<HyprmuxApp>, session: Opti
 /// usually followed by the emulator exiting). So a temporary session skips the "name it first" flow
 /// and simply detaches: its server shuts itself down after the no-client grace period, which is the
 /// right outcome for a session nobody can reattach to by name anyway.
-pub(crate) fn detach_on_hangup(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn detach_on_hangup(ctx: &mut Context<AppRoot>) -> Update {
     crate::update::flush_layout_commit(ctx);
     mark_session_detached(ctx, None);
     if let Some(client) = ctx.state.current().session_client.clone() {
@@ -185,13 +185,13 @@ pub(crate) fn any_pane_live(state: &State) -> bool {
 /// Leave the client without ever raising the leave prompt, preserving everything that can be
 /// preserved. Used where there is nobody to answer a question: the control socket, which is
 /// scripted, and any other non-interactive caller. A scripted exit must never destroy a session.
-pub(crate) fn leave_client_unattended(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn leave_client_unattended(ctx: &mut Context<AppRoot>) -> Update {
     crate::update::flush_layout_commit(ctx);
     leave_client_now(ctx, false)
 }
 
 pub(crate) fn close_focused_pane_with_confirmation(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,
 ) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
@@ -221,7 +221,7 @@ pub(crate) fn close_focused_pane_with_confirmation(
 }
 
 pub(crate) fn kill_workspace_with_confirmation(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,
 ) -> Update {
     let workspace_index = ctx.state.current().active_workspace;
@@ -291,7 +291,7 @@ pub(crate) fn kill_workspace_with_confirmation(
 }
 
 pub(crate) fn kill_session_with_confirmation(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
@@ -330,7 +330,7 @@ pub(crate) fn kill_session_with_confirmation(
 }
 
 pub(crate) fn restart_session_with_confirmation(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     confirmations_enabled: bool,
 ) -> Update {
     if !ctx.state.current().session_attached {
@@ -368,7 +368,7 @@ pub(crate) fn restart_session_with_confirmation(
     crate::ops::session::restart_current_session(ctx)
 }
 
-pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<HyprmuxApp>) -> bool {
+pub(crate) fn confirm_new_temporary_session(ctx: &mut Context<AppRoot>) -> bool {
     let pending = PendingDestructive::NewTemporarySession;
     let toast = confirm_toast(
         &ctx.state.theme,
@@ -391,8 +391,8 @@ mod tests {
     use std::time::Duration;
     use tui_lipan::TestBackend;
 
-    fn confirming_backend() -> TestBackend<HyprmuxApp> {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+    fn confirming_backend() -> TestBackend<AppRoot> {
+        let mut backend = TestBackend::new(AppRoot::default());
         let (client, _rx) = SessionClient::test_channel();
         let state = backend.state_mut();
         state.current_mut().session_name = Some("eph-confirm".to_string());
@@ -415,7 +415,7 @@ mod tests {
         backend
     }
 
-    fn press_new_temporary(backend: &mut TestBackend<HyprmuxApp>) {
+    fn press_new_temporary(backend: &mut TestBackend<AppRoot>) {
         backend
             .dispatch(Msg::RunAction(Action::NewTemporarySession))
             .expect("dispatch new temporary session");
@@ -431,11 +431,11 @@ mod tests {
     }
 
     fn named_attached_backend() -> (
-        TestBackend<HyprmuxApp>,
+        TestBackend<AppRoot>,
         std::sync::mpsc::Receiver<ClientOutbound>,
         std::sync::mpsc::Receiver<String>,
     ) {
-        let mut backend = TestBackend::new(HyprmuxApp::default());
+        let mut backend = TestBackend::new(AppRoot::default());
         let (client, outbound) = SessionClient::test_channel();
         let events = {
             let state = backend.state_mut();
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn killing_a_scrollable_workspace_resolves_focus_once_after_batch_teardown() {
         on_large_stack(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(tui_lipan::prelude::Rect {
                 x: 0,
                 y: 0,

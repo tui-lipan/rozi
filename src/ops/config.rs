@@ -5,7 +5,7 @@ use notify::Watcher;
 use tui_lipan::prelude::*;
 
 use crate::state::{PaneIdentity, ThemePreset};
-use crate::{HyprmuxApp, Msg};
+use crate::{AppRoot, Msg};
 
 /// Watches the config file's directory and requests a live reload when `hyprmux.toml` changes
 /// on disk. Watching the parent directory (like tui-lipan's `ThemeWatcher`) catches editors
@@ -76,7 +76,7 @@ fn event_touches_config(event: &notify::Event, target: &std::path::Path) -> bool
 
 /// Handles a config-watcher wakeup: reloads only when the file content actually differs from
 /// what hyprmux last read or wrote, so self-persistence and no-op saves stay silent.
-pub(crate) fn config_file_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn config_file_changed(ctx: &mut Context<AppRoot>) -> Update {
     if !crate::config::config_text_changed_on_disk() {
         return Update::none();
     }
@@ -88,7 +88,7 @@ pub(crate) fn config_file_changed(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Re-reads `hyprmux.toml` and applies it live: config fields, keymap/user commands, theme
 /// (including switching the theme file watcher), and pane chrome - the same result a restart
 /// would produce, without losing running panes/workspaces/session state.
-pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     let loaded = crate::config::load_config();
     let new_config = loaded.config;
 
@@ -170,7 +170,7 @@ pub(crate) fn reload_config(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Opens `hyprmux.toml` in `$EDITOR` (falling back to `$VISUAL`, then `vi`) in a new pane, so
 /// hand-editing the config doesn't require remembering or typing its path.
-pub(crate) fn open_config_file(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn open_config_file(ctx: &mut Context<AppRoot>) -> Update {
     let editor = config_editor();
     if let Some(command) = missing_editor_command(&editor) {
         crate::pty_events::notify_error(

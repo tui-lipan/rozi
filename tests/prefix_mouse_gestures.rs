@@ -1,4 +1,4 @@
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use tui_lipan::TestBackend;
 use tui_lipan::core::event::{MouseButton, MouseKind};
 use tui_lipan::prelude::*;
@@ -26,11 +26,11 @@ fn mouse(x: u16, y: u16, kind: MouseKind) -> MouseEvent {
     }
 }
 
-fn backend() -> TestBackend<HyprmuxApp> {
+fn backend() -> TestBackend<AppRoot> {
     let app = App::new()
         .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
         .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal);
-    let mut backend = TestBackend::new_with_app(app, HyprmuxApp::default(), ());
+    let mut backend = TestBackend::new_with_app(app, AppRoot::default(), ());
     backend.set_viewport(VIEWPORT);
     {
         let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];

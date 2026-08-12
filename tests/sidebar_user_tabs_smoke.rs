@@ -1,4 +1,4 @@
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::config::{SidebarLauncherEntry, SidebarTab, SidebarTabId, UserCommandAction};
 use hyprmux::state::{SidebarCommandOutput, SidebarCommandRow};
 use tui_lipan::TestBackend;
@@ -8,7 +8,7 @@ fn sidebar_lines(tab: SidebarTab) -> Vec<String> {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -99,7 +99,7 @@ fn read_only_command_output_has_one_cell_of_leading_padding() {
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
             let tab_id = SidebarTabId::new("branches");
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

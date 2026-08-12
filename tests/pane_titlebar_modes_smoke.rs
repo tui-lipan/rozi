@@ -1,7 +1,7 @@
 //! Pins the visible pane titlebar layouts and their independent visibility switch against a real
-//! `HyprmuxApp` render. Only `Bar` may add a row before the frame.
+//! `AppRoot` render. Only `Bar` may add a row before the frame.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::state::{Pane, PaneId, PaneTitlebarMode};
 use hyprmux::tiling::build_dwindle_tree;
 use tui_lipan::TestBackend;
@@ -25,7 +25,7 @@ fn render_capture(
     floating: bool,
     highlight_focused_titlebar: bool,
 ) -> tui_lipan::CapturedFrame {
-    let mut backend = TestBackend::new(HyprmuxApp::default());
+    let mut backend = TestBackend::new(AppRoot::default());
     backend.set_viewport(Rect {
         x: 0,
         y: 0,

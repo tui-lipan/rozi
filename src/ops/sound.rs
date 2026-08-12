@@ -1,10 +1,10 @@
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::platform::sound::Cue;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tui_lipan::prelude::Context;
 
-pub(crate) fn cue(ctx: &mut Context<HyprmuxApp>, cue: Cue) {
+pub(crate) fn cue(ctx: &mut Context<AppRoot>, cue: Cue) {
     let sounds = &ctx.state.config.sounds;
     if ctx.state.do_not_disturb
         || !sounds.enabled

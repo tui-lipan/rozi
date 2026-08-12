@@ -9,7 +9,7 @@
 
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::ops::focus::request_current_pane_focus;
 use crate::state::{OverlayOrigin, State};
 
@@ -43,7 +43,7 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
 /// A picker is rebuilt (its rows are cheap to rediscover) and then handed back the query and
 /// highlighted row it had, so returning lands on the same view rather than the top of an
 /// unfiltered list.
-pub(crate) fn restore(ctx: &mut Context<HyprmuxApp>) -> Option<Update> {
+pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
     match ctx.state.overlay_return.take()? {
         OverlayOrigin::Appearance => {
             ctx.state.show_appearance = true;
@@ -88,7 +88,7 @@ pub(crate) fn restore(ctx: &mut Context<HyprmuxApp>) -> Option<Update> {
 }
 
 /// Close a child dialog: back to its parent when it had one, otherwise to the focused pane.
-pub(crate) fn finish(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn finish(ctx: &mut Context<AppRoot>) -> Update {
     match restore(ctx) {
         Some(update) => update,
         None => {
@@ -100,7 +100,7 @@ pub(crate) fn finish(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Drop the recorded parent without reopening it, for the paths that finish a workflow the parent
 /// cannot survive (attaching to a session, detaching, replacing the layout). Focus is the caller's.
-pub(crate) fn leave(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn leave(ctx: &mut Context<AppRoot>) {
     ctx.state.overlay_return = None;
 }
 
@@ -110,15 +110,15 @@ mod tests {
     use tui_lipan::prelude::Rect;
 
     use crate::state::{AppearanceAction, ProfilePickerState, SessionPickerState};
-    use crate::{HyprmuxApp, Msg};
+    use crate::{AppRoot, Msg};
 
-    /// Every case drives a real `HyprmuxApp` through the message router, so the deep component
+    /// Every case drives a real `AppRoot` through the message router, so the deep component
     /// tree needs the same roomy stack the other backend tests use.
-    fn with_backend(body: impl FnOnce(&mut TestBackend<HyprmuxApp>) + Send + 'static) {
+    fn with_backend(body: impl FnOnce(&mut TestBackend<AppRoot>) + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,

@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::config::UserCommandAction;
 use crate::input::Action;
 use crate::ops::focus::{
@@ -23,7 +23,7 @@ use crate::state::{
 
 /// Read the system clipboard and send it to the focused pane's PTY, bracketed-paste wrapped so
 /// shells/editors that opt in treat it as one paste instead of simulated keystrokes.
-fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn paste_from_focused_pane(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::full();
     };
@@ -46,7 +46,7 @@ fn paste_from_focused_pane(ctx: &mut Context<HyprmuxApp>) -> Update {
     Update::full()
 }
 
-fn toggle_pane_logging(ctx: &mut Context<HyprmuxApp>) -> Update {
+fn toggle_pane_logging(ctx: &mut Context<AppRoot>) -> Update {
     let Some(id) = ctx.state.current().focused_pane else {
         return Update::none();
     };
@@ -64,7 +64,7 @@ fn toggle_pane_logging(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Dispatch a `[keys]`-defined user command: `Run` opens a new pane running the shell command
 /// (the same `identity.command` hook the scratchpad and control socket's `NewPane` use), `Send`
 /// writes the literal text straight to the focused pane's PTY.
-fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
+fn run_user_command(ctx: &mut Context<AppRoot>, index: usize) -> Update {
     let Some(command) = ctx.state.config.user_commands.get(index).cloned() else {
         return Update::none();
     };
@@ -72,7 +72,7 @@ fn run_user_command(ctx: &mut Context<HyprmuxApp>, index: usize) -> Update {
 }
 
 pub(crate) fn execute_user_command_action(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: &UserCommandAction,
 ) -> Update {
     execute_user_command_action_with_env(ctx, action, Vec::new())
@@ -85,7 +85,7 @@ pub(crate) fn execute_user_command_action(
 /// `"$VAR"`, which the shell expands as a single word rather than re-parsing for command syntax.
 /// `Send` ignores it: it starts no process, it only types text into an existing one.
 pub(crate) fn execute_user_command_action_with_env(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: &UserCommandAction,
     env: Vec<(String, String)>,
 ) -> Update {
@@ -154,7 +154,7 @@ pub(crate) fn execute_user_command_action_with_env(
 /// own split; otherwise move hyprmux pane focus. The forwarded program is expected to hand focus
 /// back at its split edge via the control socket (`hyprmux run-action focus-<dir>`), which yields
 /// the seamless "one keymap crosses both" behavior.
-fn smart_focus(ctx: &mut Context<HyprmuxApp>, direction: Direction) -> Update {
+fn smart_focus(ctx: &mut Context<AppRoot>, direction: Direction) -> Update {
     if let Some(id) = ctx.state.current().focused_pane
         && focused_pane_forwards_navigation(&ctx.state, id)
     {
@@ -193,7 +193,7 @@ fn navigation_key(direction: Direction) -> KeyEvent {
     }
 }
 
-fn persist_pane_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
+fn persist_pane_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_pane_flag(key, value) {
         crate::pty_events::notify_on(
             ctx,
@@ -212,7 +212,7 @@ macro_rules! toggle_pane_flag {
     }};
 }
 
-fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: bool) {
+fn persist_animation_toggle(ctx: &mut Context<AppRoot>, key: &str, value: bool) {
     if let Err(err) = crate::config::persist_animation_flag(key, value) {
         crate::pty_events::notify_on(
             ctx,
@@ -223,7 +223,7 @@ fn persist_animation_toggle(ctx: &mut Context<HyprmuxApp>, key: &str, value: boo
     }
 }
 
-fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_pane_string(key, value) {
         crate::pty_events::notify_on(
             ctx,
@@ -234,7 +234,7 @@ fn persist_pane_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value:
     }
 }
 
-fn persist_workbar_alert_string_or_toast(ctx: &mut Context<HyprmuxApp>, key: &str, value: &str) {
+fn persist_workbar_alert_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
     if let Err(err) = crate::config::persist_workbar_alert_string(key, value) {
         crate::pty_events::notify_on(
             ctx,
@@ -291,16 +291,16 @@ pub(crate) fn is_blocked_by_scratchpad(state: &crate::state::State, action: Acti
         )
 }
 
-pub(crate) fn execute_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+pub(crate) fn execute_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     execute_action_inner(ctx, action, true)
 }
 
-pub(crate) fn execute_palette_action(ctx: &mut Context<HyprmuxApp>, action: Action) -> Update {
+pub(crate) fn execute_palette_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     execute_action_inner(ctx, action, false)
 }
 
 fn execute_action_inner(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     action: Action,
     confirmations_enabled: bool,
 ) -> Update {
@@ -669,7 +669,7 @@ fn opens_non_alert_overlay(action: Action) -> bool {
 
 /// Alerts is a top-level settings overlay, never a child in `overlay_return`. Starting it abandons
 /// any other modal instead of rendering it under the new palette.
-fn clear_non_alert_overlays(ctx: &mut Context<HyprmuxApp>) {
+fn clear_non_alert_overlays(ctx: &mut Context<AppRoot>) {
     crate::ops::theme::cancel_theme_picker(ctx);
     if ctx.state.show_layout_picker || ctx.state.layout_picker.is_some() {
         let _ = crate::ops::layout_picker::cancel_layout_picker(ctx);
@@ -700,8 +700,7 @@ mod tests {
 
     #[test]
     fn layout_mutating_classification_gates_structure_not_navigation() {
-        let state =
-            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+        let state = crate::state::State::new(crate::config::Config::default(), Theme::default());
         // Structural / geometry actions are gated for followers.
         for action in [
             Action::Spawn,
@@ -743,7 +742,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 assert_eq!(
                     backend
                         .update_level(Msg::RunAction(Action::ToggleDevtools))
@@ -759,7 +758,7 @@ mod tests {
     #[test]
     fn scratchpad_allows_its_toggle_and_sidebar_toggle() {
         let mut state =
-            crate::state::State::new(crate::config::HyprmuxConfig::default(), Theme::default());
+            crate::state::State::new(crate::config::Config::default(), Theme::default());
         state.scratch_visible = true;
 
         for action in [
@@ -791,7 +790,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.state_mut().scratch_visible = true;
                 let before_panes = backend.state().current().workspaces[0].panes.len();
                 let before_focus = backend.state().current().focused_pane;
@@ -820,7 +819,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 let mut blocked = Pane::new(
                     2,
                     100,
@@ -868,7 +867,7 @@ mod tests {
                     w: 100,
                     h: 30,
                 };
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(viewport);
                 let (client, rx) = SessionClient::test_channel();
                 {
@@ -938,7 +937,7 @@ mod tests {
 
     #[test]
     fn follower_layout_action_emits_no_frame_but_focus_still_works() {
-        use crate::HyprmuxApp;
+        use crate::AppRoot;
         use crate::Msg;
         use crate::session::client::{ClientOutbound, SessionClient};
         use crate::session::protocol::ClientMessage;
@@ -948,7 +947,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.set_viewport(Rect {
                     x: 0,
                     y: 0,
@@ -1012,10 +1011,10 @@ mod tests {
     }
 
     /// Run `body` on a thread with enough stack for a `TestBackend`-hosted app.
-    fn with_backend(body: impl FnOnce(tui_lipan::TestBackend<HyprmuxApp>) + Send + 'static) {
+    fn with_backend(body: impl FnOnce(tui_lipan::TestBackend<AppRoot>) + Send + 'static) {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
-            .spawn(move || body(tui_lipan::TestBackend::new(HyprmuxApp::default())))
+            .spawn(move || body(tui_lipan::TestBackend::new(AppRoot::default())))
             .expect("spawn toast test thread")
             .join()
             .expect("toast test thread completes");
@@ -1287,7 +1286,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(HyprmuxApp::default());
+                let mut backend = TestBackend::new(AppRoot::default());
                 backend.state_mut().show_appearance = true;
                 backend.state_mut().pane_padding_editor =
                     Some(PanePaddingEditorState::new((1, 1, 1, 1)));

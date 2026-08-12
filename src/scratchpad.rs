@@ -1,6 +1,6 @@
 use tui_lipan::prelude::*;
 
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::config::{SCRATCHPAD_MAX_HEIGHT, SCRATCHPAD_MIN_HEIGHT};
 use crate::geometry::workspace_tile_bounds;
@@ -46,7 +46,7 @@ fn scratch_slide_rect(
 /// Slide progress for the dropdown: `1.0` fully deployed, `0.0` hidden below the bottom edge.
 /// Sampled every frame from `render` (even while closed) so the keyed transition is seeded at
 /// `0.0` from startup - that way the very first open still slides up instead of snapping in.
-pub(crate) fn scratch_progress(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> f32 {
+pub(crate) fn scratch_progress(app: &AppRoot, ctx: &Context<AppRoot>) -> f32 {
     let target = if ctx.state.scratch_visible && ctx.state.scratch.is_some() {
         1.0
     } else {
@@ -61,7 +61,7 @@ pub(crate) fn scratch_progress(app: &HyprmuxApp, ctx: &Context<HyprmuxApp>) -> f
 
 /// Toggle the scratchpad in/out of view. The first show spawns its shell; later shows reuse
 /// the same live PTY. Hiding keeps the PTY alive and restores the previously focused pane.
-pub(crate) fn toggle(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn toggle(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.commands_dirty = true;
     if ctx.state.scratch_visible {
         ctx.state.scratch_visible = false;
@@ -159,7 +159,7 @@ pub(crate) fn scratch_height_fraction(state: &crate::state::State) -> f32 {
 }
 
 /// The scratch shell exited: drop it so the next toggle re-spawns a fresh one, and hide it.
-pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn handle_scratch_exit(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.scratch = None;
     ctx.state.scratch_visible = false;
     ctx.state.commands_dirty = true;
@@ -174,7 +174,7 @@ pub(crate) fn handle_scratch_exit(ctx: &mut Context<HyprmuxApp>) -> Update {
 
 /// Scratchpads are current-view overlays rather than attachment state. Tear the server pane down
 /// before switching so pane id 0 can never be reused against a different session client.
-pub(crate) fn close_for_session_switch(ctx: &mut Context<HyprmuxApp>) {
+pub(crate) fn close_for_session_switch(ctx: &mut Context<AppRoot>) {
     if let Some(scratch) = ctx.state.scratch.take()
         && let Some(client) = ctx.state.current().session_client.as_ref()
     {
@@ -191,7 +191,7 @@ pub(crate) fn is_scratch(id: crate::state::PaneId) -> bool {
 
 /// Grab the scratchpad's top edge: remember the current height fraction so the drag recomputes
 /// from this origin rather than accumulating per-move deltas.
-pub(crate) fn begin_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn begin_resize(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.scratch_resize_start = Some(scratch_height_fraction(&ctx.state));
     Update::none()
 }
@@ -199,7 +199,7 @@ pub(crate) fn begin_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// Drag the scratchpad's top edge to a new height. `from_y`/`y` are root-space rows; dragging up
 /// (smaller `y`) grows the bottom-anchored dropdown. The new height is stored as a runtime
 /// override and clamped to the configured bounds.
-pub(crate) fn resize(ctx: &mut Context<HyprmuxApp>, from_y: u16, y: u16) -> Update {
+pub(crate) fn resize(ctx: &mut Context<AppRoot>, from_y: u16, y: u16) -> Update {
     let start = match ctx.state.scratch_resize_start {
         Some(start) => start,
         None => scratch_height_fraction(&ctx.state),
@@ -218,7 +218,7 @@ pub(crate) fn resize(ctx: &mut Context<HyprmuxApp>, from_y: u16, y: u16) -> Upda
     Update::full()
 }
 
-pub(crate) fn end_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
+pub(crate) fn end_resize(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.scratch_resize_start = None;
     Update::none()
 }
@@ -227,7 +227,7 @@ pub(crate) fn end_resize(ctx: &mut Context<HyprmuxApp>) -> Update {
 /// reads as the focused layer. Clicking it dismisses the scratchpad. Returns `None` when the
 /// scratchpad is hidden.
 pub(crate) fn scratch_backdrop(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     progress: f32,
 ) -> Option<(FloatRect, Element)> {
     if progress <= SCRATCH_ANIM_EPSILON {
@@ -264,8 +264,8 @@ pub(crate) fn backdrop_dim(progress: f32) -> f32 {
 /// workspace layer. `progress` drives the slide; the pane stays mounted while it animates
 /// back down on hide, and is dropped once fully retracted.
 pub(crate) fn scratch_placement(
-    app: &HyprmuxApp,
-    ctx: &Context<HyprmuxApp>,
+    app: &AppRoot,
+    ctx: &Context<AppRoot>,
     progress: f32,
 ) -> Option<(FloatRect, Element)> {
     if progress <= SCRATCH_ANIM_EPSILON && !ctx.state.scratch_visible {
@@ -299,7 +299,7 @@ pub(crate) fn scratch_placement(
 /// resizes its height, mirroring the tiled split-drag strips. Only shown once fully deployed so
 /// it never floats detached from the sliding pane. Returns its placement in canvas coordinates.
 pub(crate) fn scratch_resize_strip(
-    ctx: &Context<HyprmuxApp>,
+    ctx: &Context<AppRoot>,
     progress: f32,
 ) -> Option<(FloatRect, Element)> {
     if progress < 1.0 - SCRATCH_ANIM_EPSILON || !ctx.state.scratch_visible {

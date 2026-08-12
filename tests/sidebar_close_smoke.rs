@@ -1,6 +1,6 @@
 //! The hover-revealed ✕ on Panes and Sessions rows.
 
-use hyprmux::HyprmuxApp;
+use hyprmux::AppRoot;
 use hyprmux::config::{SidebarTab, SidebarTabId};
 use hyprmux::state::SidebarClose;
 use tui_lipan::TestBackend;
@@ -8,7 +8,7 @@ use tui_lipan::core::event::{MouseEvent, MouseKind};
 use tui_lipan::prelude::{KeyMods, Rect};
 
 /// Park the pointer at `(x, y)` and let the frames that crossing asks for run.
-fn move_to(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16) {
+fn move_to(backend: &mut TestBackend<AppRoot>, x: u16, y: u16) {
     backend
         .send_mouse(MouseEvent {
             x,
@@ -20,7 +20,7 @@ fn move_to(backend: &mut TestBackend<HyprmuxApp>, x: u16, y: u16) {
     settle(backend);
 }
 
-fn settle(backend: &mut TestBackend<HyprmuxApp>) {
+fn settle(backend: &mut TestBackend<AppRoot>) {
     for _ in 0..4 {
         backend.render();
         let _ = backend.pump();
@@ -35,7 +35,7 @@ fn panes_sidebar_lines(
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,
@@ -111,7 +111,7 @@ fn hovering_the_x_keeps_the_row_hover_and_adds_the_x_hover() {
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let mut backend = TestBackend::new(HyprmuxApp::default());
+            let mut backend = TestBackend::new(AppRoot::default());
             backend.set_viewport(Rect {
                 x: 0,
                 y: 0,

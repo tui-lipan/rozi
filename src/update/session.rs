@@ -4,7 +4,7 @@ use super::attach::{
     apply_attached_panes, bind_attached_pane_backends, flush_pending_spawns,
     reset_state_for_shared_seed, spawn_state_panes_on_session,
 };
-use crate::HyprmuxApp;
+use crate::AppRoot;
 use crate::anim::GeometryAnimation;
 use crate::pane_lifecycle::{find_pane, find_pane_mut, remove_pane_after_exit};
 use crate::pty_events::{maybe_notify_pane_exit, maybe_notify_pane_status};
@@ -14,7 +14,7 @@ use crate::shared_layout::{ClientId, SharedLayout};
 use crate::state::PaneId;
 
 pub(super) fn connected(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     name: String,
     client: SessionClient,
@@ -29,7 +29,7 @@ pub(super) fn connected(
     Update::full()
 }
 
-pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: String) -> Update {
+pub(super) fn disconnected(ctx: &mut Context<AppRoot>, epoch: u64, name: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
         let disconnected = ctx
             .state
@@ -57,7 +57,7 @@ pub(super) fn disconnected(ctx: &mut Context<HyprmuxApp>, epoch: u64, name: Stri
 }
 
 pub(super) fn transport_failed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     name: String,
     message: String,
@@ -66,7 +66,7 @@ pub(super) fn transport_failed(
     disconnected(ctx, epoch, name)
 }
 
-pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
+pub(super) fn attach_failed(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> Update {
     let Some(pending) = ctx.state.current().pending_session_attach.as_ref() else {
         return Update::none();
     };
@@ -123,7 +123,7 @@ pub(super) fn attach_failed(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: 
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn attached(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     session: String,
     client_id: ClientId,
@@ -303,7 +303,7 @@ pub(super) fn attached(
 }
 
 pub(super) fn origin_set(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     created_from_profile: String,
 ) -> Update {
@@ -317,7 +317,7 @@ pub(super) fn origin_set(
     Update::full()
 }
 
-fn confirm_profile_origin(ctx: &mut Context<HyprmuxApp>, created_from_profile: String) {
+fn confirm_profile_origin(ctx: &mut Context<AppRoot>, created_from_profile: String) {
     ctx.state.current_mut().created_from_profile = Some(created_from_profile.clone());
     if let Some((profile, path, session)) = ctx.state.current_mut().pending_profile_loaded.take()
         && profile == created_from_profile
@@ -337,7 +337,7 @@ fn confirm_profile_origin(ctx: &mut Context<HyprmuxApp>, created_from_profile: S
 }
 
 pub(super) fn layout_committed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     rev: u64,
     author: ClientId,
@@ -374,7 +374,7 @@ pub(super) fn layout_committed(
 }
 
 pub(super) fn layout_rejected(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     current_rev: u64,
     layout: Option<SharedLayout>,
@@ -405,7 +405,7 @@ pub(super) fn layout_rejected(
 }
 
 pub(super) fn controller_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     controller: Option<ClientId>,
     reason: ControllerChangeReason,
@@ -474,7 +474,7 @@ pub(super) fn controller_changed(
 }
 
 pub(super) fn clients_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     clients: Vec<ClientInfo>,
     input_locked: bool,
@@ -514,11 +514,7 @@ pub(super) fn clients_changed(
     Update::full()
 }
 
-pub(super) fn control_requested(
-    ctx: &mut Context<HyprmuxApp>,
-    epoch: u64,
-    from: ClientId,
-) -> Update {
+pub(super) fn control_requested(ctx: &mut Context<AppRoot>, epoch: u64, from: ClientId) -> Update {
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
@@ -545,7 +541,7 @@ pub(super) fn control_requested(
     Update::full()
 }
 
-pub(super) fn control_declined(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(super) fn control_declined(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
@@ -553,7 +549,7 @@ pub(super) fn control_declined(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Upd
     Update::full()
 }
 
-pub(super) fn ping(ctx: &mut Context<HyprmuxApp>, epoch: u64, seq: u64) -> Update {
+pub(super) fn ping(ctx: &mut Context<AppRoot>, epoch: u64, seq: u64) -> Update {
     if let Some(client) = ctx
         .state
         .attachment_for_epoch(epoch)
@@ -564,7 +560,7 @@ pub(super) fn ping(ctx: &mut Context<HyprmuxApp>, epoch: u64, seq: u64) -> Updat
     Update::none()
 }
 
-pub(super) fn flush_pane_resizes(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(super) fn flush_pane_resizes(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(shared) = ctx
             .state
@@ -581,7 +577,7 @@ pub(super) fn flush_pane_resizes(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> U
     Update::none()
 }
 
-pub(super) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> Update {
+pub(super) fn flush_layout_commit(ctx: &mut Context<AppRoot>, epoch: u64) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(shared) = ctx
             .state
@@ -601,7 +597,7 @@ pub(super) fn flush_layout_commit(ctx: &mut Context<HyprmuxApp>, epoch: u64) -> 
 }
 
 pub(super) fn output(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -703,7 +699,7 @@ pub(super) fn output(
 }
 
 pub(super) fn resized(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -735,7 +731,7 @@ pub(super) fn resized(
 }
 
 pub(super) fn exited(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -826,7 +822,7 @@ pub(super) fn exited(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pane_logging_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -921,7 +917,7 @@ fn update_agent_status_edge(
 }
 
 pub(super) fn pane_runtime_changed(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -1150,7 +1146,7 @@ fn replay_input_deadline_command(epoch: u64, pane_id: PaneId, generation: u64) -
 }
 
 pub(super) fn replay_input_deadline(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -1170,7 +1166,7 @@ pub(super) fn replay_input_deadline(
 /// reached, so a slow or wedged spawn degrades to today's `pty_ready:false` instead of leaving the
 /// caller on the control connection's own timeout.
 pub(super) fn spawn_reply_deadline(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -1199,7 +1195,7 @@ pub(super) fn spawn_reply_deadline(
 /// Write the type-ahead a control `send-text` / `send-keys` accepted while this pane's PTY was
 /// still starting (see [`crate::state::State::pending_control_input`]). Always runs behind
 /// [`flush_replay_input`] so a restored pane's own command reaches the shell first.
-fn flush_pending_control_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation: u64) {
+fn flush_pending_control_input(ctx: &mut Context<AppRoot>, pane_id: PaneId, generation: u64) {
     let Some(bytes) = ctx
         .state
         .pending_control_input
@@ -1220,7 +1216,7 @@ fn flush_pending_control_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, g
 /// it as if the user had typed it - aliases, shell functions, and rc-file PATH resolve, and the
 /// prompt's title/OSC integration has already run. The entry is consumed even when the pane is
 /// gone or the client dropped; a later respawn queues its own fresh entry.
-fn flush_replay_input(ctx: &mut Context<HyprmuxApp>, pane_id: PaneId, generation: u64) {
+fn flush_replay_input(ctx: &mut Context<AppRoot>, pane_id: PaneId, generation: u64) {
     let Some(input) = ctx
         .state
         .current_mut()
@@ -1265,7 +1261,7 @@ fn flush_attachment_replay_input(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_result(
-    ctx: &mut Context<HyprmuxApp>,
+    ctx: &mut Context<AppRoot>,
     epoch: u64,
     pane_id: PaneId,
     generation: u64,
@@ -1408,7 +1404,7 @@ pub(super) fn spawn_result(
     }
 }
 
-pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
+pub(super) fn error(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
         return Update::none();
     }
@@ -1422,7 +1418,7 @@ pub(super) fn error(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) 
 /// The controller removed this client. The server has already closed the connection, so there is
 /// nothing to detach — this only has to leave the session behind deliberately, before the resulting
 /// disconnect reaches [`disconnected`] and gets answered with a reconnect.
-pub(super) fn evicted(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String) -> Update {
+pub(super) fn evicted(ctx: &mut Context<AppRoot>, epoch: u64, message: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
         // Removed from a session we were keeping in the background: drop the attachment rather than
         // let it sit there offline, since reconnecting it is exactly what the removal ruled out.
@@ -1451,7 +1447,7 @@ pub(super) fn evicted(ctx: &mut Context<HyprmuxApp>, epoch: u64, message: String
     update
 }
 
-pub(super) fn renamed(ctx: &mut Context<HyprmuxApp>, epoch: u64, session: String) -> Update {
+pub(super) fn renamed(ctx: &mut Context<AppRoot>, epoch: u64, session: String) -> Update {
     if epoch != ctx.state.runtime_epoch {
         if let Some(attachment) = ctx.state.background.get_mut(&epoch) {
             attachment.session_name = Some(session);
@@ -1551,7 +1547,7 @@ mod tests {
     }
 
     fn install_search_scan(
-        backend: &mut TestBackend<crate::HyprmuxApp>,
+        backend: &mut TestBackend<crate::AppRoot>,
         target: crate::state::PaneId,
         query: &str,
     ) -> u64 {
@@ -1591,7 +1587,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let target = backend
                     .state()
@@ -1687,7 +1683,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let target = backend
                     .state()
@@ -1751,7 +1747,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let pane_id = backend.state().current().focused_pane.unwrap();
                 let generation = 42;
@@ -1795,7 +1791,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let pane_id = backend
                     .state()
@@ -1847,7 +1843,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let pane_id = backend
                     .state()
@@ -1924,7 +1920,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let (client, _outbound) = SessionClient::test_channel();
                 let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
                 {
@@ -1982,7 +1978,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 {
                     let state = backend.state_mut();
                     state.runtime_epoch = 8;
@@ -2156,7 +2152,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let mut attachment = crate::state::Attachment::new();
                 attachment.epoch = 9;
                 let mut pane =
@@ -2227,7 +2223,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let epoch = backend.state().runtime_epoch;
                 let pane = &mut backend.state_mut().current_mut().workspaces[0].panes[0];
                 pane.pty_generation = 7;
@@ -2320,7 +2316,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 {
                     let state = backend.state_mut();
                     state.runtime_epoch = 4;
@@ -2363,7 +2359,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 backend.state_mut().current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
                         epoch: 42,
@@ -2398,7 +2394,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let target = crate::session::remote::RemoteTarget::Alias("workbox".to_string());
                 {
                     let state = backend.state_mut();
@@ -2456,7 +2452,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let target = crate::session::remote::RemoteTarget::Alias("windev".to_string());
                 {
                     let state = backend.state_mut();
@@ -2524,7 +2520,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 {
                     let state = backend.state_mut();
                     let mut parked = crate::state::Attachment::new();
@@ -2580,7 +2576,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(move || {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let (client, _rx) = SessionClient::test_channel();
                 backend.state_mut().current_mut().pending_session_attach =
                     Some(crate::state::PendingSessionAttach {
@@ -2637,7 +2633,7 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
-                let mut backend = TestBackend::new(crate::HyprmuxApp::default());
+                let mut backend = TestBackend::new(crate::AppRoot::default());
                 let (client, rx) = SessionClient::test_channel();
                 let path = PathBuf::from("legacy-profile.toml");
                 backend.state_mut().current_mut().pending_session_attach =

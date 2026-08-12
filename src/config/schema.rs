@@ -185,6 +185,12 @@ pub enum SessionStartup {
 }
 
 impl SessionStartup {
+    /// Cycle order for the Settings row, ascending in how much it decides for you: ask, scratch,
+    /// wherever you were, one fixed workplace.
+    pub fn all() -> &'static [Self] {
+        &[Self::Picker, Self::Ephemeral, Self::Last, Self::Profile]
+    }
+
     /// One spelling per mode: an unrecognized value warns and leaves the default in place rather
     /// than resolving through aliases that describe a different mode than they name.
     pub fn parse(value: &str) -> Option<Self> {
@@ -195,6 +201,40 @@ impl SessionStartup {
             "profile" => Some(Self::Profile),
             _ => None,
         }
+    }
+
+    /// The config spelling, so `parse(startup.id())` round-trips.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ephemeral => "ephemeral",
+            Self::Picker => "picker",
+            Self::Last => "last",
+            Self::Profile => "profile",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ephemeral => "Ephemeral",
+            Self::Picker => "Picker",
+            Self::Last => "Last",
+            Self::Profile => "Profile",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        self.step(false)
+    }
+
+    pub fn prev(self) -> Self {
+        self.step(true)
+    }
+
+    fn step(self, reverse: bool) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
+        let offset = if reverse { all.len() - 1 } else { 1 };
+        all[(index + offset) % all.len()]
     }
 }
 
@@ -1361,6 +1401,24 @@ mod tests {
         assert_eq!(SessionStartup::parse("attach"), None);
         assert_eq!(SessionStartup::parse("pick"), None);
         assert_eq!(SessionStartup::parse("choose"), None);
+    }
+
+    /// The Settings row steps through this enum and writes `id()` back, so the ring has to be
+    /// closed in both directions and every spelling has to parse back to the same mode.
+    #[test]
+    fn session_startup_cycles_through_every_mode_and_round_trips_its_id() {
+        let mut mode = SessionStartup::Picker;
+        for _ in 0..SessionStartup::all().len() {
+            assert_eq!(SessionStartup::parse(mode.id()), Some(mode));
+            assert_eq!(mode.next().prev(), mode);
+            mode = mode.next();
+        }
+        assert_eq!(mode, SessionStartup::Picker, "next() must close the ring");
+        assert_eq!(
+            SessionStartup::Picker.prev(),
+            SessionStartup::Profile,
+            "prev() must wrap the other way"
+        );
     }
 
     #[test]

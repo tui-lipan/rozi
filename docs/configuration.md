@@ -427,7 +427,7 @@ active theme.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. With `[session] startup = "profile"` it also names the session a bare launch opens. Also writable via **Ctrl+f** in **Profiles**. |
+| `default` | _none_ | Profile seeding every session opened without a recipe: the launch, each new temporary session, and each named session created without one. Explicit named targets, `--profile`, and `startup = "last"` take precedence. With `[session] startup = "profile"` it also names the session a bare launch opens. Also writable via **Ctrl+f** in **Profiles**, which **Settings → Startup → Default profile** opens on the current default. |
 
 See [Named profiles](profiles.md) and [Project profiles & pane identity](project-profiles.md) for the profile format.
 
@@ -560,9 +560,9 @@ background session server and can be detached/reattached with live terminal stat
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `autosave` | `false` | Write the layout on quit and restore it on startup. |
-| `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. |
-| `startup` | `"picker"` | What a bare launch does: `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted; `"profile"` opens the session named after `[profile] default`. Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place. |
+| `autosave` | `false` | Write the layout on quit and restore it on startup. Also **Settings → Sessions → Layout autosave**. |
+| `resurrect` | `true` | Snapshot named sessions so their layout, commands, and scrollback can be restored after the server exits. Also **Settings → Sessions → Resurrect named sessions**, which applies to servers started after the change - a running server already read this value. |
+| `startup` | `"picker"` | What a bare launch does: `"picker"` opens the session picker without attaching anything; `"ephemeral"` starts a scratch session straight away; `"last"` reopens the exact last named session, falling back to the picker with that name highlighted; `"profile"` opens the session named after `[profile] default`. Each mode has exactly one spelling; an unknown value warns and leaves `"picker"` in place. Also **Settings → Startup → Startup mode**, which cycles the four in this order. |
 | `path` | `$XDG_STATE_HOME/rozi/session.toml` | Session file location (falls back to `~/.local/state/...`). |
 | `allow_takeover` | `true` | Let any writable, active follower take the layout-control lease immediately with `request-control`. Set `false` to make a request wait for the controller to grant or decline it. The session server reads this when it starts; use `toggle-control-takeover` to change a running session. Read-only and parked clients can never take control. |
 

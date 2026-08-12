@@ -174,8 +174,26 @@ fn open_profile_picker_mode(ctx: &mut Context<AppRoot>, apply_mode: bool) -> Upd
     let mut picker = ProfilePickerState::new(entries);
     picker.apply_mode = apply_mode;
     picker.running = rows.into_iter().map(|row| (row.name, row.status)).collect();
+    // Opened from Settings' `Default profile` row, land on the current default so `ctrl+f` needs no
+    // navigation; opened any other way, the list starts at the top as always.
+    if ctx.state.show_settings
+        && let Some(default) = ctx.state.config.profile.default.as_deref()
+        && let Some(index) = picker
+            .entries
+            .iter()
+            .position(|entry| entry.name == default)
+    {
+        picker.selected = index;
+    }
     ctx.state.profile_picker = Some(picker);
     ctx.state.show_profile_picker = true;
+    // Always assign: from Settings this leads back there, standalone it clears whatever a previous
+    // child left behind (see `ops::overlay_return`).
+    ctx.state.overlay_return = ctx
+        .state
+        .show_settings
+        .then_some(crate::state::OverlayOrigin::Settings);
+    ctx.state.show_settings = false;
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
     ctx.state.search = None;
@@ -403,9 +421,10 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
         ),
     );
     // Every pane on screen was just torn down and rebuilt from the profile - the layout itself is
-    // the confirmation.
+    // the confirmation, and there is no dialog left worth returning to.
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
+    crate::ops::overlay_return::leave(ctx);
     ctx.state.commands_dirty = true;
     if spawned.is_empty() {
         Update::full()
@@ -592,6 +611,9 @@ pub(crate) fn open_named_target(
         crate::pty_events::notify_info(ctx, "Attach already in progress");
         return Update::full();
     }
+    // Past the guards this session is being opened, which retires any dialog we were raised from -
+    // Settings included. The rejections above keep their parent, since nothing happened.
+    crate::ops::overlay_return::leave(ctx);
 
     let seed = match intent {
         OpenNamedIntent::ResolveProfile { profile, path } => {
@@ -735,6 +757,7 @@ pub(crate) fn load_profile_into_fresh_ephemeral(
     ctx.state.current_mut().connection = crate::state::ConnectionState::Connecting;
     ctx.state.show_profile_picker = false;
     ctx.state.profile_picker = None;
+    crate::ops::overlay_return::leave(ctx);
     // The theme-tick, workbar-tick, and workbar-command loops started at app launch are
     // self-sustaining and survive the state swap, so don't restart them here.
     Update::with_command(Command::spawn(move |link| {

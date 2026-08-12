@@ -403,18 +403,44 @@ fn settings_activate_dir(
             ctx.state.config.sounds.error = !ctx.state.config.sounds.error;
             persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
         }
+        CycleStartupMode => {
+            let value = if reverse {
+                ctx.state.config.session.startup.prev()
+            } else {
+                ctx.state.config.session.startup.next()
+            };
+            ctx.state.config.session.startup = value;
+            if let Err(err) = crate::config::persist_session_string("startup", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
+        DefaultProfile => {
+            // The profile list owns this value, so hand off the way `Theme` hands off to the theme
+            // picker: `open_profile_picker` records Settings as the return target and highlights the
+            // current default, so `ctrl+f` there is one keypress from the row that sent you.
+            execute_action(ctx, Action::OpenProfilePicker);
+        }
+        ToggleSessionAutosave => {
+            ctx.state.config.session.autosave = !ctx.state.config.session.autosave;
+            persisted = Some(("session", "autosave", ctx.state.config.session.autosave));
+        }
+        ToggleSessionResurrect => {
+            ctx.state.config.session.resurrect = !ctx.state.config.session.resurrect;
+            persisted = Some(("session", "resurrect", ctx.state.config.session.resurrect));
+        }
     }
     if let Some((section, key, value)) = persisted {
         let result = match section {
             "notifications" => crate::config::persist_notification_flag(key, value),
             "sounds" => crate::config::persist_sound_flag(key, value),
+            "session" => crate::config::persist_session_flag(key, value),
             _ => crate::config::persist_workbar_alert_flag(key, value),
         };
         if let Err(err) = result {
             preference_error(ctx, err);
         }
     }
-    if !matches!(action, Theme | EditPadding) {
+    if !action.opens_nested_dialog() {
         ctx.state.show_settings = true;
         ctx.state.settings_selected = Some(action);
         ctx.request_focus(crate::view::settings_palette_key());
@@ -691,6 +717,129 @@ mod tests {
                 backend.state().settings_selected,
                 Some(crate::state::SettingsAction::Theme)
             );
+        });
+    }
+
+    /// The startup row is a value ring like the alert modes: both arrows work and the row keeps the
+    /// highlight. What reaches `[session]` is pinned deterministically in `config::persist` instead -
+    /// these tests share one scratch config file and run in parallel, so reading it back here would
+    /// race a sibling's write.
+    #[test]
+    fn settings_steps_startup_mode_in_both_directions() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::CycleStartupMode);
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Picker
+            );
+
+            backend
+                .dispatch(Msg::SettingsStep { reverse: false })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Ephemeral
+            );
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::CycleStartupMode)
+            );
+            assert!(backend.state().show_settings, "the dialog stays open");
+
+            backend
+                .dispatch(Msg::SettingsStep { reverse: true })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Picker
+            );
+        });
+    }
+
+    #[test]
+    fn settings_toggles_session_flags() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            for (action, key) in [
+                (
+                    crate::state::SettingsAction::ToggleSessionAutosave,
+                    "autosave",
+                ),
+                (
+                    crate::state::SettingsAction::ToggleSessionResurrect,
+                    "resurrect",
+                ),
+            ] {
+                let before = match key {
+                    "autosave" => backend.state().config.session.autosave,
+                    _ => backend.state().config.session.resurrect,
+                };
+                backend.dispatch(Msg::SettingsActivate(action)).unwrap();
+                let after = match key {
+                    "autosave" => backend.state().config.session.autosave,
+                    _ => backend.state().config.session.resurrect,
+                };
+                assert_eq!(after, !before, "{key} should toggle");
+                assert_eq!(backend.state().settings_selected, Some(action));
+                assert!(backend.state().show_settings, "the dialog stays open");
+            }
+        });
+    }
+
+    /// The default-profile row hands off to the Profiles picker instead of stepping a value, and
+    /// lands on the current default so `ctrl+f` is one keypress away.
+    #[test]
+    fn default_profile_row_opens_the_profile_picker_on_the_current_default() {
+        on_large_stack(|| {
+            let profiles = crate::config::profiles_dir();
+            std::fs::create_dir_all(&profiles).expect("profiles dir");
+            for name in ["aaa-settings-row", "zzz-settings-row"] {
+                crate::profiles::save_profile(
+                    &profiles.join(format!("{name}.toml")),
+                    &crate::profiles::Profile::default(),
+                )
+                .expect("write profile");
+            }
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().config.profile.default = Some("zzz-settings-row".to_string());
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::DefaultProfile);
+            backend
+                .dispatch(Msg::SettingsActivate(
+                    crate::state::SettingsAction::DefaultProfile,
+                ))
+                .unwrap();
+
+            assert!(backend.state().show_profile_picker);
+            assert!(
+                !backend.state().show_settings,
+                "the picker replaces Settings rather than stacking on it"
+            );
+            let selected_name = backend
+                .state()
+                .profile_picker
+                .as_ref()
+                .map(|picker| picker.entries[picker.selected].name.clone());
+            assert_eq!(selected_name.as_deref(), Some("zzz-settings-row"));
+
+            // Esc is "never mind": back to Settings, on the row that sent us there.
+            backend.dispatch(Msg::CloseProfilePicker).unwrap();
+            assert!(!backend.state().show_profile_picker);
+            assert!(backend.state().show_settings);
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::DefaultProfile)
+            );
+
+            for name in ["aaa-settings-row", "zzz-settings-row"] {
+                let _ = std::fs::remove_file(profiles.join(format!("{name}.toml")));
+            }
         });
     }
 

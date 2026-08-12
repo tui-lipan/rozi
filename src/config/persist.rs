@@ -147,6 +147,9 @@ pub fn persist_sound_flag(key: &str, value: bool) -> std::result::Result<PathBuf
 pub fn persist_workbar_alert_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     persist_bool("workbar.alert", key, value)
 }
+pub fn persist_session_flag(key: &str, value: bool) -> std::result::Result<PathBuf, String> {
+    persist_bool("session", key, value)
+}
 fn persist_bool(section: &str, key: &str, value: bool) -> std::result::Result<PathBuf, String> {
     let path = config_path();
     let text = match fs::read_to_string(&path) {
@@ -167,6 +170,19 @@ pub fn persist_pane_string(key: &str, value: &str) -> std::result::Result<PathBu
     };
 
     let updated = upsert_value_in_section(&text, "pane", key, &format!("\"{value}\""));
+    write_config_text(&path, updated)?;
+    Ok(path)
+}
+
+pub fn persist_session_string(key: &str, value: &str) -> std::result::Result<PathBuf, String> {
+    let path = config_path();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("Could not read config {}: {err}", path.display())),
+    };
+
+    let updated = upsert_value_in_section(&text, "session", key, &format!("\"{value}\""));
     write_config_text(&path, updated)?;
     Ok(path)
 }
@@ -764,6 +780,32 @@ mod tests {
             "\"off\"",
         );
         assert!(bare.contains("[workbar.alert]\nmode = \"off\""));
+    }
+
+    /// The Settings dialog's Startup/Sessions rows write into `[session]`, a section a config that
+    /// never mentioned sessions does not have yet - and one that must survive `path`/`autosave`
+    /// lines it already carries.
+    #[test]
+    fn session_keys_upsert_beside_existing_session_settings() {
+        assert_eq!(
+            upsert_value_in_section("", "session", "startup", "\"profile\""),
+            "[session]\nstartup = \"profile\"\n"
+        );
+        assert_eq!(
+            upsert_bool_in_section("", "session", "autosave", true),
+            "[session]\nautosave = true\n"
+        );
+
+        let text = "[session]\n# keep me\nstartup = \"picker\"\npath = \"~/s.toml\"\n";
+        let updated = upsert_value_in_section(text, "session", "startup", "\"last\"");
+        assert!(updated.contains("# keep me"));
+        assert!(updated.contains("path = \"~/s.toml\""));
+        assert!(updated.contains("startup = \"last\""));
+        assert!(!updated.contains("startup = \"picker\""));
+
+        let flagged = upsert_bool_in_section(&updated, "session", "resurrect", false);
+        assert!(flagged.contains("startup = \"last\""));
+        assert!(flagged.contains("resurrect = false"));
     }
 
     #[test]

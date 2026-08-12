@@ -279,13 +279,16 @@ keyboard - capture session as profile, replace session with profile, open Settin
 master, plus discoverable extras (rename pane, search, copy mode, scratchpad, resize mode, toggle
 layout, do not disturb, and help). **Settings** groups durable preferences for theme,
 titlebar, workbar, focused-pane chrome, borders, focus-on-hover, alert markers, desktop
-notifications, and sounds in one searchable list. `change-appearance` and `alerts` remain bindable
+notifications, sounds, startup, and session persistence in one searchable list.
+`change-appearance` and `alerts` remain bindable
 deep links into that list; `toggle-do-not-disturb` remains a runtime command for this client. On
 Settings toggle or cycle rows, `←` / `→` steps the value (Enter still activates, including Theme
 and Terminal padding). Command results are separated into **Panes**, **Workspace**, **App**,
 **Profile**, **Session**, **Collaboration**, and **Sidebar** sections.
 Settings uses **General**, **Titlebar**, **Workbar**, **Panes**, **Alerts**, **Desktop notifications**,
-and **Sounds**, with one blank row separating adjacent sections.
+**Sounds**, **Startup**, and **Sessions**, with one blank row separating adjacent sections. The last
+two groups come last because they change what a later launch or server does, so unlike every group
+above them there is nothing on screen to inspect after stepping a value.
 Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
 overlay only, since the key is faster than a search box. "Settings" has no default key; bind its
 `settings` action under `[keys]` if desired. "Open config file" is also palette-only; config changes

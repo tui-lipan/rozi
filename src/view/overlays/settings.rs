@@ -148,6 +148,35 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                 ("Exit with error", enabled_status(ctx.state.config.sounds.error), ToggleSoundError),
             ],
         ),
+        // Last two groups: unlike everything above, these change what a *later* launch or server
+        // does, so there is nothing on screen to inspect after stepping them. `Default profile`
+        // sits under `Startup mode` because the `Profile` mode has nothing to open without it.
+        settings_group(
+            "Startup",
+            vec![
+                (
+                    "Startup mode",
+                    ctx.state.config.session.startup.label().to_string(),
+                    CycleStartupMode,
+                ),
+                ("Default profile", default_profile_label(ctx), DefaultProfile),
+            ],
+        ),
+        settings_group(
+            "Sessions",
+            vec![
+                (
+                    "Layout autosave",
+                    enabled_status(ctx.state.config.session.autosave),
+                    ToggleSessionAutosave,
+                ),
+                (
+                    "Resurrect named sessions",
+                    enabled_status(ctx.state.config.session.resurrect),
+                    ToggleSessionResurrect,
+                ),
+            ],
+        ),
     ]);
 
     let config = ctx.state.config.clone();
@@ -384,6 +413,17 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
 
 fn enabled_status(enabled: bool) -> String {
     if enabled { "Enabled" } else { "Disabled" }.to_string()
+}
+
+/// `none` rather than an empty value: an unset default is the state that makes `Startup mode`'s
+/// `Profile` inert, so the row has to say it.
+fn default_profile_label(ctx: &Context<AppRoot>) -> String {
+    ctx.state
+        .config
+        .profile
+        .default
+        .clone()
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn current_theme_label(ctx: &Context<AppRoot>) -> String {

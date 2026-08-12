@@ -215,7 +215,8 @@ the requested command once the session is attached.
 
 `[session] startup` applies only to a **bare launch**. An explicit target (`rozi dev`, `attach`,
 `new`, `--session`), `--pick`, and `--remote` all take precedence over it; each mode has exactly one
-spelling.
+spelling. **Settings → Startup → Startup mode** cycles the four without editing TOML, with
+**Default profile** on the row below it.
 
 | Mode | A bare `rozi` |
 | --- | --- |

@@ -243,6 +243,21 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
         CycleWorkbarAlertPaint => {
             alias_list(&["workspace tab alert paint", "marker fill"])
         }
+        CycleStartupMode => alias_list(&[
+            "session startup",
+            "launch",
+            "bare launch",
+            "picker",
+            "ephemeral",
+            "last session",
+        ]),
+        DefaultProfile => alias_list(&["profile default", "startup profile", "default recipe"]),
+        ToggleSessionAutosave => {
+            alias_list(&["session autosave", "restore layout", "save layout on quit"])
+        }
+        ToggleSessionResurrect => {
+            alias_list(&["session resurrect", "restore sessions", "server restart"])
+        }
         _ => Vec::new(),
     };
     aliases.push(Arc::from(group));

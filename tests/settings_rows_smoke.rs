@@ -140,8 +140,8 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
         let mut backend = settings_backend(100, 110);
         let frame = rendered_rows(&mut backend);
         assert!(
-            frame.contains("39/39"),
-            "expected 39 Settings rows:\n{frame}"
+            frame.contains("43/43"),
+            "expected 43 Settings rows:\n{frame}"
         );
 
         for (group, rows, next_group) in [
@@ -220,6 +220,16 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Finished",
                     "Exit with error",
                 ][..],
+                "Startup",
+            ),
+            (
+                "Startup",
+                &["Startup mode", "Default profile"][..],
+                "Sessions",
+            ),
+            (
+                "Sessions",
+                &["Layout autosave", "Resurrect named sessions"][..],
                 "",
             ),
         ] {
@@ -231,6 +241,47 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                 );
             }
         }
+    });
+}
+
+/// The two behavioral groups sit last and read their values from `[session]` / `[profile]`, which no
+/// other row does. `none` in particular has to render, since that is the state that makes the
+/// `Profile` startup mode inert.
+#[test]
+fn settings_reports_startup_and_session_values() {
+    on_large_stack(|| {
+        let mut backend = settings_backend(100, 110);
+        {
+            let state = backend.state_mut();
+            state.config.session.startup = rozi::config::SessionStartup::Last;
+            state.config.session.autosave = true;
+            state.config.profile.default = None;
+        }
+        let frame = rendered_rows(&mut backend);
+
+        assert!(
+            setting_row(&frame, "Startup mode").contains("Last"),
+            "startup row is misbound:\n{frame}"
+        );
+        assert!(
+            setting_row(&frame, "Default profile").contains("none"),
+            "an unset default must say so:\n{frame}"
+        );
+        assert!(
+            setting_row(&frame, "Layout autosave").contains("Enabled"),
+            "autosave row is misbound:\n{frame}"
+        );
+        assert!(
+            setting_row(&frame, "Resurrect named sessions").contains("Enabled"),
+            "resurrect row is misbound:\n{frame}"
+        );
+
+        backend.state_mut().config.profile.default = Some("dev".to_string());
+        let frame = rendered_rows(&mut backend);
+        assert!(
+            setting_row(&frame, "Default profile").contains("dev"),
+            "the configured default must show its name:\n{frame}"
+        );
     });
 }
 

@@ -665,7 +665,7 @@ fn load_config_from_text(text: &str, path: &Path) -> LoadedConfig {
         match AlertMode::parse(alert_border) {
             Some(mode) => config.pane.alert_border = mode,
             None => warnings.push(format!(
-                "Ignored unknown pane.alert_border \"{alert_border}\" (expected one of: off, on, pulse)"
+                "Ignored unknown pane.alert_border \"{alert_border}\" (expected one of: off, static, pulse)"
             )),
         }
     }
@@ -1155,6 +1155,11 @@ mod file_tests {
             load_config_from_text("[pane]\nalert_border = \"flash\"", Path::new("test.toml"));
         assert_eq!(loaded.config.pane.alert_border, AlertMode::Pulse);
         assert_eq!(loaded.warnings.len(), 1);
+        assert!(
+            loaded.warnings[0].contains("off, static, pulse"),
+            "{:?}",
+            loaded.warnings
+        );
     }
 
     #[test]

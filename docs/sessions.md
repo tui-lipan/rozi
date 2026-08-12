@@ -238,11 +238,16 @@ second launch finds the session the first one created. Because the profile *is* 
 this is the mode where naming a profile after a project pays off.
 
 Neither `last` nor `profile` silently substitutes a different session. If the named one cannot be
-opened — `last` has no reopenable memory, or `profile` has no `[profile] default`, an unusable name,
-or nothing to open under it — the launch falls back to the `picker` path above and a toast says why.
+opened (`last` has no reopenable memory, or `profile` has no `[profile] default`, an unusable name,
+or nothing to open under it) the launch falls back to the `picker` path above and a toast says why.
 `last` highlights its remembered name there; `profile` has no row to land on, so it does not. A
 profile that exists but fails to *parse* is reported the same way and its session opens blank:
 startup policy chose that target, so a broken file does not keep rozi from launching.
+
+That fallback **does not rewrite your config**. Setting `profile` mode in Settings requires a default
+profile, and clearing the default resets the mode, so a launch only lands here for a config written by
+hand or shared between machines, where the profile may be missing just on this one or just until a
+checkout finishes. Rozi reports it and moves on rather than deciding you changed your mind.
 
 ## The Sessions sidebar (grouped view)
 

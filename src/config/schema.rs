@@ -191,6 +191,17 @@ impl SessionStartup {
         &[Self::Picker, Self::Ephemeral, Self::Last, Self::Profile]
     }
 
+    /// The modes the Settings row offers. `Profile` is withheld while no default profile is set,
+    /// since it has nothing to open then; starring one in Profiles brings it back. A row is a single
+    /// visible value rather than a list, so there is nothing to grey out the way a dependent row is.
+    pub fn choices(default_profile_set: bool) -> Vec<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .filter(|mode| default_profile_set || *mode != Self::Profile)
+            .collect()
+    }
+
     /// One spelling per mode: an unrecognized value warns and leaves the default in place rather
     /// than resolving through aliases that describe a different mode than they name.
     pub fn parse(value: &str) -> Option<Self> {
@@ -223,18 +234,29 @@ impl SessionStartup {
     }
 
     pub fn next(self) -> Self {
-        self.step(false)
+        self.step_in(Self::all(), false)
     }
 
     pub fn prev(self) -> Self {
-        self.step(true)
+        self.step_in(Self::all(), true)
     }
 
-    fn step(self, reverse: bool) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|mode| *mode == self).unwrap_or(0);
-        let offset = if reverse { all.len() - 1 } else { 1 };
-        all[(index + offset) % all.len()]
+    /// Step within an offered subset. A value the subset no longer contains (a config that says
+    /// `profile` after its default profile went away) is not a position to move from, so either
+    /// direction lands on the nearest end instead of silently staying put.
+    pub fn step_in(self, choices: &[Self], reverse: bool) -> Self {
+        let Some(first) = choices.first().copied() else {
+            return self;
+        };
+        let Some(index) = choices.iter().position(|mode| *mode == self) else {
+            return if reverse {
+                choices[choices.len() - 1]
+            } else {
+                first
+            };
+        };
+        let offset = if reverse { choices.len() - 1 } else { 1 };
+        choices[(index + offset) % choices.len()]
     }
 }
 
@@ -1418,6 +1440,37 @@ mod tests {
             SessionStartup::Picker.prev(),
             SessionStartup::Profile,
             "prev() must wrap the other way"
+        );
+    }
+
+    /// Without a default profile there is nothing for `profile` mode to open, so the Settings row
+    /// does not offer it. A config that already selected it still has to be steppable out of.
+    #[test]
+    fn session_startup_offers_profile_mode_only_with_a_default_profile() {
+        let with = SessionStartup::choices(true);
+        let without = SessionStartup::choices(false);
+        assert!(with.contains(&SessionStartup::Profile));
+        assert!(!without.contains(&SessionStartup::Profile));
+        assert_eq!(without.len(), SessionStartup::all().len() - 1);
+
+        // Ring of three: the last offered mode wraps to the first, skipping `profile` entirely.
+        assert_eq!(
+            SessionStartup::Last.step_in(&without, false),
+            SessionStartup::Picker
+        );
+        assert_eq!(
+            SessionStartup::Picker.step_in(&without, true),
+            SessionStartup::Last
+        );
+
+        // Stranded on a mode that is no longer offered: both directions move to an offered one.
+        assert_eq!(
+            SessionStartup::Profile.step_in(&without, false),
+            SessionStartup::Picker
+        );
+        assert_eq!(
+            SessionStartup::Profile.step_in(&without, true),
+            SessionStartup::Last
         );
     }
 

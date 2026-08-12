@@ -420,6 +420,28 @@ pub(crate) fn apply_selected_profile_in_place(ctx: &mut Context<AppRoot>) -> Upd
     }
 }
 
+/// `[session] startup = "profile"` opens the session named after `[profile] default`, so losing that
+/// default leaves it pointing at nothing. Whenever *rozi itself* removes the default (unstarring,
+/// deleting the starred profile) the mode goes back to `picker` in the same keystroke, which is a
+/// consequence the user can see and undo. A launch that merely *finds* no default does not write
+/// anything: the profile may be missing only on this machine, or only until a checkout finishes.
+///
+/// Returns whether the mode was actually reset, so the caller can mention it once.
+fn reset_startup_mode_without_default(ctx: &mut Context<AppRoot>) -> bool {
+    if ctx.state.config.profile.default.is_some()
+        || ctx.state.config.session.startup != crate::config::SessionStartup::Profile
+    {
+        return false;
+    }
+    let fallback = crate::config::SessionStartup::default();
+    ctx.state.config.session.startup = fallback;
+    if let Err(message) = crate::config::persist_session_string("startup", fallback.id()) {
+        crate::pty_events::notify_error(ctx, "Startup mode not saved", message);
+        return false;
+    }
+    true
+}
+
 pub(crate) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
     let Some(entry) = selected_profile_entry(ctx) else {
         return Update::none();
@@ -436,6 +458,11 @@ pub(crate) fn profile_picker_set_default(ctx: &mut Context<AppRoot>) -> Update {
             ctx.state.config.profile.default = (!unset).then(|| entry.name.clone());
             if let Some(picker) = ctx.state.profile_picker.as_mut() {
                 picker.pending_delete = None;
+            }
+            // Starring is visible in the list itself, but taking the star away can invalidate the
+            // startup mode, which lives on another screen. Say so where the key was pressed.
+            if unset && reset_startup_mode_without_default(ctx) {
+                crate::pty_events::notify_info(ctx, "Startup mode is back to Picker");
             }
         }
         Err(message) => {
@@ -480,7 +507,16 @@ pub(crate) fn profile_picker_delete_key(ctx: &mut Context<AppRoot>) -> Update {
                 match clear_default_profile(&name) {
                     Ok(Some(_)) => {
                         ctx.state.config.profile.default = None;
-                        crate::pty_events::notify_info(ctx, "Cleared startup default");
+                        // One toast for both consequences: the deleted row is already gone from the
+                        // list, so what is worth saying is what changed off screen.
+                        if reset_startup_mode_without_default(ctx) {
+                            crate::pty_events::notify_info(
+                                ctx,
+                                "Cleared startup default, startup mode is back to Picker",
+                            );
+                        } else {
+                            crate::pty_events::notify_info(ctx, "Cleared startup default");
+                        }
                     }
                     Ok(None) => {}
                     Err(message) => {
@@ -814,6 +850,64 @@ mod tests {
         assert_eq!(normalize_profile_name("team\\dev"), None);
         assert_eq!(normalize_profile_name("team dev"), None);
         assert_eq!(normalize_profile_name("eph-123"), None);
+    }
+
+    /// Unstarring the default profile strands `startup = "profile"`, so rozi undoes that mode in the
+    /// same keystroke rather than leaving a launch to discover it. Starring, and unstarring under any
+    /// other mode, must leave the startup mode alone.
+    #[test]
+    fn unstarring_the_default_profile_resets_a_profile_startup_mode() {
+        on_large_stack(|| {
+            let path = temp_profile_path();
+            save_profile(&path, &Profile::default()).expect("write profile");
+            let open_on_default = |backend: &mut TestBackend<AppRoot>, startup| {
+                let mut picker = ProfilePickerState::new(vec![entry("dev", path.clone())]);
+                picker.selected = 0;
+                let state = backend.state_mut();
+                state.profile_picker = Some(picker);
+                state.show_profile_picker = true;
+                state.config.profile.default = Some("dev".to_string());
+                state.config.session.startup = startup;
+            };
+
+            let mut backend = TestBackend::new(AppRoot::default());
+            open_on_default(&mut backend, crate::config::SessionStartup::Profile);
+            backend
+                .dispatch(Msg::ProfilePickerSetDefault)
+                .expect("unstar the default profile");
+            assert!(backend.state().config.profile.default.is_none());
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Picker,
+                "unstarring must not leave `profile` mode pointing at nothing"
+            );
+
+            // Any other startup mode is none of unstarring's business.
+            open_on_default(&mut backend, crate::config::SessionStartup::Last);
+            backend
+                .dispatch(Msg::ProfilePickerSetDefault)
+                .expect("unstar the default profile");
+            assert!(backend.state().config.profile.default.is_none());
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Last
+            );
+
+            // Starring one back leaves the mode alone too; only removal invalidates anything.
+            backend
+                .dispatch(Msg::ProfilePickerSetDefault)
+                .expect("star it again");
+            assert_eq!(
+                backend.state().config.profile.default.as_deref(),
+                Some("dev")
+            );
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Last
+            );
+
+            let _ = std::fs::remove_file(&path);
+        });
     }
 
     /// Capturing a temporary session names it after the profile, so the running session and its

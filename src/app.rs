@@ -1062,9 +1062,16 @@ fn session_openable_by_name(name: &str) -> bool {
 /// to report when there is nothing to open under that name; the launch then takes the ordinary
 /// bare-launch path (picker, or ephemeral with nothing to pick) rather than attaching some other
 /// session. No picker highlight: an unresolvable name has no row to land on.
+///
+/// Nothing is written back. Settings withholds this mode until a default profile exists and clears it
+/// when one goes away, so reaching the first case means the config was hand-written or synced in,
+/// where the profile may be missing only on this machine or only until a checkout finishes.
+/// Overwriting it there would discard an intent that is still in use.
 fn resolve_profile_session_target(config: &config::Config) -> std::result::Result<String, String> {
     let Some(name) = config.profile.default.as_deref() else {
-        return Err("session.startup = \"profile\" needs a [profile] default.".to_string());
+        return Err(
+            "Startup mode needs a default profile: set one in Profiles with ctrl+f.".to_string(),
+        );
     };
     if !crate::session::discovery::valid_session_name(name) {
         return Err(format!(
@@ -1178,10 +1185,11 @@ mod tests {
     fn startup_profile_defers_to_the_picker_without_a_usable_default() {
         let config = crate::config::Config::default();
         assert!(config.profile.default.is_none());
+        // Actionable rather than a config-key restatement: the fix is one keypress in Profiles.
         assert!(
             resolve_profile_session_target(&config)
                 .expect_err("no default configured")
-                .contains("[profile] default")
+                .contains("set one in Profiles")
         );
 
         let mut config = crate::config::Config::default();

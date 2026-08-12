@@ -99,7 +99,10 @@ A bare `rozi` then does exactly what `rozi dev` does — attach to session `dev`
 `profiles/dev.toml`. See [startup policies](sessions.md#other-startup-policies).
 
 `startup` is also **Settings → Sessions → Startup mode**; the default profile is set here in
-**Profiles** with **Ctrl+f**, which is the one place that owns it.
+**Profiles** with **Ctrl+f**, which is the one place that owns it. The two keep each other honest:
+Settings offers the `Profile` mode only while a default profile is set, and clearing the default
+resets the mode. So the pair can only fall out of step in a config you wrote by hand or synced in
+from another machine.
 
 Set a default profile in config:
 
@@ -156,7 +159,7 @@ Open **Profiles** from the command palette, then:
 | **Ctrl+o** | **Open as**: launch the highlighted recipe under a new session name, or leave the name empty for a fresh ephemeral session. A name must not already be running. |
 | **Ctrl+n** | Capture the current session as a new profile. |
 | **Ctrl+r** | Replace the current session with the highlighted profile. Press twice to close all panes and running processes and launch the recipe; the session name and attached clients are kept. |
-| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `config.toml`; pressing it on the current default clears the setting. |
+| **Ctrl+f** | Toggle the highlighted profile as `[profile] default` in `config.toml`; pressing it on the current default clears the setting. Clearing it while `[session] startup` is `"profile"` also puts the startup mode back to `"picker"`, since that mode would otherwise point at nothing, and one toast reports it. |
 | **Ctrl+d** | Delete the highlighted profile file. Press **Ctrl+d** again on the same row to confirm. |
 
 The status beside a profile refers only to its canonical same-name session: **attached** or

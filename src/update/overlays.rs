@@ -404,11 +404,9 @@ fn settings_activate_dir(
             persisted = Some(("sounds", "error", ctx.state.config.sounds.error));
         }
         CycleStartupMode => {
-            let value = if reverse {
-                ctx.state.config.session.startup.prev()
-            } else {
-                ctx.state.config.session.startup.next()
-            };
+            let choices =
+                crate::config::SessionStartup::choices(ctx.state.config.profile.default.is_some());
+            let value = ctx.state.config.session.startup.step_in(&choices, reverse);
             ctx.state.config.session.startup = value;
             if let Err(err) = crate::config::persist_session_string("startup", value.id()) {
                 preference_error(ctx, err);
@@ -749,6 +747,38 @@ mod tests {
             assert_eq!(
                 backend.state().config.session.startup,
                 crate::config::SessionStartup::Picker
+            );
+        });
+    }
+
+    /// `profile` mode has nothing to open without a default profile, so the row does not stop there
+    /// until one is set. Stepping back from `picker` is the shortest way to reach it.
+    #[test]
+    fn settings_offers_profile_startup_only_once_a_default_profile_exists() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend.state_mut().show_settings = true;
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::CycleStartupMode);
+            assert!(backend.state().config.profile.default.is_none());
+
+            backend
+                .dispatch(Msg::SettingsStep { reverse: true })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Last,
+                "with no default profile the ring wraps straight past `profile`"
+            );
+
+            backend.state_mut().config.profile.default = Some("dev".to_string());
+            backend
+                .dispatch(Msg::SettingsStep { reverse: false })
+                .unwrap();
+            assert_eq!(
+                backend.state().config.session.startup,
+                crate::config::SessionStartup::Profile,
+                "starring a profile puts the mode back in the ring"
             );
         });
     }

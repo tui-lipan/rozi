@@ -4,17 +4,32 @@ use std::str::FromStr;
 use tui_lipan::prelude::KeyBinding;
 
 use super::file::{KeyBindingSpec, UserCommandTableSpec};
-use super::schema::{InputConfig, UserCommand, UserCommandAction, WmModifier, scheme_shortcuts};
+use super::schema::{
+    InputConfig, UserCommand, UserCommandAction, WhichKeyDelay, WmModifier, scheme_shortcuts,
+};
 
 pub(super) fn apply_input_config(
     input: &mut InputConfig,
     modifier: Option<String>,
     prefix: Option<String>,
     modifier_shortcuts: Option<bool>,
+    which_key: Option<bool>,
+    which_key_delay: Option<String>,
     warnings: &mut Vec<String>,
 ) {
     if let Some(modifier_shortcuts) = modifier_shortcuts {
         input.modifier_shortcuts = modifier_shortcuts;
+    }
+    if let Some(which_key) = which_key {
+        input.which_key = which_key;
+    }
+    if let Some(delay) = which_key_delay {
+        match WhichKeyDelay::parse(&delay) {
+            Some(parsed) => input.which_key_delay = parsed,
+            None => warnings.push(format!(
+                "Unknown which_key_delay `{delay}`; expected `instant`, `short`, or `long`"
+            )),
+        }
     }
     if let Some(modifier) = modifier {
         match parse_modifier(&modifier) {
@@ -383,6 +398,7 @@ mod tests {
             prefix: KeyBinding::from_str("ctrl-b").unwrap(),
             modifier: WmModifier::Super,
             modifier_shortcuts: true,
+            ..InputConfig::default()
         };
         let text = "[keys]\ncopy-mode = \"b\"";
         let (result, _) = overrides(text, &input);
@@ -442,6 +458,7 @@ mod tests {
             prefix: KeyBinding::from_str("ctrl-b").unwrap(),
             modifier: WmModifier::Super,
             modifier_shortcuts: true,
+            ..InputConfig::default()
         };
         let (result, warnings) = overrides(
             "[keys]\ncopy-mode = \"scheme:ctrl-t\"\nspawn = { add = [\"scheme:ctrl-n\"] }",

@@ -13,6 +13,16 @@ pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element
                     enabled_status(ctx.state.config.animations.enabled),
                     ToggleAnimations,
                 ),
+                (
+                    "Which-key panel",
+                    enabled_status(ctx.state.config.input.which_key),
+                    ToggleWhichKey,
+                ),
+                (
+                    "Which-key delay",
+                    ctx.state.config.input.which_key_delay.label().to_string(),
+                    CycleWhichKeyDelay,
+                ),
                 ("Focus on hover", enabled_status(pane.focus_on_hover), ToggleFocusOnHover),
                 (
                     "Background follows terminal",

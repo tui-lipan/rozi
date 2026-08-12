@@ -58,6 +58,84 @@ pub struct InputConfig {
     /// leader chord. Set to false to drop the modifier layer entirely, leaving prefix-only
     /// bindings so held `Alt`/`Super` chords pass straight through to the focused pane.
     pub modifier_shortcuts: bool,
+    /// Show the which-key strip - what the prefix can do next - while a prefix chord is pending.
+    /// Held WM-modifier chords resolve in one key and never go pending, so this only ever
+    /// appears for the leader scheme.
+    pub which_key: bool,
+    /// How long the prefix must be held before the which-key strip appears.
+    pub which_key_delay: WhichKeyDelay,
+}
+
+/// How long the prefix is held before the which-key strip appears.
+///
+/// Three named steps rather than a millisecond field: the only decision anyone actually makes here
+/// is whether the strip should beat their muscle memory or wait behind it, and a free number invites
+/// tuning a value whose exact size nobody can perceive.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WhichKeyDelay {
+    /// No delay - the strip appears with the `PREFIX` badge. Best while learning the keys, at the
+    /// cost of a flash on every chord finished from muscle memory.
+    Instant,
+    /// Long enough that a chord typed without thinking never shows the strip, short enough that it
+    /// is already there when you pause to think.
+    #[default]
+    Short,
+    /// Only appears once you have visibly stopped, so the strip stays out of the way until asked.
+    Long,
+}
+
+impl WhichKeyDelay {
+    /// Cycle order for the Settings row, ascending in how long the strip waits.
+    pub fn all() -> &'static [Self] {
+        &[Self::Instant, Self::Short, Self::Long]
+    }
+
+    /// One spelling per step; an unrecognized value warns and leaves the default in place.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "instant" => Some(Self::Instant),
+            "short" => Some(Self::Short),
+            "long" => Some(Self::Long),
+            _ => None,
+        }
+    }
+
+    /// The config spelling, so `parse(delay.id())` round-trips.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Instant => "instant",
+            Self::Short => "short",
+            Self::Long => "long",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Instant => "Instant",
+            Self::Short => "Short",
+            Self::Long => "Long",
+        }
+    }
+
+    /// `Short` sits near a typed chord's own duration, so it reads as "you hesitated" rather than
+    /// "you were slow". `Long` is roughly double that: past any hesitation, into a deliberate stop.
+    pub fn duration(self) -> std::time::Duration {
+        std::time::Duration::from_millis(match self {
+            Self::Instant => 0,
+            Self::Short => 300,
+            Self::Long => 750,
+        })
+    }
+
+    pub fn step(self, reverse: bool) -> Self {
+        let choices = Self::all();
+        let index = choices
+            .iter()
+            .position(|delay| *delay == self)
+            .unwrap_or_default();
+        let offset = if reverse { choices.len() - 1 } else { 1 };
+        choices[(index + offset) % choices.len()]
+    }
 }
 
 impl Default for InputConfig {
@@ -66,6 +144,8 @@ impl Default for InputConfig {
             prefix: KeyBinding::from_str("ctrl-a").expect("default prefix key parses"),
             modifier: WmModifier::Alt,
             modifier_shortcuts: true,
+            which_key: true,
+            which_key_delay: WhichKeyDelay::default(),
         }
     }
 }

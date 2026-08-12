@@ -9,6 +9,8 @@ pub enum SettingsAction {
     Theme,
     EditPadding,
     ToggleAnimations,
+    ToggleWhichKey,
+    CycleWhichKeyDelay,
     ToggleFocusOnHover,
     ToggleBackgroundFollowsTerminal,
     ToggleTitles,
@@ -51,6 +53,66 @@ pub enum SettingsAction {
 }
 
 impl SettingsAction {
+    /// Every row, in the order the Settings overlay lists them. Anything that has to reason about
+    /// the whole set - search aliases, coverage tests - iterates this instead of repeating a
+    /// hand-maintained list that silently omits whatever was added last.
+    pub const fn all() -> &'static [Self] {
+        &[
+            // General
+            Self::Theme,
+            Self::EditPadding,
+            Self::ToggleAnimations,
+            Self::ToggleWhichKey,
+            Self::CycleWhichKeyDelay,
+            Self::ToggleFocusOnHover,
+            Self::ToggleBackgroundFollowsTerminal,
+            // Titlebar
+            Self::ToggleTitles,
+            Self::CycleTitlebar,
+            Self::CycleTitleStyle,
+            // Workbar
+            Self::ToggleWorkbar,
+            Self::ToggleWorkbarPosition,
+            Self::ToggleWorkbarGap,
+            Self::CycleWorkbarStyle,
+            Self::CycleWorkbarBadgeStyle,
+            Self::CycleWorkbarTabStyle,
+            Self::ToggleWorkbarPowerline,
+            // Panes
+            Self::ToggleHighlightFocusedBackground,
+            Self::ToggleHighlightFocusedBorder,
+            Self::ToggleHighlightFocusedTitlebar,
+            Self::CycleBorderMode,
+            Self::CycleBorderStyle,
+            // Alerts
+            Self::ToggleBellUrgency,
+            Self::CycleAlertBorder,
+            Self::CycleWorkbarAlert,
+            Self::CycleWorkbarAlertPaint,
+            Self::ToggleMarkBell,
+            Self::ToggleMarkBlocked,
+            Self::ToggleMarkFinished,
+            Self::ToggleMarkWorking,
+            Self::ToggleMarkIdle,
+            // Desktop notifications
+            Self::ToggleDesktopEnabled,
+            Self::ToggleDesktopBlocked,
+            Self::ToggleDesktopDone,
+            Self::ToggleDesktopExit,
+            Self::ToggleDesktopExitError,
+            // Sounds
+            Self::ToggleSoundEnabled,
+            Self::ToggleSoundBell,
+            Self::ToggleSoundBlocked,
+            Self::ToggleSoundDone,
+            Self::ToggleSoundError,
+            // Sessions
+            Self::CycleStartupMode,
+            Self::ToggleSessionAutosave,
+            Self::ToggleSessionResurrect,
+        ]
+    }
+
     /// Rows whose value can be nudged with Left/Right. Theme and padding open nested UI, so arrows
     /// stay with the search caret there.
     pub const fn steps_horizontally(self) -> bool {
@@ -75,6 +137,7 @@ impl SettingsAction {
             Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
                 Some("Unsupported in this mode")
             }
+            Self::CycleWhichKeyDelay if !config.input.which_key => Some("Needs which-key panel"),
             Self::ToggleWorkbarPosition
             | Self::ToggleWorkbarGap
             | Self::CycleWorkbarStyle

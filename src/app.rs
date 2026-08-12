@@ -962,6 +962,10 @@ pub fn run() -> Result<()> {
         // focused widgets/terminal passthrough so they win regardless of what has focus.
         .key_dispatch_policy(KeyDispatchPolicy::AppCommandsFirst)
         .terminal_key_policy(TerminalKeyPolicy::AppCommandsThenTerminal)
+        // How long the prefix is held before the which-key strip appears. Only that strip reads the
+        // delayed signal; the PREFIX badge, the withheld caret, and prefix mouse gestures all stay
+        // on the instant `command_chord_pending`.
+        .command_chord_reveal_delay(config.input.which_key_delay.duration())
         // Ctrl-q is unbound: rozi's own `quit`/`detach` commands own client lifecycle exits.
         .global_quit(None);
 

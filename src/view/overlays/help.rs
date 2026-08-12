@@ -220,53 +220,43 @@ mod palette_alias_tests {
     use crate::state::SettingsAction;
     use tui_lipan::prelude::SearchEntry;
 
+    /// `settings_palette_aliases` always appends the group name, so a row with no aliases of its
+    /// own still returns a one-element list. Assert on the aliases *besides* the group, or the
+    /// check passes for every row whether or not anyone wrote one.
     #[test]
     fn every_settings_action_has_search_aliases() {
-        let actions = [
-            SettingsAction::Theme,
-            SettingsAction::EditPadding,
-            SettingsAction::ToggleTitles,
-            SettingsAction::CycleTitlebar,
-            SettingsAction::CycleTitleStyle,
-            SettingsAction::ToggleWorkbar,
-            SettingsAction::ToggleWorkbarGap,
-            SettingsAction::ToggleWorkbarPosition,
-            SettingsAction::CycleWorkbarStyle,
-            SettingsAction::CycleWorkbarBadgeStyle,
-            SettingsAction::ToggleWorkbarPowerline,
-            SettingsAction::CycleWorkbarTabStyle,
-            SettingsAction::ToggleAnimations,
-            SettingsAction::ToggleFocusOnHover,
-            SettingsAction::ToggleHighlightFocusedBackground,
-            SettingsAction::ToggleHighlightFocusedBorder,
-            SettingsAction::ToggleHighlightFocusedTitlebar,
-            SettingsAction::CycleBorderMode,
-            SettingsAction::CycleBorderStyle,
-            SettingsAction::ToggleBackgroundFollowsTerminal,
-            SettingsAction::ToggleBellUrgency,
-            SettingsAction::CycleAlertBorder,
-            SettingsAction::CycleWorkbarAlert,
-            SettingsAction::CycleWorkbarAlertPaint,
-            SettingsAction::ToggleMarkBell,
-            SettingsAction::ToggleMarkBlocked,
-            SettingsAction::ToggleMarkFinished,
-            SettingsAction::ToggleMarkWorking,
-            SettingsAction::ToggleMarkIdle,
-            SettingsAction::ToggleDesktopEnabled,
-            SettingsAction::ToggleDesktopBlocked,
-            SettingsAction::ToggleDesktopDone,
-            SettingsAction::ToggleDesktopExit,
-            SettingsAction::ToggleDesktopExitError,
-            SettingsAction::ToggleSoundEnabled,
-            SettingsAction::ToggleSoundBell,
-            SettingsAction::ToggleSoundBlocked,
-            SettingsAction::ToggleSoundDone,
-            SettingsAction::ToggleSoundError,
-        ];
-        for action in actions {
+        for action in SettingsAction::all().iter().copied() {
+            let group = "Test group";
+            let aliases = settings_palette_aliases(group, action);
+            let own: Vec<_> = aliases
+                .iter()
+                .filter(|alias| alias.as_ref() != group)
+                .collect();
             assert!(
-                !settings_palette_aliases("Test group", action).is_empty(),
-                "missing aliases for {action:?}"
+                !own.is_empty(),
+                "{action:?} is searchable only by its group name; give it aliases of its own"
+            );
+        }
+    }
+
+    /// Every row must also be reachable from the Commands palette, where `Settings` is the only
+    /// entry standing in for all of them - typing what you want to change has to find the door.
+    #[test]
+    fn settings_command_aliases_cover_every_group() {
+        let aliases = command_palette_aliases("settings");
+        for group in [
+            "theme",
+            "titlebar",
+            "workbar",
+            "which key",
+            "alerts",
+            "notifications",
+            "sounds",
+            "session startup",
+        ] {
+            assert!(
+                aliases.iter().any(|alias| alias.as_ref() == group),
+                "the Settings command is unreachable by `{group}`"
             );
         }
     }

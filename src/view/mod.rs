@@ -3,6 +3,7 @@ mod overlays;
 mod pane;
 pub(crate) mod session_status;
 pub(crate) mod sidebar;
+mod which_key;
 mod workbar;
 
 pub use keys::{
@@ -503,6 +504,18 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
         let popup_host: Element =
             popup_canvas.key(format!("rozi-popup-host-{}", ctx.state.runtime_epoch));
         root = root.child(popup_host);
+    }
+
+    // Above the panes so it is never covered, below the modal overlays so it never competes with
+    // one - and passthrough, because it is chrome that must not eat a click meant for a pane.
+    if let Some((rect, element)) = which_key::layer(ctx, content_viewport) {
+        root = root.child(
+            Canvas::new()
+                .height(Length::Flex(1))
+                .passthrough(true)
+                .child_at(rect, element)
+                .key("rozi-which-key"),
+        );
     }
 
     // Overlays portal to the root regardless of where they are attached.

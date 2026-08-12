@@ -115,11 +115,30 @@ fn command_palette_aliases(id: &str) -> Vec<Arc<str>> {
             "focused background",
             "focused titlebar",
             "titlebar focus",
+            "which key",
+            "which-key",
+            "prefix hints",
+            "key hints",
+            "chord panel",
+            "which key delay",
+            "background follows terminal",
+            "terminal background",
             "notifications",
             "sound",
+            "sounds",
+            "audio",
             "desktop",
             "blocked",
             "urgent",
+            "bell",
+            "marker",
+            "markers",
+            "workspace marker",
+            "alert marker",
+            "session startup",
+            "startup",
+            "autosave",
+            "resurrect",
             "focus on hover",
         ]),
         "toggle-do-not-disturb" => alias_list(&["dnd", "mute", "quiet"]),
@@ -228,6 +247,12 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
             "square borders",
             "border glyphs",
         ]),
+        ToggleWhichKey => alias_list(&["which key", "prefix hints", "key hints", "chord panel"]),
+        CycleWhichKeyDelay => alias_list(&[
+            "which key delay",
+            "prefix hint delay",
+            "chord panel timing",
+        ]),
         ToggleFocusOnHover => alias_list(&["mouse focus", "hover focus"]),
         ToggleBellUrgency => alias_list(&["terminal bell", "urgent bell"]),
         CycleAlertBorder => alias_list(&[
@@ -258,7 +283,31 @@ fn settings_palette_aliases(group: &str, action: SettingsAction) -> Vec<Arc<str>
         ToggleSessionResurrect => {
             alias_list(&["session resurrect", "restore sessions", "server restart"])
         }
-        _ => Vec::new(),
+        ToggleMarkBell => alias_list(&["bell mark", "bell marker", "bell tab marker"]),
+        ToggleMarkBlocked => alias_list(&["blocked mark", "blocked marker", "waiting marker"]),
+        ToggleMarkFinished => alias_list(&["finished mark", "done marker", "completed marker"]),
+        ToggleMarkWorking => alias_list(&["working mark", "busy marker", "running marker"]),
+        ToggleMarkIdle => alias_list(&["idle mark", "idle marker", "quiet marker"]),
+        ToggleDesktopEnabled => alias_list(&[
+            "desktop notifications",
+            "system notifications",
+            "notify send",
+        ]),
+        ToggleDesktopBlocked => {
+            alias_list(&["blocked notification", "waiting notification", "agent prompt"])
+        }
+        ToggleDesktopDone => alias_list(&["finished notification", "done notification"]),
+        ToggleDesktopExit => alias_list(&["exit notification", "pane exit notification"]),
+        ToggleDesktopExitError => alias_list(&[
+            "exit error notification",
+            "failure notification",
+            "non-zero exit",
+        ]),
+        ToggleSoundEnabled => alias_list(&["play sounds", "audio cues", "sound effects"]),
+        ToggleSoundBell => alias_list(&["bell sound", "bell audio"]),
+        ToggleSoundBlocked => alias_list(&["blocked sound", "waiting sound"]),
+        ToggleSoundDone => alias_list(&["finished sound", "done sound"]),
+        ToggleSoundError => alias_list(&["error sound", "failure sound"]),
     };
     aliases.push(Arc::from(group));
     aliases

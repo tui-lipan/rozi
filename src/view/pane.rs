@@ -858,12 +858,13 @@ pub(crate) fn pane_element(
         .screen(pane.terminal.screen_handle())
         .decorations(terminal_decorations_for_pane(ctx, pane))
         .paste_shortcut_behavior(TerminalPasteShortcutBehavior::Performable)
-        // A mask over what the child program asks for: a pane wearing hint labels or one whose
-        // command has exited shows no caret regardless.
+        // A mask over what the child program asks for: a pane wearing hint labels, one whose
+        // command has exited, or any pane while a prefix chord is pending shows no caret regardless.
         .show_cursor(app_allows_cursor(
             ctx.state.hint_mode.as_ref().map(|hints| hints.target),
             id,
             exited,
+            ctx.command_chord_pending(),
         ))
         .style(theme.primary.patch(Style::new().bg(frame_bg)))
         .selection_style(theme.text_selection)
@@ -1704,8 +1705,17 @@ fn selection_for_render(selection: &TerminalSelection) -> TerminalSelection {
 
 /// Whether the app permits this pane a caret at all; the child program still decides whether it
 /// wants one, and the widget ANDs the two.
-fn app_allows_cursor(hint_target: Option<PaneId>, id: PaneId, exited: bool) -> bool {
-    hint_target != Some(id) && !exited
+///
+/// A pending prefix chord withholds the caret from *every* pane, not just the focused one: the next
+/// keystroke belongs to rozi rather than to the shell, and a blinking caret in the pane says the
+/// opposite. It is the same reasoning as hint mode, applied window-wide because the chord is.
+fn app_allows_cursor(
+    hint_target: Option<PaneId>,
+    id: PaneId,
+    exited: bool,
+    chord_pending: bool,
+) -> bool {
+    hint_target != Some(id) && !exited && !chord_pending
 }
 
 #[cfg(test)]
@@ -1883,11 +1893,18 @@ mod tests {
     #[test]
     fn hint_mode_and_exit_state_withhold_the_cursor() {
         // The pane wearing the hint labels loses its caret; its neighbors keep theirs.
-        assert!(!app_allows_cursor(Some(7), 7, false));
-        assert!(app_allows_cursor(Some(7), 8, false));
-        assert!(app_allows_cursor(None, 7, false));
-        assert!(!app_allows_cursor(None, 7, true));
-        assert!(!app_allows_cursor(Some(7), 7, true));
+        assert!(!app_allows_cursor(Some(7), 7, false, false));
+        assert!(app_allows_cursor(Some(7), 8, false, false));
+        assert!(app_allows_cursor(None, 7, false, false));
+        assert!(!app_allows_cursor(None, 7, true, false));
+        assert!(!app_allows_cursor(Some(7), 7, true, false));
+    }
+
+    #[test]
+    fn a_pending_chord_withholds_the_cursor_from_every_pane() {
+        // Unlike hint mode, this is not scoped to one pane: the chord owns the whole window.
+        assert!(!app_allows_cursor(None, 7, false, true));
+        assert!(!app_allows_cursor(Some(7), 8, false, true));
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> FloatRect {

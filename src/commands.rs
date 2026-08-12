@@ -1109,6 +1109,20 @@ pub(crate) fn default_shortcuts_for_action(
 
 /// Resolve a command's live display label, reflecting current state for toggle actions (e.g.
 /// "Disable floating" vs "Enable floating") and the active layout for `ToggleLayout`.
+/// The static label for a built-in command, before [`resolved_label`] folds in live state.
+///
+/// The registry deliberately carries the resolved form ("Enable floating", "Switch layout
+/// (current: dwindle)") because a palette row is read one at a time and benefits from saying what
+/// pressing it will do. A dense grid is scanned rather than read, so the which-key strip wants the
+/// terse noun this returns instead. `None` for anything outside [`BUILTIN_COMMANDS`], including
+/// user `[keys]` commands, which have no second spelling.
+pub(crate) fn builtin_label(id: &str) -> Option<&'static str> {
+    BUILTIN_COMMANDS
+        .iter()
+        .find(|command| command.action.id() == Some(id))
+        .map(|command| command.label)
+}
+
 fn resolved_label(action: Action, base_label: &str, state: &State) -> String {
     if action == Action::EditScrollback {
         return edit_scrollback_label(&crate::ops::config::config_editor());

@@ -44,6 +44,12 @@
 # Mirror every built-in default onto <modifier>+<key> alongside its <prefix> <key> chord.
 # Set false to drop the held-modifier layer so Alt/Super chords reach the focused pane.
 #modifier_shortcuts = true
+# While a prefix chord is pending, show a compact table of what the next key can be. Held
+# <modifier>+<key> chords resolve in one press and never go pending, so this is prefix-only.
+#which_key = true
+# How long the prefix is held before that table appears, so a chord finished from muscle memory
+# never flashes it: "instant", "short", or "long". The PREFIX badge is never delayed.
+#which_key_delay = "short"
 
 [layout]
 # Terminal cell height divided by cell width. Dwindle compares a pane's visual width and

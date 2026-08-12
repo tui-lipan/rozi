@@ -139,9 +139,12 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
     on_large_stack(|| {
         let mut backend = settings_backend(100, 110);
         let frame = rendered_rows(&mut backend);
+        // Counted from the action list rather than hardcoded, so a row added to one and not the
+        // other fails here instead of drifting until someone notices a setting nobody can search.
+        let rows = rozi::state::SettingsAction::all().len();
         assert!(
-            frame.contains("42/42"),
-            "expected 42 Settings rows:\n{frame}"
+            frame.contains(&format!("{rows}/{rows}")),
+            "expected {rows} Settings rows:\n{frame}"
         );
 
         for (group, rows, next_group) in [
@@ -151,6 +154,8 @@ fn settings_renders_the_accepted_groups_and_row_labels() {
                     "Theme",
                     "Terminal padding",
                     "Animations",
+                    "Which-key panel",
+                    "Which-key delay",
                     "Focus on hover",
                     "Background follows terminal",
                 ][..],

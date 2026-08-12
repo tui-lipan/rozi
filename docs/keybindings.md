@@ -14,6 +14,12 @@ portable path because it does not depend on the terminal delivering modified key
 - `Ctrl-a` again (while in prefix mode) sends a **literal** `Ctrl-a` to the focused pane.
 - `Esc` cancels prefix mode. An unrecognized key is forwarded to the pane.
 - The workbar shows a yellow **PREFIX** indicator while you are in prefix mode.
+- The focused pane's caret is withheld while the prefix is pending: the next key belongs to rozi,
+  not to the shell.
+- After a short hold, a **which-key strip** beside the workbar lists what the next key can be,
+  capped at a fifth of the screen with a `+N · ? all` count for whatever did not fit. Turn it off
+  with `[input] which_key = false` or retime it with `which_key_delay`; see
+  [the which-key strip](configuration.md#the-which-key-strip).
 
 ### 2. Held modifier (direct)
 

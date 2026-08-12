@@ -275,7 +275,8 @@ Major module map:
   console-control handling, protocol-first shutdown, Job Object containment, forced termination,
   ConPTY availability), `shell_integration` (per-shell injection), `process/*` (`ProcessInspector`;
   Linux/macOS only by design), and `notifications`. See `platform/mod.rs` for per-submodule status.
-- `view/` - Pane rendering, workbar, palettes, overlays, and callbacks.
+- `view/` - Pane rendering, workbar, palettes, overlays, the pending-chord which-key strip, and
+  callbacks.
 - `benches/` - Criterion targets for terminal ingest, snapshot rebuilding, protocol framing, and
   the end-to-end session pipeline; `benches/support/mod.rs` generates deterministic corpora.
 

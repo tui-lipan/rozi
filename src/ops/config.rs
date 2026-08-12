@@ -127,6 +127,9 @@ pub(crate) fn reload_config(ctx: &mut Context<AppRoot>) -> Update {
     // command-shell-only changes. Keep matching in-flight guards until their old results arrive so
     // the replacement polls cannot overlap them.
     ctx.state.workbar.reconcile(&new_config.workbar);
+    // The reveal delay lives in the runtime rather than in `State`, so a reload has to push it
+    // across explicitly - otherwise it is the one `[input]` key that silently needs a restart.
+    ctx.set_command_chord_reveal_delay(new_config.input.which_key_delay.duration());
     ctx.state.config = new_config;
     // Releasing focus when a reload hides the sidebar is part of the same visibility transition as
     // the interactive toggle. Refresh work is kicked explicitly below, so only the synchronous

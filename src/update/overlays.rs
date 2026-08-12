@@ -241,6 +241,20 @@ fn settings_activate_dir(
         ToggleAnimations => {
             execute_action(ctx, Action::ToggleAnimations);
         }
+        ToggleWhichKey => {
+            ctx.state.config.input.which_key = !ctx.state.config.input.which_key;
+            persisted = Some(("input", "which_key", ctx.state.config.input.which_key));
+        }
+        CycleWhichKeyDelay => {
+            let value = ctx.state.config.input.which_key_delay.step(reverse);
+            ctx.state.config.input.which_key_delay = value;
+            // The delay lives in the runtime, not in `State`, so the new value has to be pushed
+            // across the same way `reload_config` does or the row would change nothing.
+            ctx.set_command_chord_reveal_delay(value.duration());
+            if let Err(err) = crate::config::persist_input_string("which_key_delay", value.id()) {
+                preference_error(ctx, err);
+            }
+        }
         ToggleFocusOnHover => {
             execute_action(ctx, Action::ToggleFocusOnHover);
         }
@@ -426,6 +440,7 @@ fn settings_activate_dir(
             "notifications" => crate::config::persist_notification_flag(key, value),
             "sounds" => crate::config::persist_sound_flag(key, value),
             "session" => crate::config::persist_session_flag(key, value),
+            "input" => crate::config::persist_input_flag(key, value),
             _ => crate::config::persist_workbar_alert_flag(key, value),
         };
         if let Err(err) = result {

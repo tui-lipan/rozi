@@ -307,9 +307,10 @@ fn execute_action_inner(
     if is_blocked_by_scratchpad(&ctx.state, action) {
         return Update::none();
     }
-    if opens_non_alert_overlay(action) {
-        ctx.state.show_alerts = false;
-        ctx.state.alerts_selected = None;
+    if closes_settings(action) {
+        ctx.state.show_settings = false;
+        ctx.state.settings_selected = None;
+        ctx.state.pane_padding_editor = None;
     }
     // Any action can flip a dynamic label (a toggle, layout cycling) or the `commands_active`
     // gate (mode/overlay changes). Marking dirty unconditionally here covers both the
@@ -478,27 +479,10 @@ fn execute_action_inner(
             crate::ops::exit::restart_session_with_confirmation(ctx, confirmations_enabled)
         }
         Action::OpenThemePicker => open_theme_picker(ctx),
-        Action::OpenAppearance => {
-            ctx.state.pane_padding_editor = None;
-            ctx.state.show_appearance = true;
-            ctx.state.appearance_selected = Some(crate::state::AppearanceAction::Theme);
-            ctx.state.show_palette = false;
-            ctx.state.show_help = false;
-            ctx.state.show_theme_picker = false;
-            ctx.state.commands_dirty = true;
-            ctx.request_focus(crate::view::appearance_palette_key());
-            Update::full()
+        Action::OpenSettings | Action::OpenAppearance => {
+            open_settings(ctx, crate::state::SettingsAction::Theme)
         }
-        Action::OpenAlerts => {
-            clear_non_alert_overlays(ctx);
-            ctx.state.show_alerts = true;
-            ctx.state.alerts_selected = Some(crate::state::AlertsAction::ToggleDoNotDisturb);
-            ctx.state.show_palette = false;
-            ctx.state.show_help = false;
-            ctx.state.show_appearance = false;
-            ctx.request_focus(crate::view::alerts_palette_key());
-            Update::full()
-        }
+        Action::OpenAlerts => open_settings(ctx, crate::state::SettingsAction::ToggleBellUrgency),
         Action::ToggleDoNotDisturb => {
             // A persistent in-session mode earns a workbar chip, not a redundant toast.
             ctx.state.do_not_disturb = !ctx.state.do_not_disturb;
@@ -507,9 +491,9 @@ fn execute_action_inner(
         Action::TogglePalette => {
             ctx.state.pane_padding_editor = None;
             ctx.state.show_palette = !ctx.state.show_palette;
+            ctx.state.command_palette_sidebar_query = false;
             if ctx.state.show_palette {
                 ctx.state.show_help = false;
-                ctx.state.show_appearance = false;
                 request_palette_focus(ctx);
             }
             Update::full()
@@ -519,7 +503,6 @@ fn execute_action_inner(
             ctx.state.show_help = !ctx.state.show_help;
             if ctx.state.show_help {
                 ctx.state.show_palette = false;
-                ctx.state.show_appearance = false;
             }
             Update::full()
         }
@@ -645,15 +628,13 @@ fn execute_action_inner(
     }
 }
 
-/// Overlay-opening actions share this boundary so Alerts cannot remain underneath another modal.
-/// The nested overlay-return flow does not open Alerts, so it retains its own parent bookkeeping.
-fn opens_non_alert_overlay(action: Action) -> bool {
+/// Theme is the one child that records Settings as its parent before hiding it. Every unrelated
+/// overlay opener closes Settings immediately so no modal remains interactive underneath another.
+fn closes_settings(action: Action) -> bool {
     matches!(
         action,
-        Action::OpenAppearance
-            | Action::TogglePalette
+        Action::TogglePalette
             | Action::ToggleHelp
-            | Action::OpenThemePicker
             | Action::OpenLayoutPicker
             | Action::OpenSearch
             | Action::RenamePane
@@ -667,17 +648,25 @@ fn opens_non_alert_overlay(action: Action) -> bool {
     )
 }
 
-/// Alerts is a top-level settings overlay, never a child in `overlay_return`. Starting it abandons
-/// any other modal instead of rendering it under the new palette.
-fn clear_non_alert_overlays(ctx: &mut Context<AppRoot>) {
+fn open_settings(ctx: &mut Context<AppRoot>, selected: crate::state::SettingsAction) -> Update {
+    clear_non_settings_overlays(ctx);
+    ctx.state.show_settings = true;
+    ctx.state.settings_selected = Some(selected);
+    ctx.state.commands_dirty = true;
+    ctx.request_focus(crate::view::settings_palette_key());
+    Update::full()
+}
+
+/// A top-level Settings opening abandons any other modal instead of rendering over it.
+fn clear_non_settings_overlays(ctx: &mut Context<AppRoot>) {
     crate::ops::theme::cancel_theme_picker(ctx);
     if ctx.state.show_layout_picker || ctx.state.layout_picker.is_some() {
         let _ = crate::ops::layout_picker::cancel_layout_picker(ctx);
     }
     ctx.state.show_palette = false;
     ctx.state.show_help = false;
-    ctx.state.show_appearance = false;
-    ctx.state.appearance_selected = None;
+    ctx.state.show_settings = false;
+    ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;
     ctx.state.search = None;
     ctx.state.rename = None;
@@ -1287,7 +1276,7 @@ mod tests {
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let mut backend = TestBackend::new(AppRoot::default());
-                backend.state_mut().show_appearance = true;
+                backend.state_mut().show_settings = true;
                 backend.state_mut().pane_padding_editor =
                     Some(PanePaddingEditorState::new((1, 1, 1, 1)));
                 let (reply, replies) = std::sync::mpsc::channel();

@@ -120,7 +120,7 @@ pub struct FollowPromptState {
 /// the rebuild has to restore. See [`crate::ops::overlay_return`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OverlayOrigin {
-    Appearance,
+    Settings,
     ProfilePicker {
         query: String,
         selected: usize,

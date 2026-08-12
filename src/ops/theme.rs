@@ -124,15 +124,15 @@ pub(crate) fn open_theme_picker(ctx: &mut Context<AppRoot>) -> Update {
         .iter()
         .position(|choice| &choice.id() == current);
     ctx.state.show_theme_picker = true;
-    // Opened from the Appearance dialog's `Theme` row, cancelling or picking a theme returns
+    // Opened from Settings' `Theme` row, cancelling or picking a theme returns
     // there; opened standalone (keybinding, palette) it leads back to the pane.
     ctx.state.overlay_return = ctx
         .state
-        .show_appearance
-        .then_some(crate::state::OverlayOrigin::Appearance);
+        .show_settings
+        .then_some(crate::state::OverlayOrigin::Settings);
     ctx.state.show_help = false;
     ctx.state.show_palette = false;
-    ctx.state.show_appearance = false;
+    ctx.state.show_settings = false;
     ctx.state.pane_padding_editor = None;
     ctx.state.search = None;
     ctx.state.mode = Mode::Normal;
@@ -178,8 +178,8 @@ pub(crate) fn cancel_theme_picker(ctx: &mut Context<AppRoot>) {
 }
 
 /// Picking a theme finishes the errand it was opened for, so it leaves the whole dialog stack —
-/// including the Appearance list it may have been raised from — rather than stepping back one level
-/// into a dialog the user is done with. Cancelling still returns to Appearance.
+/// including Settings when it was raised there — rather than stepping back one level into a dialog
+/// the user is done with. Cancelling still returns to Settings.
 fn close_after_theme_pick(ctx: &mut Context<AppRoot>) -> Update {
     crate::ops::overlay_return::leave(ctx);
     crate::ops::focus::request_current_pane_focus(ctx);

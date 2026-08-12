@@ -129,7 +129,7 @@ error = "#ff5555"
 
 ### Matching the host terminal's background
 
-The easiest way to get this is the *Background follows terminal* toggle in the Appearance
+The easiest way to get this is the *Background follows terminal* toggle in Settings
 picker (`[pane] background_follows_terminal` in config, off by default). It pins
 `surface.backdrop` to the host terminal's background for whichever theme is active, without
 needing a custom theme file at all - see [`[pane]`](configuration.md#pane) in the configuration

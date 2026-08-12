@@ -1,6 +1,6 @@
 //! Return-to-parent for nested dialogs.
 //!
-//! A dialog raised *from* another dialog (the theme picker from Appearance, a naming prompt from a
+//! A dialog raised *from* another dialog (the theme picker from Settings, a naming prompt from a
 //! picker) has to lead back where it came from: cancelling means "never mind, back to the list",
 //! not "close everything". Openers of such a child record their parent in
 //! [`crate::state::State::overlay_return`] — always assigning, so a standalone opening clears any
@@ -45,13 +45,13 @@ pub(crate) fn picker_origin(state: &State) -> Option<OverlayOrigin> {
 /// unfiltered list.
 pub(crate) fn restore(ctx: &mut Context<AppRoot>) -> Option<Update> {
     match ctx.state.overlay_return.take()? {
-        OverlayOrigin::Appearance => {
-            ctx.state.show_appearance = true;
-            if ctx.state.appearance_selected.is_none() {
-                ctx.state.appearance_selected = Some(crate::state::AppearanceAction::Theme);
+        OverlayOrigin::Settings => {
+            ctx.state.show_settings = true;
+            if ctx.state.settings_selected.is_none() {
+                ctx.state.settings_selected = Some(crate::state::SettingsAction::Theme);
             }
             ctx.state.commands_dirty = true;
-            ctx.request_focus(crate::view::appearance_palette_key());
+            ctx.request_focus(crate::view::settings_palette_key());
             Some(Update::full())
         }
         OverlayOrigin::ProfilePicker {
@@ -109,7 +109,7 @@ mod tests {
     use tui_lipan::TestBackend;
     use tui_lipan::prelude::Rect;
 
-    use crate::state::{AppearanceAction, ProfilePickerState, SessionPickerState};
+    use crate::state::{ProfilePickerState, SessionPickerState, SettingsAction};
     use crate::{AppRoot, Msg};
 
     /// Every case drives a real `AppRoot` through the message router, so the deep component
@@ -133,47 +133,47 @@ mod tests {
     }
 
     #[test]
-    fn theme_picker_opened_from_appearance_returns_to_it() {
+    fn theme_picker_opened_from_settings_returns_to_it() {
         with_backend(|backend| {
-            backend.state_mut().show_appearance = true;
+            backend.state_mut().show_settings = true;
             backend
-                .dispatch(Msg::AppearanceActivate(AppearanceAction::Theme))
+                .dispatch(Msg::SettingsActivate(SettingsAction::Theme))
                 .expect("open theme picker");
             assert!(backend.state().show_theme_picker);
-            assert!(!backend.state().show_appearance);
+            assert!(!backend.state().show_settings);
 
             backend
                 .dispatch(Msg::CloseThemePicker)
                 .expect("close theme picker");
             assert!(!backend.state().show_theme_picker);
-            assert!(backend.state().show_appearance);
+            assert!(backend.state().show_settings);
             assert_eq!(
                 backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::appearance_palette_key())
+                Some(crate::view::settings_palette_key())
             );
         });
     }
 
-    /// Cancelling steps back into Appearance, but picking a theme is the errand finished: it leaves
+    /// Cancelling steps back into Settings, but picking a theme is the errand finished: it leaves
     /// the whole stack rather than dropping the user back into a list they are done with.
     #[test]
-    fn selecting_a_theme_from_appearance_closes_the_dialogs() {
+    fn selecting_a_theme_from_settings_closes_the_dialogs() {
         with_backend(|backend| {
             // Selecting persists the pick; `test_support` has already pointed the writer at this
             // process's scratch root rather than the developer's own config.
-            backend.state_mut().show_appearance = true;
+            backend.state_mut().show_settings = true;
             backend
-                .dispatch(Msg::AppearanceActivate(AppearanceAction::Theme))
+                .dispatch(Msg::SettingsActivate(SettingsAction::Theme))
                 .expect("open theme picker");
             backend
                 .dispatch(Msg::SelectTheme(0))
                 .expect("select first theme");
-            let appearance_closed = !backend.state().show_appearance;
+            let settings_closed = !backend.state().show_settings;
             let picker_closed = !backend.state().show_theme_picker;
             let origin_cleared = backend.state().overlay_return.is_none();
 
             assert!(picker_closed);
-            assert!(appearance_closed);
+            assert!(settings_closed);
             assert!(origin_cleared);
         });
     }
@@ -191,7 +191,7 @@ mod tests {
                 .dispatch(Msg::CloseThemePicker)
                 .expect("close theme picker");
             assert!(!backend.state().show_theme_picker);
-            assert!(!backend.state().show_appearance);
+            assert!(!backend.state().show_settings);
         });
     }
 
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn standalone_prompt_does_not_inherit_a_stale_origin() {
         with_backend(|backend| {
-            backend.state_mut().overlay_return = Some(super::OverlayOrigin::Appearance);
+            backend.state_mut().overlay_return = Some(super::OverlayOrigin::Settings);
             backend
                 .dispatch(Msg::RunAction(crate::input::Action::RenameWorkspace))
                 .expect("open workspace rename");
@@ -278,7 +278,7 @@ mod tests {
             backend
                 .dispatch(Msg::CloseRenameSession)
                 .expect("close workspace rename");
-            assert!(!backend.state().show_appearance);
+            assert!(!backend.state().show_settings);
         });
     }
 }

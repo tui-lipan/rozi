@@ -160,9 +160,9 @@ agent with success; attending a finished pane (its host window and the pane are 
 that signal, while focused panes keep the active border. `separate` and `merged` draw the alert ring
 (merged seams resolve quiet below alert below focus); `dividers` colors only touching internal seams,
 and `none` draws no pane alert. Use
-`[pane] alert_border = "pulse"` (the default) for a slow breathe, or `cycle-alert-border` in Alerts.
+`[pane] alert_border = "pulse"` (the default) for a slow breathe, or `cycle-alert-border` in Settings.
 Workspace markers remain available independently through `[workbar.alert]`, whose own `mode` key
-(Alerts row **Workspace tab → Effect**, action `cycle-workbar-alert`) takes the same off/static/pulse
+(Settings row **Alerts → Workspace tab effect**, action `cycle-workbar-alert`) takes the same off/static/pulse
 values and breathes inactive marked tabs.
 
 A **new pane opens in the focused pane's current working directory** (when it can be

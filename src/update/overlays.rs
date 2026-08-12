@@ -48,7 +48,11 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     }
     if matches!(
         action,
-        Action::OpenAppearance | Action::OpenAlerts | Action::TogglePalette | Action::ToggleHelp
+        Action::OpenSettings
+            | Action::OpenAppearance
+            | Action::OpenAlerts
+            | Action::TogglePalette
+            | Action::ToggleHelp
     ) {
         ctx.state.pane_padding_editor = None;
     }
@@ -56,6 +60,7 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
     let from_palette = ctx.state.show_palette;
     if !cycle_layout_in_palette {
         ctx.state.show_palette = false;
+        ctx.state.command_palette_sidebar_query = false;
     }
     let update = if from_palette {
         execute_palette_action(ctx, action)
@@ -66,7 +71,8 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
         Action::OpenSearch => request_search_focus(ctx),
         Action::RenamePane => request_rename_focus(ctx),
         Action::RenameWorkspace | Action::RenameSession => request_rename_session_focus(ctx),
-        Action::OpenAppearance
+        Action::OpenSettings
+        | Action::OpenAppearance
         | Action::OpenAlerts
         | Action::OpenThemePicker
         | Action::OpenLayoutPicker => {}
@@ -89,8 +95,18 @@ pub(super) fn run_action(ctx: &mut Context<AppRoot>, action: Action) -> Update {
 
 pub(super) fn close_palette(ctx: &mut Context<AppRoot>) -> Update {
     ctx.state.show_palette = false;
+    ctx.state.command_palette_sidebar_query = false;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
+    Update::full()
+}
+
+pub(super) fn command_palette_query_changed(ctx: &mut Context<AppRoot>, query: String) -> Update {
+    let sidebar_query = query.trim().eq_ignore_ascii_case("sidebar");
+    if ctx.state.command_palette_sidebar_query == sidebar_query {
+        return Update::none();
+    }
+    ctx.state.command_palette_sidebar_query = sidebar_query;
     Update::full()
 }
 
@@ -101,66 +117,161 @@ pub(super) fn close_help(ctx: &mut Context<AppRoot>) -> Update {
     Update::full()
 }
 
-pub(super) fn close_appearance(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.show_appearance = false;
-    ctx.state.appearance_selected = None;
+pub(super) fn close_settings(ctx: &mut Context<AppRoot>) -> Update {
+    ctx.state.show_settings = false;
+    ctx.state.settings_selected = None;
     ctx.state.pane_padding_editor = None;
     ctx.state.commands_dirty = true;
     request_current_pane_focus(ctx);
     Update::full()
 }
 
-pub(super) fn close_alerts(ctx: &mut Context<AppRoot>) -> Update {
-    ctx.state.show_alerts = false;
-    ctx.state.alerts_selected = None;
-    ctx.state.commands_dirty = true;
-    request_current_pane_focus(ctx);
+pub(super) fn settings_select(
+    ctx: &mut Context<AppRoot>,
+    action: crate::state::SettingsAction,
+) -> Update {
+    ctx.state.settings_selected = Some(action);
+    // The key interceptor is rebuilt from this live selection: Theme/Padding leave Left/Right to
+    // the search caret, while value rows consume them for stepping.
     Update::full()
 }
-pub(super) fn alerts_select(
+
+pub(super) fn settings_activate(
     ctx: &mut Context<AppRoot>,
-    action: crate::state::AlertsAction,
+    action: crate::state::SettingsAction,
 ) -> Update {
-    ctx.state.alerts_selected = Some(action);
-    Update::none()
-}
-pub(super) fn alerts_activate(
-    ctx: &mut Context<AppRoot>,
-    action: crate::state::AlertsAction,
-) -> Update {
-    alerts_activate_dir(ctx, action, false)
+    settings_activate_dir(ctx, action, false)
 }
 
-pub(super) fn alerts_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
-    let Some(action) = ctx.state.alerts_selected else {
+pub(super) fn settings_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
+    let Some(action) = ctx.state.settings_selected else {
         return Update::none();
     };
     if !action.steps_horizontally() {
         return Update::none();
     }
-    alerts_activate_dir(ctx, action, reverse)
+    settings_activate_dir(ctx, action, reverse)
 }
 
-fn alerts_activate_dir(
+fn settings_activate_dir(
     ctx: &mut Context<AppRoot>,
-    action: crate::state::AlertsAction,
+    action: crate::state::SettingsAction,
     reverse: bool,
 ) -> Update {
-    if action
-        .disabled_reason(
-            &ctx.state.config.pane,
-            ctx.state.config.notifications.enabled,
-            ctx.state.config.sounds.enabled,
-        )
-        .is_some()
-    {
-        ctx.request_focus(crate::view::alerts_palette_key());
+    if action.disabled_reason(&ctx.state.config).is_some() {
+        ctx.request_focus(crate::view::settings_palette_key());
         return Update::full();
     }
-    use crate::state::AlertsAction::*;
+    use crate::state::SettingsAction::*;
     let mut persisted: Option<(&str, &str, bool)> = None;
     match action {
-        ToggleDoNotDisturb => ctx.state.do_not_disturb = !ctx.state.do_not_disturb,
+        Theme => {
+            execute_action(ctx, Action::OpenThemePicker);
+        }
+        EditPadding => {
+            ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
+                ctx.state.config.pane.padding,
+            ));
+            ctx.request_focus(crate::view::pane_padding_vertical_key());
+        }
+        ToggleTitles => {
+            execute_action(ctx, Action::ToggleTitles);
+        }
+        CycleTitlebar if reverse => {
+            let value = ctx.state.config.pane.titlebar.prev();
+            ctx.state.config.pane.titlebar = value;
+            persist_pane_string_or_toast(ctx, "titlebar", value.id());
+        }
+        CycleTitlebar => {
+            execute_action(ctx, Action::CycleTitlebar);
+        }
+        CycleTitleStyle if reverse => {
+            let value = crate::state::prev_cap_style(ctx.state.config.pane.title_style);
+            ctx.state.config.pane.title_style = value;
+            persist_pane_string_or_toast(ctx, "title_style", crate::state::cap_style_id(value));
+        }
+        CycleTitleStyle => {
+            execute_action(ctx, Action::CycleTitleStyle);
+        }
+        ToggleWorkbar => {
+            execute_action(ctx, Action::ToggleWorkbar);
+        }
+        ToggleWorkbarPosition => {
+            execute_action(ctx, Action::ToggleWorkbarPosition);
+        }
+        ToggleWorkbarGap => {
+            execute_action(ctx, Action::ToggleWorkbarGap);
+        }
+        CycleWorkbarStyle if reverse => {
+            let value = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
+            ctx.state.config.pane.workbar_style = value;
+            persist_pane_string_or_toast(ctx, "workbar_style", crate::state::cap_style_id(value));
+        }
+        CycleWorkbarStyle => {
+            execute_action(ctx, Action::CycleWorkbarStyle);
+        }
+        CycleWorkbarBadgeStyle if reverse => {
+            let value =
+                crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
+            ctx.state.config.pane.workbar_badge_style = value;
+            persist_pane_string_or_toast(
+                ctx,
+                "workbar_badge_style",
+                crate::state::cap_style_id(value),
+            );
+        }
+        CycleWorkbarBadgeStyle => {
+            execute_action(ctx, Action::CycleWorkbarBadgeStyle);
+        }
+        CycleWorkbarTabStyle if reverse => {
+            let value = crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
+            ctx.state.config.pane.workbar_tab_style = value;
+            persist_pane_string_or_toast(
+                ctx,
+                "workbar_tab_style",
+                crate::state::cap_style_id(value),
+            );
+        }
+        CycleWorkbarTabStyle => {
+            execute_action(ctx, Action::CycleWorkbarTabStyle);
+        }
+        ToggleWorkbarPowerline => {
+            execute_action(ctx, Action::ToggleWorkbarPowerline);
+        }
+        ToggleAnimations => {
+            execute_action(ctx, Action::ToggleAnimations);
+        }
+        ToggleFocusOnHover => {
+            execute_action(ctx, Action::ToggleFocusOnHover);
+        }
+        ToggleBackgroundFollowsTerminal => {
+            execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
+        }
+        ToggleHighlightFocusedBackground => {
+            execute_action(ctx, Action::ToggleHighlightFocusedBackground);
+        }
+        ToggleHighlightFocusedBorder => {
+            execute_action(ctx, Action::ToggleHighlightFocusedBorder);
+        }
+        ToggleHighlightFocusedTitlebar => {
+            execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
+        }
+        CycleBorderMode if reverse => {
+            let value = ctx.state.config.pane.border_mode.prev();
+            ctx.state.config.pane.border_mode = value;
+            persist_pane_string_or_toast(ctx, "border_mode", value.id());
+        }
+        CycleBorderMode => {
+            execute_action(ctx, Action::CycleBorderMode);
+        }
+        CycleBorderStyle if reverse => {
+            let value = ctx.state.config.pane.border_style.prev();
+            ctx.state.config.pane.border_style = value;
+            persist_pane_string_or_toast(ctx, "border_style", value.id());
+        }
+        CycleBorderStyle => {
+            execute_action(ctx, Action::CycleBorderStyle);
+        }
         ToggleBellUrgency => {
             ctx.state.config.notifications.bell = !ctx.state.config.notifications.bell;
             persisted = Some(("notifications", "bell", ctx.state.config.notifications.bell));
@@ -303,11 +414,14 @@ fn alerts_activate_dir(
             preference_error(ctx, err);
         }
     }
-    ctx.state.show_alerts = true;
-    ctx.state.alerts_selected = Some(action);
-    ctx.request_focus(crate::view::alerts_palette_key());
+    if !matches!(action, Theme | EditPadding) {
+        ctx.state.show_settings = true;
+        ctx.state.settings_selected = Some(action);
+        ctx.request_focus(crate::view::settings_palette_key());
+    }
     Update::full()
 }
+
 fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
     crate::pty_events::notify_on(
         ctx,
@@ -315,159 +429,6 @@ fn preference_error(ctx: &mut Context<AppRoot>, err: String) {
         Some("Preference not saved".to_string()),
         err,
     );
-}
-
-pub(super) fn appearance_select(
-    ctx: &mut Context<AppRoot>,
-    action: crate::state::AppearanceAction,
-) -> Update {
-    ctx.state.appearance_selected = Some(action);
-    Update::none()
-}
-
-pub(super) fn appearance_step(ctx: &mut Context<AppRoot>, reverse: bool) -> Update {
-    let Some(action) = ctx.state.appearance_selected else {
-        return Update::none();
-    };
-    if !action.steps_horizontally() {
-        return Update::none();
-    }
-    appearance_activate_dir(ctx, action, reverse)
-}
-
-pub(super) fn appearance_activate(
-    ctx: &mut Context<AppRoot>,
-    action: crate::state::AppearanceAction,
-) -> Update {
-    appearance_activate_dir(ctx, action, false)
-}
-
-fn appearance_activate_dir(
-    ctx: &mut Context<AppRoot>,
-    action: crate::state::AppearanceAction,
-    reverse: bool,
-) -> Update {
-    // A greyed row (its parent feature is off) is inert: keep the overlay open and focused but
-    // change nothing. Otherwise dispatch the row's underlying action.
-    if action.disabled_reason(&ctx.state.config.pane).is_some() {
-        ctx.request_focus(crate::view::appearance_palette_key());
-        return Update::full();
-    }
-    match action {
-        crate::state::AppearanceAction::Theme => {
-            execute_action(ctx, Action::OpenThemePicker);
-        }
-        crate::state::AppearanceAction::EditPadding => {
-            ctx.state.pane_padding_editor = Some(crate::state::PanePaddingEditorState::new(
-                ctx.state.config.pane.padding,
-            ));
-            ctx.request_focus(crate::view::pane_padding_vertical_key());
-        }
-        crate::state::AppearanceAction::ToggleTitles => {
-            execute_action(ctx, Action::ToggleTitles);
-        }
-        crate::state::AppearanceAction::CycleTitlebar if reverse => {
-            let prev = ctx.state.config.pane.titlebar.prev();
-            ctx.state.config.pane.titlebar = prev;
-            persist_pane_string_or_toast(ctx, "titlebar", prev.id());
-        }
-        crate::state::AppearanceAction::CycleTitlebar => {
-            execute_action(ctx, Action::CycleTitlebar);
-        }
-        crate::state::AppearanceAction::ToggleWorkbar => {
-            execute_action(ctx, Action::ToggleWorkbar);
-        }
-        crate::state::AppearanceAction::ToggleWorkbarGap => {
-            execute_action(ctx, Action::ToggleWorkbarGap);
-        }
-        crate::state::AppearanceAction::ToggleWorkbarPosition => {
-            execute_action(ctx, Action::ToggleWorkbarPosition);
-        }
-        crate::state::AppearanceAction::ToggleWorkbarPowerline => {
-            execute_action(ctx, Action::ToggleWorkbarPowerline);
-        }
-        crate::state::AppearanceAction::ToggleAnimations => {
-            execute_action(ctx, Action::ToggleAnimations);
-        }
-        crate::state::AppearanceAction::ToggleHighlightFocusedBackground => {
-            execute_action(ctx, Action::ToggleHighlightFocusedBackground);
-        }
-        crate::state::AppearanceAction::ToggleHighlightFocusedBorder => {
-            execute_action(ctx, Action::ToggleHighlightFocusedBorder);
-        }
-        crate::state::AppearanceAction::ToggleHighlightFocusedTitlebar => {
-            execute_action(ctx, Action::ToggleHighlightFocusedTitlebar);
-        }
-        crate::state::AppearanceAction::CycleBorderMode if reverse => {
-            let prev = ctx.state.config.pane.border_mode.prev();
-            ctx.state.config.pane.border_mode = prev;
-            persist_pane_string_or_toast(ctx, "border_mode", prev.id());
-        }
-        crate::state::AppearanceAction::CycleBorderMode => {
-            execute_action(ctx, Action::CycleBorderMode);
-        }
-        crate::state::AppearanceAction::ToggleBackgroundFollowsTerminal => {
-            execute_action(ctx, Action::ToggleBackgroundFollowsTerminal);
-        }
-        crate::state::AppearanceAction::CycleBorderStyle if reverse => {
-            let prev = ctx.state.config.pane.border_style.prev();
-            ctx.state.config.pane.border_style = prev;
-            persist_pane_string_or_toast(ctx, "border_style", prev.id());
-        }
-        crate::state::AppearanceAction::CycleBorderStyle => {
-            execute_action(ctx, Action::CycleBorderStyle);
-        }
-        crate::state::AppearanceAction::CycleTitleStyle if reverse => {
-            let prev = crate::state::prev_cap_style(ctx.state.config.pane.title_style);
-            ctx.state.config.pane.title_style = prev;
-            persist_pane_string_or_toast(ctx, "title_style", crate::state::cap_style_id(prev));
-        }
-        crate::state::AppearanceAction::CycleTitleStyle => {
-            execute_action(ctx, Action::CycleTitleStyle);
-        }
-        crate::state::AppearanceAction::CycleWorkbarBadgeStyle if reverse => {
-            let prev =
-                crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_badge_style);
-            ctx.state.config.pane.workbar_badge_style = prev;
-            persist_pane_string_or_toast(
-                ctx,
-                "workbar_badge_style",
-                crate::state::cap_style_id(prev),
-            );
-        }
-        crate::state::AppearanceAction::CycleWorkbarBadgeStyle => {
-            execute_action(ctx, Action::CycleWorkbarBadgeStyle);
-        }
-        crate::state::AppearanceAction::CycleWorkbarTabStyle if reverse => {
-            let prev = crate::state::prev_badge_cap_style(ctx.state.config.pane.workbar_tab_style);
-            ctx.state.config.pane.workbar_tab_style = prev;
-            persist_pane_string_or_toast(
-                ctx,
-                "workbar_tab_style",
-                crate::state::cap_style_id(prev),
-            );
-        }
-        crate::state::AppearanceAction::CycleWorkbarTabStyle => {
-            execute_action(ctx, Action::CycleWorkbarTabStyle);
-        }
-        crate::state::AppearanceAction::CycleWorkbarStyle if reverse => {
-            let prev = crate::state::prev_cap_style(ctx.state.config.pane.workbar_style);
-            ctx.state.config.pane.workbar_style = prev;
-            persist_pane_string_or_toast(ctx, "workbar_style", crate::state::cap_style_id(prev));
-        }
-        crate::state::AppearanceAction::CycleWorkbarStyle => {
-            execute_action(ctx, Action::CycleWorkbarStyle);
-        }
-    };
-    if !matches!(
-        action,
-        crate::state::AppearanceAction::Theme | crate::state::AppearanceAction::EditPadding
-    ) {
-        ctx.state.show_appearance = true;
-        ctx.state.appearance_selected = Some(action);
-        ctx.request_focus(crate::view::appearance_palette_key());
-    }
-    Update::full()
 }
 
 fn persist_pane_string_or_toast(ctx: &mut Context<AppRoot>, key: &str, value: &str) {
@@ -486,8 +447,8 @@ pub(super) fn close_pane_padding_editor(ctx: &mut Context<AppRoot>) -> Update {
         return Update::none();
     }
     ctx.state.pane_padding_editor = None;
-    if ctx.state.show_appearance {
-        ctx.request_focus(crate::view::appearance_palette_key());
+    if ctx.state.show_settings {
+        ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
 }
@@ -552,8 +513,8 @@ pub(super) fn submit_pane_padding(ctx: &mut Context<AppRoot>) -> Update {
         crate::pty_events::notify_error(ctx, "Padding not saved", error);
     }
     ctx.state.pane_padding_editor = None;
-    if ctx.state.show_appearance {
-        ctx.request_focus(crate::view::appearance_palette_key());
+    if ctx.state.show_settings {
+        ctx.request_focus(crate::view::settings_palette_key());
     }
     Update::full()
 }
@@ -630,35 +591,39 @@ mod tests {
     }
 
     #[test]
-    fn alerts_left_right_steps_modes_and_keeps_selection() {
+    fn settings_left_right_steps_alert_modes_and_keeps_selection() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
-            backend.state_mut().show_alerts = true;
+            backend.state_mut().show_settings = true;
             backend.state_mut().config.pane.show_workbar = true;
-            backend.state_mut().alerts_selected =
-                Some(crate::state::AlertsAction::CycleAlertBorder);
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::CycleAlertBorder);
 
-            backend.dispatch(Msg::AlertsStep { reverse: true }).unwrap();
+            backend
+                .dispatch(Msg::SettingsStep { reverse: true })
+                .unwrap();
             assert_eq!(
                 backend.state().config.pane.alert_border,
                 crate::state::AlertMode::Static
             );
             assert_eq!(
-                backend.state().alerts_selected,
-                Some(crate::state::AlertsAction::CycleAlertBorder)
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::CycleAlertBorder)
             );
 
             backend
-                .dispatch(Msg::AlertsStep { reverse: false })
+                .dispatch(Msg::SettingsStep { reverse: false })
                 .unwrap();
             assert_eq!(
                 backend.state().config.pane.alert_border,
                 crate::state::AlertMode::Pulse
             );
 
-            backend.state_mut().alerts_selected =
-                Some(crate::state::AlertsAction::CycleWorkbarAlert);
-            backend.dispatch(Msg::AlertsStep { reverse: true }).unwrap();
+            backend.state_mut().settings_selected =
+                Some(crate::state::SettingsAction::CycleWorkbarAlert);
+            backend
+                .dispatch(Msg::SettingsStep { reverse: true })
+                .unwrap();
             assert_eq!(
                 backend.state().config.workbar.alert.mode,
                 crate::state::AlertMode::Static
@@ -667,20 +632,23 @@ mod tests {
     }
 
     #[test]
-    fn opening_another_overlay_closes_alerts() {
+    fn appearance_deep_link_reuses_settings() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
-            backend.state_mut().show_alerts = true;
+            backend.state_mut().show_settings = true;
             backend
                 .dispatch(Msg::RunAction(Action::OpenAppearance))
                 .unwrap();
-            assert!(!backend.state().show_alerts);
-            assert!(backend.state().show_appearance);
+            assert!(backend.state().show_settings);
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::Theme)
+            );
         });
     }
 
     #[test]
-    fn opening_alerts_clears_a_session_picker_and_focuses_alerts() {
+    fn alerts_deep_link_clears_a_session_picker_and_selects_bell_urgency() {
         on_large_stack(|| {
             let mut backend = TestBackend::new(AppRoot::default());
             {
@@ -688,7 +656,7 @@ mod tests {
                 state.show_session_picker = true;
                 state.session_picker = Some(crate::state::SessionPickerState::new(Vec::new()));
                 state.show_help = true;
-                state.overlay_return = Some(crate::state::OverlayOrigin::Appearance);
+                state.overlay_return = Some(crate::state::OverlayOrigin::Settings);
             }
 
             backend
@@ -699,15 +667,43 @@ mod tests {
             assert!(backend.state().session_picker.is_none());
             assert!(!backend.state().show_help);
             assert!(backend.state().overlay_return.is_none());
-            assert!(backend.state().show_alerts);
+            assert!(backend.state().show_settings);
             assert_eq!(
-                backend.state().alerts_selected,
-                Some(crate::state::AlertsAction::ToggleDoNotDisturb)
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::ToggleBellUrgency)
             );
             assert_eq!(
                 backend.focused_key().map(|key| key.as_ref()),
-                Some(crate::view::alerts_palette_key())
+                Some(crate::view::settings_palette_key())
             );
+        });
+    }
+
+    #[test]
+    fn settings_command_opens_at_theme() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            backend
+                .dispatch(Msg::RunAction(Action::OpenSettings))
+                .unwrap();
+            assert!(backend.state().show_settings);
+            assert_eq!(
+                backend.state().settings_selected,
+                Some(crate::state::SettingsAction::Theme)
+            );
+        });
+    }
+
+    #[test]
+    fn focus_on_hover_id_stays_a_direct_action() {
+        on_large_stack(|| {
+            let mut backend = TestBackend::new(AppRoot::default());
+            let initial = backend.state().config.pane.focus_on_hover;
+            backend
+                .dispatch(Msg::RunAction(Action::ToggleFocusOnHover))
+                .unwrap();
+            assert_eq!(backend.state().config.pane.focus_on_hover, !initial);
+            assert!(!backend.state().show_settings);
         });
     }
 }

@@ -275,17 +275,21 @@ overlay (under "Custom") and command palette with a generated label, but are con
 have no stable id, so they can't be rebound elsewhere or invoked via `rozi run-action`.
 
 The **command palette** (`p`) is a fuzzy-search list of commands that are awkward to reach by
-keyboard - capture session as profile, replace session with profile, change appearance, promote to master, plus discoverable extras (rename pane, search,
-copy mode, scratchpad, resize mode, toggle layout, toggle focus on hover, alerts, help). The appearance
-palette groups theme, titlebar, workbar, animation, and border controls; **Alerts** groups pane,
-workspace, desktop, and sound cues. `alerts` opens that panel and `toggle-do-not-disturb` toggles
-its DND mode; it also contains `cycle-alert-border` and `cycle-workbar-alert` (Off/Static/Pulse).
-On Appearance and Alerts toggle or cycle rows, `←` / `→` steps the value (Enter still activates,
-including Theme and Terminal padding).
+keyboard - capture session as profile, replace session with profile, open Settings, promote to
+master, plus discoverable extras (rename pane, search, copy mode, scratchpad, resize mode, toggle
+layout, do not disturb, and help). **Settings** groups durable preferences for theme,
+titlebar, workbar, focused-pane chrome, borders, focus-on-hover, alert markers, desktop
+notifications, and sounds in one searchable list. `change-appearance` and `alerts` remain bindable
+deep links into that list; `toggle-do-not-disturb` remains a runtime command for this client. On
+Settings toggle or cycle rows, `←` / `→` steps the value (Enter still activates, including Theme
+and Terminal padding). Command results are separated into **Panes**, **Workspace**, **App**,
+**Profile**, **Session**, **Collaboration**, and **Sidebar** sections.
+Settings uses **General**, **Titlebar**, **Workbar**, **Panes**, **Alerts**, **Desktop notifications**,
+and **Sounds**, with one blank row separating adjacent sections.
 Frequent single-key actions (spawn/close/float/fullscreen/flip/grow/shrink) live in the help
-overlay only, since the key is faster than a search box. "Change appearance" and "Toggle
-focus on hover" are palette-only - they have no default key. So are "Open config file" and
-"Reload config" - see
+overlay only, since the key is faster than a search box. "Settings" has no default key; bind its
+`settings` action under `[keys]` if desired. "Open config file" is also palette-only; config changes
+reload automatically - see
 [Reloading and editing](configuration.md#reloading-and-editing).
 
 The **help overlay** (`?`) is the complete keybinding reference and lists every binding,
@@ -372,7 +376,7 @@ While an overlay is open (command palette, help, theme picker, search, rename):
 - `Esc` closes the overlay.
 - A dialog opened *from* another one goes **back** to it instead of to the pane, and its hint bar
   says `back esc` rather than `cancel esc`. The theme picker and the terminal-padding editor return
-  to **Appearance**; a naming prompt raised from a picker (`Ctrl+N` / `Ctrl+O` in **Profiles**,
+  to **Settings**; a naming prompt raised from a picker (`Ctrl+N` / `Ctrl+O` in **Profiles**,
   `Ctrl+N` / `Ctrl+R` / `Ctrl+S` in **Sessions**) returns to that picker, rebuilt with the query and
   highlighted row it had. Submitting returns the same way whenever the parent survives - capturing a
   profile or naming the current session lands back in the picker - while anything that attaches,

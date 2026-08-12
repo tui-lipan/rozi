@@ -115,8 +115,8 @@ with the mouse and remember their geometry.
 **Focus** — directional (`focus-<dir>`), directional-without-wrap, cycle next/previous, and
 `focus-next-blocked-pane` to jump to a pane waiting on input (reported and screen-detected blocked
 states agree). Unfocused blocked and finished-unseen agents can mark pane borders and workspace tabs;
-`cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse in **Alerts**. **Focus-on-hover** is available as a
-toggle. Focus survives layout changes.
+`cycle-alert-border` and `cycle-workbar-alert` each select off/static/pulse in **Settings**.
+**Focus-on-hover** is a Settings preference. Focus survives layout changes.
 
 **Smart focus (vim-aware)** — `smart-focus-<dir>` moves rozi focus *unless* the focused pane
 runs a split-aware program listed in `[navigation] editors`, in which case it forwards the matching
@@ -307,8 +307,8 @@ See [Keybindings](keybindings.md).
 - **Help overlay** (`?`) — the full keybinding reference, generated from `input.rs`.
 - **Layout picker** (`shift+m`) with live preview.
 - **Theme picker** — built-in presets, custom themes, and `system`, in one fuzzy modal.
-- **Appearance dialog** — step values with left/right arrows to tune gaps, borders, opacity, and
-  related settings live.
+- **Settings dialog** — fuzzy-search durable appearance, focus, alert, notification, and sound
+  preferences; step values with left/right arrows.
 - **Session picker**, **profile picker**, and **collaborators dialog**.
 - **Launcher** — a startup surface when there is no obvious session to attach to.
 - **DevTools overlay** — `tui-lipan`'s built-in inspector (`devtools` feature).
@@ -383,11 +383,11 @@ Presets: `lipan` (default), `one-dark`, `dracula`, `nord`, `gruvbox-dark`, `gruv
 `rose-pine-moon`, `rose-pine-dawn`, `kanagawa`, `everforest`, `ayu-dark`, `ayu-mirage`,
 `ayu-light`, `nightfox`, `nordfox`, `night-owl`, `material-palenight`, `oxocarbon`, `zenburn`.
 
-**Runtime appearance toggles** — titlebar on/off and layout style, titlebar cap style, border mode
+**Appearance preferences** — titlebar on/off and layout style, titlebar cap style, border mode
 and style, focused-pane background / border / titlebar highlighting, background-follows-terminal,
 alert-border mode,
-animations on/off, and every workbar style knob listed above. All are live, and reachable from both
-the command palette and the appearance dialog.
+animations on/off, and every workbar style knob listed above. Changes apply live from **Settings**;
+their stable action ids remain available for `[keys]` and `run-action`.
 
 **Animations** — spawn, close, fullscreen, tile/float, and split-axis transitions, each
 individually configurable. Geometry animation is app-driven: position and opacity animate, but

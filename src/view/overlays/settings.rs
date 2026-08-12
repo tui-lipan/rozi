@@ -1,65 +1,39 @@
-pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+pub(crate) fn settings_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
+    use SettingsAction::*;
+
     let pane = &ctx.state.config.pane;
-    // Dependent rows (Titlebar Style, Workbar Gap/Position) always stay in the list; when their
-    // parent feature is off they render greyed and non-activating (see `disabled_reason` and the
-    // `render_item` below) rather than disappearing. Category headers mirror the Commands picker;
-    // short labels rely on group context (and aliases for search).
-    let row = |label: &str, status: String, action: AppearanceAction| {
-        SearchEntry::Item(
-            SearchItem::new(label, (action, status)).aliases(appearance_palette_aliases(action)),
-        )
-    };
     let entries = search_entries_with_groups([
-        (
+        settings_group(
             "General",
             vec![
-                row("Theme", current_theme_label(ctx), AppearanceAction::Theme),
-                row(
-                    "Terminal padding",
-                    padding_summary(pane.padding),
-                    AppearanceAction::EditPadding,
-                ),
-                row(
+                ("Theme", current_theme_label(ctx), Theme),
+                ("Terminal padding", padding_summary(pane.padding), EditPadding),
+                (
                     "Animations",
                     enabled_status(ctx.state.config.animations.enabled),
-                    AppearanceAction::ToggleAnimations,
+                    ToggleAnimations,
                 ),
-                row(
+                ("Focus on hover", enabled_status(pane.focus_on_hover), ToggleFocusOnHover),
+                (
                     "Background follows terminal",
                     enabled_status(pane.background_follows_terminal),
-                    AppearanceAction::ToggleBackgroundFollowsTerminal,
+                    ToggleBackgroundFollowsTerminal,
                 ),
             ],
         ),
-        (
+        settings_group(
             "Titlebar",
             vec![
-                row(
-                    "Show titlebar",
-                    enabled_status(pane.show_titles),
-                    AppearanceAction::ToggleTitles,
-                ),
-                row(
-                    "Layout",
-                    pane.titlebar.label().to_string(),
-                    AppearanceAction::CycleTitlebar,
-                ),
-                row(
-                    "Style",
-                    cap_style_label(pane.title_style).to_string(),
-                    AppearanceAction::CycleTitleStyle,
-                ),
+                ("Show titlebar", enabled_status(pane.show_titles), ToggleTitles),
+                ("Layout", pane.titlebar.label().to_string(), CycleTitlebar),
+                ("Style", cap_style_label(pane.title_style).to_string(), CycleTitleStyle),
             ],
         ),
-        (
+        settings_group(
             "Workbar",
             vec![
-                row(
-                    "Show workbar",
-                    enabled_status(pane.show_workbar),
-                    AppearanceAction::ToggleWorkbar,
-                ),
-                row(
+                ("Show workbar", enabled_status(pane.show_workbar), ToggleWorkbar),
+                (
                     "Position",
                     if pane.workbar_at_bottom {
                         "Bottom"
@@ -67,77 +41,120 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
                         "Top"
                     }
                     .to_string(),
-                    AppearanceAction::ToggleWorkbarPosition,
+                    ToggleWorkbarPosition,
                 ),
-                row(
-                    "Gap",
-                    enabled_status(pane.workbar_gap),
-                    AppearanceAction::ToggleWorkbarGap,
-                ),
-                row(
-                    "Style",
-                    cap_style_label(pane.workbar_style).to_string(),
-                    AppearanceAction::CycleWorkbarStyle,
-                ),
-                row(
+                ("Gap", enabled_status(pane.workbar_gap), ToggleWorkbarGap),
+                ("Style", cap_style_label(pane.workbar_style).to_string(), CycleWorkbarStyle),
+                (
                     "Badge style",
                     cap_style_label(pane.workbar_badge_style).to_string(),
-                    AppearanceAction::CycleWorkbarBadgeStyle,
+                    CycleWorkbarBadgeStyle,
                 ),
-                row(
+                (
                     "Tab style",
                     cap_style_label(pane.workbar_tab_style).to_string(),
-                    AppearanceAction::CycleWorkbarTabStyle,
+                    CycleWorkbarTabStyle,
                 ),
-                row(
-                    "Powerline",
-                    enabled_status(pane.workbar_powerline),
-                    AppearanceAction::ToggleWorkbarPowerline,
-                ),
+                ("Powerline", enabled_status(pane.workbar_powerline), ToggleWorkbarPowerline),
             ],
         ),
-        (
-            "Focused pane",
+        settings_group(
+            "Panes",
             vec![
-                row(
-                    "Background",
+                (
+                    "Focused background",
                     enabled_status(pane.highlight_focused_background),
-                    AppearanceAction::ToggleHighlightFocusedBackground,
+                    ToggleHighlightFocusedBackground,
                 ),
-                row(
-                    "Border",
+                (
+                    "Focused border",
                     enabled_status(pane.highlight_focused_border),
-                    AppearanceAction::ToggleHighlightFocusedBorder,
+                    ToggleHighlightFocusedBorder,
                 ),
-                row(
-                    "Titlebar",
+                (
+                    "Focused titlebar",
                     enabled_status(pane.highlight_focused_titlebar),
-                    AppearanceAction::ToggleHighlightFocusedTitlebar,
+                    ToggleHighlightFocusedTitlebar,
                 ),
+                ("Border mode", pane.border_mode.label().to_string(), CycleBorderMode),
+                ("Border style", pane.border_style.label().to_string(), CycleBorderStyle),
             ],
         ),
-        (
-            "Pane borders",
+        settings_group(
+            "Alerts",
             vec![
-                row(
-                    "Mode",
-                    pane.border_mode.label().to_string(),
-                    AppearanceAction::CycleBorderMode,
+                (
+                    "Bell urgency",
+                    enabled_status(ctx.state.config.notifications.bell),
+                    ToggleBellUrgency,
                 ),
-                row(
-                    "Style",
-                    pane.border_style.label().to_string(),
-                    AppearanceAction::CycleBorderStyle,
+                (
+                    "Pane border effect",
+                    pane.alert_border.status_label(
+                        ctx.state.config.animations.enabled,
+                        ctx.state.config.animations.focus_chrome,
+                    ),
+                    CycleAlertBorder,
                 ),
+                (
+                    "Workspace tab effect",
+                    ctx.state.config.workbar.alert.mode.status_label(
+                        ctx.state.config.animations.enabled,
+                        ctx.state.config.animations.focus_chrome,
+                    ),
+                    CycleWorkbarAlert,
+                ),
+                (
+                    "Workspace tab highlight",
+                    ctx.state.config.workbar.alert.paint.label().to_string(),
+                    CycleWorkbarAlertPaint,
+                ),
+                ("Bell mark", enabled_status(ctx.state.config.workbar.alert.bell), ToggleMarkBell),
+                (
+                    "Blocked mark",
+                    enabled_status(ctx.state.config.workbar.alert.blocked),
+                    ToggleMarkBlocked,
+                ),
+                (
+                    "Finished mark",
+                    enabled_status(ctx.state.config.workbar.alert.finished),
+                    ToggleMarkFinished,
+                ),
+                (
+                    "Working mark",
+                    enabled_status(ctx.state.config.workbar.alert.working),
+                    ToggleMarkWorking,
+                ),
+                ("Idle mark", enabled_status(ctx.state.config.workbar.alert.idle), ToggleMarkIdle),
+            ],
+        ),
+        settings_group(
+            "Desktop notifications",
+            vec![
+                ("Show notifications", enabled_status(ctx.state.config.notifications.enabled), ToggleDesktopEnabled),
+                ("Blocked", enabled_status(ctx.state.config.notifications.pane_blocked), ToggleDesktopBlocked),
+                ("Finished", enabled_status(ctx.state.config.notifications.pane_done), ToggleDesktopDone),
+                ("Exit", enabled_status(ctx.state.config.notifications.pane_exit), ToggleDesktopExit),
+                ("Exit with error", enabled_status(ctx.state.config.notifications.pane_exit_error), ToggleDesktopExitError),
+            ],
+        ),
+        settings_group(
+            "Sounds",
+            vec![
+                ("Play sounds", enabled_status(ctx.state.config.sounds.enabled), ToggleSoundEnabled),
+                ("Bell", enabled_status(ctx.state.config.sounds.bell), ToggleSoundBell),
+                ("Blocked", enabled_status(ctx.state.config.sounds.blocked), ToggleSoundBlocked),
+                ("Finished", enabled_status(ctx.state.config.sounds.done), ToggleSoundDone),
+                ("Exit with error", enabled_status(ctx.state.config.sounds.error), ToggleSoundError),
             ],
         ),
     ]);
 
-    let pane_flags = ctx.state.config.pane;
+    let config = ctx.state.config.clone();
     let item_style = fg_only(&ctx.state.theme.primary);
     let description_style = fg_only(&ctx.state.theme.muted);
     let disabled_style = fg_only(&ctx.state.theme.muted);
-    let selected_index = ctx.state.appearance_selected.and_then(|selected| {
+    let selected_index = ctx.state.settings_selected.and_then(|selected| {
         entries
             .iter()
             .filter_map(|entry| match entry {
@@ -146,16 +163,16 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
             })
             .position(|action| action == selected)
     });
-    let palette = shared_search_palette::<(AppearanceAction, String)>(ctx, Length::Auto, false)
+    let palette = shared_search_palette::<(SettingsAction, String)>(ctx, Length::Auto, false)
         .entries(entries)
-        .placeholder("Search appearance…")
+        .placeholder("Search settings…")
         .preserve_groups(true)
         .initial_selected_item_index(selected_index)
         .sync_selection(true)
-        .input_key_interceptor(appearance_palette_key_interceptor(ctx))
+        .input_key_interceptor(settings_palette_key_interceptor(ctx))
         .render_item(Arc::new(
-            move |item: &SearchItem<(AppearanceAction, String)>, _highlight| {
-                let disabled_reason = item.value.0.disabled_reason(&pane_flags);
+            move |item: &SearchItem<(SettingsAction, String)>, _highlight| {
+                let disabled_reason = item.value.0.disabled_reason(&config);
                 let status = disabled_reason.unwrap_or(&item.value.1);
                 let style = if disabled_reason.is_some() {
                     disabled_style
@@ -174,19 +191,19 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
         ))
         .on_select(
             ctx.link()
-                .callback(|event: SearchEvent<(AppearanceAction, String)>| {
-                    Msg::AppearanceSelect(event.item.value.0)
+                .callback(|event: SearchEvent<(SettingsAction, String)>| {
+                    Msg::SettingsSelect(event.item.value.0)
                 }),
         )
         .on_activate(
             ctx.link()
-                .callback(|event: SearchEvent<(AppearanceAction, String)>| {
-                    Msg::AppearanceActivate(event.item.value.0)
+                .callback(|event: SearchEvent<(SettingsAction, String)>| {
+                    Msg::SettingsActivate(event.item.value.0)
                 }),
         );
 
     let panel: Element = Frame::new()
-        .header_left("Change appearance")
+        .header_left("Settings")
         .header_style(ctx.state.theme.accent.bold())
         .border_style(BorderStyle::Rounded)
         .padding(0)
@@ -195,7 +212,7 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
         .child(action_palette_frame(palette))
         .into();
     let dim_progress = ctx.transition::<f32>(
-        "rozi-appearance-padding-dim",
+        "rozi-settings-padding-dim",
         if ctx.state.pane_padding_editor.is_some() {
             1.0
         } else {
@@ -221,21 +238,39 @@ pub(crate) fn appearance_overlay(app: &AppRoot, ctx: &Context<AppRoot>) -> Eleme
         .border(false)
         .padding(0)
         .frame_style(Style::new().bg(ctx.state.theme.surface.element))
-        .on_close(ctx.link().callback(|_| Msg::CloseAppearance))
+        .on_close(ctx.link().callback(|_| Msg::CloseSettings))
         .child(panel)
-        .key(appearance_palette_key())
+        .key(settings_palette_key())
 }
 
-fn appearance_palette_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
-    // Always claim bare Left/Right; `appearance_step` reads live selection so a stale
-    // render-time capture cannot step the wrong row (or miss a move after Up/Down).
-    ctx.link().key_handler(|key| {
+fn settings_group(
+    group: &'static str,
+    rows: Vec<(&'static str, String, SettingsAction)>,
+) -> (&'static str, Vec<SearchEntry<(SettingsAction, String)>>) {
+    let entries = rows
+        .into_iter()
+        .map(|(label, status, action)| {
+            SearchEntry::Item(
+                SearchItem::new(label, (action, status))
+                    .aliases(settings_palette_aliases(group, action)),
+            )
+        })
+        .collect();
+    (group, entries)
+}
+
+fn settings_palette_key_interceptor(ctx: &Context<AppRoot>) -> KeyHandler {
+    let selected = ctx.state.settings_selected;
+    ctx.link().key_handler(move |key| {
         if key.mods != KeyMods::default() {
             return None;
         }
+        if !selected.is_some_and(SettingsAction::steps_horizontally) {
+            return None;
+        }
         match key.code {
-            KeyCode::Left => Some(Msg::AppearanceStep { reverse: true }),
-            KeyCode::Right => Some(Msg::AppearanceStep { reverse: false }),
+            KeyCode::Left => Some(Msg::SettingsStep { reverse: true }),
+            KeyCode::Right => Some(Msg::SettingsStep { reverse: false }),
             _ => None,
         }
     })
@@ -316,20 +351,23 @@ pub(crate) fn pane_padding_overlay(ctx: &Context<AppRoot>) -> Element {
         .gap(0)
         .child(fields);
     if editor.normalizes_asymmetric {
-        // Only worth a line when the current padding is uneven and applying will flatten it.
+        // Compact structured status: applying this editor always writes its two-axis form.
         body = body.child(
-            Text::new("Sides differ; applying writes symmetric padding.")
-                .style(fg_only(&theme.muted))
-                .overflow(Overflow::Wrap),
+            HStack::new()
+                .height(Length::Auto)
+                .padding((0, 1))
+                .justify(Justify::SpaceBetween)
+                .child(Text::new("Apply").style(fg_only(&theme.muted)))
+                .child(Text::new("Symmetric").style(fg_only(&theme.primary))),
         );
     }
     let body = body.child(
         hint_row()
             .child(hint_pill(theme, "next / apply", "enter"))
-            // Both keys land back in Appearance whenever it is the dialog behind this one.
+            // Both keys land back in Settings whenever it is the dialog behind this one.
             .child(hint_pill(
                 theme,
-                if ctx.state.show_appearance {
+                if ctx.state.show_settings {
                     "back"
                 } else {
                     "cancel"

@@ -6,11 +6,10 @@ pub(crate) mod sidebar;
 mod workbar;
 
 pub use keys::{
-    alerts_palette_key, appearance_palette_key, collaboration_key, follow_prompt_key,
-    layout_picker_key, palette_key, pane_padding_horizontal_key, pane_padding_vertical_key,
-    pane_terminal_key, pane_window_key, profile_picker_key, rename_input_key,
-    rename_session_input_key, save_profile_key, search_input_key, session_picker_key,
-    sidebar_body_key, theme_picker_key,
+    collaboration_key, follow_prompt_key, layout_picker_key, palette_key,
+    pane_padding_horizontal_key, pane_padding_vertical_key, pane_terminal_key, pane_window_key,
+    profile_picker_key, rename_input_key, rename_session_input_key, save_profile_key,
+    search_input_key, session_picker_key, settings_palette_key, sidebar_body_key, theme_picker_key,
 };
 pub(crate) use pane::{
     PaneKind, PaneMerge, divider_title_element, has_pane_alert, pane_alert, pane_element,
@@ -32,10 +31,10 @@ use crate::{AppRoot, Msg};
 use pane::pane_title_bg;
 
 use overlays::{
-    alerts_overlay, appearance_overlay, collaboration_overlay, follow_prompt_overlay, help_overlay,
-    layout_picker_overlay, palette_overlay, pane_padding_overlay, profile_picker_overlay,
-    rename_overlay, rename_session_overlay, save_profile_overlay, search_overlay,
-    session_picker_overlay, theme_picker_overlay,
+    collaboration_overlay, follow_prompt_overlay, help_overlay, layout_picker_overlay,
+    palette_overlay, pane_padding_overlay, profile_picker_overlay, rename_overlay,
+    rename_session_overlay, save_profile_overlay, search_overlay, session_picker_overlay,
+    settings_overlay, theme_picker_overlay,
 };
 use pane::tiled_resize_strips;
 use workbar::{connecting_workspace_panel, empty_workspace_panel, launcher_panel, workbar};
@@ -98,8 +97,7 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     // panes to reveal matches, so they must stay readable.
     let dialog_open = ctx.state.show_palette
         || ctx.state.show_help
-        || ctx.state.show_appearance
-        || ctx.state.show_alerts
+        || ctx.state.show_settings
         || ctx.state.show_theme_picker
         || ctx.state.show_layout_picker
         || ctx.state.rename.is_some()
@@ -510,13 +508,10 @@ pub fn render(app: &AppRoot, ctx: &Context<AppRoot>) -> Element {
     if ctx.state.show_palette {
         root = root.child(palette_overlay(ctx));
     }
-    if ctx.state.show_appearance {
-        root = root.child(appearance_overlay(app, ctx));
+    if ctx.state.show_settings {
+        root = root.child(settings_overlay(app, ctx));
     }
-    if ctx.state.show_alerts {
-        root = root.child(alerts_overlay(ctx));
-    }
-    if ctx.state.show_appearance && ctx.state.pane_padding_editor.is_some() {
+    if ctx.state.show_settings && ctx.state.pane_padding_editor.is_some() {
         root = root.child(pane_padding_overlay(ctx));
     }
     if ctx.state.show_help {
@@ -876,17 +871,47 @@ pub(crate) fn shared_search_palette<T: Clone + PartialEq>(
     }
 }
 
-/// Flatten `(category, items)` buckets into a header-prefixed entry list for `SearchPalette`.
-/// Category headers only show for an empty query when the palette uses `preserve_groups(false)`.
+/// Flatten `(category, items)` buckets with one non-selectable blank row between adjacent groups.
 pub(crate) fn search_entries_with_groups<T>(
     groups: impl IntoIterator<Item = (impl Into<std::sync::Arc<str>>, Vec<SearchEntry<T>>)>,
 ) -> Vec<SearchEntry<T>> {
     let mut entries = Vec::new();
-    for (category, items) in groups {
+    for (index, (category, items)) in groups.into_iter().enumerate() {
+        if index > 0 {
+            entries.push(SearchEntry::spacer());
+        }
         entries.push(SearchEntry::header(category));
         entries.extend(items);
     }
     entries
+}
+
+#[cfg(test)]
+mod grouped_search_tests {
+    use super::search_entries_with_groups;
+    use tui_lipan::prelude::SearchEntry;
+
+    #[test]
+    fn grouped_search_entries_have_one_spacer_between_groups() {
+        let entries = search_entries_with_groups([
+            ("General", vec![SearchEntry::item("Theme", 1)]),
+            ("Panes", vec![SearchEntry::item("Border", 2)]),
+            ("Alerts", vec![SearchEntry::item("Bell", 3)]),
+        ]);
+
+        assert!(matches!(entries[0], SearchEntry::Header(_)));
+        assert!(matches!(entries[2], SearchEntry::Spacer));
+        assert!(matches!(entries[3], SearchEntry::Header(_)));
+        assert!(matches!(entries[5], SearchEntry::Spacer));
+        assert!(matches!(entries[6], SearchEntry::Header(_)));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry, SearchEntry::Spacer))
+                .count(),
+            2
+        );
+    }
 }
 
 fn search_palette_active_item_style() -> Style {

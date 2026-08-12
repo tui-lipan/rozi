@@ -149,11 +149,11 @@ fn help_category_priority(category: &str) -> usize {
         "Collaboration" => 2,
         "Panes" => 3,
         "Focus" => 4,
-        "Layout" => 5,
+        "Workspace" => 5,
         "Workspaces" => 6,
         "Copy mode" => 7,
         "Profile" => 8,
-        "Appearance" => 9,
+        "Settings" => 9,
         "Mouse" => 10,
         "Custom" => 11,
         _ => 12,
@@ -213,43 +213,67 @@ fn help_row(keys: &str, desc: &str, theme: &Theme) -> Element {
 
 #[cfg(test)]
 mod palette_alias_tests {
-    use super::{appearance_palette_aliases, command_palette_aliases, help_category_priority};
-    use crate::state::AppearanceAction;
+    use super::{
+        command_entries_with_groups, command_palette_aliases, help_category_priority,
+        settings_palette_aliases,
+    };
+    use crate::state::SettingsAction;
+    use tui_lipan::prelude::SearchEntry;
 
     #[test]
-    fn every_appearance_action_has_search_aliases() {
+    fn every_settings_action_has_search_aliases() {
         let actions = [
-            AppearanceAction::Theme,
-            AppearanceAction::EditPadding,
-            AppearanceAction::ToggleTitles,
-            AppearanceAction::CycleTitlebar,
-            AppearanceAction::CycleTitleStyle,
-            AppearanceAction::ToggleWorkbar,
-            AppearanceAction::ToggleWorkbarGap,
-            AppearanceAction::ToggleWorkbarPosition,
-            AppearanceAction::CycleWorkbarStyle,
-            AppearanceAction::CycleWorkbarBadgeStyle,
-            AppearanceAction::ToggleWorkbarPowerline,
-            AppearanceAction::CycleWorkbarTabStyle,
-            AppearanceAction::ToggleAnimations,
-            AppearanceAction::ToggleHighlightFocusedBackground,
-            AppearanceAction::ToggleHighlightFocusedBorder,
-            AppearanceAction::ToggleHighlightFocusedTitlebar,
-            AppearanceAction::CycleBorderMode,
-            AppearanceAction::CycleBorderStyle,
-            AppearanceAction::ToggleBackgroundFollowsTerminal,
+            SettingsAction::Theme,
+            SettingsAction::EditPadding,
+            SettingsAction::ToggleTitles,
+            SettingsAction::CycleTitlebar,
+            SettingsAction::CycleTitleStyle,
+            SettingsAction::ToggleWorkbar,
+            SettingsAction::ToggleWorkbarGap,
+            SettingsAction::ToggleWorkbarPosition,
+            SettingsAction::CycleWorkbarStyle,
+            SettingsAction::CycleWorkbarBadgeStyle,
+            SettingsAction::ToggleWorkbarPowerline,
+            SettingsAction::CycleWorkbarTabStyle,
+            SettingsAction::ToggleAnimations,
+            SettingsAction::ToggleFocusOnHover,
+            SettingsAction::ToggleHighlightFocusedBackground,
+            SettingsAction::ToggleHighlightFocusedBorder,
+            SettingsAction::ToggleHighlightFocusedTitlebar,
+            SettingsAction::CycleBorderMode,
+            SettingsAction::CycleBorderStyle,
+            SettingsAction::ToggleBackgroundFollowsTerminal,
+            SettingsAction::ToggleBellUrgency,
+            SettingsAction::CycleAlertBorder,
+            SettingsAction::CycleWorkbarAlert,
+            SettingsAction::CycleWorkbarAlertPaint,
+            SettingsAction::ToggleMarkBell,
+            SettingsAction::ToggleMarkBlocked,
+            SettingsAction::ToggleMarkFinished,
+            SettingsAction::ToggleMarkWorking,
+            SettingsAction::ToggleMarkIdle,
+            SettingsAction::ToggleDesktopEnabled,
+            SettingsAction::ToggleDesktopBlocked,
+            SettingsAction::ToggleDesktopDone,
+            SettingsAction::ToggleDesktopExit,
+            SettingsAction::ToggleDesktopExitError,
+            SettingsAction::ToggleSoundEnabled,
+            SettingsAction::ToggleSoundBell,
+            SettingsAction::ToggleSoundBlocked,
+            SettingsAction::ToggleSoundDone,
+            SettingsAction::ToggleSoundError,
         ];
         for action in actions {
             assert!(
-                !appearance_palette_aliases(action).is_empty(),
+                !settings_palette_aliases("Test group", action).is_empty(),
                 "missing aliases for {action:?}"
             );
         }
     }
 
     #[test]
-    fn change_appearance_command_aliases_cover_recent_controls() {
-        let aliases = command_palette_aliases("change-appearance");
+    fn settings_command_aliases_cover_nested_controls() {
+        let aliases = command_palette_aliases("settings");
         for term in [
             "padding",
             "powerline",
@@ -261,7 +285,7 @@ mod palette_alias_tests {
         ] {
             assert!(
                 aliases.iter().any(|alias| alias.as_ref() == term),
-                "missing change-appearance alias: {term}"
+                "missing settings alias: {term}"
             );
         }
     }
@@ -273,13 +297,48 @@ mod palette_alias_tests {
             aliases.iter().any(|alias| alias.as_ref() == "sidebar"),
             "toggle-sidebar must keep an exact sidebar alias for Hybrid ranking"
         );
+        for id in [
+            "toggle-sidebar-split",
+            "focus-sidebar",
+            "sidebar-next-tab",
+            "sidebar-prev-tab",
+        ] {
+            assert!(
+                command_palette_aliases(id).is_empty(),
+                "{id} needs no redundant sidebar alias"
+            );
+        }
     }
 
     #[test]
-    fn help_categories_put_appearance_after_profiles() {
+    fn command_groups_have_exactly_one_spacer_between_them() {
+        let entries = command_entries_with_groups([
+            ("Panes", vec![SearchEntry::item("Pane", 1)]),
+            ("Workspace", vec![SearchEntry::item("Workspace", 2)]),
+            ("App", vec![SearchEntry::item("App", 3)]),
+        ]);
+        assert!(matches!(entries[0], SearchEntry::Header(_)));
+        assert!(matches!(entries[1], SearchEntry::Item(_)));
+        assert!(matches!(entries[2], SearchEntry::Spacer));
+        assert!(matches!(entries[3], SearchEntry::Header(_)));
+        assert!(matches!(entries[4], SearchEntry::Item(_)));
+        assert!(matches!(entries[5], SearchEntry::Spacer));
+        assert!(matches!(entries[6], SearchEntry::Header(_)));
+        assert!(matches!(entries[7], SearchEntry::Item(_)));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry, SearchEntry::Spacer))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn help_categories_put_settings_after_profiles() {
         let categories = [
-            "Appearance",
-            "Layout",
+            "Settings",
+            "Workspace",
             "Session",
             "Collaboration",
             "App",
@@ -296,9 +355,9 @@ mod palette_alias_tests {
                 "Session",
                 "Collaboration",
                 "Panes",
-                "Layout",
+                "Workspace",
                 "Profile",
-                "Appearance",
+                "Settings",
                 "Custom",
             ]
         );

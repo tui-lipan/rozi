@@ -59,6 +59,7 @@ pub enum Action {
     /// Shut down the current session's server and immediately recreate it, staying attached.
     RestartSession,
     OpenThemePicker,
+    OpenSettings,
     OpenAppearance,
     OpenAlerts,
     ToggleDoNotDisturb,
@@ -165,6 +166,7 @@ const BINDABLE_ACTIONS: &[Action] = &[
     Action::KillSession,
     Action::RestartSession,
     Action::OpenThemePicker,
+    Action::OpenSettings,
     Action::OpenAppearance,
     Action::OpenAlerts,
     Action::ToggleDoNotDisturb,
@@ -270,6 +272,7 @@ impl Action {
             Action::KillSession => "kill-session",
             Action::RestartSession => "restart-session",
             Action::OpenThemePicker => "choose-theme",
+            Action::OpenSettings => "settings",
             Action::OpenAppearance => "change-appearance",
             Action::OpenAlerts => "alerts",
             Action::ToggleDoNotDisturb => "toggle-do-not-disturb",

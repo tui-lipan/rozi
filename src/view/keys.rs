@@ -62,11 +62,8 @@ pub fn sidebar_body_key() -> &'static str {
     "rozi-sidebar-body"
 }
 
-pub fn appearance_palette_key() -> &'static str {
-    "rozi-appearance-palette"
-}
-pub fn alerts_palette_key() -> &'static str {
-    "rozi-alerts-palette"
+pub fn settings_palette_key() -> &'static str {
+    "rozi-settings-palette"
 }
 
 pub fn pane_padding_vertical_key() -> &'static str {

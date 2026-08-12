@@ -41,7 +41,7 @@ rozi watches the config file and applies every save live - config fields, `[keys
 bindings/user commands, theme (including switching which file the theme watcher follows), and
 workbar segments - without touching running panes, workspaces, or the active session. A parse
 failure reloads to defaults and reports it as a toast, same as at startup; fix the file and
-save again. Changes rozi persists itself (theme selection, appearance toggles, the default
+save again. Changes rozi persists itself (theme selection, Settings preferences, the default
 profile) are already applied and don't trigger a reload.
 
 The **Open config file** command-palette entry (`open-config`) opens the file in `$EDITOR`
@@ -305,14 +305,14 @@ Pane focus and chrome behavior.
 | `highlight_focused_titlebar` | `true` | Use focused titlebar colors and emphasis for `bar`, `border`, and `integrated` layouts. The palette toggle writes this back to config. |
 | `show_workbar` | `true` | Show the workbar (workspace tabs, mode chips, configured segments). When `false`, panes use the full viewport height with no top gap. |
 | `workbar_gap` | `true` | Show a 1-line gap between the workbar and the panes area. |
-| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The palette/appearance toggle writes this back to config. |
+| `workbar_at_bottom` | `false` | Draw the workbar on the last row (below the panes) instead of the first row. The gap, when enabled, moves to sit between the panes and the workbar. The Settings toggle writes this back to config. |
 | `show_titles` | `true` | Show the selected pane titlebar layout. The palette toggle writes this back to config without changing the selected `titlebar` layout. |
-| `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The appearance cycle writes this back to config. |
-| `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The appearance cycle writes this back to config. |
-| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The appearance row is disabled when the selected mode has no pane frames. |
+| `titlebar` | `bar` | Pane title layout: `bar` keeps the existing separate, full-width title row; `border` embeds the icon and title in the top frame border; `integrated` fills the top border row as a compact title strip. `border` and `integrated` each retain the terminal row that `bar` consumes. The Settings cycle writes this back to config. |
+| `border_mode` | `separate` | Pane border presentation: `separate` draws one frame per pane, `merged` overlaps adjacent frames into shared junctions, `none` draws no frames or separators, and `dividers` draws only auto-joining lines along internal tiled splits. The Settings cycle writes this back to config. |
+| `border_style` | `rounded` | Frame glyphs for `separate` and `merged`: `rounded`, `plain`, `double`, or `thick`. It does not affect the standard light lines used by `dividers`. The Settings row is disabled when the selected mode has no pane frames. |
 | `alert_border` | `pulse` | `off`, `static`, or the default `pulse` for unfocused attention borders. The Alerts action is `cycle-alert-border`; it is disabled in `none` mode. |
 | `keep_special_borders` | `false` | Config-file-only exception that keeps double frames around floating panes, popups, and the scratchpad in `none` and `dividers` modes. Fullscreen panes remain consistent with the selected global mode. |
-| `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. The Appearance → Terminal padding editor writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
+| `padding` | `0` | Blank cells inserted between each pane's border and its terminal grid, painted with the pane's frame background. Accepts a single number (all sides), or a CSS-style array of `[vertical, horizontal]` (2 values) or `[top, right, bottom, left]` (4 values); other lengths are ignored with a warning. Purely cosmetic: each cell of padding costs a column/row of usable terminal space. Each side is clamped to `8`. Settings → Terminal padding writes the two-value `[vertical, horizontal]` form; saving there intentionally normalizes any four-side asymmetric padding. |
 
 `[pane.alert]` assigns badge/theme roles to agent states: `blocked = "error"` and unseen
 `finished = "success"` default on; `working` and `idle` default `off` because they are ambient,
@@ -323,13 +323,13 @@ alert clears when you focus its pane; closing and exited panes never alert.
 workspace-tab breathing. It needs both `animations.enabled` and `focus_chrome`; its half-period is
 floored at 400 ms. No pulse timer runs until an eligible alert is visible.
 Blocked and finished alerts are visible state, so they do not create success toasts.
-| `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The appearance cycle writes this back to config. |
-| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `rozi` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The appearance cycle writes this back to config. |
-| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The appearance toggle writes this back to config. |
+| `title_style` | `padded` | End-cap style for `titlebar = "bar"` or `"integrated"`: `padded` (flush bar, blank side padding), `half` (`▐`/`▌` half-block caps), `round` or `arrow` (powerline pill/point caps). Integrated half-block caps replace the frame corners; round and arrow caps sit immediately inside them. `round` and `arrow` need a patched/Nerd font, like the titlebar icons. The Settings cycle writes this back to config. |
+| `workbar_badge_style` | `padded` | End-cap style for the workbar's colored badges. The `rozi` title chip caps on its right and the mode chips (`PREFIX`/`RESIZE`/`COPY`) cap on their left, so each pill rounds off toward the workbar's edge. Same values and font requirements as `title_style`, except `half` is not available for badges. Existing configs without `workbar_tab_style` also apply this value to workspace and sidebar tabs. The Settings cycle writes this back to config. |
+| `workbar_powerline` | `true` | Whether the trailing badges (mode chips + right-region badges such as `session`) chain into a powerline: the gap between them collapses and each cap blends into its left neighbor's color. Adjacent badges with the same color retain a contrasting seam (`` for arrow caps, `▏` for round and padded badges). When `false`, trailing badges keep a 1-cell gap and each cap is drawn over the panel bar. Independent of `workbar_badge_style`, which only controls the pill shape. The Settings toggle writes this back to config. |
 | `toast_opacity` | `0.8` | How opaque a toast's background is over the pane content it covers, in `[0.0, 1.0]`. The default reads as tinted glass: the theme's `surface.panel` blended per cell with whatever is behind, so content underneath stays visible instead of being replaced. `1.0` paints the panel solid. Below `1.0` the text contrast depends on what the toast covers, and themes vary a lot in how much headroom their panel/text pair has — measured over white, yellow, red, and dark panes across the 30 bundled themes, the worst case falls under the 4.5:1 readability floor on 17 of them at `0.8`, 7 at `0.9`, and 2 at `1.0` (those last 2 sit at their own theme's ceiling either way). Raise it if your theme's toasts read poorly. Values outside `[0.0, 1.0]` warn and are ignored. |
-| `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The appearance cycle writes this back to config. |
-| `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The appearance cycle writes this back to config. |
-| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The appearance toggle writes this back to config. |
+| `workbar_tab_style` | `padded` | End-cap style for workspace and sidebar tabs. Only the active and hovered tab are capped (tabs are peers, so they do not chain). Same values and font requirements as `workbar_badge_style`. When unset, `workbar_badge_style` is used for backward-compatible appearance. The Settings cycle writes this back to config. |
+| `workbar_style` | `padded` | End-cap style for the workbar itself, so the whole panel bar reads as a pill/point over the backdrop instead of a flush edge-to-edge bar. The caps replace the bar's outer side padding rather than widening it. Same values and font requirements as `title_style`. The Settings cycle writes this back to config. |
+| `background_follows_terminal` | `false` | Pin `surface.backdrop` (canvas gaps, unfocused pane frames) to the host terminal's own background, overriding whatever the active theme authored - including a preset or custom theme file that sets a concrete color. See [Matching the host terminal's background](themes.md#matching-the-host-terminals-background). The Settings toggle writes this back to config. |
 
 ## `[[rules]]`
 
@@ -460,8 +460,8 @@ Failures are ignored and never block the UI.
 ## `[sounds]`
 
 Built-in WAV cues are extracted into rozi's cache and played best-effort. `player`, when set,
-receives the cue path as its final argument. The Alerts panel persists its toggle rows; do-not-disturb
-is in-memory for this client lifetime and mutes desktop and sound cues only. BEL and pane-status
+ receives the cue path as its final argument. Settings persists its sound rows; do-not-disturb is a
+separate in-memory command for this client lifetime and mutes desktop and sound cues only. BEL and pane-status
 cues use the attended rule; non-zero exit cues play regardless of pane attendance.
 
 | Key | Default | Notes |
@@ -823,8 +823,8 @@ finished only, and say *which* states mark a tab.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `mode` | `pulse` | How a marked tab is drawn: `off` shows no marker at all, `static` colors it, `pulse` also breathes it. Mirrors `pane.alert_border`; the Appearance action is `cycle-workbar-alert` and the row is **Workbar → Alert**, disabled while the workbar is hidden. |
-| `paint` | `background` | What a marked tab colors. `background` fills it and gives it the same end caps as the active tab, so it reads from across the screen; `text` colors the label only and leaves the tab flat, which is quieter beside the active tab. Appearance row **Workbar → Alert paint**, action `cycle-workbar-alert-paint`. |
+| `mode` | `pulse` | How a marked tab is drawn: `off` shows no marker at all, `static` colors it, `pulse` also breathes it. Mirrors `pane.alert_border`; the Settings action is `cycle-workbar-alert` and the row is **Alerts → Workspace tab effect**, disabled while the workbar is hidden. |
+| `paint` | `background` | What a marked tab colors. `background` fills it and gives it the same end caps as the active tab, so it reads from across the screen; `text` colors the label only and leaves the tab flat, which is quieter beside the active tab. Settings row **Alerts → Workspace tab highlight**, action `cycle-workbar-alert-paint`. |
 
 Only **inactive** marked tabs are colored or breathed — the active workspace keeps its solid tab pill,
 and its pane border already carries the alert. Several marked tabs share one phase, so they breathe in
@@ -950,7 +950,7 @@ Action ids: `spawn`, `close`, `focus-left/down/up/right`, `focus-left-no-wrap`,
 `toggle-float`, `toggle-fullscreen`, `rename-pane`, `rename-workspace`, `paste`, `flip-split`,
 `grow-split`, `shrink-split`, `resize-mode`, `toggle-layout`, `choose-layout`, `copy-mode`, `scratchpad`, `search`,
 `save-profile`, `open-profile`, `sessions`, `rename-session`, `collaborators`, `request-control`, `grant-control`, `toggle-input-lock`, `toggle-control-takeover`, `detach`, `quit`, `kill-workspace`, `kill-session`, `restart-session`,
-`choose-theme`, `command-palette`, `alerts`, `toggle-do-not-disturb`,
+`choose-theme`, `settings`, `change-appearance`, `command-palette`, `alerts`, `toggle-do-not-disturb`,
 `help`, `toggle-devtools`, `toggle-titles`, `cycle-titlebar`, `toggle-workbar`, `toggle-workbar-gap`, `toggle-workbar-position`,
 `toggle-workbar-powerline`, `toggle-sidebar`, `toggle-sidebar-split`, `focus-sidebar`, `sidebar-next-tab`, `sidebar-prev-tab`,
 `toggle-animations`, `toggle-focus-on-hover`,

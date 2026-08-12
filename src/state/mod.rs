@@ -8,7 +8,6 @@ use crate::anim::GeometryAnimation;
 use crate::config::Config;
 use crate::tiling::append_tiled_window;
 
-mod alerts;
 mod appearance;
 mod attachment;
 mod drag;
@@ -20,11 +19,11 @@ mod pickers;
 mod search;
 mod session;
 mod sessions_view;
+mod settings;
 mod sidebar;
 mod workbar;
 mod workspace;
 
-pub use alerts::*;
 pub use appearance::*;
 pub use attachment::*;
 pub use drag::*;
@@ -36,6 +35,7 @@ pub use pickers::*;
 pub use search::*;
 pub use session::*;
 pub use sessions_view::*;
+pub use settings::*;
 pub use sidebar::*;
 pub use workbar::*;
 pub use workspace::*;
@@ -97,13 +97,14 @@ pub struct State {
     pub sidebar: SidebarState,
     pub workbar: WorkbarState,
     pub show_palette: bool,
+    /// Whether the command palette's trimmed query is exactly `sidebar`. This scopes the primary
+    /// Sidebar toggle's result priority to that one broad query without disturbing empty-list order.
+    pub command_palette_sidebar_query: bool,
     pub show_help: bool,
-    pub show_appearance: bool,
-    pub show_alerts: bool,
-    /// Highlighted appearance-palette row. Drives Left/Right stepping and
+    pub show_settings: bool,
+    /// Highlighted settings row. Drives Left/Right stepping and
     /// `initial_selected_item_index` while the overlay is open.
-    pub appearance_selected: Option<AppearanceAction>,
-    pub alerts_selected: Option<AlertsAction>,
+    pub settings_selected: Option<SettingsAction>,
     pub do_not_disturb: bool,
     pub(crate) sound_cues: HashMap<crate::platform::sound::Cue, std::time::Instant>,
     pub pane_padding_editor: Option<PanePaddingEditorState>,
@@ -290,11 +291,10 @@ impl State {
             sidebar,
             workbar: WorkbarState::default(),
             show_palette: false,
+            command_palette_sidebar_query: false,
             show_help: false,
-            show_appearance: false,
-            show_alerts: false,
-            appearance_selected: None,
-            alerts_selected: None,
+            show_settings: false,
+            settings_selected: None,
             do_not_disturb: false,
             sound_cues: HashMap::new(),
             pane_padding_editor: None,

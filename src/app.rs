@@ -1326,6 +1326,157 @@ mod tests {
     }
 
     #[test]
+    fn command_palette_empty_query_starts_with_rename_pane() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 40,
+                });
+                backend.state_mut().show_palette = true;
+                backend.render();
+
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("activate first command");
+
+                assert!(!backend.state().show_palette);
+                assert!(backend.state().rename.is_some());
+            })
+            .expect("spawn palette selection test thread")
+            .join()
+            .expect("palette selection test thread completes");
+    }
+
+    #[test]
+    fn command_palette_sidebar_query_selects_live_toggle_first() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                for initially_visible in [false, true] {
+                    let mut backend = TestBackend::new(AppRoot::default());
+                    backend.set_viewport(Rect {
+                        x: 0,
+                        y: 0,
+                        w: 96,
+                        h: 40,
+                    });
+                    if initially_visible {
+                        backend
+                            .dispatch(Msg::RunAction(crate::input::Action::ToggleSidebar))
+                            .expect("show sidebar");
+                    }
+                    backend
+                        .dispatch(Msg::RunAction(crate::input::Action::TogglePalette))
+                        .expect("open command palette");
+                    backend.render();
+
+                    for ch in "sidebar".chars() {
+                        backend
+                            .send_key(KeyEvent {
+                                code: KeyCode::Char(ch),
+                                mods: KeyMods::NONE,
+                            })
+                            .expect("type sidebar query");
+                    }
+                    backend.render();
+
+                    let rows: Vec<_> = backend
+                        .capture_frame()
+                        .to_fixed_grid_lines()
+                        .into_iter()
+                        .filter(|line| {
+                            [
+                                "Enable sidebar",
+                                "Disable sidebar",
+                                "sidebar split",
+                                "Focus sidebar",
+                                "Next sidebar",
+                                "Previous sidebar",
+                            ]
+                            .iter()
+                            .any(|label| line.contains(label))
+                        })
+                        .collect();
+                    let expected = if initially_visible {
+                        "Disable sidebar"
+                    } else {
+                        "Enable sidebar"
+                    };
+                    assert!(
+                        rows.first().is_some_and(|row| row.contains(expected)),
+                        "live toggle should be the first sidebar match: {rows:#?}"
+                    );
+
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Enter,
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("activate sidebar toggle");
+                    assert_eq!(backend.state().sidebar_visible, !initially_visible);
+                    assert!(!backend.state().show_palette);
+                }
+            })
+            .expect("spawn sidebar ranking test thread")
+            .join()
+            .expect("sidebar ranking test thread completes");
+    }
+
+    #[test]
+    fn clearing_sidebar_query_restores_initial_command_selection() {
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let mut backend = TestBackend::new(AppRoot::default());
+                backend.set_viewport(Rect {
+                    x: 0,
+                    y: 0,
+                    w: 96,
+                    h: 40,
+                });
+                backend.state_mut().show_palette = true;
+                backend.render();
+
+                for ch in "sidebar".chars() {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Char(ch),
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("type sidebar query");
+                }
+                for _ in 0.."sidebar".len() {
+                    backend
+                        .send_key(KeyEvent {
+                            code: KeyCode::Backspace,
+                            mods: KeyMods::NONE,
+                        })
+                        .expect("clear sidebar query");
+                }
+                backend
+                    .send_key(KeyEvent {
+                        code: KeyCode::Enter,
+                        mods: KeyMods::NONE,
+                    })
+                    .expect("activate restored first command");
+
+                assert!(!backend.state().show_palette);
+                assert!(backend.state().rename.is_some());
+            })
+            .expect("spawn palette query reset test thread")
+            .join()
+            .expect("palette query reset test thread completes");
+    }
+
+    #[test]
     fn terminal_padding_editor_test_backend_flow_and_bounds() {
         std::thread::Builder::new()
             .stack_size(8 * 1024 * 1024)
@@ -1337,10 +1488,10 @@ mod tests {
                     w: 96,
                     h: 40,
                 });
-                backend.state_mut().show_appearance = true;
+                backend.state_mut().show_settings = true;
                 backend
-                    .dispatch(Msg::AppearanceActivate(
-                        crate::state::AppearanceAction::EditPadding,
+                    .dispatch(Msg::SettingsActivate(
+                        crate::state::SettingsAction::EditPadding,
                     ))
                     .expect("open padding editor");
 
@@ -1396,16 +1547,16 @@ mod tests {
                     .iter()
                     .filter(|w| w.kind == UiWidgetKind::Frame)
                     .collect();
-                let appearance = frames
+                let settings = frames
                     .iter()
-                    .position(|w| w.title.as_deref() == Some("Change appearance"))
-                    .expect("appearance frame");
+                    .position(|w| w.title.as_deref() == Some("Settings"))
+                    .expect("settings frame");
                 let padding = frames
                     .iter()
                     .position(|w| w.title.as_deref() == Some("Terminal padding"))
                     .expect("padding frame");
                 assert!(
-                    padding > appearance,
+                    padding > settings,
                     "padding editor must be the topmost modal"
                 );
                 let rect = frames[padding].rect;
@@ -1430,8 +1581,8 @@ mod tests {
                     h: 14,
                 });
                 backend
-                    .dispatch(Msg::AppearanceActivate(
-                        crate::state::AppearanceAction::EditPadding,
+                    .dispatch(Msg::SettingsActivate(
+                        crate::state::SettingsAction::EditPadding,
                     ))
                     .expect("reopen editor");
                 let snapshot =
@@ -1452,8 +1603,8 @@ mod tests {
 
                 backend.state_mut().config.pane.padding = (1, 2, 3, 4);
                 backend
-                    .dispatch(Msg::AppearanceActivate(
-                        crate::state::AppearanceAction::EditPadding,
+                    .dispatch(Msg::SettingsActivate(
+                        crate::state::SettingsAction::EditPadding,
                     ))
                     .expect("open asymmetric editor");
                 let editor = backend.state().pane_padding_editor.as_ref().unwrap();

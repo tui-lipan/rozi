@@ -1,4 +1,4 @@
-use tui_lipan::prelude::{BorderStyle, CapStyle, TextInput, Theme};
+use tui_lipan::prelude::{BorderStyle, CapStyle, Theme};
 
 /// Structural presentation of a visible pane title. `Bar` is the existing separate title row;
 /// the compact variants reuse the frame's top border row. Visibility is controlled independently
@@ -412,100 +412,6 @@ pub(crate) fn prev_badge_cap_style(style: CapStyle) -> CapStyle {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AppearanceAction {
-    Theme,
-    EditPadding,
-    ToggleTitles,
-    CycleTitlebar,
-    ToggleWorkbar,
-    ToggleWorkbarGap,
-    ToggleWorkbarPosition,
-    ToggleWorkbarPowerline,
-    ToggleAnimations,
-    ToggleHighlightFocusedBackground,
-    ToggleHighlightFocusedBorder,
-    ToggleHighlightFocusedTitlebar,
-    CycleBorderMode,
-    ToggleBackgroundFollowsTerminal,
-    CycleBorderStyle,
-    CycleTitleStyle,
-    CycleWorkbarBadgeStyle,
-    CycleWorkbarTabStyle,
-    CycleWorkbarStyle,
-}
-
-/// Temporary values for the Appearance terminal-padding editor. Focus, rather than a second
-/// stage flag, determines whether Enter advances or applies.
-pub struct PanePaddingEditorState {
-    pub vertical: TextInput,
-    pub horizontal: TextInput,
-    pub normalizes_asymmetric: bool,
-}
-
-impl PanePaddingEditorState {
-    pub fn new(padding: (u16, u16, u16, u16)) -> Self {
-        let symmetric = padding.0 == padding.2 && padding.1 == padding.3;
-        let mut vertical = TextInput::new(if symmetric {
-            padding.0.to_string()
-        } else {
-            String::new()
-        });
-        let mut horizontal = TextInput::new(if symmetric {
-            padding.1.to_string()
-        } else {
-            String::new()
-        });
-        if symmetric {
-            vertical.set_anchor(Some(0));
-            horizontal.set_anchor(Some(0));
-        }
-        Self {
-            vertical,
-            horizontal,
-            normalizes_asymmetric: !symmetric,
-        }
-    }
-}
-
-impl AppearanceAction {
-    /// Rows whose value can be nudged with Left/Right in the appearance palette. Theme and padding
-    /// open nested UI, so arrows stay with the search caret there.
-    pub fn steps_horizontally(self) -> bool {
-        !matches!(self, Self::Theme | Self::EditPadding)
-    }
-
-    /// Whether this row configures a feature that is currently switched off, so the row is inert:
-    /// it still renders (greyed) but activating it does nothing. Keeps the appearance list stable
-    /// instead of hiding dependent rows as their parent toggles.
-    pub fn disabled_reason(self, pane: &crate::config::PaneConfig) -> Option<&'static str> {
-        match self {
-            Self::CycleTitlebar if !pane.show_titles => Some("Needs titlebar"),
-            Self::CycleTitleStyle if !pane.show_titles => Some("Needs titlebar"),
-            Self::CycleTitleStyle if pane.titlebar == PaneTitlebarMode::Border => {
-                Some("Needs bar or integrated titlebar")
-            }
-            Self::ToggleHighlightFocusedBorder if pane.border_mode == PaneBorderMode::None => {
-                Some("Needs pane borders")
-            }
-            Self::CycleBorderStyle if !pane.border_mode.draws_frames() => {
-                Some("Unsupported in this mode")
-            }
-            Self::ToggleWorkbarGap
-            | Self::ToggleWorkbarPosition
-            | Self::ToggleWorkbarPowerline
-            | Self::CycleWorkbarBadgeStyle
-            | Self::CycleWorkbarTabStyle
-            | Self::CycleWorkbarStyle
-                if !pane.show_workbar =>
-            {
-                Some("Needs workbar")
-            }
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThemePreset {
     Lipan,
     OneDark,
@@ -743,19 +649,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn symmetric_padding_prefills_and_asymmetric_padding_requires_explicit_normalization() {
-        let symmetric = PanePaddingEditorState::new((2, 1, 2, 1));
-        assert_eq!(symmetric.vertical.text(), "2");
-        assert_eq!(symmetric.horizontal.text(), "1");
-        assert!(!symmetric.normalizes_asymmetric);
-
-        let asymmetric = PanePaddingEditorState::new((1, 2, 3, 4));
-        assert!(asymmetric.vertical.text().is_empty());
-        assert!(asymmetric.horizontal.text().is_empty());
-        assert!(asymmetric.normalizes_asymmetric);
-    }
-
-    #[test]
     fn border_modes_parse_and_cycle() {
         assert_eq!(
             PaneBorderMode::parse("borderless"),
@@ -771,28 +664,6 @@ mod tests {
         assert_eq!(PaneBorderMode::Dividers.next(), PaneBorderMode::Separate);
         assert_eq!(PaneBorderMode::Separate.prev(), PaneBorderMode::Dividers);
         assert_eq!(PaneBorderMode::Dividers.prev(), PaneBorderMode::None);
-    }
-
-    #[test]
-    fn frame_only_controls_are_disabled_for_borderless_modes() {
-        let mut pane = crate::config::PaneConfig::default();
-        for mode in [PaneBorderMode::None, PaneBorderMode::Dividers] {
-            pane.border_mode = mode;
-            assert_eq!(
-                AppearanceAction::CycleBorderStyle.disabled_reason(&pane),
-                Some("Unsupported in this mode")
-            );
-        }
-        pane.border_mode = PaneBorderMode::None;
-        assert_eq!(
-            AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
-            Some("Needs pane borders")
-        );
-        pane.border_mode = PaneBorderMode::Dividers;
-        assert_eq!(
-            AppearanceAction::ToggleHighlightFocusedBorder.disabled_reason(&pane),
-            None
-        );
     }
 
     #[test]
@@ -817,23 +688,6 @@ mod tests {
         assert_eq!(AlertMode::Pulse.status_label(true, false), "Pulse (static)");
         assert_eq!(AlertMode::Pulse.status_label(true, true), "Pulse");
         assert_eq!(AlertMode::Static.status_label(false, false), "Static");
-    }
-
-    #[test]
-    fn alert_border_control_requires_visible_borders_only_in_none_mode() {
-        let mut pane = crate::config::PaneConfig {
-            border_mode: PaneBorderMode::None,
-            ..Default::default()
-        };
-        assert_eq!(
-            crate::state::AlertsAction::CycleAlertBorder.disabled_reason(&pane, true, true),
-            Some("Needs pane borders")
-        );
-        pane.border_mode = PaneBorderMode::Dividers;
-        assert_eq!(
-            crate::state::AlertsAction::CycleAlertBorder.disabled_reason(&pane, true, true),
-            None
-        );
     }
 
     #[test]

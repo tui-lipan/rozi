@@ -2,7 +2,7 @@
 //! registry/chord dispatch.
 //!
 //! Three families of commands are registered:
-//! - [`BUILTIN_COMMANDS`]: the ~45 stable, individually rebindable actions (`Action::id()`).
+//! - [`BUILTIN_COMMANDS`]: the stable, individually rebindable actions (`Action::id()`).
 //!   Each gets a leader-prefix chord (`<prefix> <key>`) and a WM-modifier chord
 //!   (`<modifier>-<key>`) by default; a `[keys]` override replaces both with the user's exact
 //!   bindings, except that a bare key step (e.g. `"b"`) re-enters the same prefix/modifier
@@ -53,20 +53,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: false,
     },
     BuiltinCommand {
-        action: Action::RespawnPane,
-        label: "Respawn exited pane",
-        category: "Panes",
-        default_keys: &[],
-        palette: true,
-    },
-    BuiltinCommand {
-        action: Action::TogglePaneLogging,
-        label: "Toggle pane logging",
-        category: "Panes",
-        default_keys: &[],
-        palette: true,
-    },
-    BuiltinCommand {
         action: Action::Close,
         label: "Close pane",
         category: "Panes",
@@ -97,6 +83,27 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
+        action: Action::TogglePaneSynchronization,
+        label: "Pane synchronization",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::TogglePaneLogging,
+        label: "Pane logging",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::RespawnPane,
+        label: "Respawn exited pane",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::Paste,
         label: "Paste from clipboard",
         category: "Panes",
@@ -108,13 +115,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Promote to master",
         category: "Panes",
         default_keys: &["."],
-        palette: true,
-    },
-    BuiltinCommand {
-        action: Action::TogglePaneSynchronization,
-        label: "Pane synchronization",
-        category: "Panes",
-        default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
@@ -176,54 +176,54 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::FlipSplit,
         label: "Flip split axis",
-        category: "Layout",
+        category: "Workspace",
         default_keys: &["space"],
         palette: false,
     },
     BuiltinCommand {
         action: Action::AdjustRatio(true),
         label: "Grow split",
-        category: "Layout",
+        category: "Workspace",
         default_keys: &["="],
         palette: false,
     },
     BuiltinCommand {
         action: Action::AdjustRatio(false),
         label: "Shrink split",
-        category: "Layout",
+        category: "Workspace",
         default_keys: &["-"],
         palette: false,
     },
     BuiltinCommand {
+        action: Action::RenameWorkspace,
+        label: "Rename workspace",
+        category: "Workspace",
+        // A workspace tab has no derived label at all - only its index - so naming it is the only
+        // way to make the always-visible tab strip carry meaning.
+        default_keys: &["n"],
+        palette: true,
+    },
+    BuiltinCommand {
         action: Action::EnterResizeMode,
         label: "Resize mode",
-        category: "Layout",
+        category: "Workspace",
         default_keys: &["r"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::ToggleLayout,
         label: "Switch layout",
-        category: "Layout",
+        category: "Workspace",
         default_keys: &["m"],
         palette: true,
     },
     BuiltinCommand {
         action: Action::OpenLayoutPicker,
         label: "Choose layout…",
-        category: "Layout",
+        category: "Workspace",
         // The shifted sibling of the `m` cycle: same key, one step up from blind cycling to
         // picking a layout outright.
         default_keys: &["shift-m"],
-        palette: true,
-    },
-    BuiltinCommand {
-        action: Action::RenameWorkspace,
-        label: "Rename workspace",
-        category: "Layout",
-        // A workspace tab has no derived label at all - only its index - so naming it is the only
-        // way to make the always-visible tab strip carry meaning.
-        default_keys: &["n"],
         palette: true,
     },
     BuiltinCommand {
@@ -301,22 +301,29 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::FocusNextBlockedPane,
         label: "Focus next blocked pane",
-        category: "Focus",
+        category: "Panes",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::OpenSettings,
+        label: "Settings…",
+        category: "App",
+        default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::OpenConfigFile,
+        label: "Open config file",
+        category: "App",
         default_keys: &[],
         palette: true,
     },
     BuiltinCommand {
         action: Action::ToggleHelp,
-        label: "Keybindings",
+        label: "Keybindings…",
         category: "App",
         default_keys: &["?", "shift-/"],
-        palette: true,
-    },
-    BuiltinCommand {
-        action: Action::ToggleDevtools,
-        label: "Toggle DevTools",
-        category: "App",
-        default_keys: &["f12"],
         palette: true,
     },
     BuiltinCommand {
@@ -348,17 +355,17 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         palette: true,
     },
     BuiltinCommand {
-        action: Action::SaveProfile,
-        label: "Capture session as profile…",
-        category: "Profile",
-        default_keys: &["shift-o"],
-        palette: true,
-    },
-    BuiltinCommand {
         action: Action::OpenProfilePicker,
         label: "Profiles…",
         category: "Profile",
         default_keys: &["o"],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::SaveProfile,
+        label: "Capture session as profile…",
+        category: "Profile",
+        default_keys: &["shift-o"],
         palette: true,
     },
     BuiltinCommand {
@@ -448,7 +455,7 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::KillWorkspace,
         label: "Kill workspace",
-        category: "Session",
+        category: "Workspace",
         // No default key: rarely used and destructive, so it ships unbound and is reached via the
         // command palette or a user `[keys]` binding.
         default_keys: &[],
@@ -471,23 +478,23 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::OpenThemePicker,
         label: "Change theme",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::OpenAppearance,
         label: "Change appearance…",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::OpenAlerts,
         label: "Alerts…",
-        category: "App",
+        category: "Settings",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleDoNotDisturb,
@@ -499,42 +506,42 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::ToggleTitles,
         label: "Titlebar",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleTitlebar,
         label: "Titlebar layout",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleWorkbar,
         label: "Workbar",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleWorkbarGap,
         label: "Workbar gap",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleWorkbarPosition,
         label: "Workbar position",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleWorkbarPowerline,
         label: "Workbar powerline",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
@@ -580,105 +587,105 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         action: Action::ToggleAnimations,
         label: "Animations",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleFocusOnHover,
         label: "Focus on hover",
-        category: "App",
+        category: "Settings",
         default_keys: &[],
-        palette: true,
+        palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleHighlightFocusedBackground,
         label: "Focused pane background",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleHighlightFocusedBorder,
         label: "Focused pane border",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleHighlightFocusedTitlebar,
         label: "Focused pane titlebar",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleBorderMode,
         label: "Border mode",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleAlertBorder,
         label: "Cycle alert border",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleWorkbarAlert,
         label: "Cycle workspace tab alert",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleWorkbarAlertPaint,
         label: "Cycle workspace tab alert paint",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::ToggleBackgroundFollowsTerminal,
         label: "Background follows terminal",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleBorderStyle,
         label: "Border style",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleTitleStyle,
         label: "Titlebar style",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleWorkbarBadgeStyle,
         label: "Workbar badge style",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleWorkbarTabStyle,
         label: "Workbar tab style",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
     BuiltinCommand {
         action: Action::CycleWorkbarStyle,
         label: "Workbar style",
-        category: "Appearance",
+        category: "Settings",
         default_keys: &[],
         palette: false,
     },
@@ -688,13 +695,6 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         category: "App",
         default_keys: &["p"],
         palette: false,
-    },
-    BuiltinCommand {
-        action: Action::OpenConfigFile,
-        label: "Open config file",
-        category: "App",
-        default_keys: &[],
-        palette: true,
     },
     BuiltinCommand {
         action: Action::EditScrollback,
@@ -708,6 +708,13 @@ pub(crate) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         label: "Copy last command output",
         category: "App",
         default_keys: &[],
+        palette: true,
+    },
+    BuiltinCommand {
+        action: Action::ToggleDevtools,
+        label: "Toggle DevTools",
+        category: "App",
+        default_keys: &["f12"],
         palette: true,
     },
 ];
@@ -733,7 +740,7 @@ fn commands_active_without_scratchpad(state: &State) -> bool {
     state.mode == Mode::Normal
         && !state.show_help
         && !state.show_palette
-        && !state.show_appearance
+        && !state.show_settings
         && !state.show_theme_picker
         && state.search.is_none()
         && state.rename.is_none()
@@ -1646,7 +1653,7 @@ mod tests {
         assert!(!commands_active(&state));
         state.show_palette = false;
 
-        state.show_appearance = true;
+        state.show_settings = true;
         assert!(!commands_active(&state));
     }
 
@@ -1675,8 +1682,11 @@ mod tests {
     }
 
     #[test]
-    fn appearance_settings_are_grouped_behind_change_appearance() {
-        assert!(is_palette_eligible("change-appearance"));
+    fn preferences_are_grouped_behind_settings() {
+        assert!(is_palette_eligible("settings"));
+        assert!(!is_palette_eligible("change-appearance"));
+        assert!(!is_palette_eligible("alerts"));
+        assert!(!is_palette_eligible("toggle-focus-on-hover"));
         assert!(!is_palette_eligible("choose-theme"));
         assert!(!is_palette_eligible("toggle-titles"));
         assert!(!is_palette_eligible("toggle-workbar"));
@@ -1685,6 +1695,83 @@ mod tests {
         assert!(!is_palette_eligible("toggle-highlight-focused-border"));
         assert!(!is_palette_eligible("cycle-border-mode"));
         assert!(!is_palette_eligible("cycle-border-style"));
+    }
+
+    #[test]
+    fn command_palette_categories_follow_the_compact_grouping() {
+        use std::collections::HashSet;
+
+        let mut seen = HashSet::new();
+        let categories: Vec<_> = BUILTIN_COMMANDS
+            .iter()
+            .filter(|command| command.palette)
+            .filter_map(|command| seen.insert(command.category).then_some(command.category))
+            .collect();
+        assert_eq!(
+            categories,
+            [
+                "Panes",
+                "Workspace",
+                "App",
+                "Profile",
+                "Session",
+                "Collaboration",
+                "Sidebar",
+            ]
+        );
+
+        let category = |action| {
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.action == action)
+                .map(|command| command.category)
+        };
+        assert_eq!(category(Action::FocusNextBlockedPane), Some("Panes"));
+        assert_eq!(category(Action::RenameWorkspace), Some("Workspace"));
+        assert_eq!(category(Action::KillWorkspace), Some("Workspace"));
+        assert_eq!(category(Action::OpenSettings), Some("App"));
+    }
+
+    #[test]
+    fn command_palette_group_relative_order_is_intentional() {
+        let actions = |category| {
+            BUILTIN_COMMANDS
+                .iter()
+                .filter(|command| command.palette && command.category == category)
+                .map(|command| command.action)
+                .collect::<Vec<_>>()
+        };
+
+        let panes = actions("Panes");
+        assert_eq!(
+            &panes[..3],
+            &[
+                Action::RenamePane,
+                Action::TogglePaneSynchronization,
+                Action::TogglePaneLogging,
+            ]
+        );
+        assert_eq!(actions("Workspace")[0], Action::RenameWorkspace);
+
+        let app = actions("App");
+        assert_eq!(&app[..2], &[Action::OpenSettings, Action::OpenConfigFile]);
+        assert_eq!(app.last(), Some(&Action::ToggleDevtools));
+
+        assert_eq!(actions("Profile")[0], Action::OpenProfilePicker);
+        assert_eq!(
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.action == Action::TogglePaneLogging)
+                .map(|command| command.label),
+            Some("Pane logging")
+        );
+        assert_eq!(
+            BUILTIN_COMMANDS
+                .iter()
+                .find(|command| command.action == Action::ToggleHelp)
+                .map(|command| command.label),
+            Some("Keybindings…")
+        );
     }
 
     #[test]

@@ -21,15 +21,14 @@ pub(crate) fn handle_msg(_app: &mut AppRoot, msg: Msg, ctx: &mut Context<AppRoot
         Msg::Hangup => overlays::hangup(ctx),
         Msg::RunAction(action) => overlays::run_action(ctx, action),
         Msg::ClosePalette => overlays::close_palette(ctx),
+        Msg::CommandPaletteQueryChanged(query) => {
+            overlays::command_palette_query_changed(ctx, query)
+        }
         Msg::CloseHelp => overlays::close_help(ctx),
-        Msg::CloseAppearance => overlays::close_appearance(ctx),
-        Msg::CloseAlerts => overlays::close_alerts(ctx),
-        Msg::AlertsSelect(action) => overlays::alerts_select(ctx, action),
-        Msg::AlertsActivate(action) => overlays::alerts_activate(ctx, action),
-        Msg::AlertsStep { reverse } => overlays::alerts_step(ctx, reverse),
-        Msg::AppearanceSelect(action) => overlays::appearance_select(ctx, action),
-        Msg::AppearanceActivate(action) => overlays::appearance_activate(ctx, action),
-        Msg::AppearanceStep { reverse } => overlays::appearance_step(ctx, reverse),
+        Msg::CloseSettings => overlays::close_settings(ctx),
+        Msg::SettingsSelect(action) => overlays::settings_select(ctx, action),
+        Msg::SettingsActivate(action) => overlays::settings_activate(ctx, action),
+        Msg::SettingsStep { reverse } => overlays::settings_step(ctx, reverse),
         Msg::ClosePanePaddingEditor => overlays::close_pane_padding_editor(ctx),
         Msg::PanePaddingVerticalChanged(event) => {
             overlays::pane_padding_vertical_changed(ctx, event)

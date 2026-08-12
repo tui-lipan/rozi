@@ -215,7 +215,8 @@ mouse regions, overlays, and terminal widgets. The app owns window-manager polic
 floating geometry, focus, input routing, profiles, sessions, and terminal palette synchronization.
 
 `rozi` is always-server: the session server owns every PTY and the client always attaches,
-parsing raw pane output into its own `TerminalScreen`. A bare launch attaches to a disposable
+parsing raw pane output into its own `TerminalScreen`. A bare launch follows `[session] startup`,
+which by default picks a session without attaching anything and falls back to a disposable
 ephemeral session (`eph-<pid>`); a positional target / `--session` attaches to a named session or
 launches its canonical same-name profile, while `new` creates a session explicitly.
 Leaving through either `detach` or `quit` preserves named servers, closes untouched ephemeral

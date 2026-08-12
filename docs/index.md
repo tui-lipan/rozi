@@ -7,8 +7,9 @@ windows, fullscreen, 9 workspaces,
 animated geometry, and tmux-style prefix commands.
 
 `rozi` runs an always-server model: a background session server owns every PTY and the UI
-attaches to it. A bare launch uses a disposable per-process ephemeral session; a named target or
-`--session` attaches or launches from a same-named profile; use `new` to create explicitly.
+attaches to it. A bare launch follows `[session] startup` — by default it asks which session to
+open, and falls back to a disposable per-process ephemeral one; a named target or `--session`
+attaches or launches from a same-named profile; use `new` to create explicitly.
 
 ## Contents
 

@@ -36,8 +36,8 @@ tmux-style prefix commands. It builds natively on Linux, macOS, and Windows.
 
 rozi is **always-server**. A background session server owns every PTY; the UI is always a
 client that attaches to it and parses raw pane output into its own `TerminalScreen`. This is not an
-optional mode — a bare `rozi` launch attaches to a disposable per-process ephemeral session
-(`eph-<pid>`).
+optional mode — even the disposable scratch session a bare launch can fall into (`eph-<pid>`) is a
+real server-backed session, and a client attached to nothing is a normal state.
 
 ```text
 CLI / thin main.rs
@@ -167,9 +167,11 @@ Sessions are server-backed and survive client detach.
 
 | Kind | Created by | Lifetime |
 | --- | --- | --- |
-| Ephemeral | bare `rozi` launch | `eph-<pid>`; shut down on a clean quit |
-| Named | `rozi new <name>` | Survives detach; explicit shutdown |
+| Ephemeral | a launch that settles on no named session: `startup = "ephemeral"`, nothing to pick, or a shell started from the launcher | `eph-<pid>`; shut down on a clean quit, which asks first when it holds work |
+| Named | `rozi new <name>`, `rozi <name>`, `startup = "last"` / `"profile"`, picker `Ctrl+N`, or renaming a live session | Survives detach; explicit shutdown |
 | Temporary | `new-temporary-session` action | In-session scratch session |
+
+Which of these a bare `rozi` lands on is startup policy's decision (below).
 
 **Target resolution** — `rozi <name>` (or `--session <name>`) attaches to session `<name>` or
 launches its canonical same-name profile. Unknown targets do **not** silently create a session;

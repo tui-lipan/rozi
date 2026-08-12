@@ -21,7 +21,7 @@ movement): the running shells and their scrollback are untouched. See
 
 | | Ephemeral | Named (`dev`) |
 |---|---|---|
-| Created by | bare `rozi` launch | profile launch, explicit `new`, or *Rename session* |
+| Created by | a launch that settles on no named session (see [startup policies](#other-startup-policies)) | profile launch, explicit `new`, startup policy, or *Rename session* |
 | Leaving (`prefix q` / `prefix d`), untouched | server shuts down | n/a |
 | Leaving, after you worked in it | prompts: name it to keep, or close it | server keeps running |
 | Switch to another session | retained if used, discarded if untouched | retained in this client |

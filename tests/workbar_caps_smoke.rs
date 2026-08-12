@@ -104,7 +104,7 @@ fn padded_workbar_is_flush() {
     eprintln!("{}", lines[0]);
     // Flush bar: the badge's leading space padding sits in the first cell, text right after.
     assert_eq!(lines[0].chars().next().unwrap_or(' '), ' ', "leading pad");
-    assert_eq!(lines[0].chars().nth(1).unwrap_or(' '), 'h', "text at col 1");
+    assert_eq!(lines[0].chars().nth(1).unwrap_or(' '), 'r', "text at col 1");
 }
 
 #[test]
@@ -120,7 +120,7 @@ fn capped_workbar_paints_edge_caps_without_shifting_content() {
     );
     assert_eq!(
         frame.cell(1, 0).symbol,
-        "h",
+        "r",
         "content unshifted under the left cap"
     );
     assert_eq!(

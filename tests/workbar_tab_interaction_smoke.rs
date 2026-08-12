@@ -123,9 +123,9 @@ fn run(passthrough: bool) -> (bool, Option<usize>) {
     });
     backend.render();
 
-    // " rozi " is cols 0..=8, gap at col 9, tabs " 1 "/" 2 "/" 3 " from col 10, so tab "2" is
-    // near col 14.
-    let tab2_x = 14;
+    // " rozi " is cols 0..=5, gap at col 6, tabs " 1 "/" 2 "/" 3 " from col 7, so tab "2" is
+    // near col 11.
+    let tab2_x = 11;
     backend
         .send_mouse(mouse(tab2_x, 0, MouseKind::Moved))
         .expect("move");
